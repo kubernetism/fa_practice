@@ -51,7 +51,8 @@ const api = {
 
   // Inventory
   inventory: {
-    getByBranch: (branchId: number) => ipcRenderer.invoke('inventory:get-by-branch', branchId),
+    getAll: () => ipcRenderer.invoke('inventory:get-all'),
+    getByBranch: (branchId?: number) => ipcRenderer.invoke('inventory:get-by-branch', branchId),
     getLowStock: (branchId?: number) => ipcRenderer.invoke('inventory:get-low-stock', branchId),
     getProductStock: (productId: number, branchId: number) =>
       ipcRenderer.invoke('inventory:get-product-stock', productId, branchId),

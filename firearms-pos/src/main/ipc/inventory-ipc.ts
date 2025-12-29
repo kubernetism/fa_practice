@@ -18,20 +18,44 @@ import { generateTransferNumber } from '../utils/helpers'
 export function registerInventoryHandlers(): void {
   const db = getDatabase()
 
-  ipcMain.handle('inventory:get-by-branch', async (_, branchId: number) => {
+  ipcMain.handle('inventory:get-by-branch', async (_, branchId?: number) => {
     try {
-      const data = await db
+      let query = db
         .select({
           inventory: inventory,
           product: products,
         })
         .from(inventory)
         .innerJoin(products, eq(inventory.productId, products.id))
-        .where(eq(inventory.branchId, branchId))
+
+      if (branchId) {
+        query = query.where(eq(inventory.branchId, branchId)) as typeof query
+      }
+
+      const data = await query
 
       return { success: true, data }
     } catch (error) {
       console.error('Get inventory error:', error)
+      return { success: false, message: 'Failed to fetch inventory' }
+    }
+  })
+
+  ipcMain.handle('inventory:get-all', async () => {
+    try {
+      const data = await db
+        .select({
+          inventory: inventory,
+          product: products,
+          branch: branches,
+        })
+        .from(inventory)
+        .innerJoin(products, eq(inventory.productId, products.id))
+        .innerJoin(branches, eq(inventory.branchId, branches.id))
+
+      return { success: true, data }
+    } catch (error) {
+      console.error('Get all inventory error:', error)
       return { success: false, message: 'Failed to fetch inventory' }
     }
   })

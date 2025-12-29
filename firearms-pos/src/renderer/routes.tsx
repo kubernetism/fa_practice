@@ -5,6 +5,7 @@ import { LoginScreen } from '@/screens/login'
 import { DashboardScreen } from '@/screens/dashboard'
 import { POSScreen } from '@/screens/pos'
 import { ProductsScreen } from '@/screens/products'
+import { InventoryScreen } from '@/screens/inventory'
 
 // Placeholder components for other screens
 const PlaceholderScreen = ({ title }: { title: string }) => (
@@ -26,7 +27,7 @@ export function AppRoutes() {
         <Route path="pos" element={<POSScreen />} />
         <Route path="products" element={<ProductsScreen />} />
         <Route path="sales" element={<PlaceholderScreen title="Sales History" />} />
-        <Route path="inventory" element={<PlaceholderScreen title="Inventory Management" />} />
+        <Route path="inventory" element={<InventoryScreen />} />
         <Route path="purchases" element={<PlaceholderScreen title="Purchase Orders" />} />
         <Route path="returns" element={<PlaceholderScreen title="Returns" />} />
         <Route path="customers" element={<PlaceholderScreen title="Customers" />} />

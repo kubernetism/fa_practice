@@ -30,6 +30,7 @@ const api = {
   },
   // Inventory
   inventory: {
+    getAll: () => electron.ipcRenderer.invoke("inventory:get-all"),
     getByBranch: (branchId) => electron.ipcRenderer.invoke("inventory:get-by-branch", branchId),
     getLowStock: (branchId) => electron.ipcRenderer.invoke("inventory:get-low-stock", branchId),
     getProductStock: (productId, branchId) => electron.ipcRenderer.invoke("inventory:get-product-stock", productId, branchId),

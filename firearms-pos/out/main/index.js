@@ -1129,13 +1129,30 @@ function registerInventoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("inventory:get-by-branch", async (_, branchId) => {
     try {
-      const data = await db2.select({
+      let query = db2.select({
         inventory,
         product: products
-      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).where(drizzleOrm.eq(inventory.branchId, branchId));
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id));
+      if (branchId) {
+        query = query.where(drizzleOrm.eq(inventory.branchId, branchId));
+      }
+      const data = await query;
       return { success: true, data };
     } catch (error) {
       console.error("Get inventory error:", error);
+      return { success: false, message: "Failed to fetch inventory" };
+    }
+  });
+  electron.ipcMain.handle("inventory:get-all", async () => {
+    try {
+      const data = await db2.select({
+        inventory,
+        product: products,
+        branch: branches
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id));
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get all inventory error:", error);
       return { success: false, message: "Failed to fetch inventory" };
     }
   });
