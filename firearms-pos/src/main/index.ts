@@ -1,0 +1,91 @@
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { join } from 'node:path'
+import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { initDatabase, closeDatabase } from './db'
+import { runMigrations, seedInitialData } from './db/migrate'
+import { registerAllHandlers } from './ipc'
+
+let mainWindow: BrowserWindow | null = null
+
+function createWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 1200,
+    minHeight: 700,
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
+
+  mainWindow.on('ready-to-show', () => {
+    mainWindow?.show()
+  })
+
+  mainWindow.webContents.setWindowOpenHandler((details) => {
+    // Open external links in browser
+    require('electron').shell.openExternal(details.url)
+    return { action: 'deny' }
+  })
+
+  // Load the renderer
+  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
+    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+  } else {
+    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  }
+}
+
+// Initialize app
+app.whenReady().then(async () => {
+  // Set app user model id for windows
+  electronApp.setAppUserModelId('com.firearms.pos')
+
+  // Default open or close DevTools by F12 in development
+  app.on('browser-window-created', (_, window) => {
+    optimizer.watchWindowShortcuts(window)
+  })
+
+  try {
+    // Initialize database
+    initDatabase()
+    console.log('Database initialized')
+
+    // Run migrations
+    await runMigrations()
+
+    // Seed initial data
+    await seedInitialData()
+
+    // Register IPC handlers
+    registerAllHandlers()
+    console.log('IPC handlers registered')
+  } catch (error) {
+    console.error('Failed to initialize app:', error)
+  }
+
+  createWindow()
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+    }
+  })
+})
+
+app.on('window-all-closed', () => {
+  closeDatabase()
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+
+// Handle app quit
+app.on('before-quit', () => {
+  closeDatabase()
+})
