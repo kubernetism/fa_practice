@@ -1158,7 +1158,7 @@ function registerInventoryHandlers() {
   });
   electron.ipcMain.handle("inventory:get-low-stock", async (_, branchId) => {
     try {
-      const conditions = [drizzleOrm.lt(inventory.quantity, inventory.minQuantity)];
+      const conditions = [drizzleOrm.lte(inventory.quantity, inventory.minQuantity)];
       if (branchId) {
         conditions.push(drizzleOrm.eq(inventory.branchId, branchId));
       }

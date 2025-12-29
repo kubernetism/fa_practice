@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, lt, sql, desc } from 'drizzle-orm'
+import { eq, and, lte, sql, desc } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   inventory,
@@ -62,7 +62,7 @@ export function registerInventoryHandlers(): void {
 
   ipcMain.handle('inventory:get-low-stock', async (_, branchId?: number) => {
     try {
-      const conditions = [lt(inventory.quantity, inventory.minQuantity)]
+      const conditions = [lte(inventory.quantity, inventory.minQuantity)]
       if (branchId) {
         conditions.push(eq(inventory.branchId, branchId))
       }
