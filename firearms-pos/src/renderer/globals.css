@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* Light theme (default) */
 @theme {
   --color-background: oklch(100% 0 0);
   --color-foreground: oklch(14.08% 0.004 285.82);
@@ -35,9 +36,35 @@
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
   }
+
+  /* Dark theme */
+  .dark {
+    --color-background: oklch(14.08% 0.004 285.82);
+    --color-foreground: oklch(98.49% 0.001 106.42);
+    --color-card: oklch(17.76% 0.005 285.82);
+    --color-card-foreground: oklch(98.49% 0.001 106.42);
+    --color-popover: oklch(17.76% 0.005 285.82);
+    --color-popover-foreground: oklch(98.49% 0.001 106.42);
+    --color-primary: oklch(98.49% 0.001 106.42);
+    --color-primary-foreground: oklch(20.47% 0.006 285.88);
+    --color-secondary: oklch(26.87% 0.006 285.88);
+    --color-secondary-foreground: oklch(98.49% 0.001 106.42);
+    --color-muted: oklch(26.87% 0.006 285.88);
+    --color-muted-foreground: oklch(71.19% 0.013 285.94);
+    --color-accent: oklch(26.87% 0.006 285.88);
+    --color-accent-foreground: oklch(98.49% 0.001 106.42);
+    --color-destructive: oklch(62.8% 0.257 29.23);
+    --color-destructive-foreground: oklch(98.49% 0.001 106.42);
+    --color-border: oklch(26.87% 0.006 285.88);
+    --color-input: oklch(26.87% 0.006 285.88);
+    --color-ring: oklch(83.14% 0.001 106.42);
+    --color-success: oklch(72.27% 0.192 149.58);
+    --color-warning: oklch(79.48% 0.165 86.05);
+    --color-info: oklch(62.3% 0.214 259.15);
+  }
 }
 
-/* Custom scrollbar */
+/* Custom scrollbar - Light */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -56,6 +83,15 @@
   background: oklch(70% 0 0);
 }
 
+/* Custom scrollbar - Dark */
+.dark ::-webkit-scrollbar-thumb {
+  background: oklch(40% 0 0);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: oklch(50% 0 0);
+}
+
 /* Focus visible outline */
 :focus-visible {
   outline: 2px solid var(--color-ring);
@@ -67,4 +103,13 @@
   .no-print {
     display: none !important;
   }
+}
+
+/* Smooth theme transitions */
+html {
+  transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+html.dark {
+  color-scheme: dark;
 }
