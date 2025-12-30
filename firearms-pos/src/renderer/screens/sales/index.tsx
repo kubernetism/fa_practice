@@ -97,7 +97,8 @@ interface Product {
 
 interface Customer {
   id: number
-  name: string
+  firstName: string
+  lastName: string
   phone: string | null
   email: string | null
 }
@@ -225,7 +226,8 @@ export function SalesHistoryScreen() {
   const getCustomerName = (customerId: number | null): string => {
     if (!customerId) return 'Walk-in Customer'
     const customer = customers.find(c => c.id === customerId)
-    return customer?.name || 'Unknown'
+    if (!customer) return 'Unknown'
+    return `${customer.firstName} ${customer.lastName}`.trim()
   }
 
   const getCustomerPhone = (customerId: number | null): string => {
@@ -845,7 +847,7 @@ export function SalesHistoryScreen() {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Customer</p>
-                  <p className="font-medium">{viewingCustomer?.name || getCustomerName(viewingSale.customerId)}</p>
+                  <p className="font-medium">{viewingCustomer ? `${viewingCustomer.firstName} ${viewingCustomer.lastName}`.trim() : getCustomerName(viewingSale.customerId)}</p>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Contact</p>

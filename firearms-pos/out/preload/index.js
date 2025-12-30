@@ -79,7 +79,8 @@ const api = {
   returns: {
     create: (data) => electron.ipcRenderer.invoke("returns:create", data),
     getAll: (params) => electron.ipcRenderer.invoke("returns:get-all", params),
-    getById: (id) => electron.ipcRenderer.invoke("returns:get-by-id", id)
+    getById: (id) => electron.ipcRenderer.invoke("returns:get-by-id", id),
+    delete: (id) => electron.ipcRenderer.invoke("returns:delete", id)
   },
   // Branches
   branches: {

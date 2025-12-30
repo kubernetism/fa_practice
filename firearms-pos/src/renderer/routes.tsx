@@ -7,6 +7,11 @@ import { POSScreen } from '@/screens/pos'
 import { ProductsScreen } from '@/screens/products'
 import { InventoryScreen } from '@/screens/inventory'
 import { SalesHistoryScreen } from '@/screens/sales'
+import { PurchasesScreen } from '@/screens/purchases'
+import { ReturnsScreen } from '@/screens/returns'
+import { CustomersScreen } from '@/screens/customers'
+import SuppliersScreen from '@/screens/suppliers'
+import ExpensesScreen from '@/screens/expenses'
 
 // Placeholder components for other screens
 const PlaceholderScreen = ({ title }: { title: string }) => (
@@ -29,11 +34,11 @@ export function AppRoutes() {
         <Route path="products" element={<ProductsScreen />} />
         <Route path="sales" element={<SalesHistoryScreen />} />
         <Route path="inventory" element={<InventoryScreen />} />
-        <Route path="purchases" element={<PlaceholderScreen title="Purchase Orders" />} />
-        <Route path="returns" element={<PlaceholderScreen title="Returns" />} />
-        <Route path="customers" element={<PlaceholderScreen title="Customers" />} />
-        <Route path="suppliers" element={<PlaceholderScreen title="Suppliers" />} />
-        <Route path="expenses" element={<PlaceholderScreen title="Expenses" />} />
+        <Route path="purchases" element={<PurchasesScreen />} />
+        <Route path="returns" element={<ReturnsScreen />} />
+        <Route path="customers" element={<CustomersScreen />} />
+        <Route path="suppliers" element={<SuppliersScreen />} />
+        <Route path="expenses" element={<ExpensesScreen />} />
         <Route path="commissions" element={<PlaceholderScreen title="Commissions" />} />
         <Route path="users" element={<PlaceholderScreen title="Users" />} />
         <Route path="branches" element={<PlaceholderScreen title="Branches" />} />

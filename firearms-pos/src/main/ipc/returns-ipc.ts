@@ -255,4 +255,64 @@ export function registerReturnHandlers(): void {
       return { success: false, message: 'Failed to fetch return' }
     }
   })
+
+  ipcMain.handle('returns:delete', async (_, id: number) => {
+    try {
+      const session = getCurrentSession()
+
+      const returnRecord = await db.query.returns.findFirst({
+        where: eq(returns.id, id),
+      })
+
+      if (!returnRecord) {
+        return { success: false, message: 'Return not found' }
+      }
+
+      // Get return items to reverse inventory changes
+      const items = await db.query.returnItems.findMany({
+        where: eq(returnItems.returnId, id),
+      })
+
+      // Reverse inventory changes for restockable items
+      for (const item of items) {
+        const existingInventory = await db.query.inventory.findFirst({
+          where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, returnRecord.branchId)),
+        })
+
+        if (existingInventory && item.restockable) {
+          await db
+            .update(inventory)
+            .set({
+              quantity: sql`${inventory.quantity} - ${item.quantity}`,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(inventory.id, existingInventory.id))
+        }
+      }
+
+      // Delete return items first
+      await db.delete(returnItems).where(eq(returnItems.returnId, id))
+
+      // Delete the return record
+      await db.delete(returns).where(eq(returns.id, id))
+
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: returnRecord.branchId,
+        action: 'delete',
+        entityType: 'return',
+        entityId: id,
+        oldValues: {
+          returnNumber: returnRecord.returnNumber,
+          totalAmount: returnRecord.totalAmount,
+        },
+        description: `Deleted return: ${returnRecord.returnNumber}`,
+      })
+
+      return { success: true, message: 'Return deleted successfully' }
+    } catch (error) {
+      console.error('Delete return error:', error)
+      return { success: false, message: 'Failed to delete return' }
+    }
+  })
 }

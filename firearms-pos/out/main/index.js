@@ -2397,6 +2397,49 @@ function registerReturnHandlers() {
       return { success: false, message: "Failed to fetch return" };
     }
   });
+  electron.ipcMain.handle("returns:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const returnRecord = await db2.query.returns.findFirst({
+        where: drizzleOrm.eq(returns.id, id)
+      });
+      if (!returnRecord) {
+        return { success: false, message: "Return not found" };
+      }
+      const items = await db2.query.returnItems.findMany({
+        where: drizzleOrm.eq(returnItems.returnId, id)
+      });
+      for (const item of items) {
+        const existingInventory = await db2.query.inventory.findFirst({
+          where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+        });
+        if (existingInventory && item.restockable) {
+          await db2.update(inventory).set({
+            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+        }
+      }
+      await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
+      await db2.delete(returns).where(drizzleOrm.eq(returns.id, id));
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: returnRecord.branchId,
+        action: "delete",
+        entityType: "return",
+        entityId: id,
+        oldValues: {
+          returnNumber: returnRecord.returnNumber,
+          totalAmount: returnRecord.totalAmount
+        },
+        description: `Deleted return: ${returnRecord.returnNumber}`
+      });
+      return { success: true, message: "Return deleted successfully" };
+    } catch (error) {
+      console.error("Delete return error:", error);
+      return { success: false, message: "Failed to delete return" };
+    }
+  });
 }
 function registerBranchHandlers() {
   const db2 = getDatabase();

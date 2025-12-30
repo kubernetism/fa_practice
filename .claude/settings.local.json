@@ -9,7 +9,11 @@
       "Bash(node:*)",
       "Bash(pkill:*)",
       "Bash(pnpm db:generate:*)",
-      "Bash(pnpm dev)"
+      "Bash(pnpm dev)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(npm run dev:*)",
+      "Bash(mkdir:*)"
     ]
   }
 }

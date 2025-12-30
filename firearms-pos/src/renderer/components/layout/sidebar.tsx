@@ -16,6 +16,7 @@ import {
   Settings,
   History,
   BadgePercent,
+  Store,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -43,7 +44,7 @@ const inventoryNavItems: NavItem[] = [
 
 const managementNavItems: NavItem[] = [
   { title: 'Customers', href: '/customers', icon: Users, permission: 'customers:view' },
-  { title: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'suppliers:view' },
+  { title: 'Suppliers', href: '/suppliers', icon: Store, permission: 'suppliers:view' },
   { title: 'Expenses', href: '/expenses', icon: DollarSign, permission: 'expenses:view' },
   { title: 'Commissions', href: '/commissions', icon: BadgePercent, permission: 'commissions:view' },
 ]
