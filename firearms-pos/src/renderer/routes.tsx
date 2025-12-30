@@ -12,6 +12,9 @@ import { ReturnsScreen } from '@/screens/returns'
 import { CustomersScreen } from '@/screens/customers'
 import SuppliersScreen from '@/screens/suppliers'
 import ExpensesScreen from '@/screens/expenses'
+import CommissionsScreen from '@/screens/commissions'
+import UsersScreen from '@/screens/users'
+import BranchesScreen from '@/screens/branches'
 
 // Placeholder components for other screens
 const PlaceholderScreen = ({ title }: { title: string }) => (
@@ -39,9 +42,9 @@ export function AppRoutes() {
         <Route path="customers" element={<CustomersScreen />} />
         <Route path="suppliers" element={<SuppliersScreen />} />
         <Route path="expenses" element={<ExpensesScreen />} />
-        <Route path="commissions" element={<PlaceholderScreen title="Commissions" />} />
-        <Route path="users" element={<PlaceholderScreen title="Users" />} />
-        <Route path="branches" element={<PlaceholderScreen title="Branches" />} />
+        <Route path="commissions" element={<CommissionsScreen />} />
+        <Route path="users" element={<UsersScreen />} />
+        <Route path="branches" element={<BranchesScreen />} />
         <Route path="reports" element={<PlaceholderScreen title="Reports" />} />
         <Route path="audit" element={<PlaceholderScreen title="Audit Logs" />} />
         <Route path="settings" element={<PlaceholderScreen title="Settings" />} />

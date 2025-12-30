@@ -1,0 +1,13 @@
+fa_practice/node_modules/
+fa_practice/dist/
+fa_practice/.env
+fa_practice/.DS_Store
+fa_practice/.vscode
+fa_practice/.idea
+npm-debug.log
+yarn-error.log
+coverage
+*.log
+*.tmp
+*.bak
+*.swp
