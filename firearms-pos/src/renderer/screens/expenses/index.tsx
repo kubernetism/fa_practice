@@ -131,9 +131,13 @@ export default function ExpensesScreen() {
         setExpenses(response.data)
         setTotalPages(response.totalPages || 1)
         setTotalExpenses(response.total || 0)
+      } else {
+        console.error('Failed to fetch expenses:', response.message)
+        setExpenses([])
       }
     } catch (error) {
       console.error('Failed to fetch expenses:', error)
+      setExpenses([])
     } finally {
       setIsLoading(false)
     }
@@ -142,11 +146,15 @@ export default function ExpensesScreen() {
   const fetchBranches = async () => {
     try {
       const response = await window.api.branches.getAll()
-      if (response.success && response.data) {
+      if (response && response.data) {
         setBranches(response.data)
+      } else {
+        console.error('Failed to fetch branches:', response)
+        setBranches([])
       }
     } catch (error) {
       console.error('Failed to fetch branches:', error)
+      setBranches([])
     }
   }
 
