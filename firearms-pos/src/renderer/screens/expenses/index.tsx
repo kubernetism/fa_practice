@@ -100,6 +100,8 @@ const initialFormData: ExpenseFormData = {
 }
 
 export default function ExpensesScreen() {
+  console.log('ExpensesScreen rendering...')
+
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [branches, setBranches] = useState<Branch[]>([])
   const [searchTerm, setSearchTerm] = useState('')
@@ -115,6 +117,8 @@ export default function ExpensesScreen() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
 
   const itemsPerPage = 20
+
+  console.log('State initialized, expenses length:', expenses.length)
 
   const fetchExpenses = useCallback(async () => {
     setIsLoading(true)
@@ -159,12 +163,12 @@ export default function ExpensesScreen() {
   }
 
   useEffect(() => {
-    fetchExpenses()
-  }, [fetchExpenses])
-
-  useEffect(() => {
     fetchBranches()
   }, [])
+
+  useEffect(() => {
+    fetchExpenses()
+  }, [fetchExpenses])
 
   const handleOpenDialog = (expense?: Expense) => {
     if (expense) {
