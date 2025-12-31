@@ -3,6 +3,7 @@ import { getDatabase, getDbPath } from './index'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { migrateToBusinessSettings } from './migrations/migrate_to_business_settings'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -26,16 +27,22 @@ export async function runMigrations(): Promise<void> {
 
   if (!migrationsPath) {
     console.log('No migrations folder found, creating tables directly...')
-    // For development without migrations, we can use push or skip
-    return
+  } else {
+    try {
+      migrate(db, { migrationsFolder: migrationsPath })
+      console.log('Migrations completed successfully')
+    } catch (error) {
+      console.error('Migration error:', error)
+      throw error
+    }
   }
 
+  // Run business settings migration to ensure default settings exist
   try {
-    migrate(db, { migrationsFolder: migrationsPath })
-    console.log('Migrations completed successfully')
+    await migrateToBusinessSettings()
   } catch (error) {
-    console.error('Migration error:', error)
-    throw error
+    console.error('Business settings migration error:', error)
+    // Don't throw - the IPC handler can create defaults if needed
   }
 }
 
