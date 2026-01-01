@@ -1,17 +1,79 @@
 import { ipcMain } from 'electron'
 import {
   getMachineId,
+  getMachineIdForDisplay,
+  generateLicenseKey,
+  validateLicenseKey,
   getLicenseStatus,
   activateLicense,
   deactivateLicense,
+  getLicenseInfo,
+  LicenseStatus,
 } from '../utils/license'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
+import { getDatabase } from '../db'
+import { applicationInfo } from '../db/schemas/application-info'
+import { eq, and } from 'drizzle-orm'
+import { writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { app } from 'electron'
+
+interface ExtendedLicenseStatus {
+  status: LicenseStatus
+  isValid: boolean
+  isActivated: boolean
+  isTrial: boolean
+  machineId: string
+  expiresAt: string | null
+  daysRemaining: number
+  message: string
+  installationDate: string | null
+  trialStartDate: string | null
+  trialEndDate: string | null
+  licenseStartDate: string | null
+  licenseEndDate: string | null
+}
+
+function getLicenseFilePath(): string {
+  return join(app.getPath('userData'), 'license.json')
+}
+
+function getApplicationInfoFromDb() {
+  const db = getDatabase()
+  return db.select().from(applicationInfo).limit(1).get()
+}
+
+function initializeApplicationInfo() {
+  const db = getDatabase()
+  const existingInfo = getApplicationInfoFromDb()
+
+  if (existingInfo) {
+    return existingInfo
+  }
+
+  const now = new Date().toISOString()
+  const trialEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  const machineId = getMachineIdForDisplay()
+
+  const newInfo = {
+    installationDate: now,
+    firstRunDate: now,
+    trialStartDate: now,
+    trialEndDate,
+    isLicensed: false,
+    machineId,
+  }
+
+  const result = db.insert(applicationInfo).values(newInfo).returning().get()
+  return result
+}
 
 export function registerLicenseHandlers(): void {
+  // Get machine ID
   ipcMain.handle('license:get-machine-id', async () => {
     try {
-      const machineId = getMachineId()
+      const machineId = getMachineIdForDisplay()
       return { success: true, data: machineId }
     } catch (error) {
       console.error('Get machine ID error:', error)
@@ -19,6 +81,92 @@ export function registerLicenseHandlers(): void {
     }
   })
 
+  // Generate license request key (for admin to copy)
+  ipcMain.handle('license:generate-license-request', async () => {
+    try {
+      const machineId = getMachineIdForDisplay()
+      const expectedLicenseKey = generateLicenseKey(machineId)
+      return {
+        success: true,
+        data: {
+          machineId,
+          expectedLicenseKey,
+          instructions: 'Run: node generate-license.js <machine_id>',
+        },
+      }
+    } catch (error) {
+      console.error('Generate license request error:', error)
+      return { success: false, message: 'Failed to generate license request' }
+    }
+  })
+
+  // Get extended application info with trial/license status
+  ipcMain.handle('license:get-application-info', async () => {
+    try {
+      // Initialize application info if not exists
+      const appInfo = initializeApplicationInfo()
+      const machineId = getMachineIdForDisplay()
+      const licenseInfo = getLicenseInfo()
+
+      const now = new Date()
+      const trialEnd = new Date(appInfo.trialEndDate)
+      const trialDaysRemaining = Math.max(0, Math.ceil((trialEnd.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+
+      // Determine status
+      let status: LicenseStatus = 'TRIAL_ACTIVE'
+      let isValid = true
+      let isActivated = false
+      let isTrial = true
+      let daysRemaining = trialDaysRemaining
+      let expiresAt: string | null = appInfo.trialEndDate
+      let message = `Trial period: ${trialDaysRemaining} days remaining`
+
+      if (appInfo.isLicensed && licenseInfo) {
+        isActivated = true
+        isTrial = false
+        expiresAt = licenseInfo.licenseEndDate
+
+        if (licenseInfo.licenseEndDate && new Date(licenseInfo.licenseEndDate) < now) {
+          status = 'LICENSE_EXPIRED'
+          isValid = false
+          daysRemaining = 0
+          message = 'License has expired. Please renew.'
+        } else {
+          status = 'LICENSE_ACTIVE'
+          daysRemaining = Math.max(0, Math.ceil((new Date(licenseInfo.licenseEndDate).getTime() - now.getTime()) / (1000 * 60 * 60 * 24)))
+          message = `License active: ${daysRemaining} days remaining`
+        }
+      } else if (trialEnd < now) {
+        status = 'TRIAL_EXPIRED'
+        isValid = false
+        daysRemaining = 0
+        message = 'Trial period has expired. Please activate license.'
+      }
+
+      const extendedStatus: ExtendedLicenseStatus = {
+        status,
+        isValid,
+        isActivated,
+        isTrial,
+        machineId,
+        expiresAt,
+        daysRemaining,
+        message,
+        installationDate: appInfo.installationDate,
+        trialStartDate: appInfo.trialStartDate,
+        trialEndDate: appInfo.trialEndDate,
+        licenseStartDate: licenseInfo?.licenseStartDate || null,
+        licenseEndDate: licenseInfo?.licenseEndDate || null,
+      }
+
+      return { success: true, data: extendedStatus }
+    } catch (error) {
+      console.error('Get application info error:', error)
+      return { success: false, message: 'Failed to get application info' }
+    }
+  })
+
+  // Get license status (simplified)
   ipcMain.handle('license:get-status', async () => {
     try {
       const status = getLicenseStatus()
@@ -29,18 +177,40 @@ export function registerLicenseHandlers(): void {
     }
   })
 
+  // Activate license
   ipcMain.handle('license:activate', async (_, licenseKey: string) => {
     try {
       const session = getCurrentSession()
+      if (!session || session.role?.toLowerCase() !== 'admin') {
+        return { success: false, message: 'Only administrators can activate licenses.' }
+      }
+
       const result = activateLicense(licenseKey)
 
       if (result.success) {
+        // Update database
+        const db = getDatabase()
+        const now = new Date().toISOString()
+        const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+
+        db.update(applicationInfo)
+          .set({
+            isLicensed: true,
+            licenseStartDate: now,
+            licenseEndDate,
+            licenseKey: licenseKey.toUpperCase(),
+            updatedAt: now,
+          })
+          .where(eq(applicationInfo.infoId, 1))
+          .run()
+
+        // Audit log
         await createAuditLog({
-          userId: session?.userId,
-          branchId: session?.branchId,
+          userId: session.userId,
+          branchId: session.branchId,
           action: 'create',
-          entityType: 'setting',
-          description: 'License activated',
+          entityType: 'license',
+          description: `License activated. Key: ${licenseKey.substring(0, 8)}...`,
         })
       }
 
@@ -51,17 +221,38 @@ export function registerLicenseHandlers(): void {
     }
   })
 
+  // Deactivate license
   ipcMain.handle('license:deactivate', async () => {
     try {
       const session = getCurrentSession()
+      if (!session || session.role?.toLowerCase() !== 'admin') {
+        return { success: false, message: 'Only administrators can deactivate licenses.' }
+      }
+
       const result = deactivateLicense()
 
       if (result.success) {
+        // Update database
+        const db = getDatabase()
+        const now = new Date().toISOString()
+
+        db.update(applicationInfo)
+          .set({
+            isLicensed: false,
+            licenseStartDate: null,
+            licenseEndDate: null,
+            licenseKey: null,
+            updatedAt: now,
+          })
+          .where(eq(applicationInfo.infoId, 1))
+          .run()
+
+        // Audit log
         await createAuditLog({
-          userId: session?.userId,
-          branchId: session?.branchId,
+          userId: session.userId,
+          branchId: session.branchId,
           action: 'delete',
-          entityType: 'setting',
+          entityType: 'license',
           description: 'License deactivated',
         })
       }
@@ -70,6 +261,59 @@ export function registerLicenseHandlers(): void {
     } catch (error) {
       console.error('Deactivate license error:', error)
       return { success: false, message: 'Failed to deactivate license' }
+    }
+  })
+
+  // Validate license key format without activating
+  ipcMain.handle('license:validate-key', async (_, licenseKey: string) => {
+    try {
+      const machineId = getMachineIdForDisplay()
+      const isValid = validateLicenseKey(licenseKey, machineId)
+      // Accept both 32 and 64 character keys
+      const isValidFormat = /^[A-F0-9]{32}$/.test(licenseKey.toUpperCase()) ||
+                           /^[A-F0-9]{64}$/.test(licenseKey.toUpperCase())
+
+      return {
+        success: true,
+        data: {
+          isValid,
+          isValidFormat,
+          message: isValid
+            ? 'License key is valid for this machine.'
+            : isValidFormat
+            ? 'License key format is valid but not for this machine.'
+            : 'Invalid license key format.',
+        },
+      }
+    } catch (error) {
+      console.error('Validate license key error:', error)
+      return { success: false, message: 'Failed to validate license key' }
+    }
+  })
+
+  // Get license history (from license.json file)
+  ipcMain.handle('license:get-history', async () => {
+    try {
+      const licenseInfo = getLicenseInfo()
+      if (!licenseInfo) {
+        return { success: true, data: [] }
+      }
+
+      const history = [
+        {
+          id: 1,
+          type: 'FULL',
+          status: licenseInfo.licenseEndDate && new Date(licenseInfo.licenseEndDate) > new Date() ? 'ACTIVE' : 'EXPIRED',
+          activatedBy: 'Administrator',
+          activatedAt: licenseInfo.licenseStartDate,
+          expiresAt: licenseInfo.licenseEndDate,
+        },
+      ]
+
+      return { success: true, data: history }
+    } catch (error) {
+      console.error('Get license history error:', error)
+      return { success: false, message: 'Failed to get license history' }
     }
   })
 }
