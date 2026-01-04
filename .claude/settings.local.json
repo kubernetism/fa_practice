@@ -38,7 +38,9 @@
       "Bash(ssh-keygen:*)",
       "Bash(git filter-branch:*)",
       "Bash(git stash:*)",
-      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch:*)"
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch:*)",
+      "Bash(git fsck:*)",
+      "Bash(xargs -I {} git checkout ad3d2bca80b5061090e7fc73f3a59abb18d22882 -- {})"
     ]
   }
 }
