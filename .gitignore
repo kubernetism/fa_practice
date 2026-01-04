@@ -11,3 +11,7 @@ coverage
 *.tmp
 *.bak
 *.swp
+
+# Firearms POS
+/firearms-pos/node_modules
+/firearms-pos/release
