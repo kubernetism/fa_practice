@@ -491,18 +491,17 @@ export function registerAccountReceivablesHandlers(): void {
 
       // Get today's collections from receivable payments
       const today = new Date().toISOString().split('T')[0]
+      const todayConditions = [sql`date(${receivablePayments.paymentDate}) = ${today}`]
+      if (branchId) {
+        todayConditions.push(eq(accountReceivables.branchId, branchId))
+      }
       const todayCollectionQuery = await db
         .select({
-          todayCollected: sql<number>`sum(${receivablePayments.amount})`,
+          todayCollected: sql<number>`COALESCE(sum(${receivablePayments.amount}), 0)`,
         })
         .from(receivablePayments)
         .innerJoin(accountReceivables, eq(receivablePayments.receivableId, accountReceivables.id))
-        .where(
-          and(
-            sql`date(${receivablePayments.paymentDate}) = ${today}`,
-            ...(conditions.length > 0 ? conditions : [])
-          )
-        )
+        .where(and(...todayConditions))
 
       // Get overdue count (receivables past due date)
       const overdueQuery = await db
