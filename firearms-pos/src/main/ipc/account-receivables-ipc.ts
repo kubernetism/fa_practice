@@ -462,12 +462,11 @@ export function registerAccountReceivablesHandlers(): void {
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .groupBy(accountReceivables.status)
 
-      // Get overall totals
-      const totalsQuery = await db
+      // Get overall totals (outstanding only - pending, partial, overdue)
+      const outstandingQuery = await db
         .select({
           totalReceivables: sql<number>`count(*)`,
           totalAmount: sql<number>`sum(${accountReceivables.totalAmount})`,
-          totalPaid: sql<number>`sum(${accountReceivables.paidAmount})`,
           totalRemaining: sql<number>`sum(${accountReceivables.remainingAmount})`,
         })
         .from(accountReceivables)
@@ -482,8 +481,30 @@ export function registerAccountReceivablesHandlers(): void {
           )
         )
 
-      // Get overdue count (receivables past due date)
+      // Get total collected from ALL receivables (including paid ones)
+      const collectedQuery = await db
+        .select({
+          totalPaid: sql<number>`sum(${accountReceivables.paidAmount})`,
+        })
+        .from(accountReceivables)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+
+      // Get today's collections from receivable payments
       const today = new Date().toISOString().split('T')[0]
+      const todayCollectionQuery = await db
+        .select({
+          todayCollected: sql<number>`sum(${receivablePayments.amount})`,
+        })
+        .from(receivablePayments)
+        .innerJoin(accountReceivables, eq(receivablePayments.receivableId, accountReceivables.id))
+        .where(
+          and(
+            sql`date(${receivablePayments.paymentDate}) = ${today}`,
+            ...(conditions.length > 0 ? conditions : [])
+          )
+        )
+
+      // Get overdue count (receivables past due date)
       const overdueQuery = await db
         .select({ count: sql<number>`count(*)` })
         .from(accountReceivables)
@@ -510,11 +531,12 @@ export function registerAccountReceivablesHandlers(): void {
         success: true,
         data: {
           byStatus: statusQuery,
-          totals: totalsQuery[0] ?? {
-            totalReceivables: 0,
-            totalAmount: 0,
-            totalPaid: 0,
-            totalRemaining: 0,
+          totals: {
+            totalReceivables: outstandingQuery[0]?.totalReceivables ?? 0,
+            totalAmount: outstandingQuery[0]?.totalAmount ?? 0,
+            totalPaid: collectedQuery[0]?.totalPaid ?? 0,
+            totalRemaining: outstandingQuery[0]?.totalRemaining ?? 0,
+            todayCollected: todayCollectionQuery[0]?.todayCollected ?? 0,
           },
           overdueCount: overdueQuery[0]?.count ?? 0,
         },

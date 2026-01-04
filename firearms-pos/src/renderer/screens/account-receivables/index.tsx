@@ -100,6 +100,7 @@ interface Summary {
   totalAmount: number
   totalPaid: number
   totalRemaining: number
+  todayCollected: number
 }
 
 interface AgingBucket {
@@ -335,7 +336,7 @@ export function AccountReceivablesScreen() {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-5">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium">Total Receivables</CardTitle>
@@ -363,7 +364,17 @@ export function AccountReceivablesScreen() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-green-600">{formatCurrency(summary?.totalPaid ?? 0)}</div>
-            <p className="text-xs text-muted-foreground">Payments received</p>
+            <p className="text-xs text-muted-foreground">Total payments received</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium">Today's Collection</CardTitle>
+            <TrendingUp className="h-4 w-4 text-blue-600" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-blue-600">{formatCurrency(summary?.todayCollected ?? 0)}</div>
+            <p className="text-xs text-muted-foreground">Collected today</p>
           </CardContent>
         </Card>
         <Card>
