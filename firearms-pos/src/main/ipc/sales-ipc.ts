@@ -8,6 +8,7 @@ import {
   products,
   customers,
   commissions,
+  accountReceivables,
   type NewSale,
   type NewSaleItem,
 } from '../db/schema'
@@ -194,6 +195,22 @@ export function registerSalesHandlers(): void {
           rate: commissionRate,
           commissionAmount,
           status: 'pending',
+        })
+      }
+
+      // Create account receivable if there's an outstanding balance and customer exists
+      const outstandingAmount = totalAmount - data.amountPaid
+      if (outstandingAmount > 0 && data.customerId) {
+        await db.insert(accountReceivables).values({
+          customerId: data.customerId,
+          saleId: sale.id,
+          branchId: data.branchId,
+          invoiceNumber,
+          totalAmount: outstandingAmount,
+          paidAmount: 0,
+          remainingAmount: outstandingAmount,
+          status: 'pending',
+          createdBy: session?.userId,
         })
       }
 
