@@ -8143,6 +8143,21 @@ function registerAccountReceivablesHandlers() {
         status: newStatus,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(accountReceivables.id, data.receivableId));
+      if (receivable.saleId) {
+        const sale = await db2.query.sales.findFirst({
+          where: drizzleOrm.eq(sales.id, receivable.saleId)
+        });
+        if (sale) {
+          const newSaleAmountPaid = sale.amountPaid + data.amount;
+          const saleOutstanding = sale.totalAmount - newSaleAmountPaid;
+          const newSalePaymentStatus = saleOutstanding <= 0 ? "paid" : "partial";
+          await db2.update(sales).set({
+            amountPaid: newSaleAmountPaid,
+            paymentStatus: newSalePaymentStatus,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(sales.id, receivable.saleId));
+        }
+      }
       await createAuditLog({
         userId: session.userId,
         branchId: receivable.branchId,
@@ -8392,6 +8407,56 @@ Cancelled: ${reason}`.trim() : receivable.notes,
     } catch (error) {
       console.error("Get aging report error:", error);
       return { success: false, message: "Failed to fetch aging report" };
+    }
+  });
+  electron.ipcMain.handle("receivables:sync-with-sales", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      if (session.role !== "admin") {
+        return { success: false, message: "Admin access required" };
+      }
+      const db22 = getDatabase();
+      const receivablesWithSales = await db22.query.accountReceivables.findMany({
+        where: drizzleOrm.sql`${accountReceivables.saleId} IS NOT NULL`
+      });
+      let syncedCount = 0;
+      for (const receivable of receivablesWithSales) {
+        if (!receivable.saleId) continue;
+        const sale = await db22.query.sales.findFirst({
+          where: drizzleOrm.eq(sales.id, receivable.saleId)
+        });
+        if (!sale) continue;
+        const originalCashPayment = sale.totalAmount - receivable.totalAmount;
+        const expectedAmountPaid = originalCashPayment + receivable.paidAmount;
+        const expectedStatus = expectedAmountPaid >= sale.totalAmount ? "paid" : expectedAmountPaid > 0 ? "partial" : "pending";
+        if (sale.amountPaid !== expectedAmountPaid || sale.paymentStatus !== expectedStatus) {
+          await db22.update(sales).set({
+            amountPaid: expectedAmountPaid,
+            paymentStatus: expectedStatus,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(sales.id, receivable.saleId));
+          syncedCount++;
+        }
+      }
+      await createAuditLog({
+        userId: session.userId,
+        branchId: null,
+        action: "sync",
+        entityType: "account_receivable",
+        entityId: 0,
+        description: `Synced ${syncedCount} sales records with receivables`
+      });
+      return {
+        success: true,
+        message: `Successfully synced ${syncedCount} records`,
+        syncedCount
+      };
+    } catch (error) {
+      console.error("Sync receivables with sales error:", error);
+      return { success: false, message: "Failed to sync receivables with sales" };
     }
   });
 }

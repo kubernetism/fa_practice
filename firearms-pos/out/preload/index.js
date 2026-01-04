@@ -223,7 +223,8 @@ const api = {
     cancel: (id, reason) => electron.ipcRenderer.invoke("receivables:cancel", id, reason),
     getSummary: (branchId) => electron.ipcRenderer.invoke("receivables:get-summary", branchId),
     getPayments: (receivableId) => electron.ipcRenderer.invoke("receivables:get-payments", receivableId),
-    getAgingReport: (branchId) => electron.ipcRenderer.invoke("receivables:get-aging-report", branchId)
+    getAgingReport: (branchId) => electron.ipcRenderer.invoke("receivables:get-aging-report", branchId),
+    syncWithSales: () => electron.ipcRenderer.invoke("receivables:sync-with-sales")
   },
   // Account Payables
   payables: {
