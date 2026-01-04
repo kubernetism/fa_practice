@@ -317,6 +317,7 @@ const api = {
     getSummary: (branchId?: number) => ipcRenderer.invoke('receivables:get-summary', branchId),
     getPayments: (receivableId: number) => ipcRenderer.invoke('receivables:get-payments', receivableId),
     getAgingReport: (branchId?: number) => ipcRenderer.invoke('receivables:get-aging-report', branchId),
+    syncWithSales: () => ipcRenderer.invoke('receivables:sync-with-sales'),
   },
 
   // Account Payables

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Search,
   Filter,
@@ -201,6 +201,20 @@ export function AccountReceivablesScreen() {
     fetchSummary()
   }, [fetchReceivables, fetchSummary])
 
+  // Filter receivables based on search query
+  const filteredReceivables = useMemo(() => {
+    if (!searchQuery.trim()) return receivables
+
+    const query = searchQuery.toLowerCase().trim()
+    return receivables.filter((receivable) => {
+      const invoiceMatch = receivable.invoiceNumber.toLowerCase().includes(query)
+      const customerName = `${receivable.customer?.firstName ?? ''} ${receivable.customer?.lastName ?? ''}`.toLowerCase()
+      const customerMatch = customerName.includes(query)
+      const phoneMatch = receivable.customer?.phone?.toLowerCase().includes(query) ?? false
+      return invoiceMatch || customerMatch || phoneMatch
+    })
+  }, [receivables, searchQuery])
+
   // Open payment dialog
   const openPaymentDialog = (receivable: Receivable) => {
     setSelectedReceivable(receivable)
@@ -368,6 +382,15 @@ export function AccountReceivablesScreen() {
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-wrap items-center gap-4">
+            <div className="relative flex-1 min-w-[250px] max-w-md">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by invoice, customer name, or phone..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9"
+              />
+            </div>
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
               <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as ReceivableStatus | 'all'); setPage(1); }}>
@@ -384,6 +407,11 @@ export function AccountReceivablesScreen() {
                 </SelectContent>
               </Select>
             </div>
+            {searchQuery && (
+              <Button variant="ghost" size="sm" onClick={() => setSearchQuery('')}>
+                Clear Search
+              </Button>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -395,10 +423,15 @@ export function AccountReceivablesScreen() {
             <div className="flex h-60 items-center justify-center">
               <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
             </div>
-          ) : receivables.length === 0 ? (
+          ) : filteredReceivables.length === 0 ? (
             <div className="flex h-60 flex-col items-center justify-center text-muted-foreground">
               <FileText className="mb-4 h-12 w-12" />
-              <p>No receivables found</p>
+              <p>{searchQuery ? 'No receivables match your search' : 'No receivables found'}</p>
+              {searchQuery && (
+                <Button variant="link" size="sm" onClick={() => setSearchQuery('')}>
+                  Clear search
+                </Button>
+              )}
             </div>
           ) : (
             <Table>
@@ -415,7 +448,7 @@ export function AccountReceivablesScreen() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {receivables.map((receivable) => (
+                {filteredReceivables.map((receivable) => (
                   <TableRow key={receivable.id}>
                     <TableCell className="font-medium">{receivable.invoiceNumber}</TableCell>
                     <TableCell>

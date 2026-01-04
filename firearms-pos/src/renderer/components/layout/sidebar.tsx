@@ -33,13 +33,18 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAuth } from '@/contexts/auth-context'
 import { ThemeToggle } from '@/components/theme'
 
+type UserRole = 'admin' | 'manager' | 'cashier'
+
 interface NavItem {
   title: string
   href: string
   icon: React.ElementType
-  permission?: string
-  adminOnly?: boolean
+  allowedRoles?: UserRole[]
 }
+
+// Cashier: Main only
+// Manager: Main + Inventory + Management
+// Admin: Everything
 
 const mainNavItems: NavItem[] = [
   { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -49,49 +54,47 @@ const mainNavItems: NavItem[] = [
 ]
 
 const inventoryNavItems: NavItem[] = [
-  { title: 'Products', href: '/products', icon: Package, permission: 'products:view' },
-  { title: 'Inventory', href: '/inventory', icon: Warehouse, permission: 'inventory:view' },
-  { title: 'Purchases', href: '/purchases', icon: Truck, permission: 'purchases:view' },
-  { title: 'Returns', href: '/returns', icon: ArrowLeftRight },
+  { title: 'Products', href: '/products', icon: Package, allowedRoles: ['admin', 'manager'] },
+  { title: 'Inventory', href: '/inventory', icon: Warehouse, allowedRoles: ['admin', 'manager'] },
+  { title: 'Purchases', href: '/purchases', icon: Truck, allowedRoles: ['admin', 'manager'] },
+  { title: 'Returns', href: '/returns', icon: ArrowLeftRight, allowedRoles: ['admin', 'manager'] },
 ]
 
 const managementNavItems: NavItem[] = [
-  { title: 'Customers', href: '/customers', icon: Users, permission: 'customers:view' },
-  { title: 'Suppliers', href: '/suppliers', icon: Store, permission: 'suppliers:view' },
-  { title: 'Expenses', href: '/expenses', icon: DollarSign, permission: 'expenses:view' },
-  { title: 'Commissions', href: '/commissions', icon: BadgePercent, permission: 'commissions:view' },
-  { title: 'Referral Persons', href: '/referral-persons', icon: UserPlus, permission: 'commissions:view' },
-  { title: 'Receivables', href: '/receivables', icon: Wallet, permission: 'sales:view' },
-  { title: 'Payables', href: '/payables', icon: CreditCard, permission: 'purchases:view' },
+  { title: 'Customers', href: '/customers', icon: Users, allowedRoles: ['admin', 'manager'] },
+  { title: 'Suppliers', href: '/suppliers', icon: Store, allowedRoles: ['admin', 'manager'] },
+  { title: 'Expenses', href: '/expenses', icon: DollarSign, allowedRoles: ['admin', 'manager'] },
+  { title: 'Commissions', href: '/commissions', icon: BadgePercent, allowedRoles: ['admin', 'manager'] },
+  { title: 'Referral Persons', href: '/referral-persons', icon: UserPlus, allowedRoles: ['admin', 'manager'] },
+  { title: 'Receivables', href: '/receivables', icon: Wallet, allowedRoles: ['admin', 'manager'] },
+  { title: 'Payables', href: '/payables', icon: CreditCard, allowedRoles: ['admin', 'manager'] },
 ]
 
 const financeNavItems: NavItem[] = [
-  { title: 'Cash Register', href: '/cash-register', icon: Banknote, permission: 'sales:view' },
-  { title: 'Chart of Accounts', href: '/chart-of-accounts', icon: Landmark, permission: 'reports:view' },
+  { title: 'Cash Register', href: '/cash-register', icon: Banknote, allowedRoles: ['admin'] },
+  { title: 'Chart of Accounts', href: '/chart-of-accounts', icon: Landmark, allowedRoles: ['admin'] },
 ]
 
 const adminNavItems: NavItem[] = [
-  { title: 'Users', href: '/users', icon: UserCog, permission: 'users:view' },
-  { title: 'Branches', href: '/branches', icon: Building2, permission: 'branches:view' },
-  { title: 'Reports', href: '/reports', icon: FileText, permission: 'reports:view' },
-  { title: 'Audit Reports', href: '/audit-reports', icon: FileBarChart, permission: 'reports:view' },
-  { title: 'Activity Logs', href: '/audit', icon: ClipboardList, adminOnly: true },
-  { title: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
-  { title: 'Database Viewer', href: '/database', icon: Database, adminOnly: true },
-  { title: 'License Settings', href: '/settings/license', icon: Shield, adminOnly: true },
+  { title: 'Users', href: '/users', icon: UserCog, allowedRoles: ['admin'] },
+  { title: 'Branches', href: '/branches', icon: Building2, allowedRoles: ['admin'] },
+  { title: 'Reports', href: '/reports', icon: FileText, allowedRoles: ['admin'] },
+  { title: 'Audit Reports', href: '/audit-reports', icon: FileBarChart, allowedRoles: ['admin'] },
+  { title: 'Activity Logs', href: '/audit', icon: ClipboardList, allowedRoles: ['admin'] },
+  { title: 'Settings', href: '/settings', icon: Settings, allowedRoles: ['admin'] },
+  { title: 'Database Viewer', href: '/database', icon: Database, allowedRoles: ['admin'] },
+  { title: 'License Settings', href: '/settings/license', icon: Shield, allowedRoles: ['admin'] },
 ]
 
 function NavSection({ title, items }: { title: string; items: NavItem[] }) {
-  const { checkPermission, user } = useAuth()
+  const { user } = useAuth()
 
   const visibleItems = items.filter((item) => {
-    // Admin-only items require admin role
-    if (item.adminOnly) {
-      return user?.role?.toLowerCase() === 'admin'
-    }
-    // Regular permission check
-    if (!item.permission) return true
-    return checkPermission(item.permission)
+    // If no role restriction, everyone can see it
+    if (!item.allowedRoles) return true
+    // Check if user's role is in the allowed roles
+    const userRole = user?.role?.toLowerCase() as UserRole
+    return item.allowedRoles.includes(userRole)
   })
 
   if (visibleItems.length === 0) return null

@@ -698,6 +698,8 @@ export function SalesHistoryScreen() {
                   <TableHead>Branch</TableHead>
                   <TableHead>Payment</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="text-right">Paid</TableHead>
+                  <TableHead className="text-right">Outstanding</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -734,6 +736,20 @@ export function SalesHistoryScreen() {
                       <span className={cn('font-medium', sale.isVoided && 'line-through')}>
                         {formatCurrency(sale.totalAmount)}
                       </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className={cn('font-medium', sale.isVoided && 'line-through')}>
+                        {formatCurrency(sale.amountPaid)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {sale.totalAmount - sale.amountPaid > 0 ? (
+                        <span className={cn('font-medium text-destructive', sale.isVoided && 'line-through')}>
+                          {formatCurrency(sale.totalAmount - sale.amountPaid)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </TableCell>
                     <TableCell>{getPaymentStatusBadge(sale.paymentStatus, sale.isVoided)}</TableCell>
                     <TableCell className="text-right">
