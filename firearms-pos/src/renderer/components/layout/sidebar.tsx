@@ -17,21 +17,34 @@ import {
   History,
   BadgePercent,
   Store,
+  FileBarChart,
+  ClipboardList,
+  Database,
+  Shield,
+  Layers,
+  Wallet,
+  UserPlus,
+  CreditCard,
+  Landmark,
+  Banknote,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAuth } from '@/contexts/auth-context'
+import { ThemeToggle } from '@/components/theme'
 
 interface NavItem {
   title: string
   href: string
   icon: React.ElementType
   permission?: string
+  adminOnly?: boolean
 }
 
 const mainNavItems: NavItem[] = [
   { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { title: 'Point of Sale', href: '/pos', icon: ShoppingCart },
+  { title: 'POS Tabs', href: '/pos-tabs', icon: Layers },
   { title: 'Sales History', href: '/sales', icon: Receipt },
 ]
 
@@ -47,20 +60,39 @@ const managementNavItems: NavItem[] = [
   { title: 'Suppliers', href: '/suppliers', icon: Store, permission: 'suppliers:view' },
   { title: 'Expenses', href: '/expenses', icon: DollarSign, permission: 'expenses:view' },
   { title: 'Commissions', href: '/commissions', icon: BadgePercent, permission: 'commissions:view' },
+  { title: 'Referral Persons', href: '/referral-persons', icon: UserPlus, permission: 'commissions:view' },
+  { title: 'Receivables', href: '/receivables', icon: Wallet, permission: 'sales:view' },
+  { title: 'Payables', href: '/payables', icon: CreditCard, permission: 'purchases:view' },
+]
+
+const financeNavItems: NavItem[] = [
+  { title: 'Cash Register', href: '/cash-register', icon: Banknote, permission: 'sales:view' },
+  { title: 'Chart of Accounts', href: '/chart-of-accounts', icon: Landmark, permission: 'reports:view' },
 ]
 
 const adminNavItems: NavItem[] = [
   { title: 'Users', href: '/users', icon: UserCog, permission: 'users:view' },
   { title: 'Branches', href: '/branches', icon: Building2, permission: 'branches:view' },
   { title: 'Reports', href: '/reports', icon: FileText, permission: 'reports:view' },
-  { title: 'Audit Logs', href: '/audit', icon: History, permission: 'audit:view' },
-  { title: 'Settings', href: '/settings', icon: Settings, permission: 'settings:view' },
+  { title: 'Audit Reports', href: '/audit-reports', icon: FileBarChart, permission: 'reports:view' },
+  { title: 'Activity Logs', href: '/audit', icon: ClipboardList, adminOnly: true },
+  { title: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
+  { title: 'Database Viewer', href: '/database', icon: Database, adminOnly: true },
+  { title: 'License Settings', href: '/settings/license', icon: Shield, adminOnly: true },
 ]
 
 function NavSection({ title, items }: { title: string; items: NavItem[] }) {
-  const { checkPermission } = useAuth()
+  const { checkPermission, user } = useAuth()
 
-  const visibleItems = items.filter((item) => !item.permission || checkPermission(item.permission))
+  const visibleItems = items.filter((item) => {
+    // Admin-only items require admin role
+    if (item.adminOnly) {
+      return user?.role?.toLowerCase() === 'admin'
+    }
+    // Regular permission check
+    if (!item.permission) return true
+    return checkPermission(item.permission)
+  })
 
   if (visibleItems.length === 0) return null
 
@@ -100,10 +132,12 @@ export function Sidebar() {
         <NavSection title="Main" items={mainNavItems} />
         <NavSection title="Inventory" items={inventoryNavItems} />
         <NavSection title="Management" items={managementNavItems} />
+        <NavSection title="Finance" items={financeNavItems} />
         <NavSection title="Administration" items={adminNavItems} />
       </ScrollArea>
-      <div className="border-t p-4">
+      <div className="border-t p-4 flex items-center justify-between">
         <p className="text-xs text-muted-foreground">Version 1.0.0</p>
+        <ThemeToggle />
       </div>
     </aside>
   )

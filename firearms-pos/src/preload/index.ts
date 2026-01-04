@@ -99,6 +99,27 @@ const api = {
       ipcRenderer.invoke('sales:get-daily-summary', branchId, date),
   },
 
+  // Sales Tabs
+  salesTabs: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('sales-tabs:get-all', params),
+    getById: (id: number) => ipcRenderer.invoke('sales-tabs:get-by-id', id),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('sales-tabs:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('sales-tabs:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('sales-tabs:delete', id),
+    addItem: (tabId: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('sales-tabs:add-item', tabId, data),
+    updateItem: (tabId: number, itemId: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('sales-tabs:update-item', tabId, itemId, data),
+    removeItem: (tabId: number, itemId: number) =>
+      ipcRenderer.invoke('sales-tabs:remove-item', tabId, itemId),
+    getAvailableProducts: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('sales-tabs:get-available-products', params),
+    checkout: (tabId: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('sales-tabs:checkout', tabId, data),
+    clearItems: (tabId: number) => ipcRenderer.invoke('sales-tabs:clear-items', tabId),
+  },
+
   // Purchases
   purchases: {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('purchases:create', data),
@@ -156,28 +177,42 @@ const api = {
   // Commissions
   commissions: {
     getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('commissions:get-all', params),
-    getSummary: (userId: number, startDate?: string, endDate?: string) =>
-      ipcRenderer.invoke('commissions:get-summary', userId, startDate, endDate),
+    getById: (id: number) => ipcRenderer.invoke('commissions:get-by-id', id),
+    getSummary: (referralPersonId?: number, startDate?: string, endDate?: string) =>
+      ipcRenderer.invoke('commissions:get-summary', referralPersonId, startDate, endDate),
     approve: (ids: number[]) => ipcRenderer.invoke('commissions:approve', ids),
     markPaid: (ids: number[]) => ipcRenderer.invoke('commissions:mark-paid', ids),
-    calculate: (
-      saleId: number,
-      userId: number,
-      branchId: number,
-      baseAmount: number,
-      rate: number
-    ) => ipcRenderer.invoke('commissions:calculate', saleId, userId, branchId, baseAmount, rate),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('commissions:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('commissions:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('commissions:delete', id),
+    getAvailableInvoices: (referralPersonId?: number) =>
+      ipcRenderer.invoke('commissions:get-available-invoices', referralPersonId),
+  },
+
+  // Referral Persons
+  referralPersons: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('referral-persons:get-all', params),
+    getById: (id: number) => ipcRenderer.invoke('referral-persons:get-by-id', id),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('referral-persons:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('referral-persons:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('referral-persons:delete', id),
+    getForSelect: (branchId?: number) => ipcRenderer.invoke('referral-persons:get-for-select', branchId),
+    updateCommission: (id: number, amount: number, isPaid: boolean) =>
+      ipcRenderer.invoke('referral-persons:update-commission', id, amount, isPaid),
   },
 
   // Audit Logs
   audit: {
     getLogs: (params: Record<string, unknown>) => ipcRenderer.invoke('audit:get-logs', params),
+    getStats: (params?: Record<string, unknown>) => ipcRenderer.invoke('audit:get-stats', params),
     getByEntity: (entityType: string, entityId: number) =>
       ipcRenderer.invoke('audit:get-by-entity', entityType, entityId),
     export: (params: Record<string, unknown>) => ipcRenderer.invoke('audit:export', params),
   },
 
-  // Settings
+  // Settings (Legacy)
   settings: {
     getAll: () => ipcRenderer.invoke('settings:get-all'),
     getByKey: (key: string) => ipcRenderer.invoke('settings:get-by-key', key),
@@ -188,8 +223,55 @@ const api = {
       ipcRenderer.invoke('settings:update-bulk', updates),
   },
 
+  // Business Settings (Multi-Business)
+  businessSettings: {
+    getGlobal: () => ipcRenderer.invoke('business-settings:get-global'),
+    getByBranch: (branchId: number) => ipcRenderer.invoke('business-settings:get-by-branch', branchId),
+    getAll: (userId: number) => ipcRenderer.invoke('business-settings:get-all', userId),
+    create: (userId: number, settingsData: Record<string, unknown>) =>
+      ipcRenderer.invoke('business-settings:create', { userId, settingsData }),
+    update: (userId: number, settingId: number, settingsData: Record<string, unknown>) =>
+      ipcRenderer.invoke('business-settings:update', { userId, settingId, settingsData }),
+    delete: (userId: number, settingId: number) =>
+      ipcRenderer.invoke('business-settings:delete', { userId, settingId }),
+    clone: (userId: number, sourceBranchId: number | null, targetBranchId: number) =>
+      ipcRenderer.invoke('business-settings:clone', { userId, sourceBranchId, targetBranchId }),
+    export: (userId: number) => ipcRenderer.invoke('business-settings:export', userId),
+    import: (userId: number, data: unknown) =>
+      ipcRenderer.invoke('business-settings:import', { userId, data }),
+  },
+
   // Reports
   reports: {
+    sales: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:sales-report', params),
+    inventory: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:inventory-report', params),
+    'profit-loss': (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:profit-loss', params),
+    customer: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:customer-report', params),
+    expenses: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:expenses-report', params),
+    purchases: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:purchases-report', params),
+    returns: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:returns-report', params),
+    commissions: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:commissions-report', params),
+    tax: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:tax-report', params),
+    'branch-performance': (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:branch-performance', params),
+    'cash-flow': (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:cash-flow', params),
+    'audit-trail': (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:audit-trail', params),
+    comprehensiveAudit: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:comprehensive-audit', params),
+    exportPDF: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('reports:export-pdf', params),
+    // Legacy methods for backward compatibility
     salesReport: (params: Record<string, unknown>) =>
       ipcRenderer.invoke('reports:sales-report', params),
     inventoryReport: (params: Record<string, unknown>) =>
@@ -204,8 +286,105 @@ const api = {
   license: {
     getMachineId: () => ipcRenderer.invoke('license:get-machine-id'),
     getStatus: () => ipcRenderer.invoke('license:get-status'),
+    getApplicationInfo: () => ipcRenderer.invoke('license:get-application-info'),
     activate: (licenseKey: string) => ipcRenderer.invoke('license:activate', licenseKey),
     deactivate: () => ipcRenderer.invoke('license:deactivate'),
+    validateKey: (licenseKey: string) => ipcRenderer.invoke('license:validate-key', licenseKey),
+    generateLicenseRequest: () => ipcRenderer.invoke('license:generate-license-request'),
+    getHistory: () => ipcRenderer.invoke('license:get-history'),
+  },
+
+  // Database Viewer
+  database: {
+    getTables: () => ipcRenderer.invoke('database:get-tables'),
+    getTableInfo: (tableName: string) => ipcRenderer.invoke('database:get-table-info', tableName),
+    getTableData: (params: { tableName: string; page?: number; limit?: number }) =>
+      ipcRenderer.invoke('database:get-table-data', params),
+    executeQuery: (params: { query: string; userId: number }) =>
+      ipcRenderer.invoke('database:execute-query', params),
+    getInfo: () => ipcRenderer.invoke('database:get-info'),
+  },
+
+  // Account Receivables
+  receivables: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('receivables:get-all', params),
+    getById: (id: number) => ipcRenderer.invoke('receivables:get-by-id', id),
+    getByCustomer: (customerId: number) => ipcRenderer.invoke('receivables:get-by-customer', customerId),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('receivables:create', data),
+    recordPayment: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('receivables:record-payment', data),
+    cancel: (id: number, reason?: string) => ipcRenderer.invoke('receivables:cancel', id, reason),
+    getSummary: (branchId?: number) => ipcRenderer.invoke('receivables:get-summary', branchId),
+    getPayments: (receivableId: number) => ipcRenderer.invoke('receivables:get-payments', receivableId),
+    getAgingReport: (branchId?: number) => ipcRenderer.invoke('receivables:get-aging-report', branchId),
+  },
+
+  // Account Payables
+  payables: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('payables:get-all', params),
+    getById: (id: number) => ipcRenderer.invoke('payables:get-by-id', id),
+    getBySupplier: (supplierId: number) => ipcRenderer.invoke('payables:get-by-supplier', supplierId),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('payables:create', data),
+    recordPayment: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('payables:record-payment', data),
+    cancel: (id: number, reason?: string) => ipcRenderer.invoke('payables:cancel', id, reason),
+    getSummary: (branchId?: number) => ipcRenderer.invoke('payables:get-summary', branchId),
+    getPayments: (payableId: number) => ipcRenderer.invoke('payables:get-payments', payableId),
+    getAgingReport: (branchId?: number) => ipcRenderer.invoke('payables:get-aging-report', branchId),
+  },
+
+  // Cash Register
+  cashRegister: {
+    getCurrentSession: (branchId: number) =>
+      ipcRenderer.invoke('cash-register:get-current-session', branchId),
+    openSession: (data: { branchId: number; openingBalance: number; notes?: string }) =>
+      ipcRenderer.invoke('cash-register:open-session', data),
+    closeSession: (data: { sessionId: number; actualBalance: number; notes?: string }) =>
+      ipcRenderer.invoke('cash-register:close-session', data),
+    recordTransaction: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('cash-register:record-transaction', data),
+    getHistory: (params: { branchId?: number; startDate?: string; endDate?: string; page?: number; limit?: number }) =>
+      ipcRenderer.invoke('cash-register:get-history', params),
+    getTransactions: (sessionId: number) =>
+      ipcRenderer.invoke('cash-register:get-transactions', sessionId),
+    getCashFlowSummary: (params: { branchId?: number; days?: number }) =>
+      ipcRenderer.invoke('cash-register:get-cash-flow-summary', params),
+    adjust: (data: { sessionId: number; amount: number; reason: string }) =>
+      ipcRenderer.invoke('cash-register:adjust', data),
+  },
+
+  // Chart of Accounts
+  chartOfAccounts: {
+    getAll: () => ipcRenderer.invoke('coa:get-all'),
+    getByType: (accountType: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense') =>
+      ipcRenderer.invoke('coa:get-by-type', accountType),
+    getById: (id: number) => ipcRenderer.invoke('coa:get-by-id', id),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('coa:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('coa:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('coa:delete', id),
+    getBalanceSheet: (branchId?: number) => ipcRenderer.invoke('coa:get-balance-sheet', branchId),
+    getIncomeStatement: (startDate: string, endDate: string, branchId?: number) =>
+      ipcRenderer.invoke('coa:get-income-statement', startDate, endDate, branchId),
+    getTrialBalance: (asOfDate?: string) => ipcRenderer.invoke('coa:get-trial-balance', asOfDate),
+    getLedger: (accountId: number, startDate?: string, endDate?: string) =>
+      ipcRenderer.invoke('coa:get-ledger', accountId, startDate, endDate),
+  },
+
+  // Journal Entries
+  journal: {
+    getAll: (filters?: Record<string, unknown>) => ipcRenderer.invoke('journal:get-all', filters),
+    getById: (id: number) => ipcRenderer.invoke('journal:get-by-id', id),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('journal:create', data),
+    post: (entryId: number, postedBy: number) => ipcRenderer.invoke('journal:post', entryId, postedBy),
+  },
+
+  // Receipt Generation
+  receipt: {
+    generate: (saleId: number) => ipcRenderer.invoke('receipt:generate', saleId),
+    getSettings: (branchId?: number) => ipcRenderer.invoke('receipt:get-settings', branchId),
+    generatePaymentHistory: (receivableId: number) =>
+      ipcRenderer.invoke('receipt:generate-payment-history', receivableId),
   },
 }
 

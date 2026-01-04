@@ -62,6 +62,32 @@
     --color-warning: oklch(79.48% 0.165 86.05);
     --color-info: oklch(62.3% 0.214 259.15);
   }
+
+  /* Midnight theme */
+  .midnight {
+    --color-background: oklch(10% 0 0);
+    --color-foreground: oklch(95% 0 0);
+    --color-card: oklch(12% 0 0);
+    --color-card-foreground: oklch(95% 0 0);
+    --color-popover: oklch(12% 0 0);
+    --color-popover-foreground: oklch(95% 0 0);
+    --color-primary: oklch(60% 0.15 250);
+    --color-primary-foreground: oklch(98% 0 0);
+    --color-secondary: oklch(18% 0 0);
+    --color-secondary-foreground: oklch(90% 0 0);
+    --color-muted: oklch(18% 0 0);
+    --color-muted-foreground: oklch(60% 0 0);
+    --color-accent: oklch(25% 0.05 280);
+    --color-accent-foreground: oklch(95% 0 0);
+    --color-destructive: oklch(55% 0.2 25);
+    --color-destructive-foreground: oklch(98% 0 0);
+    --color-border: oklch(20% 0 0);
+    --color-input: oklch(18% 0 0);
+    --color-ring: oklch(60% 0.15 250);
+    --color-success: oklch(65% 0.18 150);
+    --color-warning: oklch(75% 0.15 80);
+    --color-info: oklch(65% 0.18 270);
+  }
 }
 
 /* Custom scrollbar - Light */
@@ -92,6 +118,15 @@
   background: oklch(50% 0 0);
 }
 
+/* Custom scrollbar - Midnight */
+.midnight ::-webkit-scrollbar-thumb {
+  background: oklch(30% 0 0);
+}
+
+.midnight ::-webkit-scrollbar-thumb:hover {
+  background: oklch(40% 0 0);
+}
+
 /* Focus visible outline */
 :focus-visible {
   outline: 2px solid var(--color-ring);
@@ -111,5 +146,9 @@ html {
 }
 
 html.dark {
+  color-scheme: dark;
+}
+
+html.midnight {
   color-scheme: dark;
 }

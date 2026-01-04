@@ -13,7 +13,32 @@
       "Bash(cat:*)",
       "Bash(wc:*)",
       "Bash(npm run dev:*)",
-      "Bash(mkdir:*)"
+      "Bash(mkdir:*)",
+      "Bash(npm install:*)",
+      "Bash(pnpm add:*)",
+      "Bash(sqlite3:*)",
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(code .)",
+      "Bash(pnpm dist:linux:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)",
+      "Bash(pnpm run start)",
+      "Bash(pnpm run dev)",
+      "Bash(pnpm run build)",
+      "Bash(pnpm run typecheck:*)",
+      "Bash(timeout 15 pnpm run dev:*)",
+      "Bash(pnpm run typecheck:main:*)",
+      "Bash(git checkout:*)",
+      "Bash(git rm:*)",
+      "Bash(gh auth status:*)",
+      "Bash(ssh-keygen:*)",
+      "Bash(git filter-branch:*)",
+      "Bash(git stash:*)",
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch:*)"
     ]
   }
 }

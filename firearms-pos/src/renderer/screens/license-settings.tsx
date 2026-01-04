@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { Shield, Copy, Key, Power, RefreshCw, Terminal } from 'lucide-react'
+import { Shield, Copy, Key, Power, RefreshCw, Terminal, AlertTriangle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
+import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { ActivateLicenseDialog } from '@/components/license/activate-license-dialog'
 import { LicenseHistory } from '@/components/license/license-history'
 
@@ -52,6 +53,9 @@ export function LicenseSettingsScreen() {
   const [machineId, setMachineId] = useState<string>('')
   const [instructions, setInstructions] = useState<string>('')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [deactivateConfirmOpen, setDeactivateConfirmOpen] = useState(false)
+  const [deactivateClickCount, setDeactivateClickCount] = useState(0)
+  const [showFinalWarning, setShowFinalWarning] = useState(false)
 
   const fetchLicenseInfo = useCallback(async () => {
     try {
@@ -125,10 +129,21 @@ export function LicenseSettingsScreen() {
   }
 
   const handleDeactivate = async () => {
-    if (!confirm('Are you sure you want to deactivate the license? This will revert to trial mode.')) {
+    const newCount = deactivateClickCount + 1
+    setDeactivateClickCount(newCount)
+
+    if (newCount < 5) {
+      setDeactivateConfirmOpen(true)
       return
     }
 
+    // 5th click - show final warning
+    setShowFinalWarning(true)
+    return
+  }
+
+  const confirmDeactivate = async () => {
+    setDeactivateConfirmOpen(false)
     setIsDeactivating(true)
     try {
       const result = await window.api.license.deactivate()
@@ -143,7 +158,17 @@ export function LicenseSettingsScreen() {
       showToast('Failed to deactivate license', 'error')
     } finally {
       setIsDeactivating(false)
+      setDeactivateClickCount(0)
     }
+  }
+
+  const cancelDeactivate = () => {
+    setDeactivateConfirmOpen(false)
+  }
+
+  const handleFinalWarningClose = () => {
+    setShowFinalWarning(false)
+    setDeactivateClickCount(0)
   }
 
   // Admin access check
@@ -349,8 +374,13 @@ export function LicenseSettingsScreen() {
                 </div>
 
                 <div className="flex gap-2 pt-4">
-                  <Button variant="outline" onClick={handleDeactivate} disabled={isDeactivating}>
-                    <Power className="w-4 h-4 mr-2" />
+                  <Button
+                    variant="destructive"
+                    onClick={handleDeactivate}
+                    disabled={isDeactivating}
+                    className="gap-2"
+                  >
+                    <Power className="w-4 h-4" />
                     {isDeactivating ? 'Deactivating...' : 'Deactivate License'}
                   </Button>
                 </div>
@@ -446,6 +476,68 @@ export function LicenseSettingsScreen() {
         isActivating={isActivating}
         machineId={machineId}
       />
+
+      {/* Deactivate Confirmation Dialog */}
+      <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              Deactivate License?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to deactivate the license? This will revert the application
+              to trial mode and you will need to activate a new license to continue using all features.
+              <br /><br />
+              You have clicked the button {5 - deactivateClickCount} more time(s) before deactivation.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={cancelDeactivate}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDeactivate}>
+              Yes, Deactivate
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Final Warning Dialog (5th click) */}
+      <AlertDialog open={showFinalWarning} onOpenChange={handleFinalWarningClose}>
+        <AlertDialogContent className="max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-6 h-6" />
+              WARNING: Final Confirmation Required
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-3">
+              <p className="text-base font-medium text-foreground">
+                You are about to deactivate your license!
+              </p>
+              <p>
+                This action will:
+              </p>
+              <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                <li>Remove your full license from this machine</li>
+                <li>Revert the application to trial mode (30 days)</li>
+                <li>Require you to generate a new license key to continue</li>
+              </ul>
+              <p className="text-sm font-medium text-foreground pt-2">
+                Are you absolutely sure you want to proceed?
+              </p>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={handleFinalWarningClose}>
+              No, Keep License
+            </Button>
+            <Button variant="destructive" onClick={confirmDeactivate}>
+              Yes, Deactivate License
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

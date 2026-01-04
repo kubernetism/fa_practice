@@ -29,7 +29,8 @@ interface CreateSaleData {
   customerId?: number
   branchId: number
   items: CartItem[]
-  paymentMethod: 'cash' | 'card' | 'credit' | 'mixed'
+  paymentMethod: 'cash' | 'card' | 'credit' | 'mixed' | 'mobile' | 'cod' | 'receivable'
+  paymentStatus?: 'paid' | 'partial' | 'pending'
   amountPaid: number
   discountAmount?: number
   notes?: string
@@ -134,7 +135,8 @@ export function registerSalesHandlers(): void {
       const discountAmount = data.discountAmount || 0
       const totalAmount = subtotal + taxAmount - discountAmount
       const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0
-      const paymentStatus = data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending'
+      // Use provided paymentStatus for receivable/cod, otherwise calculate based on amount
+      const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending')
 
       // Generate invoice number
       const invoiceNumber = generateInvoiceNumber()

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, between } from 'drizzle-orm'
+import { eq, and, desc, sql, between, isNull, isNotNull } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { commissions, users, sales, type NewCommission } from '../db/schema'
+import { commissions, users, sales, referralPersons, type NewCommission } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -15,21 +15,36 @@ export function registerCommissionHandlers(): void {
       _,
       params: PaginationParams & {
         userId?: number
+        referralPersonId?: number
         branchId?: number
         status?: string
+        commissionType?: string
         startDate?: string
         endDate?: string
       }
     ) => {
       try {
-        const { page = 1, limit = 20, sortOrder = 'desc', userId, branchId, status, startDate, endDate } = params
+        const {
+          page = 1,
+          limit = 20,
+          sortOrder = 'desc',
+          userId,
+          referralPersonId,
+          branchId,
+          status,
+          commissionType,
+          startDate,
+          endDate,
+        } = params
 
         const conditions = []
 
         if (userId) conditions.push(eq(commissions.userId, userId))
+        if (referralPersonId) conditions.push(eq(commissions.referralPersonId, referralPersonId))
         if (branchId) conditions.push(eq(commissions.branchId, branchId))
         if (status)
           conditions.push(eq(commissions.status, status as 'pending' | 'approved' | 'paid' | 'cancelled'))
+        if (commissionType) conditions.push(eq(commissions.commissionType, commissionType))
         if (startDate && endDate) {
           conditions.push(between(commissions.createdAt, startDate, endDate))
         }
@@ -51,13 +66,21 @@ export function registerCommissionHandlers(): void {
               fullName: users.fullName,
               username: users.username,
             },
+            referralPerson: {
+              id: referralPersons.id,
+              name: referralPersons.name,
+              contact: referralPersons.contact,
+            },
             sale: {
               id: sales.id,
               invoiceNumber: sales.invoiceNumber,
+              totalAmount: sales.totalAmount,
+              saleDate: sales.saleDate,
             },
           })
           .from(commissions)
-          .innerJoin(users, eq(commissions.userId, users.id))
+          .leftJoin(users, eq(commissions.userId, users.id))
+          .leftJoin(referralPersons, eq(commissions.referralPersonId, referralPersons.id))
           .innerJoin(sales, eq(commissions.saleId, sales.id))
           .where(whereClause)
           .limit(limit)
@@ -80,28 +103,261 @@ export function registerCommissionHandlers(): void {
     }
   )
 
-  ipcMain.handle('commissions:get-summary', async (_, userId: number, startDate?: string, endDate?: string) => {
+  ipcMain.handle('commissions:get-by-id', async (_, id: number) => {
     try {
-      const conditions = [eq(commissions.userId, userId)]
+      const [commission] = await db
+        .select({
+          commission: commissions,
+          user: {
+            id: users.id,
+            fullName: users.fullName,
+            username: users.username,
+          },
+          referralPerson: {
+            id: referralPersons.id,
+            name: referralPersons.name,
+            contact: referralPersons.contact,
+          },
+          sale: {
+            id: sales.id,
+            invoiceNumber: sales.invoiceNumber,
+            totalAmount: sales.totalAmount,
+            saleDate: sales.saleDate,
+          },
+        })
+        .from(commissions)
+        .leftJoin(users, eq(commissions.userId, users.id))
+        .leftJoin(referralPersons, eq(commissions.referralPersonId, referralPersons.id))
+        .innerJoin(sales, eq(commissions.saleId, sales.id))
+        .where(eq(commissions.id, id))
+        .limit(1)
 
-      if (startDate && endDate) {
-        conditions.push(between(commissions.createdAt, startDate, endDate))
+      if (!commission) {
+        return { success: false, message: 'Commission not found' }
+      }
+
+      return { success: true, data: commission }
+    } catch (error) {
+      console.error('Get commission error:', error)
+      return { success: false, message: 'Failed to fetch commission' }
+    }
+  })
+
+  ipcMain.handle('commissions:get-available-invoices', async (_, referralPersonId?: number) => {
+    try {
+      const session = getCurrentSession()
+      const branchId = session?.branchId
+
+      // Get sale IDs that already have a commission for this referral person
+      let existingSaleIds: number[] = []
+      if (referralPersonId) {
+        const existingCommissions = await db
+          .select({ saleId: commissions.saleId })
+          .from(commissions)
+          .where(eq(commissions.referralPersonId, referralPersonId))
+        existingSaleIds = existingCommissions.map((c) => c.saleId)
+      }
+
+      const conditions: any[] = [eq(sales.status, 'completed')]
+      if (branchId) conditions.push(eq(sales.branchId, branchId))
+      if (existingSaleIds.length > 0) {
+        conditions.push(sql`${sales.id} NOT IN (${sql.join(existingSaleIds.map(id => sql`${id}`), sql`, `)})`)
       }
 
       const data = await db
-        .select({
-          status: commissions.status,
-          total: sql<number>`sum(${commissions.commissionAmount})`,
-          count: sql<number>`count(*)`,
-        })
-        .from(commissions)
+        .select()
+        .from(sales)
         .where(and(...conditions))
-        .groupBy(commissions.status)
+        .orderBy(desc(sales.saleDate))
+        .limit(100)
 
       return { success: true, data }
     } catch (error) {
-      console.error('Get commission summary error:', error)
-      return { success: false, message: 'Failed to fetch commission summary' }
+      console.error('Get available invoices error:', error)
+      return { success: false, message: 'Failed to fetch available invoices' }
+    }
+  })
+
+  ipcMain.handle(
+    'commissions:create',
+    async (
+      _,
+      data: {
+        saleId: number
+        userId?: number
+        referralPersonId?: number
+        commissionType: string
+        baseAmount: number
+        rate: number
+        notes?: string
+      }
+    ) => {
+      try {
+        const session = getCurrentSession()
+
+        // Validate: at least userId or referralPersonId must be provided
+        if (!data.userId && !data.referralPersonId) {
+          return {
+            success: false,
+            message: 'Either user or referral person must be specified',
+          }
+        }
+
+        const commissionAmount = (data.baseAmount * data.rate) / 100
+
+        const [newCommission] = await db
+          .insert(commissions)
+          .values({
+            saleId: data.saleId,
+            userId: data.userId || null,
+            referralPersonId: data.referralPersonId || null,
+            branchId: session?.branchId || 1,
+            commissionType: data.commissionType as 'sale' | 'referral' | 'bonus',
+            baseAmount: data.baseAmount,
+            rate: data.rate,
+            commissionAmount,
+            status: 'pending',
+            notes: data.notes,
+          })
+          .returning()
+
+        // Update referral person's total commission
+        if (data.referralPersonId) {
+          await db
+            .update(referralPersons)
+            .set({
+              totalCommissionEarned: sql`${referralPersons.totalCommissionEarned} + ${commissionAmount}`,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(referralPersons.id, data.referralPersonId))
+        }
+
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: 'create',
+          entityType: 'commission',
+          entityId: newCommission.id,
+          newValues: {
+            saleId: data.saleId,
+            referralPersonId: data.referralPersonId,
+            commissionAmount,
+          },
+          description: `Created ${data.commissionType} commission for sale #${data.saleId}`,
+        })
+
+        return { success: true, data: newCommission }
+      } catch (error) {
+        console.error('Create commission error:', error)
+        return { success: false, message: 'Failed to create commission' }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'commissions:update',
+    async (
+      _,
+      id: number,
+      data: {
+        commissionType?: string
+        baseAmount?: number
+        rate?: number
+        notes?: string
+        status?: string
+      }
+    ) => {
+      try {
+        const session = getCurrentSession()
+
+        const [existing] = await db
+          .select()
+          .from(commissions)
+          .where(eq(commissions.id, id))
+          .limit(1)
+
+        if (!existing) {
+          return { success: false, message: 'Commission not found' }
+        }
+
+        const updates: any = {
+          ...data,
+          updatedAt: new Date().toISOString(),
+        }
+
+        // Recalculate commission amount if baseAmount or rate changed
+        if (data.baseAmount !== undefined || data.rate !== undefined) {
+          const baseAmount = data.baseAmount ?? existing.baseAmount
+          const rate = data.rate ?? existing.rate
+          updates.commissionAmount = (baseAmount * rate) / 100
+        }
+
+        const [updated] = await db
+          .update(commissions)
+          .set(updates)
+          .where(eq(commissions.id, id))
+          .returning()
+
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: 'update',
+          entityType: 'commission',
+          entityId: id,
+          newValues: data,
+          oldValues: existing,
+          description: `Updated commission #${id}`,
+        })
+
+        return { success: true, data: updated }
+      } catch (error) {
+        console.error('Update commission error:', error)
+        return { success: false, message: 'Failed to update commission' }
+      }
+    }
+  )
+
+  ipcMain.handle('commissions:delete', async (_, id: number) => {
+    try {
+      const session = getCurrentSession()
+
+      const [existing] = await db
+        .select()
+        .from(commissions)
+        .where(eq(commissions.id, id))
+        .limit(1)
+
+      if (!existing) {
+        return { success: false, message: 'Commission not found' }
+      }
+
+      // If commission was for referral person, adjust their total
+      if (existing.referralPersonId) {
+        await db
+          .update(referralPersons)
+          .set({
+            totalCommissionEarned: sql`MAX(0, ${referralPersons.totalCommissionEarned} - ${existing.commissionAmount})`,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(referralPersons.id, existing.referralPersonId))
+      }
+
+      await db.delete(commissions).where(eq(commissions.id, id))
+
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: 'delete',
+        entityType: 'commission',
+        entityId: id,
+        oldValues: existing,
+        description: `Deleted commission #${id}`,
+      })
+
+      return { success: true, message: 'Commission deleted successfully' }
+    } catch (error) {
+      console.error('Delete commission error:', error)
+      return { success: false, message: 'Failed to delete commission' }
     }
   })
 
@@ -115,7 +371,12 @@ export function registerCommissionHandlers(): void {
           status: 'approved',
           updatedAt: new Date().toISOString(),
         })
-        .where(and(eq(commissions.status, 'pending'), sql`${commissions.id} IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`))
+        .where(
+          and(
+            eq(commissions.status, 'pending'),
+            sql`${commissions.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`
+          )
+        )
 
       for (const id of ids) {
         await createAuditLog({
@@ -140,6 +401,17 @@ export function registerCommissionHandlers(): void {
     try {
       const session = getCurrentSession()
 
+      // Get commissions to update referral person paid totals
+      const commissionRecords = await db
+        .select()
+        .from(commissions)
+        .where(
+          and(
+            eq(commissions.status, 'approved'),
+            sql`${commissions.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`
+          )
+        )
+
       await db
         .update(commissions)
         .set({
@@ -147,17 +419,33 @@ export function registerCommissionHandlers(): void {
           paidDate: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         })
-        .where(and(eq(commissions.status, 'approved'), sql`${commissions.id} IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`))
+        .where(
+          and(
+            eq(commissions.status, 'approved'),
+            sql`${commissions.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`
+          )
+        )
 
-      for (const id of ids) {
+      // Update referral person paid totals
+      for (const commission of commissionRecords) {
+        if (commission.referralPersonId) {
+          await db
+            .update(referralPersons)
+            .set({
+              totalCommissionPaid: sql`${referralPersons.totalCommissionPaid} + ${commission.commissionAmount}`,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(referralPersons.id, commission.referralPersonId))
+        }
+
         await createAuditLog({
           userId: session?.userId,
           branchId: session?.branchId,
           action: 'update',
           entityType: 'commission',
-          entityId: id,
+          entityId: commission.id,
           newValues: { status: 'paid' },
-          description: `Marked commission #${id} as paid`,
+          description: `Marked commission #${commission.id} as paid`,
         })
       }
 
@@ -168,42 +456,26 @@ export function registerCommissionHandlers(): void {
     }
   })
 
-  ipcMain.handle(
-    'commissions:calculate',
-    async (_, saleId: number, userId: number, branchId: number, baseAmount: number, rate: number) => {
-      try {
-        const session = getCurrentSession()
-        const commissionAmount = baseAmount * (rate / 100)
+  ipcMain.handle('commissions:get-summary', async (_, referralPersonId?: number, startDate?: string, endDate?: string) => {
+    try {
+      const conditions: any[] = []
+      if (referralPersonId) conditions.push(eq(commissions.referralPersonId, referralPersonId))
+      if (startDate && endDate) conditions.push(between(commissions.createdAt, startDate, endDate))
 
-        const [newCommission] = await db
-          .insert(commissions)
-          .values({
-            saleId,
-            userId,
-            branchId,
-            commissionType: 'sale',
-            baseAmount,
-            rate,
-            commissionAmount,
-            status: 'pending',
-          })
-          .returning()
-
-        await createAuditLog({
-          userId: session?.userId,
-          branchId,
-          action: 'create',
-          entityType: 'commission',
-          entityId: newCommission.id,
-          newValues: { saleId, userId, commissionAmount },
-          description: `Created commission for sale #${saleId}`,
+      const data = await db
+        .select({
+          status: commissions.status,
+          total: sql<number>`sum(${commissions.commissionAmount})`,
+          count: sql<number>`count(*)`,
         })
+        .from(commissions)
+        .where(and(...conditions))
+        .groupBy(commissions.status)
 
-        return { success: true, data: newCommission }
-      } catch (error) {
-        console.error('Calculate commission error:', error)
-        return { success: false, message: 'Failed to calculate commission' }
-      }
+      return { success: true, data }
+    } catch (error) {
+      console.error('Get commission summary error:', error)
+      return { success: false, message: 'Failed to fetch commission summary' }
     }
-  )
+  })
 }

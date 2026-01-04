@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { getDatabase } from '../db'
+import { getDatabase, getDbPath } from '../db'
 
 interface TableInfo {
   name: string
@@ -39,7 +39,7 @@ export function registerDatabaseViewerHandlers(): void {
   // Get table structure (columns)
   ipcMain.handle('database:get-table-info', async (_, tableName: string) => {
     try {
-      const info = await db.all<TableInfo>(`PRAGMA table_info(${tableName})`)
+      const info = await db.all<TableInfo>(`PRAGMA table_info("${tableName}")`)
       return { success: true, columns: info }
     } catch (err) {
       console.error('Error fetching table info:', err)
@@ -54,23 +54,50 @@ export function registerDatabaseViewerHandlers(): void {
       try {
         // Get total count
         const countResult = await db.get<{ count: number }>(
-          `SELECT COUNT(*) as count FROM ${tableName}`
+          `SELECT COUNT(*) as count FROM "${tableName}"`
         )
         const totalCount = countResult?.count || 0
 
         // Get data with pagination
         const offset = (page - 1) * limit
-        const data = await db.all(`SELECT * FROM ${tableName} LIMIT ${limit} OFFSET ${offset}`)
+        const data = await db.all(`SELECT * FROM "${tableName}" LIMIT ${limit} OFFSET ${offset}`)
 
         // Get column names
-        const columnsResult = await db.all<{ name: string }>(`PRAGMA table_info(${tableName})`)
+        const columnsResult = await db.all<{ name: string }>(`PRAGMA table_info("${tableName}")`)
         const columns = columnsResult.map((col) => col.name)
+
+        // Convert to plain objects for IPC serialization
+        const rows = data.map(row => {
+          const plainRow: Record<string, unknown> = {}
+          for (const col of columns) {
+            let value = (row as Record<string, unknown>)[col]
+            // Convert Date objects to ISO strings
+            if (value instanceof Date) {
+              value = value.toISOString()
+            }
+            // Convert Buffers to base64 or strings
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+              // Handle special types like Buffer
+              const proto = Object.getPrototypeOf(value)
+              if (proto && proto.constructor && proto.constructor.name === 'Blob') {
+                // SQLite Blob - convert to base64
+                try {
+                  value = Buffer.isBuffer(value) ? value.toString('base64') : String(value)
+                } catch {
+                  value = '[Binary Data]'
+                }
+              }
+            }
+            plainRow[col] = value
+          }
+          return plainRow
+        })
 
         return {
           success: true,
           data: {
             columns,
-            rows: data as unknown[][],
+            rows,
             count: totalCount,
             page,
             limit,
@@ -123,11 +150,24 @@ export function registerDatabaseViewerHandlers(): void {
           columns = Object.keys(result[0])
         }
 
+        // Convert to plain objects for IPC serialization
+        const rows = result.map(row => {
+          const plainRow: Record<string, unknown> = {}
+          for (const col of columns) {
+            let value = (row as Record<string, unknown>)[col]
+            if (value instanceof Date) {
+              value = value.toISOString()
+            }
+            plainRow[col] = value
+          }
+          return plainRow
+        })
+
         return {
           success: true,
           data: {
             columns,
-            rows: result as unknown[][],
+            rows,
             count: result.length,
           },
         }
@@ -141,13 +181,11 @@ export function registerDatabaseViewerHandlers(): void {
   // Get database size and info
   ipcMain.handle('database:get-info', async () => {
     try {
-      const dbPath = db.config.filename
+      const dbPath = getDbPath()
 
       // Get all table names and their row counts
-      const tables = await db.all(`
-        SELECT m.name as table_name, (
-          SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=m.name
-        ) as exists
+      const tableRows = await db.all<{ name: string }>(`
+        SELECT m.name
         FROM sqlite_master m
         WHERE m.type='table'
         AND m.name NOT LIKE 'sqlite_%'
@@ -155,9 +193,9 @@ export function registerDatabaseViewerHandlers(): void {
       `)
 
       const tableCounts = await Promise.all(
-        tables.map(async (table: { name: string }) => {
+        tableRows.map(async (table) => {
           const result = await db.get<{ count: number }>(
-            `SELECT COUNT(*) as count FROM ${table.name}`
+            `SELECT COUNT(*) as count FROM "${table.name}"`
           )
           return { name: table.name, count: result?.count || 0 }
         })

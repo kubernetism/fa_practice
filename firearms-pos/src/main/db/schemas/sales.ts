@@ -19,7 +19,7 @@ export const sales = sqliteTable('sales', {
   discountAmount: real('discount_amount').notNull().default(0),
   totalAmount: real('total_amount').notNull().default(0),
   paymentMethod: text('payment_method', {
-    enum: ['cash', 'card', 'credit', 'mixed'],
+    enum: ['cash', 'card', 'credit', 'mixed', 'mobile', 'cod', 'receivable'],
   })
     .notNull()
     .default('cash'),

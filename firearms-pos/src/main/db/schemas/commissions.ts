@@ -2,15 +2,15 @@ import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
 import { sales } from './sales'
 import { users } from './users'
 import { branches } from './branches'
+import { referralPersons } from './referral-persons'
 
 export const commissions = sqliteTable('commissions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   saleId: integer('sale_id')
     .notNull()
     .references(() => sales.id),
-  userId: integer('user_id')
-    .notNull()
-    .references(() => users.id),
+  userId: integer('user_id').references(() => users.id), // Employee commission (optional)
+  referralPersonId: integer('referral_person_id').references(() => referralPersons.id), // Referral commission (optional)
   branchId: integer('branch_id')
     .notNull()
     .references(() => branches.id),

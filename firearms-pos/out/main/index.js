@@ -27,12 +27,32 @@ const betterSqlite3 = require("drizzle-orm/better-sqlite3");
 const Database = require("better-sqlite3");
 const node_fs = require("node:fs");
 const sqliteCore = require("drizzle-orm/sqlite-core");
-const migrator = require("drizzle-orm/better-sqlite3/migrator");
 const drizzleOrm = require("drizzle-orm");
+const migrator = require("drizzle-orm/better-sqlite3/migrator");
 const bcrypt = require("bcryptjs");
 const dateFns = require("date-fns");
+const path = require("path");
+const fs = require("fs");
 const node_crypto = require("node:crypto");
 const node_os = require("node:os");
+function _interopNamespaceDefault(e) {
+  const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
+  if (e) {
+    for (const k in e) {
+      if (k !== "default") {
+        const d = Object.getOwnPropertyDescriptor(e, k);
+        Object.defineProperty(n, k, d.get ? d : {
+          enumerable: true,
+          get: () => e[k]
+        });
+      }
+    }
+  }
+  n.default = e;
+  return Object.freeze(n);
+}
+const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
+const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
 const is = {
   dev: !electron.app.isPackaged
 };
@@ -247,7 +267,7 @@ const sales = sqliteCore.sqliteTable("sales", {
   discountAmount: sqliteCore.real("discount_amount").notNull().default(0),
   totalAmount: sqliteCore.real("total_amount").notNull().default(0),
   paymentMethod: sqliteCore.text("payment_method", {
-    enum: ["cash", "card", "credit", "mixed"]
+    enum: ["cash", "card", "credit", "mixed", "mobile", "cod", "receivable"]
   }).notNull().default("cash"),
   paymentStatus: sqliteCore.text("payment_status", { enum: ["paid", "partial", "pending"] }).notNull().default("paid"),
   amountPaid: sqliteCore.real("amount_paid").notNull().default(0),
@@ -273,6 +293,82 @@ const saleItems = sqliteCore.sqliteTable("sale_items", {
   totalPrice: sqliteCore.real("total_price").notNull(),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const salesTabs = sqliteCore.sqliteTable(
+  "sales_tabs",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    tabNumber: sqliteCore.text("tab_number").notNull().unique(),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    customerId: sqliteCore.integer("customer_id").references(() => customers.id),
+    userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
+    status: sqliteCore.text("status", {
+      enum: ["open", "on_hold", "closed"]
+    }).notNull().default("open"),
+    itemCount: sqliteCore.integer("item_count").notNull().default(0),
+    subtotal: sqliteCore.real("subtotal").notNull().default(0),
+    discount: sqliteCore.real("discount").notNull().default(0),
+    tax: sqliteCore.real("tax").notNull().default(0),
+    finalAmount: sqliteCore.real("final_amount").notNull().default(0),
+    notes: sqliteCore.text("notes"),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    closedAt: sqliteCore.text("closed_at"),
+    closedBy: sqliteCore.integer("closed_by").references(() => users.id)
+  },
+  (table) => [
+    sqliteCore.index("sales_tabs_branch_idx").on(table.branchId),
+    sqliteCore.index("sales_tabs_status_idx").on(table.status),
+    sqliteCore.index("sales_tabs_created_idx").on(table.createdAt)
+  ]
+);
+const salesTabItems = sqliteCore.sqliteTable(
+  "sales_tab_items",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    tabId: sqliteCore.integer("tab_id").notNull().references(() => salesTabs.id, { onDelete: "cascade" }),
+    productId: sqliteCore.integer("product_id").notNull(),
+    productName: sqliteCore.text("product_name").notNull(),
+    productCode: sqliteCore.text("product_code"),
+    quantity: sqliteCore.integer("quantity").notNull(),
+    sellingPrice: sqliteCore.real("selling_price").notNull(),
+    costPrice: sqliteCore.real("cost_price").notNull(),
+    taxPercent: sqliteCore.real("tax_percent").notNull().default(0),
+    subtotal: sqliteCore.real("subtotal").notNull(),
+    serialNumber: sqliteCore.text("serial_number"),
+    batchNumber: sqliteCore.text("batch_number"),
+    addedAt: sqliteCore.text("added_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => [sqliteCore.index("sales_tab_items_tab_idx").on(table.tabId)]
+);
+const salesTabsRelations = drizzleOrm.relations(salesTabs, ({ one, many }) => ({
+  customer: one(customers, {
+    fields: [salesTabs.customerId],
+    references: [customers.id]
+  }),
+  branch: one(branches, {
+    fields: [salesTabs.branchId],
+    references: [branches.id]
+  }),
+  user: one(users, {
+    fields: [salesTabs.userId],
+    references: [users.id]
+  }),
+  closedByUser: one(users, {
+    fields: [salesTabs.closedBy],
+    references: [users.id]
+  }),
+  items: many(salesTabItems)
+}));
+const salesTabItemsRelations = drizzleOrm.relations(salesTabItems, ({ one }) => ({
+  tab: one(salesTabs, {
+    fields: [salesTabItems.tabId],
+    references: [salesTabs.id]
+  }),
+  product: one(products, {
+    fields: [salesTabItems.productId],
+    references: [products.id]
+  })
+}));
 const purchases = sqliteCore.sqliteTable("purchases", {
   id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
   purchaseOrderNumber: sqliteCore.text("purchase_order_number").notNull().unique(),
@@ -348,10 +444,35 @@ const expenses = sqliteCore.sqliteTable("expenses", {
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const referralPersons = sqliteCore.sqliteTable(
+  "referral_persons",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    name: sqliteCore.text("name").notNull(),
+    contact: sqliteCore.text("contact"),
+    address: sqliteCore.text("address"),
+    notes: sqliteCore.text("notes"),
+    isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+    totalCommissionEarned: sqliteCore.real("total_commission_earned").notNull().default(0),
+    totalCommissionPaid: sqliteCore.real("total_commission_paid").notNull().default(0),
+    commissionRate: sqliteCore.real("commission_rate"),
+    // Default commission rate for this referral person
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    branchIdx: sqliteCore.index("referral_persons_branch_idx").on(table.branchId),
+    nameIdx: sqliteCore.index("referral_persons_name_idx").on(table.name)
+  })
+);
 const commissions = sqliteCore.sqliteTable("commissions", {
   id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
   saleId: sqliteCore.integer("sale_id").notNull().references(() => sales.id),
-  userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
+  userId: sqliteCore.integer("user_id").references(() => users.id),
+  // Employee commission (optional)
+  referralPersonId: sqliteCore.integer("referral_person_id").references(() => referralPersons.id),
+  // Referral commission (optional)
   branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
   commissionType: sqliteCore.text("commission_type", { enum: ["sale", "referral", "bonus"] }).notNull().default("sale"),
   baseAmount: sqliteCore.real("base_amount").notNull(),
@@ -453,22 +574,635 @@ const stockTransfers = sqliteCore.sqliteTable("stock_transfers", {
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const businessSettings = sqliteCore.sqliteTable("business_settings", {
+  // Primary Key
+  settingId: sqliteCore.integer("setting_id").primaryKey({ autoIncrement: true }),
+  // Branch Association (NULL = Global Settings)
+  branchId: sqliteCore.integer("branch_id").references(() => branches.id),
+  // Business Information
+  businessName: sqliteCore.text("business_name").notNull(),
+  businessRegistrationNo: sqliteCore.text("business_registration_no"),
+  businessType: sqliteCore.text("business_type"),
+  // Retail, Wholesale, Mixed
+  businessAddress: sqliteCore.text("business_address"),
+  businessCity: sqliteCore.text("business_city"),
+  businessState: sqliteCore.text("business_state"),
+  businessCountry: sqliteCore.text("business_country"),
+  businessPostalCode: sqliteCore.text("business_postal_code"),
+  businessPhone: sqliteCore.text("business_phone"),
+  businessEmail: sqliteCore.text("business_email"),
+  businessWebsite: sqliteCore.text("business_website"),
+  businessLogo: sqliteCore.text("business_logo"),
+  // Base64 or file path
+  // Tax Configuration
+  taxId: sqliteCore.text("tax_id"),
+  taxRate: sqliteCore.real("tax_rate").default(0),
+  taxName: sqliteCore.text("tax_name").default("GST"),
+  isTaxInclusive: sqliteCore.integer("is_tax_inclusive", { mode: "boolean" }).default(false),
+  secondaryTaxRate: sqliteCore.real("secondary_tax_rate").default(0),
+  secondaryTaxName: sqliteCore.text("secondary_tax_name"),
+  // Currency Settings
+  currencySymbol: sqliteCore.text("currency_symbol").default("Rs."),
+  currencyCode: sqliteCore.text("currency_code").default("PKR"),
+  currencyPosition: sqliteCore.text("currency_position").default("prefix"),
+  // prefix or suffix
+  decimalPlaces: sqliteCore.integer("decimal_places").default(2),
+  thousandSeparator: sqliteCore.text("thousand_separator").default(","),
+  decimalSeparator: sqliteCore.text("decimal_separator").default("."),
+  // Receipt/Invoice Settings
+  receiptHeader: sqliteCore.text("receipt_header"),
+  receiptFooter: sqliteCore.text("receipt_footer"),
+  receiptLogo: sqliteCore.text("receipt_logo"),
+  invoicePrefix: sqliteCore.text("invoice_prefix").default("INV"),
+  invoiceNumberFormat: sqliteCore.text("invoice_number_format").default("sequential"),
+  // sequential, date-based
+  invoiceStartingNumber: sqliteCore.integer("invoice_starting_number").default(1),
+  showTaxOnReceipt: sqliteCore.integer("show_tax_on_receipt", { mode: "boolean" }).default(true),
+  showQRCodeOnReceipt: sqliteCore.integer("show_qr_code_on_receipt", { mode: "boolean" }).default(false),
+  // Receipt Customization Settings
+  receiptFormat: sqliteCore.text("receipt_format").default("pdf"),
+  // pdf | thermal
+  receiptPrimaryColor: sqliteCore.text("receipt_primary_color").default("#1e40af"),
+  receiptSecondaryColor: sqliteCore.text("receipt_secondary_color").default("#64748b"),
+  receiptFontSize: sqliteCore.text("receipt_font_size").default("medium"),
+  // small | medium | large
+  receiptCustomField1Label: sqliteCore.text("receipt_custom_field_1_label"),
+  receiptCustomField1Value: sqliteCore.text("receipt_custom_field_1_value"),
+  receiptCustomField2Label: sqliteCore.text("receipt_custom_field_2_label"),
+  receiptCustomField2Value: sqliteCore.text("receipt_custom_field_2_value"),
+  receiptCustomField3Label: sqliteCore.text("receipt_custom_field_3_label"),
+  receiptCustomField3Value: sqliteCore.text("receipt_custom_field_3_value"),
+  receiptTermsAndConditions: sqliteCore.text("receipt_terms_and_conditions"),
+  receiptShowBusinessLogo: sqliteCore.integer("receipt_show_business_logo", { mode: "boolean" }).default(true),
+  receiptAutoDownload: sqliteCore.integer("receipt_auto_download", { mode: "boolean" }).default(true),
+  // Inventory Settings
+  lowStockThreshold: sqliteCore.integer("low_stock_threshold").default(10),
+  enableStockTracking: sqliteCore.integer("enable_stock_tracking", { mode: "boolean" }).default(true),
+  allowNegativeStock: sqliteCore.integer("allow_negative_stock", { mode: "boolean" }).default(false),
+  stockValuationMethod: sqliteCore.text("stock_valuation_method").default("FIFO"),
+  // FIFO, LIFO, Average
+  autoReorderEnabled: sqliteCore.integer("auto_reorder_enabled", { mode: "boolean" }).default(false),
+  autoReorderQuantity: sqliteCore.integer("auto_reorder_quantity").default(50),
+  // Payment Settings
+  defaultPaymentMethod: sqliteCore.text("default_payment_method").default("Cash"),
+  allowedPaymentMethods: sqliteCore.text("allowed_payment_methods").default("Cash,Card,Bank Transfer,COD"),
+  enableCashDrawer: sqliteCore.integer("enable_cash_drawer", { mode: "boolean" }).default(true),
+  openingCashBalance: sqliteCore.real("opening_cash_balance").default(0),
+  // Sales Settings
+  enableDiscounts: sqliteCore.integer("enable_discounts", { mode: "boolean" }).default(true),
+  maxDiscountPercentage: sqliteCore.real("max_discount_percentage").default(50),
+  requireCustomerForSale: sqliteCore.integer("require_customer_for_sale", { mode: "boolean" }).default(false),
+  enableCustomerLoyalty: sqliteCore.integer("enable_customer_loyalty", { mode: "boolean" }).default(false),
+  loyaltyPointsRatio: sqliteCore.real("loyalty_points_ratio").default(1),
+  // Expense Settings
+  expenseCategories: sqliteCore.text("expense_categories").default("Utilities,Rent,Salaries,Supplies,Maintenance,Other"),
+  expenseApprovalRequired: sqliteCore.integer("expense_approval_required", { mode: "boolean" }).default(false),
+  expenseApprovalLimit: sqliteCore.real("expense_approval_limit").default(1e4),
+  // Return/Refund Settings
+  enableReturns: sqliteCore.integer("enable_returns", { mode: "boolean" }).default(true),
+  returnWindowDays: sqliteCore.integer("return_window_days").default(30),
+  requireReceiptForReturn: sqliteCore.integer("require_receipt_for_return", { mode: "boolean" }).default(true),
+  refundMethod: sqliteCore.text("refund_method").default("Original Payment Method"),
+  // Notification Settings
+  enableEmailNotifications: sqliteCore.integer("enable_email_notifications", { mode: "boolean" }).default(false),
+  notificationEmail: sqliteCore.text("notification_email"),
+  lowStockNotifications: sqliteCore.integer("low_stock_notifications", { mode: "boolean" }).default(true),
+  dailySalesReport: sqliteCore.integer("daily_sales_report", { mode: "boolean" }).default(false),
+  // Working Hours
+  workingDaysStart: sqliteCore.text("working_days_start").default("Monday"),
+  workingDaysEnd: sqliteCore.text("working_days_end").default("Saturday"),
+  openingTime: sqliteCore.text("opening_time").default("09:00"),
+  closingTime: sqliteCore.text("closing_time").default("18:00"),
+  // Backup Settings
+  autoBackupEnabled: sqliteCore.integer("auto_backup_enabled", { mode: "boolean" }).default(true),
+  autoBackupFrequency: sqliteCore.text("auto_backup_frequency").default("daily"),
+  backupRetentionDays: sqliteCore.integer("backup_retention_days").default(30),
+  // System Preferences
+  dateFormat: sqliteCore.text("date_format").default("DD/MM/YYYY"),
+  timeFormat: sqliteCore.text("time_format").default("24-hour"),
+  language: sqliteCore.text("language").default("en"),
+  timezone: sqliteCore.text("timezone").default("UTC"),
+  // Security Settings (Admin Only)
+  sessionTimeoutMinutes: sqliteCore.integer("session_timeout_minutes").default(60),
+  requirePasswordChange: sqliteCore.integer("require_password_change", { mode: "boolean" }).default(false),
+  passwordChangeIntervalDays: sqliteCore.integer("password_change_interval_days").default(90),
+  enableAuditLogs: sqliteCore.integer("enable_audit_logs", { mode: "boolean" }).default(true),
+  // Status & Metadata
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).default(true),
+  isDefault: sqliteCore.integer("is_default", { mode: "boolean" }).default(false),
+  notes: sqliteCore.text("notes"),
+  createdBy: sqliteCore.integer("created_by").references(() => users.id),
+  createdAt: sqliteCore.text("created_at").$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const businessSettingsRelations = drizzleOrm.relations(businessSettings, ({ one }) => ({
+  branch: one(branches, {
+    fields: [businessSettings.branchId],
+    references: [branches.id]
+  }),
+  createdByUser: one(users, {
+    fields: [businessSettings.createdBy],
+    references: [users.id]
+  })
+}));
+const accountReceivables = sqliteCore.sqliteTable(
+  "account_receivables",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    customerId: sqliteCore.integer("customer_id").notNull().references(() => customers.id),
+    saleId: sqliteCore.integer("sale_id").references(() => sales.id),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    invoiceNumber: sqliteCore.text("invoice_number").notNull(),
+    totalAmount: sqliteCore.real("total_amount").notNull(),
+    // Original amount owed
+    paidAmount: sqliteCore.real("paid_amount").notNull().default(0),
+    // Amount paid so far
+    remainingAmount: sqliteCore.real("remaining_amount").notNull(),
+    // Amount still owed
+    status: sqliteCore.text("status", { enum: ["pending", "partial", "paid", "overdue", "cancelled"] }).notNull().default("pending"),
+    dueDate: sqliteCore.text("due_date"),
+    // Optional due date for payment
+    notes: sqliteCore.text("notes"),
+    createdBy: sqliteCore.integer("created_by").references(() => users.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    customerIdx: sqliteCore.index("receivables_customer_idx").on(table.customerId),
+    statusIdx: sqliteCore.index("receivables_status_idx").on(table.status),
+    branchIdx: sqliteCore.index("receivables_branch_idx").on(table.branchId),
+    dueDateIdx: sqliteCore.index("receivables_due_date_idx").on(table.dueDate)
+  })
+);
+const receivablePayments = sqliteCore.sqliteTable(
+  "receivable_payments",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    receivableId: sqliteCore.integer("receivable_id").notNull().references(() => accountReceivables.id, { onDelete: "cascade" }),
+    amount: sqliteCore.real("amount").notNull(),
+    paymentMethod: sqliteCore.text("payment_method", {
+      enum: ["cash", "card", "mobile", "bank_transfer", "cheque"]
+    }).notNull().default("cash"),
+    referenceNumber: sqliteCore.text("reference_number"),
+    // Cheque number, transaction ID, etc.
+    notes: sqliteCore.text("notes"),
+    receivedBy: sqliteCore.integer("received_by").references(() => users.id),
+    paymentDate: sqliteCore.text("payment_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    receivableIdx: sqliteCore.index("payments_receivable_idx").on(table.receivableId),
+    dateIdx: sqliteCore.index("payments_date_idx").on(table.paymentDate)
+  })
+);
+const accountReceivablesRelations = drizzleOrm.relations(accountReceivables, ({ one, many }) => ({
+  customer: one(customers, {
+    fields: [accountReceivables.customerId],
+    references: [customers.id]
+  }),
+  sale: one(sales, {
+    fields: [accountReceivables.saleId],
+    references: [sales.id]
+  }),
+  branch: one(branches, {
+    fields: [accountReceivables.branchId],
+    references: [branches.id]
+  }),
+  createdByUser: one(users, {
+    fields: [accountReceivables.createdBy],
+    references: [users.id]
+  }),
+  payments: many(receivablePayments)
+}));
+const receivablePaymentsRelations = drizzleOrm.relations(receivablePayments, ({ one }) => ({
+  receivable: one(accountReceivables, {
+    fields: [receivablePayments.receivableId],
+    references: [accountReceivables.id]
+  }),
+  receivedByUser: one(users, {
+    fields: [receivablePayments.receivedBy],
+    references: [users.id]
+  })
+}));
+const accountPayables = sqliteCore.sqliteTable(
+  "account_payables",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    supplierId: sqliteCore.integer("supplier_id").notNull().references(() => suppliers.id),
+    purchaseId: sqliteCore.integer("purchase_id").references(() => purchases.id),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    invoiceNumber: sqliteCore.text("invoice_number").notNull(),
+    totalAmount: sqliteCore.real("total_amount").notNull(),
+    // Original amount owed
+    paidAmount: sqliteCore.real("paid_amount").notNull().default(0),
+    // Amount paid so far
+    remainingAmount: sqliteCore.real("remaining_amount").notNull(),
+    // Amount still owed
+    status: sqliteCore.text("status", { enum: ["pending", "partial", "paid", "overdue", "cancelled"] }).notNull().default("pending"),
+    dueDate: sqliteCore.text("due_date"),
+    // Payment due date
+    paymentTerms: sqliteCore.text("payment_terms"),
+    // e.g., "Net 30", "Net 60"
+    notes: sqliteCore.text("notes"),
+    createdBy: sqliteCore.integer("created_by").references(() => users.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    supplierIdx: sqliteCore.index("payables_supplier_idx").on(table.supplierId),
+    statusIdx: sqliteCore.index("payables_status_idx").on(table.status),
+    branchIdx: sqliteCore.index("payables_branch_idx").on(table.branchId),
+    dueDateIdx: sqliteCore.index("payables_due_date_idx").on(table.dueDate)
+  })
+);
+const payablePayments = sqliteCore.sqliteTable(
+  "payable_payments",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    payableId: sqliteCore.integer("payable_id").notNull().references(() => accountPayables.id, { onDelete: "cascade" }),
+    amount: sqliteCore.real("amount").notNull(),
+    paymentMethod: sqliteCore.text("payment_method", {
+      enum: ["cash", "card", "bank_transfer", "cheque", "mobile"]
+    }).notNull().default("bank_transfer"),
+    referenceNumber: sqliteCore.text("reference_number"),
+    // Cheque number, transaction ID, etc.
+    notes: sqliteCore.text("notes"),
+    paidBy: sqliteCore.integer("paid_by").references(() => users.id),
+    paymentDate: sqliteCore.text("payment_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    payableIdx: sqliteCore.index("payable_payments_payable_idx").on(table.payableId),
+    dateIdx: sqliteCore.index("payable_payments_date_idx").on(table.paymentDate)
+  })
+);
+const accountPayablesRelations = drizzleOrm.relations(accountPayables, ({ one, many }) => ({
+  supplier: one(suppliers, {
+    fields: [accountPayables.supplierId],
+    references: [suppliers.id]
+  }),
+  purchase: one(purchases, {
+    fields: [accountPayables.purchaseId],
+    references: [purchases.id]
+  }),
+  branch: one(branches, {
+    fields: [accountPayables.branchId],
+    references: [branches.id]
+  }),
+  createdByUser: one(users, {
+    fields: [accountPayables.createdBy],
+    references: [users.id]
+  }),
+  payments: many(payablePayments)
+}));
+const payablePaymentsRelations = drizzleOrm.relations(payablePayments, ({ one }) => ({
+  payable: one(accountPayables, {
+    fields: [payablePayments.payableId],
+    references: [accountPayables.id]
+  }),
+  paidByUser: one(users, {
+    fields: [payablePayments.paidBy],
+    references: [users.id]
+  })
+}));
+const cashRegisterSessions = sqliteCore.sqliteTable(
+  "cash_register_sessions",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    sessionDate: sqliteCore.text("session_date").notNull(),
+    // YYYY-MM-DD format
+    openingBalance: sqliteCore.real("opening_balance").notNull().default(0),
+    closingBalance: sqliteCore.real("closing_balance"),
+    // Set when session is closed
+    expectedBalance: sqliteCore.real("expected_balance"),
+    // Calculated from transactions
+    actualBalance: sqliteCore.real("actual_balance"),
+    // Counted cash
+    variance: sqliteCore.real("variance"),
+    // Difference between expected and actual
+    status: sqliteCore.text("status", { enum: ["open", "closed", "reconciled"] }).notNull().default("open"),
+    openedBy: sqliteCore.integer("opened_by").notNull().references(() => users.id),
+    closedBy: sqliteCore.integer("closed_by").references(() => users.id),
+    reconciledBy: sqliteCore.integer("reconciled_by").references(() => users.id),
+    openedAt: sqliteCore.text("opened_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    closedAt: sqliteCore.text("closed_at"),
+    reconciledAt: sqliteCore.text("reconciled_at"),
+    notes: sqliteCore.text("notes"),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    branchDateUnique: sqliteCore.unique("cash_session_branch_date_unique").on(table.branchId, table.sessionDate),
+    branchIdx: sqliteCore.index("cash_session_branch_idx").on(table.branchId),
+    dateIdx: sqliteCore.index("cash_session_date_idx").on(table.sessionDate),
+    statusIdx: sqliteCore.index("cash_session_status_idx").on(table.status)
+  })
+);
+const cashTransactions = sqliteCore.sqliteTable(
+  "cash_transactions",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    sessionId: sqliteCore.integer("session_id").notNull().references(() => cashRegisterSessions.id),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    transactionType: sqliteCore.text("transaction_type", {
+      enum: [
+        "sale",
+        // Cash from sales
+        "refund",
+        // Cash refunds
+        "expense",
+        // Cash expenses
+        "ar_collection",
+        // Cash collected from receivables
+        "ap_payment",
+        // Cash paid for payables
+        "deposit",
+        // Cash deposited to bank
+        "withdrawal",
+        // Cash withdrawn from bank
+        "adjustment",
+        // Manual adjustments
+        "petty_cash_in",
+        // Petty cash added
+        "petty_cash_out"
+        // Petty cash removed
+      ]
+    }).notNull(),
+    amount: sqliteCore.real("amount").notNull(),
+    // Positive for inflow, negative for outflow
+    referenceType: sqliteCore.text("reference_type"),
+    // 'sale', 'expense', 'receivable', 'payable', etc.
+    referenceId: sqliteCore.integer("reference_id"),
+    // ID of the related record
+    description: sqliteCore.text("description"),
+    recordedBy: sqliteCore.integer("recorded_by").notNull().references(() => users.id),
+    transactionDate: sqliteCore.text("transaction_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    sessionIdx: sqliteCore.index("cash_tx_session_idx").on(table.sessionId),
+    branchIdx: sqliteCore.index("cash_tx_branch_idx").on(table.branchId),
+    typeIdx: sqliteCore.index("cash_tx_type_idx").on(table.transactionType),
+    dateIdx: sqliteCore.index("cash_tx_date_idx").on(table.transactionDate)
+  })
+);
+const cashRegisterSessionsRelations = drizzleOrm.relations(cashRegisterSessions, ({ one, many }) => ({
+  branch: one(branches, {
+    fields: [cashRegisterSessions.branchId],
+    references: [branches.id]
+  }),
+  openedByUser: one(users, {
+    fields: [cashRegisterSessions.openedBy],
+    references: [users.id],
+    relationName: "openedBy"
+  }),
+  closedByUser: one(users, {
+    fields: [cashRegisterSessions.closedBy],
+    references: [users.id],
+    relationName: "closedBy"
+  }),
+  reconciledByUser: one(users, {
+    fields: [cashRegisterSessions.reconciledBy],
+    references: [users.id],
+    relationName: "reconciledBy"
+  }),
+  transactions: many(cashTransactions)
+}));
+const cashTransactionsRelations = drizzleOrm.relations(cashTransactions, ({ one }) => ({
+  session: one(cashRegisterSessions, {
+    fields: [cashTransactions.sessionId],
+    references: [cashRegisterSessions.id]
+  }),
+  branch: one(branches, {
+    fields: [cashTransactions.branchId],
+    references: [branches.id]
+  }),
+  recordedByUser: one(users, {
+    fields: [cashTransactions.recordedBy],
+    references: [users.id]
+  })
+}));
+const chartOfAccounts = sqliteCore.sqliteTable(
+  "chart_of_accounts",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    accountCode: sqliteCore.text("account_code").notNull().unique(),
+    // e.g., "1000", "1100", "2000"
+    accountName: sqliteCore.text("account_name").notNull(),
+    accountType: sqliteCore.text("account_type", {
+      enum: ["asset", "liability", "equity", "revenue", "expense"]
+    }).notNull(),
+    accountSubType: sqliteCore.text("account_sub_type", {
+      enum: [
+        // Assets
+        "cash",
+        "bank",
+        "accounts_receivable",
+        "inventory",
+        "prepaid_expense",
+        "fixed_asset",
+        "accumulated_depreciation",
+        "other_asset",
+        // Liabilities
+        "accounts_payable",
+        "accrued_expense",
+        "short_term_loan",
+        "long_term_loan",
+        "other_liability",
+        // Equity
+        "owner_capital",
+        "retained_earnings",
+        "drawings",
+        // Revenue
+        "sales_revenue",
+        "service_revenue",
+        "other_revenue",
+        // Expenses
+        "cost_of_goods_sold",
+        "operating_expense",
+        "payroll_expense",
+        "rent_expense",
+        "utilities_expense",
+        "depreciation_expense",
+        "other_expense"
+      ]
+    }),
+    parentAccountId: sqliteCore.integer("parent_account_id"),
+    // For hierarchical accounts
+    description: sqliteCore.text("description"),
+    isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+    isSystemAccount: sqliteCore.integer("is_system_account", { mode: "boolean" }).notNull().default(false),
+    // Cannot be deleted
+    normalBalance: sqliteCore.text("normal_balance", { enum: ["debit", "credit"] }).notNull(),
+    currentBalance: sqliteCore.real("current_balance").notNull().default(0),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    typeIdx: sqliteCore.index("coa_type_idx").on(table.accountType),
+    parentIdx: sqliteCore.index("coa_parent_idx").on(table.parentAccountId),
+    activeIdx: sqliteCore.index("coa_active_idx").on(table.isActive)
+  })
+);
+const journalEntries = sqliteCore.sqliteTable(
+  "journal_entries",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    entryNumber: sqliteCore.text("entry_number").notNull().unique(),
+    // JE-YYYY-NNNN
+    entryDate: sqliteCore.text("entry_date").notNull(),
+    description: sqliteCore.text("description").notNull(),
+    referenceType: sqliteCore.text("reference_type"),
+    // 'sale', 'purchase', 'expense', 'adjustment', etc.
+    referenceId: sqliteCore.integer("reference_id"),
+    branchId: sqliteCore.integer("branch_id").references(() => branches.id),
+    status: sqliteCore.text("status", { enum: ["draft", "posted", "reversed"] }).notNull().default("draft"),
+    isAutoGenerated: sqliteCore.integer("is_auto_generated", { mode: "boolean" }).notNull().default(false),
+    createdBy: sqliteCore.integer("created_by").notNull().references(() => users.id),
+    postedBy: sqliteCore.integer("posted_by").references(() => users.id),
+    postedAt: sqliteCore.text("posted_at"),
+    reversedBy: sqliteCore.integer("reversed_by").references(() => users.id),
+    reversedAt: sqliteCore.text("reversed_at"),
+    reversalEntryId: sqliteCore.integer("reversal_entry_id"),
+    // Links to the reversing entry
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    dateIdx: sqliteCore.index("je_date_idx").on(table.entryDate),
+    statusIdx: sqliteCore.index("je_status_idx").on(table.status),
+    refIdx: sqliteCore.index("je_ref_idx").on(table.referenceType, table.referenceId)
+  })
+);
+const journalEntryLines = sqliteCore.sqliteTable(
+  "journal_entry_lines",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    journalEntryId: sqliteCore.integer("journal_entry_id").notNull().references(() => journalEntries.id, { onDelete: "cascade" }),
+    accountId: sqliteCore.integer("account_id").notNull().references(() => chartOfAccounts.id),
+    debitAmount: sqliteCore.real("debit_amount").notNull().default(0),
+    creditAmount: sqliteCore.real("credit_amount").notNull().default(0),
+    description: sqliteCore.text("description"),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    entryIdx: sqliteCore.index("jel_entry_idx").on(table.journalEntryId),
+    accountIdx: sqliteCore.index("jel_account_idx").on(table.accountId)
+  })
+);
+const accountBalances = sqliteCore.sqliteTable(
+  "account_balances",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    accountId: sqliteCore.integer("account_id").notNull().references(() => chartOfAccounts.id),
+    branchId: sqliteCore.integer("branch_id").references(() => branches.id),
+    // null for consolidated
+    periodType: sqliteCore.text("period_type", { enum: ["daily", "monthly", "yearly"] }).notNull(),
+    periodDate: sqliteCore.text("period_date").notNull(),
+    // YYYY-MM-DD for daily, YYYY-MM for monthly, YYYY for yearly
+    openingBalance: sqliteCore.real("opening_balance").notNull().default(0),
+    debitTotal: sqliteCore.real("debit_total").notNull().default(0),
+    creditTotal: sqliteCore.real("credit_total").notNull().default(0),
+    closingBalance: sqliteCore.real("closing_balance").notNull().default(0),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    accountPeriodIdx: sqliteCore.index("ab_account_period_idx").on(table.accountId, table.periodType, table.periodDate),
+    branchIdx: sqliteCore.index("ab_branch_idx").on(table.branchId)
+  })
+);
+const chartOfAccountsRelations = drizzleOrm.relations(chartOfAccounts, ({ one, many }) => ({
+  parentAccount: one(chartOfAccounts, {
+    fields: [chartOfAccounts.parentAccountId],
+    references: [chartOfAccounts.id],
+    relationName: "parentChild"
+  }),
+  childAccounts: many(chartOfAccounts, { relationName: "parentChild" }),
+  journalLines: many(journalEntryLines),
+  balances: many(accountBalances)
+}));
+const journalEntriesRelations = drizzleOrm.relations(journalEntries, ({ one, many }) => ({
+  branch: one(branches, {
+    fields: [journalEntries.branchId],
+    references: [branches.id]
+  }),
+  createdByUser: one(users, {
+    fields: [journalEntries.createdBy],
+    references: [users.id],
+    relationName: "createdBy"
+  }),
+  postedByUser: one(users, {
+    fields: [journalEntries.postedBy],
+    references: [users.id],
+    relationName: "postedBy"
+  }),
+  lines: many(journalEntryLines)
+}));
+const journalEntryLinesRelations = drizzleOrm.relations(journalEntryLines, ({ one }) => ({
+  journalEntry: one(journalEntries, {
+    fields: [journalEntryLines.journalEntryId],
+    references: [journalEntries.id]
+  }),
+  account: one(chartOfAccounts, {
+    fields: [journalEntryLines.accountId],
+    references: [chartOfAccounts.id]
+  })
+}));
+const accountBalancesRelations = drizzleOrm.relations(accountBalances, ({ one }) => ({
+  account: one(chartOfAccounts, {
+    fields: [accountBalances.accountId],
+    references: [chartOfAccounts.id]
+  }),
+  branch: one(branches, {
+    fields: [accountBalances.branchId],
+    references: [branches.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
+  accountBalances,
+  accountBalancesRelations,
+  accountPayables,
+  accountPayablesRelations,
+  accountReceivables,
+  accountReceivablesRelations,
   auditLogs,
   branches,
+  businessSettings,
+  businessSettingsRelations,
+  cashRegisterSessions,
+  cashRegisterSessionsRelations,
+  cashTransactions,
+  cashTransactionsRelations,
   categories,
+  chartOfAccounts,
+  chartOfAccountsRelations,
   commissions,
   customers,
   expenses,
   inventory,
+  journalEntries,
+  journalEntriesRelations,
+  journalEntryLines,
+  journalEntryLinesRelations,
+  payablePayments,
+  payablePaymentsRelations,
   products,
   purchaseItems,
   purchases,
+  receivablePayments,
+  receivablePaymentsRelations,
+  referralPersons,
   returnItems,
   returns,
   saleItems,
   sales,
+  salesTabItems,
+  salesTabItemsRelations,
+  salesTabs,
+  salesTabsRelations,
   settings,
   stockAdjustments,
   stockTransfers,
@@ -508,6 +1242,154 @@ function closeDatabase() {
     db = null;
   }
 }
+async function migrateToBusinessSettings() {
+  console.log("Starting migration to business_settings table...");
+  const db2 = getDatabase();
+  try {
+    let tableExists = false;
+    try {
+      await db2.select({ count: drizzleOrm.sql`count(*)` }).from(businessSettings).limit(1);
+      tableExists = true;
+    } catch {
+      tableExists = false;
+    }
+    let oldSettingsExist = false;
+    try {
+      const oldSettingsCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(settings).limit(1);
+      oldSettingsExist = oldSettingsCount && (oldSettingsCount[0]?.count ?? 0) > 0;
+    } catch {
+      oldSettingsExist = false;
+    }
+    console.log(`business_settings table exists: ${tableExists}`);
+    console.log(`Old settings table has data: ${oldSettingsExist}`);
+    let globalSettingsExists = false;
+    if (tableExists) {
+      try {
+        const globalSettings = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(businessSettings).where(drizzleOrm.isNull(businessSettings.branchId)).limit(1);
+        globalSettingsExists = globalSettings && (globalSettings[0]?.count ?? 0) > 0;
+        console.log(`Global settings already exist: ${globalSettingsExists}`);
+      } catch (err) {
+        console.error("Error checking global settings:", err);
+        globalSettingsExists = false;
+      }
+    }
+    if (!globalSettingsExists) {
+      console.log("Creating default global settings...");
+      await db2.insert(businessSettings).values({
+        branchId: null,
+        businessName: "Firearms Retail POS",
+        businessAddress: "",
+        businessCity: "",
+        businessState: "",
+        businessCountry: "Pakistan",
+        businessPostalCode: "",
+        businessPhone: "",
+        businessEmail: "",
+        businessWebsite: "",
+        taxRate: 0,
+        taxName: "GST",
+        isTaxInclusive: false,
+        secondaryTaxRate: 0,
+        currencySymbol: "Rs.",
+        currencyCode: "PKR",
+        currencyPosition: "prefix",
+        decimalPlaces: 2,
+        thousandSeparator: ",",
+        decimalSeparator: ".",
+        invoicePrefix: "INV",
+        invoiceNumberFormat: "sequential",
+        invoiceStartingNumber: 1,
+        showTaxOnReceipt: true,
+        showQRCodeOnReceipt: false,
+        lowStockThreshold: 10,
+        enableStockTracking: true,
+        allowNegativeStock: false,
+        stockValuationMethod: "FIFO",
+        autoReorderEnabled: false,
+        autoReorderQuantity: 50,
+        defaultPaymentMethod: "Cash",
+        allowedPaymentMethods: "Cash,Card,Bank Transfer,COD",
+        enableCashDrawer: true,
+        openingCashBalance: 0,
+        enableDiscounts: true,
+        maxDiscountPercentage: 50,
+        requireCustomerForSale: false,
+        enableCustomerLoyalty: false,
+        loyaltyPointsRatio: 1,
+        expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
+        expenseApprovalRequired: false,
+        expenseApprovalLimit: 1e4,
+        enableReturns: true,
+        returnWindowDays: 30,
+        requireReceiptForReturn: true,
+        refundMethod: "Original Payment Method",
+        enableEmailNotifications: false,
+        lowStockNotifications: true,
+        dailySalesReport: false,
+        workingDaysStart: "Monday",
+        workingDaysEnd: "Saturday",
+        openingTime: "09:00",
+        closingTime: "18:00",
+        autoBackupEnabled: true,
+        autoBackupFrequency: "daily",
+        backupRetentionDays: 30,
+        dateFormat: "DD/MM/YYYY",
+        timeFormat: "24-hour",
+        language: "en",
+        timezone: "UTC",
+        sessionTimeoutMinutes: 60,
+        requirePasswordChange: false,
+        passwordChangeIntervalDays: 90,
+        enableAuditLogs: true,
+        isActive: true,
+        isDefault: true
+      });
+      console.log("Default global settings created successfully");
+    }
+    if (oldSettingsExist && (oldSettingsExist[0]?.count ?? 0) > 0) {
+      console.log("Attempting to migrate old settings data...");
+      try {
+        const oldSettings = await db2.select().from(settings).all();
+        const settingMap = {};
+        oldSettings.forEach((setting) => {
+          settingMap[setting.key] = setting.value;
+        });
+        const updateData = {};
+        if (settingMap.company_name) updateData.businessName = settingMap.company_name;
+        if (settingMap.company_address) updateData.businessAddress = settingMap.company_address;
+        if (settingMap.company_phone) updateData.businessPhone = settingMap.company_phone;
+        if (settingMap.company_email) updateData.businessEmail = settingMap.company_email;
+        if (settingMap.tax_rate) updateData.taxRate = parseFloat(settingMap.tax_rate);
+        if (settingMap.tax_name) updateData.taxName = settingMap.tax_name;
+        if (settingMap.currency_symbol) updateData.currencySymbol = settingMap.currency_symbol;
+        if (settingMap.currency_code) updateData.currencyCode = settingMap.currency_code;
+        if (Object.keys(updateData).length > 0) {
+          await db2.update(businessSettings).set({
+            ...updateData,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.isNull(businessSettings.branchId));
+          console.log("Old settings migrated successfully");
+        }
+      } catch (migrationError) {
+        console.warn("Could not migrate old settings (may be in different format):", migrationError);
+      }
+    }
+    console.log("Migration completed successfully!");
+    return { success: true };
+  } catch (error) {
+    console.error("Migration failed:", error);
+    throw error;
+  }
+}
+if (require.main === module) {
+  migrateToBusinessSettings().then(() => {
+    console.log("Migration script finished");
+    process.exit(0);
+  }).catch((error) => {
+    console.error("Migration script failed:", error);
+    process.exit(1);
+  });
+}
 async function runMigrations() {
   const db2 = getDatabase();
   const possiblePaths = [
@@ -521,23 +1403,28 @@ async function runMigrations() {
     // CWD fallback
   ];
   let migrationsPath = null;
-  for (const path of possiblePaths) {
-    if (node_fs.existsSync(path) && node_fs.existsSync(node_path.join(path, "meta/_journal.json"))) {
-      migrationsPath = path;
-      console.log("Found migrations at:", path);
+  for (const path2 of possiblePaths) {
+    if (node_fs.existsSync(path2) && node_fs.existsSync(node_path.join(path2, "meta/_journal.json"))) {
+      migrationsPath = path2;
+      console.log("Found migrations at:", path2);
       break;
     }
   }
   if (!migrationsPath) {
     console.log("No migrations folder found, creating tables directly...");
-    return;
+  } else {
+    try {
+      migrator.migrate(db2, { migrationsFolder: migrationsPath });
+      console.log("Migrations completed successfully");
+    } catch (error) {
+      console.error("Migration error:", error);
+      throw error;
+    }
   }
   try {
-    migrator.migrate(db2, { migrationsFolder: migrationsPath });
-    console.log("Migrations completed successfully");
+    await migrateToBusinessSettings();
   } catch (error) {
-    console.error("Migration error:", error);
-    throw error;
+    console.error("Business settings migration error:", error);
   }
 }
 async function seedInitialData() {
@@ -1778,7 +2665,7 @@ function registerSalesHandlers() {
       const discountAmount = data.discountAmount || 0;
       const totalAmount = subtotal + taxAmount - discountAmount;
       const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0;
-      const paymentStatus = data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending";
+      const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
       const invoiceNumber = generateInvoiceNumber();
       const [sale] = await db2.insert(sales).values({
         invoiceNumber,
@@ -1995,6 +2882,649 @@ function registerSalesHandlers() {
     } catch (error) {
       console.error("Get daily summary error:", error);
       return { success: false, message: "Failed to fetch daily summary" };
+    }
+  });
+}
+async function generateTabNumber(branchId) {
+  const db2 = getDatabase();
+  const result = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(salesTabs).where(drizzleOrm.eq(salesTabs.branchId, branchId));
+  const count = result[0]?.count ?? 0;
+  const nextNumber = count + 1;
+  return `TAB-${String(nextNumber).padStart(3, "0")}`;
+}
+function registerSalesTabsHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "sales-tabs:get-all",
+    async (_, params) => {
+      try {
+        const {
+          page = 1,
+          limit = 20,
+          sortBy = "createdAt",
+          sortOrder = "desc",
+          branchId,
+          status,
+          userId
+        } = params;
+        const conditions = [];
+        if (branchId) conditions.push(drizzleOrm.eq(salesTabs.branchId, branchId));
+        if (status) conditions.push(drizzleOrm.eq(salesTabs.status, status));
+        if (userId) conditions.push(drizzleOrm.eq(salesTabs.userId, userId));
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(salesTabs).where(whereClause);
+        const total = countResult[0]?.count ?? 0;
+        const data = await db2.query.salesTabs.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: sortOrder === "desc" ? drizzleOrm.desc(salesTabs.createdAt) : salesTabs.createdAt,
+          with: {
+            customer: true,
+            branch: true,
+            user: {
+              columns: {
+                id: true,
+                username: true,
+                fullName: true
+              }
+            }
+          }
+        });
+        const result = {
+          data,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+        return { success: true, ...result };
+      } catch (error) {
+        console.error("Get sales tabs error:", error);
+        return { success: false, message: "Failed to fetch sales tabs" };
+      }
+    }
+  );
+  electron.ipcMain.handle("sales-tabs:get-by-id", async (_, id) => {
+    try {
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, id),
+        with: {
+          customer: true,
+          branch: true,
+          user: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          }
+        }
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      const items = await db2.select().from(salesTabItems).where(drizzleOrm.eq(salesTabItems.tabId, id)).orderBy(drizzleOrm.desc(salesTabItems.addedAt));
+      return {
+        success: true,
+        data: {
+          ...tab,
+          items
+        }
+      };
+    } catch (error) {
+      console.error("Get tab error:", error);
+      return { success: false, message: "Failed to fetch tab" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const branch = await db2.query.branches.findFirst({
+        where: drizzleOrm.eq(branches.id, data.branchId)
+      });
+      if (!branch) {
+        return { success: false, message: "Branch not found" };
+      }
+      if (data.customerId) {
+        const customer = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, data.customerId)
+        });
+        if (!customer) {
+          return { success: false, message: "Customer not found" };
+        }
+      }
+      const tabNumber = await generateTabNumber(data.branchId);
+      const [newTab] = await db2.insert(salesTabs).values({
+        tabNumber,
+        branchId: data.branchId,
+        customerId: data.customerId,
+        userId: session.userId,
+        notes: data.notes
+      }).returning();
+      await createAuditLog({
+        userId: session.userId,
+        branchId: data.branchId,
+        action: "create",
+        entityType: "sales_tab",
+        entityId: newTab.id,
+        newValues: {
+          tabNumber
+        },
+        description: `Created sales tab: ${tabNumber}`
+      });
+      return { success: true, data: newTab };
+    } catch (error) {
+      console.error("Create tab error:", error);
+      return { success: false, message: "Failed to create tab" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:update", async (_, id, data) => {
+    try {
+      const session = getCurrentSession();
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, id)
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Cannot modify closed tab" };
+      }
+      if (data.customerId !== void 0 && data.customerId !== tab.customerId) {
+        const customer = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, data.customerId)
+        });
+        if (!customer) {
+          return { success: false, message: "Customer not found" };
+        }
+      }
+      const updateData = {};
+      if (data.customerId !== void 0) updateData.customerId = data.customerId;
+      if (data.status !== void 0) updateData.status = data.status;
+      if (data.notes !== void 0) updateData.notes = data.notes;
+      updateData.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      if (data.status === "closed") {
+        updateData.closedAt = (/* @__PURE__ */ new Date()).toISOString();
+        updateData.closedBy = session?.userId;
+      }
+      await db2.update(salesTabs).set(updateData).where(drizzleOrm.eq(salesTabs.id, id));
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: tab.branchId,
+        action: "update",
+        entityType: "sales_tab",
+        entityId: id,
+        oldValues: {
+          status: tab.status,
+          customerId: tab.customerId
+        },
+        newValues: {
+          status: data.status,
+          customerId: data.customerId
+        },
+        description: `Updated sales tab: ${tab.tabNumber}`
+      });
+      return { success: true, message: "Tab updated successfully" };
+    } catch (error) {
+      console.error("Update tab error:", error);
+      return { success: false, message: "Failed to update tab" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, id)
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Cannot delete closed tab" };
+      }
+      await db2.delete(salesTabs).where(drizzleOrm.eq(salesTabs.id, id));
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: tab.branchId,
+        action: "delete",
+        entityType: "sales_tab",
+        entityId: id,
+        oldValues: {
+          tabNumber: tab.tabNumber
+        },
+        description: `Deleted sales tab: ${tab.tabNumber}`
+      });
+      return { success: true, message: "Tab deleted successfully" };
+    } catch (error) {
+      console.error("Delete tab error:", error);
+      return { success: false, message: "Failed to delete tab" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:add-item", async (_, tabId, data) => {
+    try {
+      const session = getCurrentSession();
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, tabId),
+        with: {
+          items: true
+        }
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Cannot add items to closed tab" };
+      }
+      const product = await db2.query.products.findFirst({
+        where: drizzleOrm.eq(products.id, data.productId)
+      });
+      if (!product) {
+        return { success: false, message: "Product not found" };
+      }
+      if (!product.isActive) {
+        return { success: false, message: "Product is not active" };
+      }
+      const stock = await db2.query.inventory.findFirst({
+        where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, data.productId), drizzleOrm.eq(inventory.branchId, tab.branchId))
+      });
+      const availableQuantity = stock?.quantity ?? 0;
+      const existingQuantity = tab.items.filter((item) => item.productId === data.productId && !item.serialNumber).reduce((sum, item) => sum + item.quantity, 0);
+      if (product.isSerialTracked) {
+        if (!data.serialNumber) {
+          return { success: false, message: "Serial number required for this product" };
+        }
+        const existingSerial = tab.items.find(
+          (item) => item.productId === data.productId && item.serialNumber === data.serialNumber
+        );
+        if (existingSerial) {
+          return { success: false, message: "This serial number is already in the tab" };
+        }
+      } else {
+        if (existingQuantity + data.quantity > availableQuantity) {
+          return {
+            success: false,
+            message: `Insufficient stock. Available: ${availableQuantity}, In tab: ${existingQuantity}, Requested: ${data.quantity}`,
+            availableQuantity: availableQuantity - existingQuantity
+          };
+        }
+      }
+      if (product.isSerialTracked && data.quantity !== 1) {
+        return { success: false, message: "Quantity must be 1 for serial tracked items" };
+      }
+      const sellingPrice = data.sellingPrice ?? product.sellingPrice;
+      const subtotal = sellingPrice * data.quantity;
+      const taxAmount = subtotal * ((product.isTaxable ? product.taxRate : 0) / 100);
+      const [newItem] = await db2.insert(salesTabItems).values({
+        tabId,
+        productId: data.productId,
+        productName: product.name,
+        productCode: product.code,
+        quantity: data.quantity,
+        sellingPrice,
+        costPrice: product.costPrice,
+        taxPercent: product.isTaxable ? product.taxRate : 0,
+        subtotal: subtotal + taxAmount,
+        serialNumber: data.serialNumber,
+        batchNumber: data.batchNumber
+      }).returning();
+      await db2.update(salesTabs).set({
+        itemCount: drizzleOrm.sql`${salesTabs.itemCount} + 1`,
+        subtotal: drizzleOrm.sql`${salesTabs.subtotal} + ${subtotal}`,
+        tax: drizzleOrm.sql`${salesTabs.tax} + ${taxAmount}`,
+        finalAmount: drizzleOrm.sql`${salesTabs.finalAmount} + ${subtotal + taxAmount}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(salesTabs.id, tabId));
+      return { success: true, data: newItem };
+    } catch (error) {
+      console.error("Add item error:", error);
+      return { success: false, message: "Failed to add item to tab" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:update-item", async (_, tabId, itemId, data) => {
+    try {
+      const session = getCurrentSession();
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, tabId)
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Cannot modify closed tab" };
+      }
+      const item = await db2.query.salesTabItems.findFirst({
+        where: drizzleOrm.eq(salesTabItems.id, itemId)
+      });
+      if (!item) {
+        return { success: false, message: "Item not found" };
+      }
+      if (item.tabId !== tabId) {
+        return { success: false, message: "Item does not belong to this tab" };
+      }
+      if (item.serialNumber && data.quantity !== 1) {
+        return { success: false, message: "Cannot change quantity of serial tracked items" };
+      }
+      if (data.quantity <= 0) {
+        return { success: false, message: "Quantity must be greater than 0" };
+      }
+      const stock = await db2.query.inventory.findFirst({
+        where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId))
+      });
+      const availableQuantity = stock?.quantity ?? 0;
+      if (data.quantity > availableQuantity) {
+        return {
+          success: false,
+          message: `Insufficient stock. Available: ${availableQuantity}`,
+          availableQuantity
+        };
+      }
+      const oldSubtotal = item.subtotal;
+      const newSubtotal = item.sellingPrice * data.quantity;
+      const newTaxAmount = newSubtotal * (item.taxPercent / 100);
+      const newItemTotal = newSubtotal + newTaxAmount;
+      const subtotalDiff = newSubtotal - oldSubtotal / (1 + item.taxPercent / 100);
+      const taxDiff = newTaxAmount - (oldSubtotal - oldSubtotal / (1 + item.taxPercent / 100));
+      const totalDiff = newItemTotal - oldSubtotal;
+      await db2.update(salesTabItems).set({
+        quantity: data.quantity,
+        subtotal: newItemTotal
+      }).where(drizzleOrm.eq(salesTabItems.id, itemId));
+      await db2.update(salesTabs).set({
+        subtotal: drizzleOrm.sql`${salesTabs.subtotal} + ${subtotalDiff}`,
+        tax: drizzleOrm.sql`${salesTabs.tax} + ${taxDiff}`,
+        finalAmount: drizzleOrm.sql`${salesTabs.finalAmount} + ${totalDiff}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(salesTabs.id, tabId));
+      return { success: true, message: "Item updated successfully" };
+    } catch (error) {
+      console.error("Update item error:", error);
+      return { success: false, message: "Failed to update item" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:remove-item", async (_, tabId, itemId) => {
+    try {
+      const session = getCurrentSession();
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, tabId)
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Cannot modify closed tab" };
+      }
+      const item = await db2.query.salesTabItems.findFirst({
+        where: drizzleOrm.eq(salesTabItems.id, itemId)
+      });
+      if (!item) {
+        return { success: false, message: "Item not found" };
+      }
+      if (item.tabId !== tabId) {
+        return { success: false, message: "Item does not belong to this tab" };
+      }
+      await db2.delete(salesTabItems).where(drizzleOrm.eq(salesTabItems.id, itemId));
+      await db2.update(salesTabs).set({
+        itemCount: drizzleOrm.sql`${salesTabs.itemCount} - 1`,
+        subtotal: drizzleOrm.sql`${salesTabs.subtotal} - ${item.sellingPrice * item.quantity}`,
+        tax: drizzleOrm.sql`${salesTabs.tax} - ${item.subtotal - item.sellingPrice * item.quantity}`,
+        finalAmount: drizzleOrm.sql`${salesTabs.finalAmount} - ${item.subtotal}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(salesTabs.id, tabId));
+      return { success: true, message: "Item removed successfully" };
+    } catch (error) {
+      console.error("Remove item error:", error);
+      return { success: false, message: "Failed to remove item" };
+    }
+  });
+  electron.ipcMain.handle(
+    "sales-tabs:get-available-products",
+    async (_, params) => {
+      try {
+        const { branchId, categoryId, searchQuery, limit = 100 } = params;
+        let query = db2.select({
+          product: products,
+          quantity: inventory.quantity
+        }).from(products).leftJoin(inventory, drizzleOrm.and(drizzleOrm.eq(inventory.productId, products.id), drizzleOrm.eq(inventory.branchId, branchId))).where(drizzleOrm.eq(products.isActive, true));
+        if (categoryId) {
+          query = query.where(drizzleOrm.eq(products.categoryId, categoryId));
+        }
+        if (searchQuery) {
+          query = query.where(
+            drizzleOrm.sql`(${products.name} LIKE ${`%${searchQuery}%`} OR ${products.code} LIKE ${`%${searchQuery}%`} OR ${products.barcode} LIKE ${`%${searchQuery}%`})`
+          );
+        }
+        query = query.limit(limit).orderBy(products.name);
+        const results = await query;
+        const availableProducts = results.filter((r) => r.quantity > 0);
+        return { success: true, data: availableProducts };
+      } catch (error) {
+        console.error("Get available products error:", error);
+        return { success: false, message: "Failed to fetch available products" };
+      }
+    }
+  );
+  electron.ipcMain.handle("sales-tabs:checkout", async (_, tabId, checkoutData) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, tabId),
+        with: {
+          items: true,
+          customer: true
+        }
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Tab is already closed" };
+      }
+      if (tab.items.length === 0) {
+        return { success: false, message: "Tab has no items" };
+      }
+      if (checkoutData.paymentMethod === "cod") {
+        if (!checkoutData.codName || !checkoutData.codPhone || !checkoutData.codAddress || !checkoutData.codCity) {
+          return { success: false, message: "COD details are required" };
+        }
+      }
+      if (checkoutData.paymentMethod === "receivable" && !tab.customerId) {
+        return { success: false, message: "Customer is required for Pay Later / Receivable payment method" };
+      }
+      const hasFirearms = tab.items.some((item) => {
+        return tab.items.filter((i) => i.productId === item.productId && !item.serialNumber).length > 0;
+      });
+      for (const item of tab.items) {
+        const product = await db2.query.products.findFirst({
+          where: drizzleOrm.eq(products.id, item.productId)
+        });
+        if (product?.isSerialTracked) {
+          if (!tab.customer) {
+            return { success: false, message: "Customer is required for firearm purchases" };
+          }
+          if (!tab.customer.firearmLicenseNumber) {
+            return { success: false, message: "Customer does not have a firearm license" };
+          }
+          if (isLicenseExpired(tab.customer.licenseExpiryDate)) {
+            return { success: false, message: "Customer firearm license has expired" };
+          }
+        }
+      }
+      for (const item of tab.items) {
+        if (item.serialNumber) {
+          const product = await db2.query.products.findFirst({
+            where: drizzleOrm.eq(products.id, item.productId)
+          });
+          if (!product || !product.isActive) {
+            return { success: false, message: `Product ${item.productName} is not available` };
+          }
+        } else {
+          const stock = await db2.query.inventory.findFirst({
+            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId))
+          });
+          if (!stock || stock.quantity < item.quantity) {
+            return {
+              success: false,
+              message: `Insufficient stock for ${item.productName}`
+            };
+          }
+        }
+      }
+      const subtotal = tab.subtotal;
+      const taxAmount = tab.tax;
+      const discountAmount = checkoutData.discount ?? 0;
+      const totalAmount = subtotal + taxAmount - discountAmount;
+      const amountPaid = checkoutData.amountPaid ?? 0;
+      const changeGiven = amountPaid > totalAmount ? amountPaid - totalAmount : 0;
+      let paymentStatus = "paid";
+      if (checkoutData.paymentMethod === "receivable" || amountPaid === 0) {
+        paymentStatus = "pending";
+      } else if (amountPaid < totalAmount) {
+        paymentStatus = "partial";
+      }
+      const invoiceNumber = generateInvoiceNumber();
+      let saleNotes;
+      if (checkoutData.notes) {
+        saleNotes = `Tab: ${tab.tabNumber}. ${checkoutData.notes}`;
+      } else {
+        saleNotes = `Tab: ${tab.tabNumber}`;
+      }
+      if (checkoutData.paymentMethod === "cod") {
+        saleNotes = `${saleNotes}
+
+COD Details:
+Name: ${checkoutData.codName}
+Phone: ${checkoutData.codPhone}
+Address: ${checkoutData.codAddress}, ${checkoutData.codCity}`;
+      }
+      const [sale] = await db2.insert(sales).values({
+        invoiceNumber,
+        customerId: tab.customerId,
+        branchId: tab.branchId,
+        userId: session.userId,
+        subtotal,
+        taxAmount,
+        discountAmount,
+        totalAmount,
+        paymentMethod: checkoutData.paymentMethod,
+        paymentStatus,
+        amountPaid,
+        changeGiven,
+        notes: saleNotes
+      }).returning();
+      for (const item of tab.items) {
+        await db2.insert(saleItems).values({
+          saleId: sale.id,
+          productId: item.productId,
+          serialNumber: item.serialNumber,
+          quantity: item.quantity,
+          unitPrice: item.sellingPrice,
+          costPrice: item.costPrice,
+          discountPercent: 0,
+          discountAmount: 0,
+          taxAmount: item.subtotal - item.sellingPrice * item.quantity,
+          totalPrice: item.subtotal
+        });
+        if (!item.serialNumber) {
+          await db2.update(inventory).set({
+            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId)));
+        }
+      }
+      const commissionRate = 2;
+      const commissionAmount = subtotal * (commissionRate / 100);
+      await db2.insert(commissions).values({
+        saleId: sale.id,
+        userId: session.userId,
+        branchId: tab.branchId,
+        commissionType: "sale",
+        baseAmount: subtotal,
+        rate: commissionRate,
+        commissionAmount,
+        status: "pending"
+      });
+      if (checkoutData.paymentMethod === "receivable" && tab.customerId) {
+        await db2.insert(accountReceivables).values({
+          customerId: tab.customerId,
+          saleId: sale.id,
+          branchId: tab.branchId,
+          invoiceNumber,
+          totalAmount,
+          paidAmount: 0,
+          remainingAmount: totalAmount,
+          status: "pending",
+          createdBy: session.userId
+        });
+      }
+      await db2.update(salesTabs).set({
+        status: "closed",
+        closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        closedBy: session.userId,
+        discount: discountAmount,
+        finalAmount: totalAmount,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(salesTabs.id, tabId));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: tab.branchId,
+        action: "checkout",
+        entityType: "sales_tab",
+        entityId: tabId,
+        oldValues: {
+          status: tab.status
+        },
+        newValues: {
+          status: "closed",
+          saleId: sale.id,
+          invoiceNumber
+        },
+        description: `Checked out sales tab ${tab.tabNumber} as sale ${invoiceNumber}`
+      });
+      return {
+        success: true,
+        data: {
+          sale,
+          invoiceNumber,
+          totalAmount,
+          changeReturned: changeGiven
+        }
+      };
+    } catch (error) {
+      console.error("Checkout tab error:", error);
+      return { success: false, message: "Failed to checkout tab" };
+    }
+  });
+  electron.ipcMain.handle("sales-tabs:clear-items", async (_, tabId) => {
+    try {
+      const session = getCurrentSession();
+      const tab = await db2.query.salesTabs.findFirst({
+        where: drizzleOrm.eq(salesTabs.id, tabId)
+      });
+      if (!tab) {
+        return { success: false, message: "Tab not found" };
+      }
+      if (tab.status === "closed") {
+        return { success: false, message: "Cannot modify closed tab" };
+      }
+      await db2.delete(salesTabItems).where(drizzleOrm.eq(salesTabItems.tabId, tabId));
+      await db2.update(salesTabs).set({
+        itemCount: 0,
+        subtotal: 0,
+        tax: 0,
+        finalAmount: 0,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(salesTabs.id, tabId));
+      return { success: true, message: "Tab cleared successfully" };
+    } catch (error) {
+      console.error("Clear tab error:", error);
+      return { success: false, message: "Failed to clear tab" };
     }
   });
 }
@@ -2954,12 +4484,25 @@ function registerCommissionHandlers() {
     "commissions:get-all",
     async (_, params) => {
       try {
-        const { page = 1, limit = 20, sortOrder = "desc", userId, branchId, status, startDate, endDate } = params;
+        const {
+          page = 1,
+          limit = 20,
+          sortOrder = "desc",
+          userId,
+          referralPersonId,
+          branchId,
+          status,
+          commissionType,
+          startDate,
+          endDate
+        } = params;
         const conditions = [];
         if (userId) conditions.push(drizzleOrm.eq(commissions.userId, userId));
+        if (referralPersonId) conditions.push(drizzleOrm.eq(commissions.referralPersonId, referralPersonId));
         if (branchId) conditions.push(drizzleOrm.eq(commissions.branchId, branchId));
         if (status)
           conditions.push(drizzleOrm.eq(commissions.status, status));
+        if (commissionType) conditions.push(drizzleOrm.eq(commissions.commissionType, commissionType));
         if (startDate && endDate) {
           conditions.push(drizzleOrm.between(commissions.createdAt, startDate, endDate));
         }
@@ -2973,11 +4516,18 @@ function registerCommissionHandlers() {
             fullName: users.fullName,
             username: users.username
           },
+          referralPerson: {
+            id: referralPersons.id,
+            name: referralPersons.name,
+            contact: referralPersons.contact
+          },
           sale: {
             id: sales.id,
-            invoiceNumber: sales.invoiceNumber
+            invoiceNumber: sales.invoiceNumber,
+            totalAmount: sales.totalAmount,
+            saleDate: sales.saleDate
           }
-        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(whereClause).limit(limit).offset((page - 1) * limit).orderBy(sortOrder === "desc" ? drizzleOrm.desc(commissions.createdAt) : commissions.createdAt);
+        }).from(commissions).leftJoin(users, drizzleOrm.eq(commissions.userId, users.id)).leftJoin(referralPersons, drizzleOrm.eq(commissions.referralPersonId, referralPersons.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(whereClause).limit(limit).offset((page - 1) * limit).orderBy(sortOrder === "desc" ? drizzleOrm.desc(commissions.createdAt) : commissions.createdAt);
         const result = {
           data,
           total,
@@ -2992,21 +4542,170 @@ function registerCommissionHandlers() {
       }
     }
   );
-  electron.ipcMain.handle("commissions:get-summary", async (_, userId, startDate, endDate) => {
+  electron.ipcMain.handle("commissions:get-by-id", async (_, id) => {
     try {
-      const conditions = [drizzleOrm.eq(commissions.userId, userId)];
-      if (startDate && endDate) {
-        conditions.push(drizzleOrm.between(commissions.createdAt, startDate, endDate));
+      const [commission] = await db2.select({
+        commission: commissions,
+        user: {
+          id: users.id,
+          fullName: users.fullName,
+          username: users.username
+        },
+        referralPerson: {
+          id: referralPersons.id,
+          name: referralPersons.name,
+          contact: referralPersons.contact
+        },
+        sale: {
+          id: sales.id,
+          invoiceNumber: sales.invoiceNumber,
+          totalAmount: sales.totalAmount,
+          saleDate: sales.saleDate
+        }
+      }).from(commissions).leftJoin(users, drizzleOrm.eq(commissions.userId, users.id)).leftJoin(referralPersons, drizzleOrm.eq(commissions.referralPersonId, referralPersons.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.eq(commissions.id, id)).limit(1);
+      if (!commission) {
+        return { success: false, message: "Commission not found" };
       }
-      const data = await db2.select({
-        status: commissions.status,
-        total: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
-        count: drizzleOrm.sql`count(*)`
-      }).from(commissions).where(drizzleOrm.and(...conditions)).groupBy(commissions.status);
+      return { success: true, data: commission };
+    } catch (error) {
+      console.error("Get commission error:", error);
+      return { success: false, message: "Failed to fetch commission" };
+    }
+  });
+  electron.ipcMain.handle("commissions:get-available-invoices", async (_, referralPersonId) => {
+    try {
+      const session = getCurrentSession();
+      const branchId = session?.branchId;
+      let existingSaleIds = [];
+      if (referralPersonId) {
+        const existingCommissions = await db2.select({ saleId: commissions.saleId }).from(commissions).where(drizzleOrm.eq(commissions.referralPersonId, referralPersonId));
+        existingSaleIds = existingCommissions.map((c) => c.saleId);
+      }
+      const conditions = [drizzleOrm.eq(sales.status, "completed")];
+      if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
+      if (existingSaleIds.length > 0) {
+        conditions.push(drizzleOrm.sql`${sales.id} NOT IN (${drizzleOrm.sql.join(existingSaleIds.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`);
+      }
+      const data = await db2.select().from(sales).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(100);
       return { success: true, data };
     } catch (error) {
-      console.error("Get commission summary error:", error);
-      return { success: false, message: "Failed to fetch commission summary" };
+      console.error("Get available invoices error:", error);
+      return { success: false, message: "Failed to fetch available invoices" };
+    }
+  });
+  electron.ipcMain.handle(
+    "commissions:create",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!data.userId && !data.referralPersonId) {
+          return {
+            success: false,
+            message: "Either user or referral person must be specified"
+          };
+        }
+        const commissionAmount = data.baseAmount * data.rate / 100;
+        const [newCommission] = await db2.insert(commissions).values({
+          saleId: data.saleId,
+          userId: data.userId || null,
+          referralPersonId: data.referralPersonId || null,
+          branchId: session?.branchId || 1,
+          commissionType: data.commissionType,
+          baseAmount: data.baseAmount,
+          rate: data.rate,
+          commissionAmount,
+          status: "pending",
+          notes: data.notes
+        }).returning();
+        if (data.referralPersonId) {
+          await db2.update(referralPersons).set({
+            totalCommissionEarned: drizzleOrm.sql`${referralPersons.totalCommissionEarned} + ${commissionAmount}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(referralPersons.id, data.referralPersonId));
+        }
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "create",
+          entityType: "commission",
+          entityId: newCommission.id,
+          newValues: {
+            saleId: data.saleId,
+            referralPersonId: data.referralPersonId,
+            commissionAmount
+          },
+          description: `Created ${data.commissionType} commission for sale #${data.saleId}`
+        });
+        return { success: true, data: newCommission };
+      } catch (error) {
+        console.error("Create commission error:", error);
+        return { success: false, message: "Failed to create commission" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "commissions:update",
+    async (_, id, data) => {
+      try {
+        const session = getCurrentSession();
+        const [existing] = await db2.select().from(commissions).where(drizzleOrm.eq(commissions.id, id)).limit(1);
+        if (!existing) {
+          return { success: false, message: "Commission not found" };
+        }
+        const updates = {
+          ...data,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        if (data.baseAmount !== void 0 || data.rate !== void 0) {
+          const baseAmount = data.baseAmount ?? existing.baseAmount;
+          const rate = data.rate ?? existing.rate;
+          updates.commissionAmount = baseAmount * rate / 100;
+        }
+        const [updated] = await db2.update(commissions).set(updates).where(drizzleOrm.eq(commissions.id, id)).returning();
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "update",
+          entityType: "commission",
+          entityId: id,
+          newValues: data,
+          oldValues: existing,
+          description: `Updated commission #${id}`
+        });
+        return { success: true, data: updated };
+      } catch (error) {
+        console.error("Update commission error:", error);
+        return { success: false, message: "Failed to update commission" };
+      }
+    }
+  );
+  electron.ipcMain.handle("commissions:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const [existing] = await db2.select().from(commissions).where(drizzleOrm.eq(commissions.id, id)).limit(1);
+      if (!existing) {
+        return { success: false, message: "Commission not found" };
+      }
+      if (existing.referralPersonId) {
+        await db2.update(referralPersons).set({
+          totalCommissionEarned: drizzleOrm.sql`MAX(0, ${referralPersons.totalCommissionEarned} - ${existing.commissionAmount})`,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(referralPersons.id, existing.referralPersonId));
+      }
+      await db2.delete(commissions).where(drizzleOrm.eq(commissions.id, id));
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "delete",
+        entityType: "commission",
+        entityId: id,
+        oldValues: existing,
+        description: `Deleted commission #${id}`
+      });
+      return { success: true, message: "Commission deleted successfully" };
+    } catch (error) {
+      console.error("Delete commission error:", error);
+      return { success: false, message: "Failed to delete commission" };
     }
   });
   electron.ipcMain.handle("commissions:approve", async (_, ids) => {
@@ -3015,7 +4714,12 @@ function registerCommissionHandlers() {
       await db2.update(commissions).set({
         status: "approved",
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.and(drizzleOrm.eq(commissions.status, "pending"), drizzleOrm.sql`${commissions.id} IN (${drizzleOrm.sql.join(ids.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`));
+      }).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(commissions.status, "pending"),
+          drizzleOrm.sql`${commissions.id} IN (${drizzleOrm.sql.join(ids.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
+        )
+      );
       for (const id of ids) {
         await createAuditLog({
           userId: session?.userId,
@@ -3036,20 +4740,37 @@ function registerCommissionHandlers() {
   electron.ipcMain.handle("commissions:mark-paid", async (_, ids) => {
     try {
       const session = getCurrentSession();
+      const commissionRecords = await db2.select().from(commissions).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(commissions.status, "approved"),
+          drizzleOrm.sql`${commissions.id} IN (${drizzleOrm.sql.join(ids.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
+        )
+      );
       await db2.update(commissions).set({
         status: "paid",
         paidDate: (/* @__PURE__ */ new Date()).toISOString(),
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.and(drizzleOrm.eq(commissions.status, "approved"), drizzleOrm.sql`${commissions.id} IN (${drizzleOrm.sql.join(ids.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`));
-      for (const id of ids) {
+      }).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(commissions.status, "approved"),
+          drizzleOrm.sql`${commissions.id} IN (${drizzleOrm.sql.join(ids.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
+        )
+      );
+      for (const commission of commissionRecords) {
+        if (commission.referralPersonId) {
+          await db2.update(referralPersons).set({
+            totalCommissionPaid: drizzleOrm.sql`${referralPersons.totalCommissionPaid} + ${commission.commissionAmount}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(referralPersons.id, commission.referralPersonId));
+        }
         await createAuditLog({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "update",
           entityType: "commission",
-          entityId: id,
+          entityId: commission.id,
           newValues: { status: "paid" },
-          description: `Marked commission #${id} as paid`
+          description: `Marked commission #${commission.id} as paid`
         });
       }
       return { success: true, message: `${ids.length} commission(s) marked as paid` };
@@ -3058,38 +4779,22 @@ function registerCommissionHandlers() {
       return { success: false, message: "Failed to mark commissions as paid" };
     }
   });
-  electron.ipcMain.handle(
-    "commissions:calculate",
-    async (_, saleId, userId, branchId, baseAmount, rate) => {
-      try {
-        const session = getCurrentSession();
-        const commissionAmount = baseAmount * (rate / 100);
-        const [newCommission] = await db2.insert(commissions).values({
-          saleId,
-          userId,
-          branchId,
-          commissionType: "sale",
-          baseAmount,
-          rate,
-          commissionAmount,
-          status: "pending"
-        }).returning();
-        await createAuditLog({
-          userId: session?.userId,
-          branchId,
-          action: "create",
-          entityType: "commission",
-          entityId: newCommission.id,
-          newValues: { saleId, userId, commissionAmount },
-          description: `Created commission for sale #${saleId}`
-        });
-        return { success: true, data: newCommission };
-      } catch (error) {
-        console.error("Calculate commission error:", error);
-        return { success: false, message: "Failed to calculate commission" };
-      }
+  electron.ipcMain.handle("commissions:get-summary", async (_, referralPersonId, startDate, endDate) => {
+    try {
+      const conditions = [];
+      if (referralPersonId) conditions.push(drizzleOrm.eq(commissions.referralPersonId, referralPersonId));
+      if (startDate && endDate) conditions.push(drizzleOrm.between(commissions.createdAt, startDate, endDate));
+      const data = await db2.select({
+        status: commissions.status,
+        total: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
+        count: drizzleOrm.sql`count(*)`
+      }).from(commissions).where(drizzleOrm.and(...conditions)).groupBy(commissions.status);
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get commission summary error:", error);
+      return { success: false, message: "Failed to fetch commission summary" };
     }
-  );
+  });
 }
 function registerAuditHandlers() {
   const db2 = getDatabase();
@@ -3105,6 +4810,7 @@ function registerAuditHandlers() {
           branchId,
           action,
           entityType,
+          searchQuery,
           startDate,
           endDate
         } = params;
@@ -3120,15 +4826,28 @@ function registerAuditHandlers() {
         } else if (endDate) {
           conditions.push(drizzleOrm.lte(auditLogs.createdAt, endDate));
         }
+        if (searchQuery) {
+          const searchTerm = `%${searchQuery}%`;
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(users.fullName, searchTerm),
+              drizzleOrm.like(users.username, searchTerm),
+              drizzleOrm.like(auditLogs.action, searchTerm),
+              drizzleOrm.like(auditLogs.entityType, searchTerm),
+              drizzleOrm.like(auditLogs.description, searchTerm)
+            )
+          );
+        }
         const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
-        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(whereClause);
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(whereClause);
         const total = countResult[0].count;
         const data = await db2.select({
           auditLog: auditLogs,
           user: {
             id: users.id,
             fullName: users.fullName,
-            username: users.username
+            username: users.username,
+            role: users.role
           }
         }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(whereClause).limit(limit).offset((page - 1) * limit).orderBy(sortOrder === "desc" ? drizzleOrm.desc(auditLogs.createdAt) : auditLogs.createdAt);
         const result = {
@@ -3145,6 +4864,77 @@ function registerAuditHandlers() {
       }
     }
   );
+  electron.ipcMain.handle(
+    "audit:get-stats",
+    async (_, params) => {
+      try {
+        const { branchId, startDate, endDate } = params || {};
+        const conditions = [];
+        if (branchId) conditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
+        if (startDate && endDate) {
+          conditions.push(drizzleOrm.between(auditLogs.createdAt, startDate, endDate));
+        } else if (startDate) {
+          conditions.push(drizzleOrm.gte(auditLogs.createdAt, startDate));
+        } else if (endDate) {
+          conditions.push(drizzleOrm.lte(auditLogs.createdAt, endDate));
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const totalResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(whereClause);
+        const totalLogs = totalResult[0].count || 0;
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const todayResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(drizzleOrm.eq(auditLogs.createdAt, today));
+        const todayLogs = todayResult[0].count || 0;
+        const actionStats = await db2.select({
+          action: auditLogs.action,
+          count: drizzleOrm.sql`count(*)`
+        }).from(auditLogs).where(whereClause).groupBy(auditLogs.action).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
+        const categoryStats = await db2.select({
+          entityType: auditLogs.entityType,
+          count: drizzleOrm.sql`count(*)`
+        }).from(auditLogs).where(whereClause).groupBy(auditLogs.entityType).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
+        const activeUsers = await db2.select({
+          userId: auditLogs.userId,
+          fullName: users.fullName,
+          username: users.username,
+          count: drizzleOrm.sql`count(*)`
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(whereClause).groupBy(auditLogs.userId, users.fullName, users.username).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`)).limit(10);
+        const criticalEvents = await db2.select({
+          auditLog: auditLogs,
+          user: {
+            id: users.id,
+            fullName: users.fullName,
+            username: users.username
+          }
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(
+          drizzleOrm.and(
+            whereClause,
+            drizzleOrm.inArray(auditLogs.action, ["delete", "void", "refund"])
+          )
+        ).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(20);
+        const sevenDaysAgo = /* @__PURE__ */ new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        const dailyActivity = await db2.select({
+          date: drizzleOrm.sql`date(${auditLogs.createdAt})`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(auditLogs).where(drizzleOrm.gte(auditLogs.createdAt, sevenDaysAgo.toISOString())).groupBy(drizzleOrm.sql`date(${auditLogs.createdAt})`).orderBy(drizzleOrm.desc(drizzleOrm.sql`date(${auditLogs.createdAt})`));
+        return {
+          success: true,
+          data: {
+            totalLogs,
+            todayLogs,
+            actionStats,
+            categoryStats,
+            activeUsers,
+            criticalEvents,
+            dailyActivity
+          }
+        };
+      } catch (error) {
+        console.error("Get audit stats error:", error);
+        return { success: false, message: "Failed to fetch audit statistics" };
+      }
+    }
+  );
   electron.ipcMain.handle("audit:get-by-entity", async (_, entityType, entityId) => {
     try {
       const data = await db2.select({
@@ -3152,7 +4942,8 @@ function registerAuditHandlers() {
         user: {
           id: users.id,
           fullName: users.fullName,
-          username: users.username
+          username: users.username,
+          role: users.role
         }
       }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(
         drizzleOrm.and(
@@ -3170,9 +4961,21 @@ function registerAuditHandlers() {
     "audit:export",
     async (_, params) => {
       try {
-        const { startDate, endDate, branchId, format = "json" } = params;
+        const { startDate, endDate, branchId, action, entityType, searchQuery, format = "json" } = params;
         const conditions = [drizzleOrm.between(auditLogs.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
+        if (action) conditions.push(drizzleOrm.eq(auditLogs.action, action));
+        if (entityType) conditions.push(drizzleOrm.eq(auditLogs.entityType, entityType));
+        if (searchQuery) {
+          const searchTerm = `%${searchQuery}%`;
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(users.fullName, searchTerm),
+              drizzleOrm.like(users.username, searchTerm),
+              drizzleOrm.like(auditLogs.description, searchTerm)
+            )
+          );
+        }
         const data = await db2.select({
           id: auditLogs.id,
           userId: auditLogs.userId,
@@ -3181,30 +4984,36 @@ function registerAuditHandlers() {
           entityType: auditLogs.entityType,
           entityId: auditLogs.entityId,
           description: auditLogs.description,
+          oldValues: auditLogs.oldValues,
+          newValues: auditLogs.newValues,
           createdAt: auditLogs.createdAt,
           username: users.username,
-          userFullName: users.fullName
-        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt));
+          userFullName: users.fullName,
+          userRole: users.role,
+          branchName: branches.name
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).leftJoin(branches, drizzleOrm.eq(auditLogs.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt));
         if (format === "csv") {
           const headers = [
             "ID",
             "Date",
             "User",
+            "Role",
             "Action",
             "Entity Type",
             "Entity ID",
-            "Description",
-            "Branch ID"
+            "Branch",
+            "Description"
           ];
           const rows = data.map((row) => [
             row.id,
             row.createdAt,
             row.userFullName || row.username || "System",
+            row.userRole || "",
             row.action,
             row.entityType,
-            row.entityId ?? "",
-            row.description ?? "",
-            row.branchId ?? ""
+            row.entityId?.toString() || "",
+            row.branchName || "",
+            row.description?.replace(/,/g, ";") || ""
           ]);
           const csvContent = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
           return { success: true, data: csvContent, format: "csv" };
@@ -3342,6 +5151,1329 @@ function registerSettingsHandlers() {
       return { success: false, message: "Failed to update settings" };
     }
   });
+}
+async function verifyAdmin(userId) {
+  try {
+    const db2 = getDatabase();
+    const user = await db2.query.users.findFirst({
+      where: drizzleOrm.eq(users.id, userId)
+    });
+    const isAdmin = user?.role?.toLowerCase() === "admin";
+    console.log("[verifyAdmin] User:", userId, "Role:", user?.role, "IsAdmin:", isAdmin);
+    return isAdmin;
+  } catch (err) {
+    console.error("[verifyAdmin] Error:", err);
+    return false;
+  }
+}
+function getSession() {
+  const session = getCurrentSession();
+  if (!session) return null;
+  return {
+    userId: session.userId,
+    username: session.username,
+    role: session.role,
+    branchId: session.branchId
+  };
+}
+function registerBusinessSettingsHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("business-settings:get-global", async () => {
+    try {
+      const result = await db2.query.businessSettings.findFirst({
+        where: drizzleOrm.isNull(businessSettings.branchId),
+        orderBy: [drizzleOrm.desc(businessSettings.settingId)]
+      });
+      console.log("[get-global] Result:", result ? `found - ${result.businessName}` : "not found");
+      if (!result) {
+        const defaultSettings = {
+          branchId: null,
+          businessName: "Firearms Retail POS",
+          businessAddress: "",
+          businessCity: "",
+          businessState: "",
+          businessCountry: "Pakistan",
+          businessPostalCode: "",
+          businessPhone: "",
+          businessEmail: "",
+          businessWebsite: "",
+          taxRate: 0,
+          taxName: "GST",
+          isTaxInclusive: false,
+          secondaryTaxRate: 0,
+          currencySymbol: "Rs.",
+          currencyCode: "PKR",
+          currencyPosition: "prefix",
+          decimalPlaces: 2,
+          thousandSeparator: ",",
+          decimalSeparator: ".",
+          invoicePrefix: "INV",
+          invoiceNumberFormat: "sequential",
+          invoiceStartingNumber: 1,
+          showTaxOnReceipt: true,
+          showQRCodeOnReceipt: false,
+          lowStockThreshold: 10,
+          enableStockTracking: true,
+          allowNegativeStock: false,
+          stockValuationMethod: "FIFO",
+          autoReorderEnabled: false,
+          autoReorderQuantity: 50,
+          defaultPaymentMethod: "Cash",
+          allowedPaymentMethods: "Cash,Card,Bank Transfer,COD",
+          enableCashDrawer: true,
+          openingCashBalance: 0,
+          enableDiscounts: true,
+          maxDiscountPercentage: 50,
+          requireCustomerForSale: false,
+          enableCustomerLoyalty: false,
+          loyaltyPointsRatio: 1,
+          expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
+          expenseApprovalRequired: false,
+          expenseApprovalLimit: 1e4,
+          enableReturns: true,
+          returnWindowDays: 30,
+          requireReceiptForReturn: true,
+          refundMethod: "Original Payment Method",
+          enableEmailNotifications: false,
+          lowStockNotifications: true,
+          dailySalesReport: false,
+          workingDaysStart: "Monday",
+          workingDaysEnd: "Saturday",
+          openingTime: "09:00",
+          closingTime: "18:00",
+          autoBackupEnabled: true,
+          autoBackupFrequency: "daily",
+          backupRetentionDays: 30,
+          dateFormat: "DD/MM/YYYY",
+          timeFormat: "24-hour",
+          language: "en",
+          timezone: "UTC",
+          sessionTimeoutMinutes: 60,
+          requirePasswordChange: false,
+          passwordChangeIntervalDays: 90,
+          enableAuditLogs: true,
+          isActive: true,
+          isDefault: true
+        };
+        const [inserted] = await db2.insert(businessSettings).values(defaultSettings).returning();
+        console.log("[get-global] Created default settings:", inserted.businessName);
+        return inserted;
+      }
+      return result;
+    } catch (err) {
+      console.error("Error fetching global settings:", err);
+      throw err;
+    }
+  });
+  electron.ipcMain.handle("business-settings:get-by-branch", async (_, branchId) => {
+    try {
+      const branchSettings = await db2.query.businessSettings.findFirst({
+        where: drizzleOrm.eq(businessSettings.branchId, branchId)
+      });
+      if (branchSettings) {
+        return branchSettings;
+      }
+      const globalSettings = await db2.query.businessSettings.findFirst({
+        where: drizzleOrm.isNull(businessSettings.branchId),
+        orderBy: [drizzleOrm.desc(businessSettings.settingId)]
+      });
+      return globalSettings;
+    } catch (err) {
+      console.error("Error fetching branch settings:", err);
+      throw err;
+    }
+  });
+  electron.ipcMain.handle("business-settings:get-all", async (_, userId) => {
+    try {
+      console.log("[get-all] Requested by user:", userId);
+      const isAdmin = await verifyAdmin(userId);
+      console.log("[get-all] Is admin:", isAdmin);
+      if (!isAdmin) {
+        throw new Error("Unauthorized: Admin access required");
+      }
+      const allSettings = await db2.query.businessSettings.findMany({
+        orderBy: [drizzleOrm.desc(businessSettings.settingId)]
+      });
+      console.log("[get-all] Settings count:", allSettings.length);
+      const branchesData = await db2.query.branches.findMany({
+        where: drizzleOrm.eq(branches.isActive, true)
+      });
+      const result = allSettings.map((setting) => ({
+        ...setting,
+        branch: setting.branchId ? branchesData.find((b) => b.id === setting.branchId) : null
+      }));
+      console.log("[get-all] Result:", result.length, "settings");
+      return result;
+    } catch (err) {
+      console.error("Error fetching all settings:", err);
+      throw err;
+    }
+  });
+  electron.ipcMain.handle(
+    "business-settings:create",
+    async (_, { userId, settingsData }) => {
+      try {
+        const isAdmin = await verifyAdmin(userId);
+        if (!isAdmin) {
+          throw new Error("Unauthorized: Admin access required");
+        }
+        const session = getSession();
+        const [result] = await db2.insert(businessSettings).values({
+          ...settingsData,
+          createdBy: userId,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).returning();
+        await createAuditLog({
+          userId: session?.userId ?? userId,
+          branchId: session?.branchId ?? null,
+          action: "create",
+          entityType: "business_settings",
+          entityId: result.settingId,
+          newValues: {
+            businessName: settingsData.businessName,
+            branchId: settingsData.branchId
+          },
+          description: `Created business settings for ${settingsData.branchId ? `Branch ID: ${settingsData.branchId}` : "Global"}`
+        });
+        return result;
+      } catch (err) {
+        console.error("Error creating business settings:", err);
+        throw err;
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "business-settings:update",
+    async (_, { userId, settingId, settingsData }) => {
+      try {
+        const isAdmin = await verifyAdmin(userId);
+        if (!isAdmin) {
+          throw new Error("Unauthorized: Admin access required");
+        }
+        const session = getSession();
+        const oldSetting = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.settingId, settingId)
+        });
+        const [result] = await db2.update(businessSettings).set({
+          ...settingsData,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(businessSettings.settingId, settingId)).returning();
+        await createAuditLog({
+          userId: session?.userId ?? userId,
+          branchId: session?.branchId ?? null,
+          action: "update",
+          entityType: "business_settings",
+          entityId: settingId,
+          oldValues: oldSetting ? { businessName: oldSetting.businessName } : null,
+          newValues: { businessName: result.businessName },
+          description: `Updated business settings for ${result.branchId ? `Branch ID: ${result.branchId}` : "Global"}`
+        });
+        return result;
+      } catch (err) {
+        console.error("Error updating business settings:", err);
+        throw err;
+      }
+    }
+  );
+  electron.ipcMain.handle("business-settings:delete", async (_, { userId, settingId }) => {
+    try {
+      const isAdmin = await verifyAdmin(userId);
+      if (!isAdmin) {
+        throw new Error("Unauthorized: Admin access required");
+      }
+      const session = getSession();
+      const setting = await db2.query.businessSettings.findFirst({
+        where: drizzleOrm.eq(businessSettings.settingId, settingId)
+      });
+      if (!setting?.branchId) {
+        throw new Error("Cannot delete global settings");
+      }
+      const [result] = await db2.delete(businessSettings).where(drizzleOrm.eq(businessSettings.settingId, settingId)).returning();
+      await createAuditLog({
+        userId: session?.userId ?? userId,
+        branchId: session?.branchId ?? null,
+        action: "delete",
+        entityType: "business_settings",
+        entityId: settingId,
+        oldValues: { businessName: setting?.businessName, branchId: setting?.branchId },
+        description: `Deleted business settings for Branch ID: ${setting?.branchId}`
+      });
+      return result;
+    } catch (err) {
+      console.error("Error deleting business settings:", err);
+      throw err;
+    }
+  });
+  electron.ipcMain.handle(
+    "business-settings:clone",
+    async (_, { userId, sourceBranchId, targetBranchId }) => {
+      try {
+        const isAdmin = await verifyAdmin(userId);
+        if (!isAdmin) {
+          throw new Error("Unauthorized: Admin access required");
+        }
+        const session = getSession();
+        const sourceSettings = await db2.query.businessSettings.findFirst({
+          where: sourceBranchId ? drizzleOrm.eq(businessSettings.branchId, sourceBranchId) : drizzleOrm.isNull(businessSettings.branchId),
+          orderBy: [drizzleOrm.desc(businessSettings.settingId)]
+        });
+        if (!sourceSettings) {
+          throw new Error("Source settings not found");
+        }
+        const existingTarget = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.branchId, targetBranchId)
+        });
+        if (existingTarget) {
+          throw new Error("Target branch already has settings. Delete them first or update instead.");
+        }
+        const { settingId, branchId: sbId, createdBy, createdAt, updatedAt, ...clonedData } = sourceSettings;
+        const [result] = await db2.insert(businessSettings).values({
+          ...clonedData,
+          branchId: targetBranchId,
+          createdBy: userId,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).returning();
+        await createAuditLog({
+          userId: session?.userId ?? userId,
+          branchId: session?.branchId ?? null,
+          action: "create",
+          entityType: "business_settings",
+          entityId: result.settingId,
+          newValues: {
+            businessName: result.businessName,
+            sourceBranchId,
+            targetBranchId
+          },
+          description: `Cloned settings from ${sourceBranchId ? `Branch ${sourceBranchId}` : "Global"} to Branch ${targetBranchId}`
+        });
+        return result;
+      } catch (err) {
+        console.error("Error cloning business settings:", err);
+        throw err;
+      }
+    }
+  );
+  electron.ipcMain.handle("business-settings:export", async (_, userId) => {
+    try {
+      const isAdmin = await verifyAdmin(userId);
+      if (!isAdmin) {
+        throw new Error("Unauthorized: Admin access required");
+      }
+      const allSettings = await db2.query.businessSettings.findMany({
+        orderBy: [drizzleOrm.desc(businessSettings.settingId)]
+      });
+      return {
+        exportDate: (/* @__PURE__ */ new Date()).toISOString(),
+        version: "1.0",
+        settings: allSettings
+      };
+    } catch (err) {
+      console.error("Error exporting settings:", err);
+      throw err;
+    }
+  });
+  electron.ipcMain.handle("business-settings:import", async (_, { userId, data }) => {
+    try {
+      const isAdmin = await verifyAdmin(userId);
+      if (!isAdmin) {
+        throw new Error("Unauthorized: Admin access required");
+      }
+      const session = getSession();
+      const importData = data;
+      if (!importData.settings || !Array.isArray(importData.settings)) {
+        throw new Error("Invalid import data format");
+      }
+      const results = [];
+      for (const setting of importData.settings) {
+        const { settingId, ...cleanData } = setting;
+        const [result] = await db2.insert(businessSettings).values({
+          ...cleanData,
+          createdBy: userId,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).returning();
+        results.push(result);
+      }
+      await createAuditLog({
+        userId: session?.userId ?? userId,
+        branchId: session?.branchId ?? null,
+        action: "create",
+        entityType: "business_settings",
+        newValues: { importedCount: results.length },
+        description: `Imported ${results.length} business settings`
+      });
+      return results;
+    } catch (err) {
+      console.error("Error importing settings:", err);
+      throw err;
+    }
+  });
+}
+function getDateRange(period, customStart, customEnd) {
+  const now = /* @__PURE__ */ new Date();
+  switch (period) {
+    case "daily":
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+      return {
+        start: startOfDay.toISOString(),
+        end: endOfDay.toISOString()
+      };
+    case "weekly":
+      const startOfWeek = new Date(now);
+      const dayOfWeek = startOfWeek.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      startOfWeek.setDate(startOfWeek.getDate() + diff);
+      startOfWeek.setHours(0, 0, 0, 0);
+      const endOfWeek = new Date(startOfWeek);
+      endOfWeek.setDate(startOfWeek.getDate() + 6);
+      endOfWeek.setHours(23, 59, 59, 999);
+      return {
+        start: startOfWeek.toISOString(),
+        end: endOfWeek.toISOString()
+      };
+    case "monthly":
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      startOfMonth.setHours(0, 0, 0, 0);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      endOfMonth.setHours(23, 59, 59, 999);
+      return {
+        start: startOfMonth.toISOString(),
+        end: endOfMonth.toISOString()
+      };
+    case "yearly":
+      const startOfYear = new Date(now.getFullYear(), 0, 1);
+      startOfYear.setHours(0, 0, 0, 0);
+      const endOfYear = new Date(now.getFullYear(), 11, 31);
+      endOfYear.setHours(23, 59, 59, 999);
+      return {
+        start: startOfYear.toISOString(),
+        end: endOfYear.toISOString()
+      };
+    case "all-time":
+      return {
+        start: (/* @__PURE__ */ new Date("2000-01-01")).toISOString(),
+        end: now.toISOString()
+      };
+    case "custom":
+      if (!customStart || !customEnd) {
+        throw new Error("Custom date range requires start and end dates");
+      }
+      const start = new Date(customStart);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(customEnd);
+      end.setHours(23, 59, 59, 999);
+      return {
+        start: start.toISOString(),
+        end: end.toISOString()
+      };
+    default:
+      throw new Error(`Unknown time period: ${period}`);
+  }
+}
+function formatDate(date) {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric"
+  });
+}
+function formatDateTime(date) {
+  const d = typeof date === "string" ? new Date(date) : date;
+  return d.toLocaleString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+function getPeriodLabel(period, startDate, endDate) {
+  switch (period) {
+    case "daily":
+      return formatDate(/* @__PURE__ */ new Date());
+    case "weekly":
+      return "This Week";
+    case "monthly":
+      return (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    case "yearly":
+      return (/* @__PURE__ */ new Date()).getFullYear().toString();
+    case "all-time":
+      return "All Time";
+    case "custom":
+      if (startDate && endDate) {
+        return `${formatDate(startDate)} - ${formatDate(endDate)}`;
+      }
+      return "Custom Range";
+    default:
+      return "Unknown Period";
+  }
+}
+async function generateReportPDF(options) {
+  const { reportType, data, filters, businessInfo } = options;
+  let htmlContent = "";
+  switch (reportType) {
+    case "sales":
+      htmlContent = generateSalesReportHTML(data, filters, businessInfo);
+      break;
+    case "inventory":
+      htmlContent = generateInventoryReportHTML(data, filters, businessInfo);
+      break;
+    case "profit-loss":
+      htmlContent = generateProfitLossReportHTML(data, filters, businessInfo);
+      break;
+    case "expenses":
+      htmlContent = generateExpenseReportHTML(data, filters, businessInfo);
+      break;
+    case "purchases":
+      htmlContent = generatePurchaseReportHTML(data, filters, businessInfo);
+      break;
+    case "returns":
+      htmlContent = generateReturnReportHTML(data, filters, businessInfo);
+      break;
+    case "commissions":
+      htmlContent = generateCommissionReportHTML(data, filters, businessInfo);
+      break;
+    case "tax":
+      htmlContent = generateTaxReportHTML(data, filters, businessInfo);
+      break;
+    case "customer":
+      htmlContent = generateCustomerReportHTML(data, filters, businessInfo);
+      break;
+    case "branch-performance":
+      htmlContent = generateBranchPerformanceHTML(data, filters, businessInfo);
+      break;
+    case "cash-flow":
+      htmlContent = generateCashFlowHTML(data, filters, businessInfo);
+      break;
+    case "audit-trail":
+      htmlContent = generateAuditTrailHTML(data, filters, businessInfo);
+      break;
+    default:
+      throw new Error(`Unknown report type: ${reportType}`);
+  }
+  const pdfWindow = new electron.BrowserWindow({
+    show: false,
+    webPreferences: {
+      nodeIntegration: false
+    }
+  });
+  await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+  await new Promise((resolve) => setTimeout(resolve, 1e3));
+  const pdfData = await pdfWindow.webContents.printToPDF({
+    pageSize: "A4",
+    printBackground: true,
+    landscape: false,
+    margins: {
+      top: 0.5,
+      bottom: 0.5,
+      left: 0.5,
+      right: 0.5
+    }
+  });
+  const downloadsPath = electron.app.getPath("downloads");
+  const fileName = `${reportType}_report_${Date.now()}.pdf`;
+  const filePath = path__namespace.join(downloadsPath, fileName);
+  fs__namespace.writeFileSync(filePath, pdfData);
+  pdfWindow.close();
+  return filePath;
+}
+function getReportTemplate(title, content, filters, businessInfo) {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          line-height: 1.6;
+          color: #333;
+          padding: 40px;
+        }
+        .header {
+          text-align: center;
+          margin-bottom: 40px;
+          border-bottom: 3px solid #2563eb;
+          padding-bottom: 20px;
+        }
+        .business-name {
+          font-size: 28px;
+          font-weight: bold;
+          color: #1e40af;
+          margin-bottom: 5px;
+        }
+        .business-info {
+          font-size: 12px;
+          color: #666;
+          margin-bottom: 15px;
+        }
+        .report-title {
+          font-size: 24px;
+          font-weight: bold;
+          margin: 15px 0 10px;
+        }
+        .report-meta {
+          font-size: 12px;
+          color: #666;
+        }
+        .summary-cards {
+          display: flex;
+          gap: 20px;
+          margin: 30px 0;
+          flex-wrap: wrap;
+        }
+        .card {
+          flex: 1;
+          min-width: 200px;
+          padding: 20px;
+          background: #f8fafc;
+          border-left: 4px solid #2563eb;
+          border-radius: 6px;
+        }
+        .card-title {
+          font-size: 11px;
+          color: #64748b;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 8px;
+        }
+        .card-value {
+          font-size: 28px;
+          font-weight: bold;
+          color: #1e293b;
+        }
+        .card-subtitle {
+          font-size: 12px;
+          color: #64748b;
+          margin-top: 4px;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 20px 0;
+          font-size: 12px;
+        }
+        thead {
+          background: #1e40af;
+          color: white;
+        }
+        th {
+          padding: 12px;
+          text-align: left;
+          font-weight: 600;
+        }
+        td {
+          padding: 10px 12px;
+          border-bottom: 1px solid #e2e8f0;
+        }
+        tr:nth-child(even) {
+          background: #f8fafc;
+        }
+        .section-title {
+          font-size: 18px;
+          font-weight: bold;
+          margin: 30px 0 15px;
+          color: #1e40af;
+          border-bottom: 2px solid #e2e8f0;
+          padding-bottom: 8px;
+        }
+        .footer {
+          margin-top: 50px;
+          padding-top: 20px;
+          border-top: 2px solid #e2e8f0;
+          text-align: center;
+          font-size: 10px;
+          color: #94a3b8;
+        }
+        .text-right {
+          text-align: right;
+        }
+        .text-center {
+          text-align: center;
+        }
+        .font-bold {
+          font-weight: bold;
+        }
+        .text-green {
+          color: #16a34a;
+        }
+        .text-red {
+          color: #dc2626;
+        }
+        .text-blue {
+          color: #2563eb;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div class="business-name">${businessInfo?.name || "Firearms Retail POS"}</div>
+        ${businessInfo ? `<div class="business-info">
+            ${businessInfo.address || ""} | ${businessInfo.phone || ""} | ${businessInfo.email || ""}
+          </div>` : ""}
+        <div class="report-title">${title}</div>
+        <div class="report-meta">
+          Period: ${getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)}
+          ${filters.branchName ? ` | Branch: ${filters.branchName}` : " | All Branches"} |
+          Generated: ${formatDateTime(/* @__PURE__ */ new Date())}
+        </div>
+      </div>
+
+      ${content}
+
+      <div class="footer">
+        Generated by Firearms Retail POS | Confidential Business Report
+      </div>
+    </body>
+    </html>
+  `;
+}
+function generateSalesReportHTML(data, filters, businessInfo) {
+  const content = `
+    <div class="summary-cards">
+      <div class="card">
+        <div class="card-title">Total Sales</div>
+        <div class="card-value">${data.summary?.totalSales || 0}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Total Revenue</div>
+        <div class="card-value text-green">Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Avg Order Value</div>
+        <div class="card-value text-blue">Rs. ${(data.summary?.avgOrderValue || 0).toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Tax Collected</div>
+        <div class="card-value">Rs. ${(data.summary?.totalTax || 0).toFixed(2)}</div>
+      </div>
+    </div>
+
+    <div class="section-title">Sales by Payment Method</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Payment Method</th>
+          <th class="text-right">Count</th>
+          <th class="text-right">Total Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.byPaymentMethod?.map(
+    (item) => `
+          <tr>
+            <td class="font-bold">${item.paymentMethod}</td>
+            <td class="text-right">${item.count}</td>
+            <td class="text-right">Rs. ${item.total.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
+      </tbody>
+    </table>
+
+    <div class="section-title">Top Selling Products</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Product Code</th>
+          <th>Product Name</th>
+          <th class="text-right">Quantity Sold</th>
+          <th class="text-right">Revenue</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.topProducts?.map(
+    (item) => `
+          <tr>
+            <td>${item.productCode}</td>
+            <td>${item.productName}</td>
+            <td class="text-right font-bold">${item.quantitySold}</td>
+            <td class="text-right text-green">Rs. ${item.revenue.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("") || '<tr><td colspan="4" class="text-center">No data available</td></tr>'}
+      </tbody>
+    </table>
+  `;
+  return getReportTemplate("Sales Report", content, filters, businessInfo);
+}
+function generateInventoryReportHTML(data, filters, businessInfo) {
+  const totalValue = data.stockValue?.reduce((sum, item) => sum + item.costValue, 0) || 0;
+  const content = `
+    <div class="summary-cards">
+      <div class="card">
+        <div class="card-title">Total Stock Value</div>
+        <div class="card-value text-green">Rs. ${totalValue.toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Low Stock Items</div>
+        <div class="card-value text-red">${data.stockSummary?.[0]?.lowStockItems || 0}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Out of Stock</div>
+        <div class="card-value text-red">${data.stockSummary?.[0]?.outOfStockItems || 0}</div>
+      </div>
+    </div>
+
+    <div class="section-title">Stock Summary by Branch</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Branch</th>
+          <th class="text-right">Total Products</th>
+          <th class="text-right">Total Units</th>
+          <th class="text-right">Low Stock</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.stockSummary?.map(
+    (item) => `
+          <tr>
+            <td class="font-bold">${item.branchName}</td>
+            <td class="text-right">${item.totalProducts}</td>
+            <td class="text-right">${item.totalUnits}</td>
+            <td class="text-right text-red">${item.lowStockItems}</td>
+          </tr>
+        `
+  ).join("") || '<tr><td colspan="4" class="text-center">No data available</td></tr>'}
+      </tbody>
+    </table>
+
+    ${data.lowStock && data.lowStock.length > 0 ? `
+    <div class="section-title">Low Stock Alert</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Branch</th>
+          <th class="text-right">Current Qty</th>
+          <th class="text-right">Min Qty</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.lowStock.map(
+    (item) => `
+          <tr>
+            <td>${item.productName}</td>
+            <td>${item.branchName}</td>
+            <td class="text-right text-red font-bold">${item.quantity}</td>
+            <td class="text-right">${item.minQuantity}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+  `;
+  return getReportTemplate("Inventory Report", content, filters, businessInfo);
+}
+function generateProfitLossReportHTML(data, filters, businessInfo) {
+  const content = `
+    <div class="summary-cards">
+      <div class="card">
+        <div class="card-title">Revenue</div>
+        <div class="card-value text-green">Rs. ${(data.revenue || 0).toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Gross Profit</div>
+        <div class="card-value text-blue">Rs. ${(data.grossProfit || 0).toFixed(2)}</div>
+        <div class="card-subtitle">${(data.grossMargin || 0).toFixed(2)}% margin</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Net Profit</div>
+        <div class="card-value ${data.netProfit >= 0 ? "text-green" : "text-red"}">
+          Rs. ${(data.netProfit || 0).toFixed(2)}
+        </div>
+        <div class="card-subtitle">${(data.netMargin || 0).toFixed(2)}% margin</div>
+      </div>
+    </div>
+
+    <div class="section-title">Financial Breakdown</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="font-bold">Total Revenue</td>
+          <td class="text-right text-green">Rs. ${(data.revenue || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Cost of Goods Sold</td>
+          <td class="text-right text-red">- Rs. ${(data.costOfGoodsSold || 0).toFixed(2)}</td>
+        </tr>
+        <tr style="background: #f1f5f9;">
+          <td class="font-bold">Gross Profit</td>
+          <td class="text-right font-bold text-blue">Rs. ${(data.grossProfit || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Operating Expenses</td>
+          <td class="text-right text-red">- Rs. ${(data.expenses || 0).toFixed(2)}</td>
+        </tr>
+        <tr style="background: #f1f5f9;">
+          <td class="font-bold">Net Profit</td>
+          <td class="text-right font-bold ${data.netProfit >= 0 ? "text-green" : "text-red"}">
+            Rs. ${(data.netProfit || 0).toFixed(2)}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
+    <div class="section-title">Expenses by Category</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.expensesByCategory.map(
+    (item) => `
+          <tr>
+            <td>${item.category}</td>
+            <td class="text-right">Rs. ${item.total.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+  `;
+  return getReportTemplate("Profit & Loss Report", content, filters, businessInfo);
+}
+function generateExpenseReportHTML(data, filters, businessInfo) {
+  const content = `
+    <div class="summary-cards">
+      <div class="card">
+        <div class="card-title">Total Expenses</div>
+        <div class="card-value text-red">Rs. ${(data.summary?.totalExpenses || 0).toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Expense Count</div>
+        <div class="card-value">${data.summary?.expenseCount || 0}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Average Expense</div>
+        <div class="card-value">Rs. ${(data.summary?.avgExpense || 0).toFixed(2)}</div>
+      </div>
+    </div>
+
+    <div class="section-title">Expenses by Category</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th class="text-right">Count</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.expensesByCategory?.map(
+    (item) => `
+          <tr>
+            <td class="font-bold">${item.category}</td>
+            <td class="text-right">${item.count}</td>
+            <td class="text-right text-red">Rs. ${item.amount.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
+      </tbody>
+    </table>
+
+    ${data.topExpenses && data.topExpenses.length > 0 ? `
+    <div class="section-title">Top Expenses</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Category</th>
+          <th>Description</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.topExpenses.map(
+    (item) => `
+          <tr>
+            <td>${formatDate(item.date)}</td>
+            <td>${item.category}</td>
+            <td>${item.description || "-"}</td>
+            <td class="text-right text-red">Rs. ${item.amount.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+  `;
+  return getReportTemplate("Expense Report", content, filters, businessInfo);
+}
+function generatePurchaseReportHTML(data, filters, businessInfo) {
+  return getReportTemplate("Purchase Report", "<p>Purchase report content...</p>", filters, businessInfo);
+}
+function generateReturnReportHTML(data, filters, businessInfo) {
+  return getReportTemplate("Returns Report", "<p>Returns report content...</p>", filters, businessInfo);
+}
+function generateCommissionReportHTML(data, filters, businessInfo) {
+  return getReportTemplate("Commission Report", "<p>Commission report content...</p>", filters, businessInfo);
+}
+function generateTaxReportHTML(data, filters, businessInfo) {
+  return getReportTemplate("Tax Report", "<p>Tax report content...</p>", filters, businessInfo);
+}
+function generateCustomerReportHTML(data, filters, businessInfo) {
+  return getReportTemplate("Customer Report", "<p>Customer report content...</p>", filters, businessInfo);
+}
+function generateBranchPerformanceHTML(data, filters, businessInfo) {
+  return getReportTemplate("Branch Performance Report", "<p>Branch performance content...</p>", filters, businessInfo);
+}
+function generateCashFlowHTML(data, filters, businessInfo) {
+  return getReportTemplate("Cash Flow Report", "<p>Cash flow content...</p>", filters, businessInfo);
+}
+function generateAuditTrailHTML(data, filters, businessInfo) {
+  const content = `
+    <div class="summary-cards">
+      <div class="card">
+        <div class="card-title">Total Sales</div>
+        <div class="card-value">${data.salesSummary?.totalSales || 0}</div>
+        <div class="card-subtitle">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Total Expenses</div>
+        <div class="card-value text-red">Rs. ${(data.expensesSummary?.totalExpenses || 0).toFixed(2)}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">Net Profit</div>
+        <div class="card-value ${(data.financialSummary?.netProfit || 0) >= 0 ? "text-green" : "text-red"}">
+          Rs. ${(data.financialSummary?.netProfit || 0).toFixed(2)}
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Total Inventory Value</div>
+        <div class="card-value text-blue">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</div>
+      </div>
+    </div>
+
+    <div class="section-title">Sales Analysis</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total Sales Count</td>
+          <td class="text-right font-bold">${data.salesSummary?.totalSales || 0}</td>
+        </tr>
+        <tr>
+          <td>Total Revenue</td>
+          <td class="text-right text-green">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Average Transaction Value</td>
+          <td class="text-right">Rs. ${(data.salesSummary?.avgOrderValue || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Total Tax Collected</td>
+          <td class="text-right">Rs. ${(data.salesSummary?.totalTax || 0).toFixed(2)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    ${data.salesByPaymentMethod && data.salesByPaymentMethod.length > 0 ? `
+    <div class="section-title">Sales by Payment Method</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Payment Method</th>
+          <th class="text-right">Count</th>
+          <th class="text-right">Total Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.salesByPaymentMethod.map(
+    (item) => `
+          <tr>
+            <td class="font-bold">${item.paymentMethod}</td>
+            <td class="text-right">${item.count}</td>
+            <td class="text-right">Rs. ${item.total.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.topProducts && data.topProducts.length > 0 ? `
+    <div class="section-title">Top 10 Selling Products</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Product Code</th>
+          <th>Product Name</th>
+          <th class="text-right">Quantity Sold</th>
+          <th class="text-right">Revenue</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.topProducts.map(
+    (item) => `
+          <tr>
+            <td>${item.productCode}</td>
+            <td>${item.productName}</td>
+            <td class="text-right font-bold">${item.quantitySold}</td>
+            <td class="text-right text-green">Rs. ${item.revenue.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+
+    <div class="section-title">Inventory Status</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total Products</td>
+          <td class="text-right font-bold">${data.inventorySummary?.totalProducts || 0}</td>
+        </tr>
+        <tr>
+          <td>Total Inventory Value</td>
+          <td class="text-right text-green">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Low Stock Items</td>
+          <td class="text-right text-red">${data.inventorySummary?.lowStockItems || 0}</td>
+        </tr>
+        <tr>
+          <td>Out of Stock Items</td>
+          <td class="text-right text-red">${data.inventorySummary?.outOfStockItems || 0}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    ${data.purchasesSummary ? `
+    <div class="section-title">Purchase Records</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total Purchase Orders</td>
+          <td class="text-right font-bold">${data.purchasesSummary.totalPurchases || 0}</td>
+        </tr>
+        <tr>
+          <td>Total Purchase Cost</td>
+          <td class="text-right text-red">Rs. ${(data.purchasesSummary.totalCost || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Average Purchase Value</td>
+          <td class="text-right">Rs. ${(data.purchasesSummary.avgPurchaseValue || 0).toFixed(2)}</td>
+        </tr>
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.expensesSummary ? `
+    <div class="section-title">Expense Tracking</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total Expenses</td>
+          <td class="text-right text-red">Rs. ${(data.expensesSummary.totalExpenses || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Expense Count</td>
+          <td class="text-right">${data.expensesSummary.expenseCount || 0}</td>
+        </tr>
+        <tr>
+          <td>Average Expense</td>
+          <td class="text-right">Rs. ${(data.expensesSummary.avgExpense || 0).toFixed(2)}</td>
+        </tr>
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
+    <div class="section-title">Expenses by Category</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th class="text-right">Count</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.expensesByCategory.map(
+    (item) => `
+          <tr>
+            <td class="font-bold">${item.category}</td>
+            <td class="text-right">${item.count}</td>
+            <td class="text-right text-red">Rs. ${item.amount.toFixed(2)}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.returnsSummary ? `
+    <div class="section-title">Returns & Refunds</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total Returns</td>
+          <td class="text-right font-bold">${data.returnsSummary.totalReturns || 0}</td>
+        </tr>
+        <tr>
+          <td>Total Refund Amount</td>
+          <td class="text-right text-red">Rs. ${(data.returnsSummary.totalRefundAmount || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Return Rate</td>
+          <td class="text-right">${(data.returnsSummary.returnRate || 0).toFixed(2)}%</td>
+        </tr>
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.financialSummary ? `
+    <div class="section-title">Financial Summary</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="font-bold">Gross Revenue</td>
+          <td class="text-right text-green">Rs. ${(data.financialSummary.grossRevenue || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Returns/Refunds</td>
+          <td class="text-right text-red">- Rs. ${(data.financialSummary.refunds || 0).toFixed(2)}</td>
+        </tr>
+        <tr style="background: #f1f5f9;">
+          <td class="font-bold">Net Revenue</td>
+          <td class="text-right font-bold text-blue">Rs. ${(data.financialSummary.netRevenue || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Cost of Goods Sold</td>
+          <td class="text-right text-red">- Rs. ${(data.financialSummary.cogs || 0).toFixed(2)}</td>
+        </tr>
+        <tr style="background: #f1f5f9;">
+          <td class="font-bold">Gross Profit</td>
+          <td class="text-right font-bold text-blue">Rs. ${(data.financialSummary.grossProfit || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Operating Expenses</td>
+          <td class="text-right text-red">- Rs. ${(data.financialSummary.expenses || 0).toFixed(2)}</td>
+        </tr>
+        <tr style="background: #f1f5f9;">
+          <td class="font-bold">Net Profit</td>
+          <td class="text-right font-bold ${data.financialSummary.netProfit >= 0 ? "text-green" : "text-red"}">
+            Rs. ${(data.financialSummary.netProfit || 0).toFixed(2)}
+          </td>
+        </tr>
+        <tr>
+          <td>Profit Margin</td>
+          <td class="text-right font-bold">${(data.financialSummary.profitMargin || 0).toFixed(2)}%</td>
+        </tr>
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.commissionsSummary ? `
+    <div class="section-title">Commissions</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Metric</th>
+          <th class="text-right">Value</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Total Commission Paid</td>
+          <td class="text-right text-red">Rs. ${(data.commissionsSummary.totalCommission || 0).toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td>Commission Count</td>
+          <td class="text-right">${data.commissionsSummary.commissionCount || 0}</td>
+        </tr>
+        <tr>
+          <td>Average Commission</td>
+          <td class="text-right">Rs. ${(data.commissionsSummary.avgCommission || 0).toFixed(2)}</td>
+        </tr>
+      </tbody>
+    </table>
+    ` : ""}
+
+    ${data.auditLogs && data.auditLogs.length > 0 ? `
+    <div class="section-title">Recent System Audit Logs</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Date/Time</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Table</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.auditLogs.slice(0, 50).map(
+    (item) => `
+          <tr>
+            <td>${formatDateTime(item.timestamp)}</td>
+            <td>${item.userName}</td>
+            <td class="font-bold">${item.action}</td>
+            <td>${item.tableName}</td>
+          </tr>
+        `
+  ).join("")}
+      </tbody>
+    </table>
+    ` : ""}
+  `;
+  return getReportTemplate("Comprehensive Business Audit Report", content, filters, businessInfo);
 }
 function registerReportHandlers() {
   const db2 = getDatabase();
@@ -3570,7 +6702,676 @@ function registerReportHandlers() {
       }
     }
   );
+  electron.ipcMain.handle(
+    "reports:expenses-report",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate } = params;
+        const conditions = [drizzleOrm.between(expenses.expenseDate, startDate, endDate)];
+        if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
+        const summary = await db2.select({
+          totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`,
+          expenseCount: drizzleOrm.sql`count(*)`,
+          avgExpense: drizzleOrm.sql`avg(${expenses.amount})`
+        }).from(expenses).where(drizzleOrm.and(...conditions));
+        const expensesByCategory = await db2.select({
+          category: expenses.category,
+          amount: drizzleOrm.sql`sum(${expenses.amount})`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(expenses).where(drizzleOrm.and(...conditions)).groupBy(expenses.category).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        const expensesByBranch = await db2.select({
+          branchId: expenses.branchId,
+          branchName: branches.name,
+          amount: drizzleOrm.sql`sum(${expenses.amount})`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.branchId, branches.name);
+        const topExpenses = await db2.select({
+          id: expenses.id,
+          category: expenses.category,
+          amount: expenses.amount,
+          description: expenses.description,
+          date: expenses.expenseDate,
+          branchName: branches.name
+        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "expense",
+          description: `Generated expense report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: summary[0],
+            expensesByCategory,
+            expensesByBranch,
+            topExpenses
+          }
+        };
+      } catch (error) {
+        console.error("Expense report error:", error);
+        return { success: false, message: "Failed to generate expense report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:purchases-report",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate } = params;
+        const conditions = [drizzleOrm.between(purchases.createdAt, startDate, endDate)];
+        if (branchId) conditions.push(drizzleOrm.eq(purchases.branchId, branchId));
+        const summary = await db2.select({
+          totalPurchases: drizzleOrm.sql`count(*)`,
+          totalCost: drizzleOrm.sql`sum(${purchases.totalAmount})`,
+          avgPurchaseValue: drizzleOrm.sql`avg(${purchases.totalAmount})`,
+          pendingPayments: drizzleOrm.sql`sum(case when ${purchases.paymentStatus} = 'pending' then ${purchases.totalAmount} else 0 end)`
+        }).from(purchases).where(drizzleOrm.and(...conditions));
+        const purchasesBySupplier = await db2.select({
+          supplierId: purchases.supplierId,
+          supplierName: suppliers.name,
+          totalPurchases: drizzleOrm.sql`count(*)`,
+          totalAmount: drizzleOrm.sql`sum(${purchases.totalAmount})`
+        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).groupBy(purchases.supplierId, suppliers.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${purchases.totalAmount})`));
+        const purchasesByStatus = await db2.select({
+          status: purchases.status,
+          count: drizzleOrm.sql`count(*)`,
+          totalAmount: drizzleOrm.sql`sum(${purchases.totalAmount})`
+        }).from(purchases).where(drizzleOrm.and(...conditions)).groupBy(purchases.status);
+        const recentPurchases = await db2.select({
+          id: purchases.id,
+          purchaseOrderNumber: purchases.purchaseOrderNumber,
+          supplierName: suppliers.name,
+          totalAmount: purchases.totalAmount,
+          status: purchases.status,
+          createdAt: purchases.createdAt
+        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(20);
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "purchase",
+          description: `Generated purchase report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: summary[0],
+            purchasesBySupplier,
+            purchasesByStatus,
+            recentPurchases
+          }
+        };
+      } catch (error) {
+        console.error("Purchase report error:", error);
+        return { success: false, message: "Failed to generate purchase report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:returns-report",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate } = params;
+        const conditions = [drizzleOrm.between(returns.returnDate, startDate, endDate)];
+        if (branchId) conditions.push(drizzleOrm.eq(returns.branchId, branchId));
+        const totalSalesResult = await db2.select({
+          count: drizzleOrm.sql`count(*)`
+        }).from(sales).where(drizzleOrm.between(sales.saleDate, startDate, endDate));
+        const summary = await db2.select({
+          totalReturns: drizzleOrm.sql`count(*)`,
+          totalValue: drizzleOrm.sql`sum(${returns.totalAmount})`
+        }).from(returns).where(drizzleOrm.and(...conditions));
+        const totalSales = totalSalesResult[0]?.count || 0;
+        const returnRate = totalSales > 0 ? summary[0]?.totalReturns / totalSales * 100 : 0;
+        const returnsByReason = await db2.select({
+          reason: returns.reason,
+          count: drizzleOrm.sql`count(*)`,
+          value: drizzleOrm.sql`sum(${returns.totalAmount})`
+        }).from(returns).where(drizzleOrm.and(...conditions)).groupBy(returns.reason).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
+        const returnsByProduct = await db2.select({
+          productId: returnItems.productId,
+          productName: products.name,
+          returnCount: drizzleOrm.sql`sum(${returnItems.quantity})`,
+          totalValue: drizzleOrm.sql`sum(${returnItems.totalPrice})`
+        }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).innerJoin(products, drizzleOrm.eq(returnItems.productId, products.id)).where(drizzleOrm.and(...conditions)).groupBy(returnItems.productId, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${returnItems.quantity})`)).limit(10);
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "return",
+          description: `Generated returns report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: {
+              ...summary[0],
+              returnRate
+            },
+            returnsByReason,
+            returnsByProduct
+          }
+        };
+      } catch (error) {
+        console.error("Returns report error:", error);
+        return { success: false, message: "Failed to generate returns report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:commissions-report",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate } = params;
+        const conditions = [drizzleOrm.between(commissions.createdAt, startDate, endDate)];
+        if (branchId) conditions.push(drizzleOrm.eq(commissions.branchId, branchId));
+        const summary = await db2.select({
+          totalCommissions: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
+          commissionCount: drizzleOrm.sql`count(*)`,
+          avgCommission: drizzleOrm.sql`avg(${commissions.commissionAmount})`
+        }).from(commissions).where(drizzleOrm.and(...conditions));
+        const commissionsBySalesperson = await db2.select({
+          userId: commissions.userId,
+          userName: users.fullName,
+          totalCommission: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
+          salesCount: drizzleOrm.sql`count(*)`
+        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).where(drizzleOrm.and(...conditions)).groupBy(commissions.userId, users.fullName).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${commissions.commissionAmount})`));
+        const recentCommissions = await db2.select({
+          id: commissions.id,
+          userName: users.fullName,
+          saleInvoice: sales.invoiceNumber,
+          amount: commissions.commissionAmount,
+          date: commissions.createdAt
+        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(commissions.createdAt)).limit(20);
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "commission",
+          description: `Generated commission report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: summary[0],
+            commissionsBySalesperson,
+            recentCommissions
+          }
+        };
+      } catch (error) {
+        console.error("Commission report error:", error);
+        return { success: false, message: "Failed to generate commission report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:tax-report",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate } = params;
+        const conditions = [
+          drizzleOrm.between(sales.saleDate, startDate, endDate),
+          drizzleOrm.eq(sales.isVoided, false)
+        ];
+        if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
+        const summary = await db2.select({
+          totalTaxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
+          taxableSales: drizzleOrm.sql`count(*)`,
+          avgTaxPerSale: drizzleOrm.sql`avg(${sales.taxAmount})`
+        }).from(sales).where(drizzleOrm.and(...conditions));
+        const taxByBranch = await db2.select({
+          branchId: sales.branchId,
+          branchName: branches.name,
+          taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`
+        }).from(sales).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.branchId, branches.name);
+        const taxByPaymentMethod = await db2.select({
+          paymentMethod: sales.paymentMethod,
+          taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
+          salesCount: drizzleOrm.sql`count(*)`
+        }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(sales.paymentMethod);
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "sale",
+          description: `Generated tax report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: summary[0],
+            taxByBranch,
+            taxByPaymentMethod
+          }
+        };
+      } catch (error) {
+        console.error("Tax report error:", error);
+        return { success: false, message: "Failed to generate tax report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:branch-performance",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { startDate, endDate } = params;
+        const allBranches = await db2.select().from(branches);
+        const branchMetrics = await Promise.all(
+          allBranches.map(async (branch) => {
+            const revenueResult = await db2.select({
+              revenue: drizzleOrm.sql`sum(${sales.totalAmount})`,
+              salesCount: drizzleOrm.sql`count(*)`
+            }).from(sales).where(
+              drizzleOrm.and(
+                drizzleOrm.eq(sales.branchId, branch.id),
+                drizzleOrm.between(sales.saleDate, startDate, endDate),
+                drizzleOrm.eq(sales.isVoided, false)
+              )
+            );
+            const expenseResult = await db2.select({
+              expenses: drizzleOrm.sql`sum(${expenses.amount})`
+            }).from(expenses).where(
+              drizzleOrm.and(
+                drizzleOrm.eq(expenses.branchId, branch.id),
+                drizzleOrm.between(expenses.expenseDate, startDate, endDate)
+              )
+            );
+            const inventoryResult = await db2.select({
+              inventoryValue: drizzleOrm.sql`sum(${inventory.quantity} * ${products.costPrice})`
+            }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).where(drizzleOrm.eq(inventory.branchId, branch.id));
+            const revenue = revenueResult[0]?.revenue || 0;
+            const expenseAmount = expenseResult[0]?.expenses || 0;
+            const profit = revenue - expenseAmount;
+            return {
+              branchId: branch.id,
+              branchName: branch.name,
+              revenue,
+              expenses: expenseAmount,
+              profit,
+              salesCount: revenueResult[0]?.salesCount || 0,
+              inventoryValue: inventoryResult[0]?.inventoryValue || 0
+            };
+          })
+        );
+        const totalRevenue = branchMetrics.reduce((sum, b) => sum + b.revenue, 0);
+        const totalProfit = branchMetrics.reduce((sum, b) => sum + b.profit, 0);
+        const topBranch = branchMetrics.reduce(
+          (top, current) => current.revenue > top.revenue ? current : top
+        );
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "view",
+          entityType: "branch",
+          description: `Generated branch performance report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: {
+              totalBranches: allBranches.length,
+              totalRevenue,
+              totalProfit
+            },
+            branchMetrics,
+            topPerformingBranch: {
+              branchId: topBranch.branchId,
+              branchName: topBranch.branchName,
+              revenue: topBranch.revenue
+            }
+          }
+        };
+      } catch (error) {
+        console.error("Branch performance report error:", error);
+        return { success: false, message: "Failed to generate branch performance report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:cash-flow",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate } = params;
+        const conditions = branchId ? [drizzleOrm.eq(sales.branchId, branchId)] : [];
+        const expenseConditions = branchId ? [drizzleOrm.eq(expenses.branchId, branchId)] : [];
+        const salesCash = await db2.select({
+          total: drizzleOrm.sql`sum(${sales.totalAmount})`
+        }).from(sales).where(
+          drizzleOrm.and(
+            drizzleOrm.between(sales.saleDate, startDate, endDate),
+            drizzleOrm.eq(sales.isVoided, false),
+            ...conditions
+          )
+        );
+        const purchasesCash = await db2.select({
+          total: drizzleOrm.sql`sum(${purchases.totalAmount})`
+        }).from(purchases).where(
+          drizzleOrm.and(
+            drizzleOrm.between(purchases.createdAt, startDate, endDate),
+            drizzleOrm.eq(purchases.paymentStatus, "paid"),
+            branchId ? drizzleOrm.eq(purchases.branchId, branchId) : void 0
+          )
+        );
+        const expensesCash = await db2.select({
+          total: drizzleOrm.sql`sum(${expenses.amount})`
+        }).from(expenses).where(drizzleOrm.and(drizzleOrm.between(expenses.expenseDate, startDate, endDate), ...expenseConditions));
+        const commissionsCash = await db2.select({
+          total: drizzleOrm.sql`sum(${commissions.commissionAmount})`
+        }).from(commissions).where(
+          drizzleOrm.and(
+            drizzleOrm.between(commissions.createdAt, startDate, endDate),
+            drizzleOrm.eq(commissions.status, "paid"),
+            branchId ? drizzleOrm.eq(commissions.branchId, branchId) : void 0
+          )
+        );
+        const refundsCash = await db2.select({
+          total: drizzleOrm.sql`sum(${returns.refundAmount})`
+        }).from(returns).where(
+          drizzleOrm.and(
+            drizzleOrm.between(returns.returnDate, startDate, endDate),
+            branchId ? drizzleOrm.eq(returns.branchId, branchId) : void 0
+          )
+        );
+        const cashIn = salesCash[0]?.total || 0;
+        const cashOutPurchases = purchasesCash[0]?.total || 0;
+        const cashOutExpenses = expensesCash[0]?.total || 0;
+        const cashOutCommissions = commissionsCash[0]?.total || 0;
+        const cashOutRefunds = refundsCash[0]?.total || 0;
+        const totalCashOut = cashOutPurchases + cashOutExpenses + cashOutCommissions + cashOutRefunds;
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "sale",
+          description: `Generated cash flow report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: {
+              cashIn,
+              cashOut: totalCashOut,
+              netCashFlow: cashIn - totalCashOut,
+              openingBalance: 0,
+              closingBalance: cashIn - totalCashOut
+            },
+            cashInBreakdown: {
+              sales: cashIn,
+              receivables: 0,
+              other: 0
+            },
+            cashOutBreakdown: {
+              purchases: cashOutPurchases,
+              expenses: cashOutExpenses,
+              commissions: cashOutCommissions,
+              refunds: cashOutRefunds
+            },
+            cashByBranch: []
+          }
+        };
+      } catch (error) {
+        console.error("Cash flow report error:", error);
+        return { success: false, message: "Failed to generate cash flow report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:audit-trail",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { branchId, startDate, endDate, userId } = params;
+        const conditions = [drizzleOrm.between(auditLogs.createdAt, startDate, endDate)];
+        if (branchId) conditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
+        if (userId) conditions.push(drizzleOrm.eq(auditLogs.userId, userId));
+        const summary = await db2.select({
+          totalActions: drizzleOrm.sql`count(*)`,
+          uniqueUsers: drizzleOrm.sql`count(distinct ${auditLogs.userId})`
+        }).from(auditLogs).where(drizzleOrm.and(...conditions));
+        const actionsByUser = await db2.select({
+          userId: auditLogs.userId,
+          userName: users.fullName,
+          actionCount: drizzleOrm.sql`count(*)`
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).groupBy(auditLogs.userId, users.fullName).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
+        const actionsByType = await db2.select({
+          action: auditLogs.action,
+          count: drizzleOrm.sql`count(*)`
+        }).from(auditLogs).where(drizzleOrm.and(...conditions)).groupBy(auditLogs.action).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
+        const recentActions = await db2.select({
+          id: auditLogs.id,
+          userName: users.fullName,
+          action: auditLogs.action,
+          entityType: auditLogs.entityType,
+          description: auditLogs.description,
+          timestamp: auditLogs.createdAt
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(50);
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "auth",
+          description: `Generated audit trail report: ${startDate} to ${endDate}`
+        });
+        return {
+          success: true,
+          data: {
+            summary: summary[0],
+            actionsByUser,
+            actionsByType,
+            recentActions
+          }
+        };
+      } catch (error) {
+        console.error("Audit trail report error:", error);
+        return { success: false, message: "Failed to generate audit trail report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:comprehensive-audit",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        if (session?.role !== "admin") {
+          return {
+            success: false,
+            message: "Unauthorized: Admin access required"
+          };
+        }
+        const { branchId, timePeriod, startDate, endDate } = params;
+        const dateRange = getDateRange(timePeriod, startDate, endDate);
+        const salesConditions = [
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        ];
+        if (branchId) salesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
+        const expenseConditions = [
+          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end)
+        ];
+        if (branchId) expenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
+        const purchaseConditions = [
+          drizzleOrm.between(purchases.createdAt, dateRange.start, dateRange.end)
+        ];
+        if (branchId) purchaseConditions.push(drizzleOrm.eq(purchases.branchId, branchId));
+        const returnConditions = [
+          drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end)
+        ];
+        if (branchId) returnConditions.push(drizzleOrm.eq(returns.branchId, branchId));
+        const salesSummary = await db2.select({
+          totalSales: drizzleOrm.sql`count(*)`,
+          totalRevenue: drizzleOrm.sql`coalesce(sum(${sales.totalAmount}), 0)`,
+          avgOrderValue: drizzleOrm.sql`coalesce(avg(${sales.totalAmount}), 0)`,
+          totalTax: drizzleOrm.sql`coalesce(sum(${sales.taxAmount}), 0)`
+        }).from(sales).where(drizzleOrm.and(...salesConditions));
+        const salesByPaymentMethod = await db2.select({
+          paymentMethod: sales.paymentMethod,
+          count: drizzleOrm.sql`count(*)`,
+          total: drizzleOrm.sql`sum(${sales.totalAmount})`
+        }).from(sales).where(drizzleOrm.and(...salesConditions)).groupBy(sales.paymentMethod);
+        const topProducts = await db2.select({
+          productId: saleItems.productId,
+          productName: products.name,
+          productCode: products.code,
+          quantitySold: drizzleOrm.sql`sum(${saleItems.quantity})`,
+          revenue: drizzleOrm.sql`sum(${saleItems.totalPrice})`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(...salesConditions)).groupBy(saleItems.productId, products.name, products.code).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${saleItems.quantity})`)).limit(10);
+        let inventoryQuery = db2.select({
+          totalProducts: drizzleOrm.sql`count(distinct ${inventory.productId})`,
+          totalValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+          lowStockItems: drizzleOrm.sql`sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end)`,
+          outOfStockItems: drizzleOrm.sql`sum(case when ${inventory.quantity} = 0 then 1 else 0 end)`
+        }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id));
+        if (branchId) {
+          inventoryQuery = inventoryQuery.where(drizzleOrm.eq(inventory.branchId, branchId));
+        }
+        const inventorySummary = await inventoryQuery;
+        const purchasesSummary = await db2.select({
+          totalPurchases: drizzleOrm.sql`count(*)`,
+          totalCost: drizzleOrm.sql`coalesce(sum(${purchases.totalAmount}), 0)`,
+          avgPurchaseValue: drizzleOrm.sql`coalesce(avg(${purchases.totalAmount}), 0)`
+        }).from(purchases).where(drizzleOrm.and(...purchaseConditions));
+        const expensesSummary = await db2.select({
+          totalExpenses: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
+          expenseCount: drizzleOrm.sql`count(*)`,
+          avgExpense: drizzleOrm.sql`coalesce(avg(${expenses.amount}), 0)`
+        }).from(expenses).where(drizzleOrm.and(...expenseConditions));
+        const expensesByCategory = await db2.select({
+          category: expenses.category,
+          amount: drizzleOrm.sql`sum(${expenses.amount})`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(expenses).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.category).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        const returnsSummary = await db2.select({
+          totalReturns: drizzleOrm.sql`count(*)`,
+          totalRefundAmount: drizzleOrm.sql`coalesce(sum(${returns.refundAmount}), 0)`
+        }).from(returns).where(drizzleOrm.and(...returnConditions));
+        const totalSales = salesSummary[0]?.totalSales || 0;
+        const returnRate = totalSales > 0 ? (returnsSummary[0]?.totalReturns || 0) / totalSales * 100 : 0;
+        const commissionsConditions = [
+          drizzleOrm.between(commissions.createdAt, dateRange.start, dateRange.end)
+        ];
+        if (branchId) commissionsConditions.push(drizzleOrm.eq(commissions.branchId, branchId));
+        const commissionsSummary = await db2.select({
+          totalCommission: drizzleOrm.sql`coalesce(sum(${commissions.commissionAmount}), 0)`,
+          commissionCount: drizzleOrm.sql`count(*)`,
+          avgCommission: drizzleOrm.sql`coalesce(avg(${commissions.commissionAmount}), 0)`
+        }).from(commissions).where(drizzleOrm.and(...commissionsConditions));
+        const grossRevenue = salesSummary[0]?.totalRevenue || 0;
+        const refunds = returnsSummary[0]?.totalRefundAmount || 0;
+        const netRevenue = grossRevenue - refunds;
+        const cogsResult = await db2.select({
+          cogs: drizzleOrm.sql`coalesce(sum(${saleItems.quantity} * ${products.costPrice}), 0)`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(...salesConditions));
+        const cogs = cogsResult[0]?.cogs || 0;
+        const grossProfit = netRevenue - cogs;
+        const totalExpenses = expensesSummary[0]?.totalExpenses || 0;
+        const netProfit = grossProfit - totalExpenses;
+        const profitMargin = netRevenue > 0 ? netProfit / netRevenue * 100 : 0;
+        const auditLogConditions = [
+          drizzleOrm.between(auditLogs.createdAt, dateRange.start, dateRange.end)
+        ];
+        if (branchId) auditLogConditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
+        const auditLogsData = await db2.select({
+          id: auditLogs.id,
+          userName: users.fullName,
+          action: auditLogs.action,
+          tableName: auditLogs.entityType,
+          timestamp: auditLogs.createdAt
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...auditLogConditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(50);
+        const formattedAuditLogs = auditLogsData.map((log) => ({
+          id: log.id,
+          userName: log.userName || "System",
+          action: log.action,
+          tableName: log.tableName,
+          timestamp: log.timestamp
+        }));
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: branchId ?? session?.branchId,
+          action: "view",
+          entityType: "audit",
+          description: `Generated comprehensive audit report: ${getPeriodLabel(timePeriod, startDate, endDate)}`
+        });
+        return {
+          success: true,
+          data: {
+            salesSummary: salesSummary[0],
+            salesByPaymentMethod,
+            topProducts,
+            inventorySummary: inventorySummary[0],
+            purchasesSummary: purchasesSummary[0],
+            expensesSummary: expensesSummary[0],
+            expensesByCategory,
+            returnsSummary: {
+              ...returnsSummary[0],
+              returnRate
+            },
+            financialSummary: {
+              grossRevenue,
+              refunds,
+              netRevenue,
+              cogs,
+              grossProfit,
+              expenses: totalExpenses,
+              netProfit,
+              profitMargin
+            },
+            commissionsSummary: commissionsSummary[0],
+            auditLogs: formattedAuditLogs
+          }
+        };
+      } catch (error) {
+        console.error("Comprehensive audit report error:", error);
+        console.error("Error stack:", error instanceof Error ? error.stack : "No stack trace");
+        return { success: false, message: "Failed to generate comprehensive audit report" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:export-pdf",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        const { reportType, data, filters } = params;
+        const businessInfo = {
+          name: "Firearms Retail POS",
+          address: "",
+          phone: "",
+          email: ""
+        };
+        const filePath = await generateReportPDF({
+          reportType,
+          data,
+          filters,
+          businessInfo
+        });
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "export",
+          entityType: "sale",
+          description: `Exported ${reportType} report to PDF`
+        });
+        return {
+          success: true,
+          filePath
+        };
+      } catch (error) {
+        console.error("PDF export error:", error);
+        return { success: false, message: "Failed to export PDF" };
+      }
+    }
+  );
 }
+const LICENSE_SECRET = "FIREARMS_POS_LICENSE_2024";
 function getMachineId() {
   const components = [];
   const nets = node_os.networkInterfaces();
@@ -3586,79 +7387,119 @@ function getMachineId() {
     components.push(cpuInfo[0].model);
   }
   components.push(node_os.hostname());
+  components.push(node_os.platform());
   const hash = node_crypto.createHash("sha256");
   hash.update(components.join("|"));
-  return hash.digest("hex").substring(0, 32);
+  return hash.digest("hex").toUpperCase();
+}
+function generateLicenseKey(machineId) {
+  const hash = node_crypto.createHash("sha256");
+  hash.update(`${machineId}|${LICENSE_SECRET}`);
+  return hash.digest("hex").toUpperCase();
+}
+function getMachineIdForDisplay() {
+  return getMachineId();
+}
+function validateLicenseKey(licenseKey, machineId) {
+  const validKey = generateLicenseKey(machineId);
+  return licenseKey.toUpperCase() === validKey.toUpperCase();
 }
 function getLicenseFilePath() {
   return node_path.join(electron.app.getPath("userData"), "license.json");
 }
 function getLicenseStatus() {
+  const machineId = getMachineId();
   const licensePath = getLicenseFilePath();
-  if (!node_fs.existsSync(licensePath)) {
-    return {
-      isValid: false,
-      isActivated: false,
-      expiresAt: null,
-      features: [],
-      message: "No license found. Please activate your license."
-    };
-  }
-  try {
-    const licenseData = JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
-    if (licenseData.machineId !== getMachineId()) {
+  if (node_fs.existsSync(licensePath)) {
+    try {
+      const licenseData = JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
+      if (licenseData.machineId !== machineId) {
+        return {
+          status: "NO_MACHINE_ID",
+          isValid: false,
+          isActivated: false,
+          isTrial: false,
+          machineId,
+          expiresAt: null,
+          daysRemaining: 0,
+          message: "License is not valid for this machine.",
+          installationDate: null,
+          trialStartDate: null,
+          trialEndDate: null,
+          licenseStartDate: null
+        };
+      }
+      if (licenseData.licenseEndDate && new Date(licenseData.licenseEndDate) < /* @__PURE__ */ new Date()) {
+        return {
+          status: "LICENSE_EXPIRED",
+          isValid: false,
+          isActivated: true,
+          isTrial: false,
+          machineId,
+          expiresAt: licenseData.licenseEndDate,
+          daysRemaining: 0,
+          message: "License has expired. Please renew your license.",
+          installationDate: null,
+          trialStartDate: null,
+          trialEndDate: null,
+          licenseStartDate: licenseData.licenseStartDate
+        };
+      }
+      const daysRemaining = licenseData.licenseEndDate ? Math.max(0, Math.ceil((new Date(licenseData.licenseEndDate).getTime() - Date.now()) / (1e3 * 60 * 60 * 24))) : 0;
       return {
-        isValid: false,
-        isActivated: false,
-        expiresAt: null,
-        features: [],
-        message: "License is not valid for this machine."
-      };
-    }
-    if (licenseData.expiresAt && new Date(licenseData.expiresAt) < /* @__PURE__ */ new Date()) {
-      return {
-        isValid: false,
+        status: "LICENSE_ACTIVE",
+        isValid: true,
         isActivated: true,
-        expiresAt: licenseData.expiresAt,
-        features: licenseData.features,
-        message: "License has expired. Please renew your license."
+        isTrial: false,
+        machineId,
+        expiresAt: licenseData.licenseEndDate,
+        daysRemaining,
+        message: "License is active and valid.",
+        installationDate: null,
+        trialStartDate: null,
+        trialEndDate: null,
+        licenseStartDate: licenseData.licenseStartDate
       };
+    } catch {
     }
-    return {
-      isValid: true,
-      isActivated: true,
-      expiresAt: licenseData.expiresAt,
-      features: licenseData.features,
-      message: "License is valid."
-    };
-  } catch {
-    return {
-      isValid: false,
-      isActivated: false,
-      expiresAt: null,
-      features: [],
-      message: "Failed to read license file."
-    };
   }
+  return {
+    status: "TRIAL_ACTIVE",
+    isValid: true,
+    isActivated: false,
+    isTrial: true,
+    machineId,
+    expiresAt: null,
+    daysRemaining: 30,
+    message: "Trial period active.",
+    installationDate: null,
+    trialStartDate: null,
+    trialEndDate: null,
+    licenseStartDate: null
+  };
 }
 function activateLicense(licenseKey) {
-  const keyPattern = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
-  if (!keyPattern.test(licenseKey)) {
-    return { success: false, message: "Invalid license key format." };
+  const machineId = getMachineId();
+  const licensePath = getLicenseFilePath();
+  const validKey = generateLicenseKey(machineId);
+  if (licenseKey.toUpperCase() !== validKey.toUpperCase()) {
+    return { success: false, message: "License key is not valid for this machine." };
   }
   const licenseData = {
-    key: licenseKey,
-    machineId: getMachineId(),
-    activatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    expiresAt: null,
-    // Perpetual license for demo
-    features: ["pos", "inventory", "reports", "multi-branch"]
+    machineId,
+    licenseKey: licenseKey.toUpperCase(),
+    licenseStartDate: (/* @__PURE__ */ new Date()).toISOString(),
+    licenseEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString(),
+    // 1 year
+    isPermanent: false,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   try {
-    node_fs.writeFileSync(getLicenseFilePath(), JSON.stringify(licenseData, null, 2));
-    return { success: true, message: "License activated successfully." };
+    node_fs.writeFileSync(licensePath, JSON.stringify(licenseData, null, 2));
+    return { success: true, message: "License activated successfully for 1 year." };
   } catch {
-    return { success: false, message: "Failed to save license." };
+    return { success: false, message: "Failed to save license file." };
   }
 }
 function deactivateLicense() {
@@ -3674,14 +7515,136 @@ function deactivateLicense() {
     return { success: false, message: "Failed to deactivate license." };
   }
 }
+function getLicenseInfo() {
+  const licensePath = getLicenseFilePath();
+  if (!node_fs.existsSync(licensePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+const applicationInfo = sqliteCore.sqliteTable("application_info", {
+  infoId: sqliteCore.integer("info_id").primaryKey({ autoIncrement: true }),
+  installationDate: sqliteCore.text("installation_date").notNull(),
+  firstRunDate: sqliteCore.text("first_run_date").notNull(),
+  trialStartDate: sqliteCore.text("trial_start_date").notNull(),
+  trialEndDate: sqliteCore.text("trial_end_date").notNull(),
+  isLicensed: sqliteCore.integer("is_licensed", { mode: "boolean" }).default(false),
+  licenseStartDate: sqliteCore.text("license_start_date"),
+  licenseEndDate: sqliteCore.text("license_end_date"),
+  machineId: sqliteCore.text("machine_id").notNull(),
+  licenseKey: sqliteCore.text("license_key"),
+  createdAt: sqliteCore.text("created_at").default(drizzleOrm.sql`CURRENT_TIMESTAMP`),
+  updatedAt: sqliteCore.text("updated_at").default(drizzleOrm.sql`CURRENT_TIMESTAMP`)
+});
+function getApplicationInfoFromDb() {
+  const db2 = getDatabase();
+  return db2.select().from(applicationInfo).limit(1).get();
+}
+function initializeApplicationInfo() {
+  const db2 = getDatabase();
+  const existingInfo = getApplicationInfoFromDb();
+  if (existingInfo) {
+    return existingInfo;
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const trialEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+  const machineId = getMachineIdForDisplay();
+  const newInfo = {
+    installationDate: now,
+    firstRunDate: now,
+    trialStartDate: now,
+    trialEndDate,
+    isLicensed: false,
+    machineId
+  };
+  const result = db2.insert(applicationInfo).values(newInfo).returning().get();
+  return result;
+}
 function registerLicenseHandlers() {
   electron.ipcMain.handle("license:get-machine-id", async () => {
     try {
-      const machineId = getMachineId();
+      const machineId = getMachineIdForDisplay();
       return { success: true, data: machineId };
     } catch (error) {
       console.error("Get machine ID error:", error);
       return { success: false, message: "Failed to get machine ID" };
+    }
+  });
+  electron.ipcMain.handle("license:generate-license-request", async () => {
+    try {
+      const machineId = getMachineIdForDisplay();
+      const expectedLicenseKey = generateLicenseKey(machineId);
+      return {
+        success: true,
+        data: {
+          machineId,
+          expectedLicenseKey,
+          instructions: "Run: node generate-license.js <machine_id>"
+        }
+      };
+    } catch (error) {
+      console.error("Generate license request error:", error);
+      return { success: false, message: "Failed to generate license request" };
+    }
+  });
+  electron.ipcMain.handle("license:get-application-info", async () => {
+    try {
+      const appInfo = initializeApplicationInfo();
+      const machineId = getMachineIdForDisplay();
+      const licenseInfo = getLicenseInfo();
+      const now = /* @__PURE__ */ new Date();
+      const trialEnd = new Date(appInfo.trialEndDate);
+      const trialDaysRemaining = Math.max(0, Math.ceil((trialEnd.getTime() - now.getTime()) / (1e3 * 60 * 60 * 24)));
+      let status = "TRIAL_ACTIVE";
+      let isValid = true;
+      let isActivated = false;
+      let isTrial = true;
+      let daysRemaining = trialDaysRemaining;
+      let expiresAt = appInfo.trialEndDate;
+      let message = `Trial period: ${trialDaysRemaining} days remaining`;
+      if (appInfo.isLicensed && licenseInfo) {
+        isActivated = true;
+        isTrial = false;
+        expiresAt = licenseInfo.licenseEndDate;
+        if (licenseInfo.licenseEndDate && new Date(licenseInfo.licenseEndDate) < now) {
+          status = "LICENSE_EXPIRED";
+          isValid = false;
+          daysRemaining = 0;
+          message = "License has expired. Please renew.";
+        } else {
+          status = "LICENSE_ACTIVE";
+          daysRemaining = Math.max(0, Math.ceil((new Date(licenseInfo.licenseEndDate).getTime() - now.getTime()) / (1e3 * 60 * 60 * 24)));
+          message = `License active: ${daysRemaining} days remaining`;
+        }
+      } else if (trialEnd < now) {
+        status = "TRIAL_EXPIRED";
+        isValid = false;
+        daysRemaining = 0;
+        message = "Trial period has expired. Please activate license.";
+      }
+      const extendedStatus = {
+        status,
+        isValid,
+        isActivated,
+        isTrial,
+        machineId,
+        expiresAt,
+        daysRemaining,
+        message,
+        installationDate: appInfo.installationDate,
+        trialStartDate: appInfo.trialStartDate,
+        trialEndDate: appInfo.trialEndDate,
+        licenseStartDate: licenseInfo?.licenseStartDate || null,
+        licenseEndDate: licenseInfo?.licenseEndDate || null
+      };
+      return { success: true, data: extendedStatus };
+    } catch (error) {
+      console.error("Get application info error:", error);
+      return { success: false, message: "Failed to get application info" };
     }
   });
   electron.ipcMain.handle("license:get-status", async () => {
@@ -3696,14 +7659,27 @@ function registerLicenseHandlers() {
   electron.ipcMain.handle("license:activate", async (_, licenseKey) => {
     try {
       const session = getCurrentSession();
+      if (!session || session.role?.toLowerCase() !== "admin") {
+        return { success: false, message: "Only administrators can activate licenses." };
+      }
       const result = activateLicense(licenseKey);
       if (result.success) {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString();
+        db2.update(applicationInfo).set({
+          isLicensed: true,
+          licenseStartDate: now,
+          licenseEndDate,
+          licenseKey: licenseKey.toUpperCase(),
+          updatedAt: now
+        }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
         await createAuditLog({
-          userId: session?.userId,
-          branchId: session?.branchId,
+          userId: session.userId,
+          branchId: session.branchId,
           action: "create",
-          entityType: "setting",
-          description: "License activated"
+          entityType: "license",
+          description: `License activated. Key: ${licenseKey.substring(0, 8)}...`
         });
       }
       return result;
@@ -3715,13 +7691,25 @@ function registerLicenseHandlers() {
   electron.ipcMain.handle("license:deactivate", async () => {
     try {
       const session = getCurrentSession();
+      if (!session || session.role?.toLowerCase() !== "admin") {
+        return { success: false, message: "Only administrators can deactivate licenses." };
+      }
       const result = deactivateLicense();
       if (result.success) {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        db2.update(applicationInfo).set({
+          isLicensed: false,
+          licenseStartDate: null,
+          licenseEndDate: null,
+          licenseKey: null,
+          updatedAt: now
+        }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
         await createAuditLog({
-          userId: session?.userId,
-          branchId: session?.branchId,
+          userId: session.userId,
+          branchId: session.branchId,
           action: "delete",
-          entityType: "setting",
+          entityType: "license",
           description: "License deactivated"
         });
       }
@@ -3729,6 +7717,3726 @@ function registerLicenseHandlers() {
     } catch (error) {
       console.error("Deactivate license error:", error);
       return { success: false, message: "Failed to deactivate license" };
+    }
+  });
+  electron.ipcMain.handle("license:validate-key", async (_, licenseKey) => {
+    try {
+      const machineId = getMachineIdForDisplay();
+      const isValid = validateLicenseKey(licenseKey, machineId);
+      const isValidFormat = /^[A-F0-9]{32}$/.test(licenseKey.toUpperCase()) || /^[A-F0-9]{64}$/.test(licenseKey.toUpperCase());
+      return {
+        success: true,
+        data: {
+          isValid,
+          isValidFormat,
+          message: isValid ? "License key is valid for this machine." : isValidFormat ? "License key format is valid but not for this machine." : "Invalid license key format."
+        }
+      };
+    } catch (error) {
+      console.error("Validate license key error:", error);
+      return { success: false, message: "Failed to validate license key" };
+    }
+  });
+  electron.ipcMain.handle("license:get-history", async () => {
+    try {
+      const licenseInfo = getLicenseInfo();
+      if (!licenseInfo) {
+        return { success: true, data: [] };
+      }
+      const history = [
+        {
+          id: 1,
+          type: "FULL",
+          status: licenseInfo.licenseEndDate && new Date(licenseInfo.licenseEndDate) > /* @__PURE__ */ new Date() ? "ACTIVE" : "EXPIRED",
+          activatedBy: "Administrator",
+          activatedAt: licenseInfo.licenseStartDate,
+          expiresAt: licenseInfo.licenseEndDate
+        }
+      ];
+      return { success: true, data: history };
+    } catch (error) {
+      console.error("Get license history error:", error);
+      return { success: false, message: "Failed to get license history" };
+    }
+  });
+}
+function registerDatabaseViewerHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("database:get-tables", async () => {
+    try {
+      const tables = await db2.all(`
+        SELECT name, sql
+        FROM sqlite_master
+        WHERE type='table'
+        AND name NOT LIKE 'sqlite_%'
+        AND name NOT LIKE 'drizzle_%'
+        ORDER BY name
+      `);
+      return { success: true, tables };
+    } catch (err) {
+      console.error("Error fetching tables:", err);
+      return { success: false, error: String(err), tables: [] };
+    }
+  });
+  electron.ipcMain.handle("database:get-table-info", async (_, tableName) => {
+    try {
+      const info = await db2.all(`PRAGMA table_info("${tableName}")`);
+      return { success: true, columns: info };
+    } catch (err) {
+      console.error("Error fetching table info:", err);
+      return { success: false, error: String(err), columns: [] };
+    }
+  });
+  electron.ipcMain.handle(
+    "database:get-table-data",
+    async (_, { tableName, page = 1, limit = 100 }) => {
+      try {
+        const countResult = await db2.get(
+          `SELECT COUNT(*) as count FROM "${tableName}"`
+        );
+        const totalCount = countResult?.count || 0;
+        const offset = (page - 1) * limit;
+        const data = await db2.all(`SELECT * FROM "${tableName}" LIMIT ${limit} OFFSET ${offset}`);
+        const columnsResult = await db2.all(`PRAGMA table_info("${tableName}")`);
+        const columns = columnsResult.map((col) => col.name);
+        const rows = data.map((row) => {
+          const plainRow = {};
+          for (const col of columns) {
+            let value = row[col];
+            if (value instanceof Date) {
+              value = value.toISOString();
+            }
+            if (value && typeof value === "object" && !Array.isArray(value)) {
+              const proto = Object.getPrototypeOf(value);
+              if (proto && proto.constructor && proto.constructor.name === "Blob") {
+                try {
+                  value = Buffer.isBuffer(value) ? value.toString("base64") : String(value);
+                } catch {
+                  value = "[Binary Data]";
+                }
+              }
+            }
+            plainRow[col] = value;
+          }
+          return plainRow;
+        });
+        return {
+          success: true,
+          data: {
+            columns,
+            rows,
+            count: totalCount,
+            page,
+            limit,
+            totalPages: Math.ceil(totalCount / limit)
+          }
+        };
+      } catch (err) {
+        console.error("Error fetching table data:", err);
+        return { success: false, error: String(err), data: null };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "database:execute-query",
+    async (_, { query, userId }) => {
+      try {
+        const normalizedQuery = query.trim().toLowerCase();
+        if (!normalizedQuery.startsWith("select") && !normalizedQuery.startsWith("pragma")) {
+          return {
+            success: false,
+            error: "Only SELECT queries are allowed for security reasons",
+            data: null
+          };
+        }
+        if (normalizedQuery.includes("drop") || normalizedQuery.includes("delete") || normalizedQuery.includes("update") || normalizedQuery.includes("insert") || normalizedQuery.includes("alter") || normalizedQuery.includes("create")) {
+          return {
+            success: false,
+            error: "Only SELECT and PRAGMA queries are allowed for viewing",
+            data: null
+          };
+        }
+        const result = await db2.all(query);
+        let columns = [];
+        if (result.length > 0) {
+          columns = Object.keys(result[0]);
+        }
+        const rows = result.map((row) => {
+          const plainRow = {};
+          for (const col of columns) {
+            let value = row[col];
+            if (value instanceof Date) {
+              value = value.toISOString();
+            }
+            plainRow[col] = value;
+          }
+          return plainRow;
+        });
+        return {
+          success: true,
+          data: {
+            columns,
+            rows,
+            count: result.length
+          }
+        };
+      } catch (err) {
+        console.error("Error executing query:", err);
+        return { success: false, error: String(err), data: null };
+      }
+    }
+  );
+  electron.ipcMain.handle("database:get-info", async () => {
+    try {
+      const dbPath = getDbPath();
+      const tableRows = await db2.all(`
+        SELECT m.name
+        FROM sqlite_master m
+        WHERE m.type='table'
+        AND m.name NOT LIKE 'sqlite_%'
+        AND m.name NOT LIKE 'drizzle_%'
+      `);
+      const tableCounts = await Promise.all(
+        tableRows.map(async (table) => {
+          const result = await db2.get(
+            `SELECT COUNT(*) as count FROM "${table.name}"`
+          );
+          return { name: table.name, count: result?.count || 0 };
+        })
+      );
+      return {
+        success: true,
+        info: {
+          path: dbPath,
+          tableCounts
+        }
+      };
+    } catch (err) {
+      console.error("Error fetching database info:", err);
+      return { success: false, error: String(err), info: null };
+    }
+  });
+}
+function registerAccountReceivablesHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("receivables:get-all", async (_, params = {}) => {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        sortOrder = "desc",
+        customerId,
+        branchId,
+        status,
+        search,
+        startDate,
+        endDate
+      } = params;
+      const conditions = [];
+      if (customerId) conditions.push(drizzleOrm.eq(accountReceivables.customerId, customerId));
+      if (branchId) conditions.push(drizzleOrm.eq(accountReceivables.branchId, branchId));
+      if (status) conditions.push(drizzleOrm.eq(accountReceivables.status, status));
+      if (startDate) conditions.push(drizzleOrm.gte(accountReceivables.createdAt, startDate));
+      if (endDate) conditions.push(drizzleOrm.lte(accountReceivables.createdAt, endDate));
+      const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+      const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(accountReceivables).where(whereClause);
+      const total = countResult[0]?.count ?? 0;
+      const data = await db2.query.accountReceivables.findMany({
+        where: whereClause,
+        limit,
+        offset: (page - 1) * limit,
+        orderBy: sortOrder === "desc" ? drizzleOrm.desc(accountReceivables.createdAt) : accountReceivables.createdAt,
+        with: {
+          customer: true,
+          sale: true,
+          branch: true,
+          createdByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          payments: {
+            orderBy: drizzleOrm.desc(receivablePayments.paymentDate)
+          }
+        }
+      });
+      return {
+        success: true,
+        data,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      };
+    } catch (error) {
+      console.error("Get receivables error:", error);
+      return { success: false, message: "Failed to fetch receivables" };
+    }
+  });
+  electron.ipcMain.handle("receivables:get-by-id", async (_, id) => {
+    try {
+      const receivable = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.id, id),
+        with: {
+          customer: true,
+          sale: true,
+          branch: true,
+          createdByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          payments: {
+            orderBy: drizzleOrm.desc(receivablePayments.paymentDate),
+            with: {
+              receivedByUser: {
+                columns: {
+                  id: true,
+                  username: true,
+                  fullName: true
+                }
+              }
+            }
+          }
+        }
+      });
+      if (!receivable) {
+        return { success: false, message: "Receivable not found" };
+      }
+      return { success: true, data: receivable };
+    } catch (error) {
+      console.error("Get receivable error:", error);
+      return { success: false, message: "Failed to fetch receivable" };
+    }
+  });
+  electron.ipcMain.handle("receivables:get-by-customer", async (_, customerId) => {
+    try {
+      const data = await db2.query.accountReceivables.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(accountReceivables.customerId, customerId),
+          drizzleOrm.or(
+            drizzleOrm.eq(accountReceivables.status, "pending"),
+            drizzleOrm.eq(accountReceivables.status, "partial"),
+            drizzleOrm.eq(accountReceivables.status, "overdue")
+          )
+        ),
+        orderBy: drizzleOrm.desc(accountReceivables.createdAt),
+        with: {
+          branch: true,
+          payments: true
+        }
+      });
+      const totalOwed = data.reduce((sum, r) => sum + r.remainingAmount, 0);
+      const totalPaid = data.reduce((sum, r) => sum + r.paidAmount, 0);
+      return {
+        success: true,
+        data,
+        summary: {
+          totalReceivables: data.length,
+          totalOwed,
+          totalPaid
+        }
+      };
+    } catch (error) {
+      console.error("Get customer receivables error:", error);
+      return { success: false, message: "Failed to fetch customer receivables" };
+    }
+  });
+  electron.ipcMain.handle("receivables:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const customer = await db2.query.customers.findFirst({
+        where: drizzleOrm.eq(customers.id, data.customerId)
+      });
+      if (!customer) {
+        return { success: false, message: "Customer not found" };
+      }
+      const branch = await db2.query.branches.findFirst({
+        where: drizzleOrm.eq(branches.id, data.branchId)
+      });
+      if (!branch) {
+        return { success: false, message: "Branch not found" };
+      }
+      const [newReceivable] = await db2.insert(accountReceivables).values({
+        customerId: data.customerId,
+        saleId: data.saleId,
+        branchId: data.branchId,
+        invoiceNumber: data.invoiceNumber,
+        totalAmount: data.totalAmount,
+        paidAmount: 0,
+        remainingAmount: data.totalAmount,
+        status: "pending",
+        dueDate: data.dueDate,
+        notes: data.notes,
+        createdBy: session.userId
+      }).returning();
+      await createAuditLog({
+        userId: session.userId,
+        branchId: data.branchId,
+        action: "create",
+        entityType: "account_receivable",
+        entityId: newReceivable.id,
+        newValues: {
+          customerId: data.customerId,
+          invoiceNumber: data.invoiceNumber,
+          totalAmount: data.totalAmount
+        },
+        description: `Created receivable ${data.invoiceNumber} for ${customer.firstName} ${customer.lastName}`
+      });
+      return { success: true, data: newReceivable };
+    } catch (error) {
+      console.error("Create receivable error:", error);
+      return { success: false, message: "Failed to create receivable" };
+    }
+  });
+  electron.ipcMain.handle("receivables:record-payment", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const receivable = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.id, data.receivableId),
+        with: {
+          customer: true
+        }
+      });
+      if (!receivable) {
+        return { success: false, message: "Receivable not found" };
+      }
+      if (receivable.status === "paid") {
+        return { success: false, message: "This receivable is already fully paid" };
+      }
+      if (receivable.status === "cancelled") {
+        return { success: false, message: "Cannot record payment for cancelled receivable" };
+      }
+      if (data.amount <= 0) {
+        return { success: false, message: "Payment amount must be greater than 0" };
+      }
+      if (data.amount > receivable.remainingAmount) {
+        return {
+          success: false,
+          message: `Payment amount cannot exceed remaining balance of ${receivable.remainingAmount}`
+        };
+      }
+      const [payment] = await db2.insert(receivablePayments).values({
+        receivableId: data.receivableId,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        referenceNumber: data.referenceNumber,
+        notes: data.notes,
+        receivedBy: session.userId
+      }).returning();
+      const newPaidAmount = receivable.paidAmount + data.amount;
+      const newRemainingAmount = receivable.totalAmount - newPaidAmount;
+      const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
+      await db2.update(accountReceivables).set({
+        paidAmount: newPaidAmount,
+        remainingAmount: Math.max(0, newRemainingAmount),
+        status: newStatus,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(accountReceivables.id, data.receivableId));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: receivable.branchId,
+        action: "payment",
+        entityType: "account_receivable",
+        entityId: data.receivableId,
+        oldValues: {
+          paidAmount: receivable.paidAmount,
+          remainingAmount: receivable.remainingAmount,
+          status: receivable.status
+        },
+        newValues: {
+          paidAmount: newPaidAmount,
+          remainingAmount: newRemainingAmount,
+          status: newStatus,
+          paymentAmount: data.amount,
+          paymentMethod: data.paymentMethod
+        },
+        description: `Recorded payment of ${data.amount} for receivable ${receivable.invoiceNumber}`
+      });
+      return {
+        success: true,
+        data: payment,
+        receivable: {
+          paidAmount: newPaidAmount,
+          remainingAmount: Math.max(0, newRemainingAmount),
+          status: newStatus
+        }
+      };
+    } catch (error) {
+      console.error("Record payment error:", error);
+      return { success: false, message: "Failed to record payment" };
+    }
+  });
+  electron.ipcMain.handle("receivables:cancel", async (_, id, reason) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const receivable = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.id, id)
+      });
+      if (!receivable) {
+        return { success: false, message: "Receivable not found" };
+      }
+      if (receivable.status === "paid") {
+        return { success: false, message: "Cannot cancel a fully paid receivable" };
+      }
+      if (receivable.paidAmount > 0) {
+        return { success: false, message: "Cannot cancel receivable with existing payments" };
+      }
+      await db2.update(accountReceivables).set({
+        status: "cancelled",
+        notes: reason ? `${receivable.notes || ""}
+Cancelled: ${reason}`.trim() : receivable.notes,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(accountReceivables.id, id));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: receivable.branchId,
+        action: "cancel",
+        entityType: "account_receivable",
+        entityId: id,
+        oldValues: { status: receivable.status },
+        newValues: { status: "cancelled", reason },
+        description: `Cancelled receivable ${receivable.invoiceNumber}`
+      });
+      return { success: true, message: "Receivable cancelled successfully" };
+    } catch (error) {
+      console.error("Cancel receivable error:", error);
+      return { success: false, message: "Failed to cancel receivable" };
+    }
+  });
+  electron.ipcMain.handle("receivables:get-summary", async (_, branchId) => {
+    try {
+      const conditions = [];
+      if (branchId) conditions.push(drizzleOrm.eq(accountReceivables.branchId, branchId));
+      const statusQuery = await db2.select({
+        status: accountReceivables.status,
+        count: drizzleOrm.sql`count(*)`,
+        totalAmount: drizzleOrm.sql`sum(${accountReceivables.totalAmount})`,
+        remainingAmount: drizzleOrm.sql`sum(${accountReceivables.remainingAmount})`
+      }).from(accountReceivables).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(accountReceivables.status);
+      const totalsQuery = await db2.select({
+        totalReceivables: drizzleOrm.sql`count(*)`,
+        totalAmount: drizzleOrm.sql`sum(${accountReceivables.totalAmount})`,
+        totalPaid: drizzleOrm.sql`sum(${accountReceivables.paidAmount})`,
+        totalRemaining: drizzleOrm.sql`sum(${accountReceivables.remainingAmount})`
+      }).from(accountReceivables).where(
+        drizzleOrm.and(
+          ...conditions.length > 0 ? conditions : [],
+          drizzleOrm.or(
+            drizzleOrm.eq(accountReceivables.status, "pending"),
+            drizzleOrm.eq(accountReceivables.status, "partial"),
+            drizzleOrm.eq(accountReceivables.status, "overdue")
+          )
+        )
+      );
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const overdueQuery = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(accountReceivables).where(
+        drizzleOrm.and(
+          ...conditions.length > 0 ? conditions : [],
+          drizzleOrm.lte(accountReceivables.dueDate, today),
+          drizzleOrm.or(drizzleOrm.eq(accountReceivables.status, "pending"), drizzleOrm.eq(accountReceivables.status, "partial"))
+        )
+      );
+      await db2.update(accountReceivables).set({ status: "overdue", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(
+        drizzleOrm.and(
+          drizzleOrm.lte(accountReceivables.dueDate, today),
+          drizzleOrm.or(drizzleOrm.eq(accountReceivables.status, "pending"), drizzleOrm.eq(accountReceivables.status, "partial"))
+        )
+      );
+      return {
+        success: true,
+        data: {
+          byStatus: statusQuery,
+          totals: totalsQuery[0] ?? {
+            totalReceivables: 0,
+            totalAmount: 0,
+            totalPaid: 0,
+            totalRemaining: 0
+          },
+          overdueCount: overdueQuery[0]?.count ?? 0
+        }
+      };
+    } catch (error) {
+      console.error("Get summary error:", error);
+      return { success: false, message: "Failed to fetch summary" };
+    }
+  });
+  electron.ipcMain.handle("receivables:get-payments", async (_, receivableId) => {
+    try {
+      const payments = await db2.query.receivablePayments.findMany({
+        where: drizzleOrm.eq(receivablePayments.receivableId, receivableId),
+        orderBy: drizzleOrm.desc(receivablePayments.paymentDate),
+        with: {
+          receivedByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          }
+        }
+      });
+      return { success: true, data: payments };
+    } catch (error) {
+      console.error("Get payments error:", error);
+      return { success: false, message: "Failed to fetch payments" };
+    }
+  });
+  electron.ipcMain.handle("receivables:get-aging-report", async (_, branchId) => {
+    try {
+      const today = /* @__PURE__ */ new Date();
+      const conditions = [
+        drizzleOrm.or(
+          drizzleOrm.eq(accountReceivables.status, "pending"),
+          drizzleOrm.eq(accountReceivables.status, "partial"),
+          drizzleOrm.eq(accountReceivables.status, "overdue")
+        )
+      ];
+      if (branchId) conditions.push(drizzleOrm.eq(accountReceivables.branchId, branchId));
+      const outstandingReceivables = await db2.query.accountReceivables.findMany({
+        where: drizzleOrm.and(...conditions),
+        with: {
+          customer: true,
+          branch: true
+        },
+        orderBy: drizzleOrm.desc(accountReceivables.dueDate)
+      });
+      const aging = {
+        current: { amount: 0, count: 0 },
+        days1to30: { amount: 0, count: 0 },
+        days31to60: { amount: 0, count: 0 },
+        days61to90: { amount: 0, count: 0 },
+        days90plus: { amount: 0, count: 0 }
+      };
+      const overdueByCustomer = /* @__PURE__ */ new Map();
+      for (const receivable of outstandingReceivables) {
+        const dueDate = receivable.dueDate ? new Date(receivable.dueDate) : null;
+        const amount = receivable.remainingAmount;
+        if (!dueDate) {
+          aging.current.amount += amount;
+          aging.current.count++;
+          continue;
+        }
+        const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1e3 * 60 * 60 * 24));
+        if (daysDiff <= 0) {
+          aging.current.amount += amount;
+          aging.current.count++;
+        } else if (daysDiff <= 30) {
+          aging.days1to30.amount += amount;
+          aging.days1to30.count++;
+        } else if (daysDiff <= 60) {
+          aging.days31to60.amount += amount;
+          aging.days31to60.count++;
+        } else if (daysDiff <= 90) {
+          aging.days61to90.amount += amount;
+          aging.days61to90.count++;
+        } else {
+          aging.days90plus.amount += amount;
+          aging.days90plus.count++;
+        }
+        if (daysDiff > 0 && receivable.customer) {
+          const customerName = `${receivable.customer.firstName} ${receivable.customer.lastName}`;
+          const existing = overdueByCustomer.get(receivable.customer.id);
+          if (existing) {
+            existing.amount += amount;
+            if (daysDiff > existing.daysOverdue) {
+              existing.daysOverdue = daysDiff;
+              existing.oldestDueDate = receivable.dueDate;
+            }
+          } else {
+            overdueByCustomer.set(receivable.customer.id, {
+              customer: customerName,
+              amount,
+              oldestDueDate: receivable.dueDate,
+              daysOverdue: daysDiff
+            });
+          }
+        }
+      }
+      const totalOutstanding = aging.current.amount + aging.days1to30.amount + aging.days31to60.amount + aging.days61to90.amount + aging.days90plus.amount;
+      const oneYearAgo = new Date(today);
+      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+      const salesResult = await db2.select({
+        totalSales: drizzleOrm.sql`sum(${accountReceivables.totalAmount})`
+      }).from(accountReceivables).where(
+        drizzleOrm.and(
+          drizzleOrm.gte(accountReceivables.createdAt, oneYearAgo.toISOString()),
+          ...branchId ? [drizzleOrm.eq(accountReceivables.branchId, branchId)] : []
+        )
+      );
+      const totalSales = salesResult[0]?.totalSales || 0;
+      const dso = totalSales > 0 ? Math.round(totalOutstanding / (totalSales / 365) * 10) / 10 : 0;
+      const topOverdue = Array.from(overdueByCustomer.values()).sort((a, b) => b.amount - a.amount).slice(0, 5);
+      return {
+        success: true,
+        data: {
+          totalOutstanding,
+          dso,
+          aging,
+          topOverdue
+        }
+      };
+    } catch (error) {
+      console.error("Get aging report error:", error);
+      return { success: false, message: "Failed to fetch aging report" };
+    }
+  });
+}
+function registerAccountPayablesHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("payables:get-all", async (_, params = {}) => {
+    try {
+      const {
+        page = 1,
+        limit = 20,
+        sortOrder = "desc",
+        supplierId,
+        branchId,
+        status,
+        startDate,
+        endDate
+      } = params;
+      const conditions = [];
+      if (supplierId) conditions.push(drizzleOrm.eq(accountPayables.supplierId, supplierId));
+      if (branchId) conditions.push(drizzleOrm.eq(accountPayables.branchId, branchId));
+      if (status) conditions.push(drizzleOrm.eq(accountPayables.status, status));
+      if (startDate) conditions.push(drizzleOrm.gte(accountPayables.createdAt, startDate));
+      if (endDate) conditions.push(drizzleOrm.lte(accountPayables.createdAt, endDate));
+      const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+      const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(accountPayables).where(whereClause);
+      const total = countResult[0]?.count ?? 0;
+      const data = await db2.query.accountPayables.findMany({
+        where: whereClause,
+        limit,
+        offset: (page - 1) * limit,
+        orderBy: sortOrder === "desc" ? drizzleOrm.desc(accountPayables.createdAt) : accountPayables.createdAt,
+        with: {
+          supplier: true,
+          purchase: true,
+          branch: true,
+          createdByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          payments: {
+            orderBy: drizzleOrm.desc(payablePayments.paymentDate)
+          }
+        }
+      });
+      return {
+        success: true,
+        data,
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit)
+      };
+    } catch (error) {
+      console.error("Get payables error:", error);
+      return { success: false, message: "Failed to fetch payables" };
+    }
+  });
+  electron.ipcMain.handle("payables:get-by-id", async (_, id) => {
+    try {
+      const payable = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.id, id),
+        with: {
+          supplier: true,
+          purchase: true,
+          branch: true,
+          createdByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          payments: {
+            orderBy: drizzleOrm.desc(payablePayments.paymentDate),
+            with: {
+              paidByUser: {
+                columns: {
+                  id: true,
+                  username: true,
+                  fullName: true
+                }
+              }
+            }
+          }
+        }
+      });
+      if (!payable) {
+        return { success: false, message: "Payable not found" };
+      }
+      return { success: true, data: payable };
+    } catch (error) {
+      console.error("Get payable error:", error);
+      return { success: false, message: "Failed to fetch payable" };
+    }
+  });
+  electron.ipcMain.handle("payables:get-by-supplier", async (_, supplierId) => {
+    try {
+      const data = await db2.query.accountPayables.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(accountPayables.supplierId, supplierId),
+          drizzleOrm.or(
+            drizzleOrm.eq(accountPayables.status, "pending"),
+            drizzleOrm.eq(accountPayables.status, "partial"),
+            drizzleOrm.eq(accountPayables.status, "overdue")
+          )
+        ),
+        orderBy: drizzleOrm.desc(accountPayables.createdAt),
+        with: {
+          branch: true,
+          payments: true
+        }
+      });
+      const totalOwed = data.reduce((sum, p) => sum + p.remainingAmount, 0);
+      const totalPaid = data.reduce((sum, p) => sum + p.paidAmount, 0);
+      return {
+        success: true,
+        data,
+        summary: {
+          totalPayables: data.length,
+          totalOwed,
+          totalPaid
+        }
+      };
+    } catch (error) {
+      console.error("Get supplier payables error:", error);
+      return { success: false, message: "Failed to fetch supplier payables" };
+    }
+  });
+  electron.ipcMain.handle("payables:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const supplier = await db2.query.suppliers.findFirst({
+        where: drizzleOrm.eq(suppliers.id, data.supplierId)
+      });
+      if (!supplier) {
+        return { success: false, message: "Supplier not found" };
+      }
+      const branch = await db2.query.branches.findFirst({
+        where: drizzleOrm.eq(branches.id, data.branchId)
+      });
+      if (!branch) {
+        return { success: false, message: "Branch not found" };
+      }
+      const [newPayable] = await db2.insert(accountPayables).values({
+        supplierId: data.supplierId,
+        purchaseId: data.purchaseId,
+        branchId: data.branchId,
+        invoiceNumber: data.invoiceNumber,
+        totalAmount: data.totalAmount,
+        paidAmount: 0,
+        remainingAmount: data.totalAmount,
+        status: "pending",
+        dueDate: data.dueDate,
+        paymentTerms: data.paymentTerms,
+        notes: data.notes,
+        createdBy: session.userId
+      }).returning();
+      await createAuditLog({
+        userId: session.userId,
+        branchId: data.branchId,
+        action: "create",
+        entityType: "account_payable",
+        entityId: newPayable.id,
+        newValues: {
+          supplierId: data.supplierId,
+          invoiceNumber: data.invoiceNumber,
+          totalAmount: data.totalAmount
+        },
+        description: `Created payable ${data.invoiceNumber} for ${supplier.name}`
+      });
+      return { success: true, data: newPayable };
+    } catch (error) {
+      console.error("Create payable error:", error);
+      return { success: false, message: "Failed to create payable" };
+    }
+  });
+  electron.ipcMain.handle("payables:record-payment", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const payable = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.id, data.payableId),
+        with: {
+          supplier: true
+        }
+      });
+      if (!payable) {
+        return { success: false, message: "Payable not found" };
+      }
+      if (payable.status === "paid") {
+        return { success: false, message: "This payable is already fully paid" };
+      }
+      if (payable.status === "cancelled") {
+        return { success: false, message: "Cannot record payment for cancelled payable" };
+      }
+      if (data.amount <= 0) {
+        return { success: false, message: "Payment amount must be greater than 0" };
+      }
+      if (data.amount > payable.remainingAmount) {
+        return {
+          success: false,
+          message: `Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`
+        };
+      }
+      const [payment] = await db2.insert(payablePayments).values({
+        payableId: data.payableId,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        referenceNumber: data.referenceNumber,
+        notes: data.notes,
+        paidBy: session.userId
+      }).returning();
+      const newPaidAmount = payable.paidAmount + data.amount;
+      const newRemainingAmount = payable.totalAmount - newPaidAmount;
+      const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
+      await db2.update(accountPayables).set({
+        paidAmount: newPaidAmount,
+        remainingAmount: Math.max(0, newRemainingAmount),
+        status: newStatus,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: payable.branchId,
+        action: "payment",
+        entityType: "account_payable",
+        entityId: data.payableId,
+        oldValues: {
+          paidAmount: payable.paidAmount,
+          remainingAmount: payable.remainingAmount,
+          status: payable.status
+        },
+        newValues: {
+          paidAmount: newPaidAmount,
+          remainingAmount: newRemainingAmount,
+          status: newStatus,
+          paymentAmount: data.amount,
+          paymentMethod: data.paymentMethod
+        },
+        description: `Recorded payment of ${data.amount} for payable ${payable.invoiceNumber}`
+      });
+      return {
+        success: true,
+        data: payment,
+        payable: {
+          paidAmount: newPaidAmount,
+          remainingAmount: Math.max(0, newRemainingAmount),
+          status: newStatus
+        }
+      };
+    } catch (error) {
+      console.error("Record payment error:", error);
+      return { success: false, message: "Failed to record payment" };
+    }
+  });
+  electron.ipcMain.handle("payables:cancel", async (_, id, reason) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const payable = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.id, id)
+      });
+      if (!payable) {
+        return { success: false, message: "Payable not found" };
+      }
+      if (payable.status === "paid") {
+        return { success: false, message: "Cannot cancel a fully paid payable" };
+      }
+      if (payable.paidAmount > 0) {
+        return { success: false, message: "Cannot cancel payable with existing payments" };
+      }
+      await db2.update(accountPayables).set({
+        status: "cancelled",
+        notes: reason ? `${payable.notes || ""}
+Cancelled: ${reason}`.trim() : payable.notes,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(accountPayables.id, id));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: payable.branchId,
+        action: "cancel",
+        entityType: "account_payable",
+        entityId: id,
+        oldValues: { status: payable.status },
+        newValues: { status: "cancelled", reason },
+        description: `Cancelled payable ${payable.invoiceNumber}`
+      });
+      return { success: true, message: "Payable cancelled successfully" };
+    } catch (error) {
+      console.error("Cancel payable error:", error);
+      return { success: false, message: "Failed to cancel payable" };
+    }
+  });
+  electron.ipcMain.handle("payables:get-summary", async (_, branchId) => {
+    try {
+      const conditions = [];
+      if (branchId) conditions.push(drizzleOrm.eq(accountPayables.branchId, branchId));
+      const statusQuery = await db2.select({
+        status: accountPayables.status,
+        count: drizzleOrm.sql`count(*)`,
+        totalAmount: drizzleOrm.sql`sum(${accountPayables.totalAmount})`,
+        remainingAmount: drizzleOrm.sql`sum(${accountPayables.remainingAmount})`
+      }).from(accountPayables).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(accountPayables.status);
+      const totalsQuery = await db2.select({
+        totalPayables: drizzleOrm.sql`count(*)`,
+        totalAmount: drizzleOrm.sql`sum(${accountPayables.totalAmount})`,
+        totalPaid: drizzleOrm.sql`sum(${accountPayables.paidAmount})`,
+        totalRemaining: drizzleOrm.sql`sum(${accountPayables.remainingAmount})`
+      }).from(accountPayables).where(
+        drizzleOrm.and(
+          ...conditions.length > 0 ? conditions : [],
+          drizzleOrm.or(
+            drizzleOrm.eq(accountPayables.status, "pending"),
+            drizzleOrm.eq(accountPayables.status, "partial"),
+            drizzleOrm.eq(accountPayables.status, "overdue")
+          )
+        )
+      );
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const overdueQuery = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(accountPayables).where(
+        drizzleOrm.and(
+          ...conditions.length > 0 ? conditions : [],
+          drizzleOrm.lte(accountPayables.dueDate, today),
+          drizzleOrm.or(drizzleOrm.eq(accountPayables.status, "pending"), drizzleOrm.eq(accountPayables.status, "partial"))
+        )
+      );
+      await db2.update(accountPayables).set({ status: "overdue", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(
+        drizzleOrm.and(
+          drizzleOrm.lte(accountPayables.dueDate, today),
+          drizzleOrm.or(drizzleOrm.eq(accountPayables.status, "pending"), drizzleOrm.eq(accountPayables.status, "partial"))
+        )
+      );
+      return {
+        success: true,
+        data: {
+          byStatus: statusQuery,
+          totals: totalsQuery[0] ?? {
+            totalPayables: 0,
+            totalAmount: 0,
+            totalPaid: 0,
+            totalRemaining: 0
+          },
+          overdueCount: overdueQuery[0]?.count ?? 0
+        }
+      };
+    } catch (error) {
+      console.error("Get summary error:", error);
+      return { success: false, message: "Failed to fetch summary" };
+    }
+  });
+  electron.ipcMain.handle("payables:get-aging-report", async (_, branchId) => {
+    try {
+      const today = /* @__PURE__ */ new Date();
+      const conditions = [
+        drizzleOrm.or(
+          drizzleOrm.eq(accountPayables.status, "pending"),
+          drizzleOrm.eq(accountPayables.status, "partial"),
+          drizzleOrm.eq(accountPayables.status, "overdue")
+        )
+      ];
+      if (branchId) conditions.push(drizzleOrm.eq(accountPayables.branchId, branchId));
+      const outstandingPayables = await db2.query.accountPayables.findMany({
+        where: drizzleOrm.and(...conditions),
+        with: {
+          supplier: true,
+          branch: true
+        },
+        orderBy: drizzleOrm.desc(accountPayables.dueDate)
+      });
+      const aging = {
+        current: { amount: 0, count: 0 },
+        days1to30: { amount: 0, count: 0 },
+        days31to60: { amount: 0, count: 0 },
+        days61to90: { amount: 0, count: 0 },
+        days90plus: { amount: 0, count: 0 }
+      };
+      const upcomingPayments = [];
+      const overdueBySupplier = /* @__PURE__ */ new Map();
+      for (const payable of outstandingPayables) {
+        const dueDate = payable.dueDate ? new Date(payable.dueDate) : null;
+        const amount = payable.remainingAmount;
+        if (!dueDate) {
+          aging.current.amount += amount;
+          aging.current.count++;
+          continue;
+        }
+        const daysDiff = Math.floor((today.getTime() - dueDate.getTime()) / (1e3 * 60 * 60 * 24));
+        if (daysDiff <= 0) {
+          aging.current.amount += amount;
+          aging.current.count++;
+          if (daysDiff >= -7) {
+            upcomingPayments.push({
+              supplier: payable.supplier?.name || "Unknown",
+              amount,
+              dueDate: payable.dueDate,
+              daysUntilDue: Math.abs(daysDiff)
+            });
+          }
+        } else if (daysDiff <= 30) {
+          aging.days1to30.amount += amount;
+          aging.days1to30.count++;
+        } else if (daysDiff <= 60) {
+          aging.days31to60.amount += amount;
+          aging.days31to60.count++;
+        } else if (daysDiff <= 90) {
+          aging.days61to90.amount += amount;
+          aging.days61to90.count++;
+        } else {
+          aging.days90plus.amount += amount;
+          aging.days90plus.count++;
+        }
+        if (daysDiff > 0 && payable.supplier) {
+          const existing = overdueBySupplier.get(payable.supplier.id);
+          if (existing) {
+            existing.amount += amount;
+            if (daysDiff > existing.daysOverdue) {
+              existing.daysOverdue = daysDiff;
+              existing.oldestDueDate = payable.dueDate;
+            }
+          } else {
+            overdueBySupplier.set(payable.supplier.id, {
+              supplier: payable.supplier.name,
+              amount,
+              oldestDueDate: payable.dueDate,
+              daysOverdue: daysDiff
+            });
+          }
+        }
+      }
+      const totalOutstanding = aging.current.amount + aging.days1to30.amount + aging.days31to60.amount + aging.days61to90.amount + aging.days90plus.amount;
+      const oneYearAgo = new Date(today);
+      oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+      const purchasesResult = await db2.select({
+        totalPurchases: drizzleOrm.sql`sum(${accountPayables.totalAmount})`
+      }).from(accountPayables).where(
+        drizzleOrm.and(
+          drizzleOrm.gte(accountPayables.createdAt, oneYearAgo.toISOString()),
+          ...branchId ? [drizzleOrm.eq(accountPayables.branchId, branchId)] : []
+        )
+      );
+      const totalPurchases = purchasesResult[0]?.totalPurchases || 0;
+      const dpo = totalPurchases > 0 ? Math.round(totalOutstanding / (totalPurchases / 365) * 10) / 10 : 0;
+      upcomingPayments.sort((a, b) => a.daysUntilDue - b.daysUntilDue);
+      const topOverdue = Array.from(overdueBySupplier.values()).sort((a, b) => b.amount - a.amount).slice(0, 5);
+      return {
+        success: true,
+        data: {
+          totalOutstanding,
+          dpo,
+          aging,
+          upcomingPayments: upcomingPayments.slice(0, 5),
+          topOverdue
+        }
+      };
+    } catch (error) {
+      console.error("Get aging report error:", error);
+      return { success: false, message: "Failed to fetch aging report" };
+    }
+  });
+  electron.ipcMain.handle("payables:get-payments", async (_, payableId) => {
+    try {
+      const payments = await db2.query.payablePayments.findMany({
+        where: drizzleOrm.eq(payablePayments.payableId, payableId),
+        orderBy: drizzleOrm.desc(payablePayments.paymentDate),
+        with: {
+          paidByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          }
+        }
+      });
+      return { success: true, data: payments };
+    } catch (error) {
+      console.error("Get payments error:", error);
+      return { success: false, message: "Failed to fetch payments" };
+    }
+  });
+}
+function registerReferralPersonHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "referral-persons:get-all",
+    async (_, params) => {
+      try {
+        const { page = 1, limit = 20, sortOrder = "desc", branchId, isActive, searchTerm } = params;
+        const conditions = [];
+        if (branchId) conditions.push(drizzleOrm.eq(referralPersons.branchId, branchId));
+        if (isActive !== void 0)
+          conditions.push(drizzleOrm.eq(referralPersons.isActive, isActive));
+        if (searchTerm) {
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(referralPersons.name, `%${searchTerm}%`),
+              drizzleOrm.like(referralPersons.contact, `%${searchTerm}%`),
+              drizzleOrm.like(referralPersons.address, `%${searchTerm}%`)
+            )
+          );
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(referralPersons).where(whereClause);
+        const total = countResult[0].count;
+        const data = await db2.select().from(referralPersons).where(whereClause).limit(limit).offset((page - 1) * limit).orderBy(
+          sortOrder === "desc" ? drizzleOrm.desc(referralPersons.createdAt) : referralPersons.createdAt
+        );
+        const result = {
+          data,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+        return { success: true, ...result };
+      } catch (error) {
+        console.error("Get referral persons error:", error);
+        return { success: false, message: "Failed to fetch referral persons" };
+      }
+    }
+  );
+  electron.ipcMain.handle("referral-persons:get-by-id", async (_, id) => {
+    try {
+      const [referralPerson] = await db2.select().from(referralPersons).where(drizzleOrm.eq(referralPersons.id, id)).limit(1);
+      if (!referralPerson) {
+        return { success: false, message: "Referral person not found" };
+      }
+      return { success: true, data: referralPerson };
+    } catch (error) {
+      console.error("Get referral person error:", error);
+      return { success: false, message: "Failed to fetch referral person" };
+    }
+  });
+  electron.ipcMain.handle("referral-persons:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      const [newReferralPerson] = await db2.insert(referralPersons).values({
+        ...data,
+        branchId: data.branchId || session?.branchId || 1,
+        totalCommissionEarned: data.totalCommissionEarned || 0,
+        totalCommissionPaid: data.totalCommissionPaid || 0
+      }).returning();
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: session?.branchId || data.branchId,
+        action: "create",
+        entityType: "referral_person",
+        entityId: newReferralPerson.id,
+        newValues: { name: data.name, contact: data.contact },
+        description: `Created referral person: ${data.name}`
+      });
+      return { success: true, data: newReferralPerson };
+    } catch (error) {
+      console.error("Create referral person error:", error);
+      return { success: false, message: "Failed to create referral person" };
+    }
+  });
+  electron.ipcMain.handle(
+    "referral-persons:update",
+    async (_, id, data) => {
+      try {
+        const session = getCurrentSession();
+        const [existing] = await db2.select().from(referralPersons).where(drizzleOrm.eq(referralPersons.id, id)).limit(1);
+        if (!existing) {
+          return { success: false, message: "Referral person not found" };
+        }
+        const [updated] = await db2.update(referralPersons).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(referralPersons.id, id)).returning();
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "update",
+          entityType: "referral_person",
+          entityId: id,
+          newValues: data,
+          oldValues: existing,
+          description: `Updated referral person: ${existing.name}`
+        });
+        return { success: true, data: updated };
+      } catch (error) {
+        console.error("Update referral person error:", error);
+        return { success: false, message: "Failed to update referral person" };
+      }
+    }
+  );
+  electron.ipcMain.handle("referral-persons:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const [existing] = await db2.select().from(referralPersons).where(drizzleOrm.eq(referralPersons.id, id)).limit(1);
+      if (!existing) {
+        return { success: false, message: "Referral person not found" };
+      }
+      await db2.delete(referralPersons).where(drizzleOrm.eq(referralPersons.id, id));
+      await createAuditLog({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "delete",
+        entityType: "referral_person",
+        entityId: id,
+        oldValues: existing,
+        description: `Deleted referral person: ${existing.name}`
+      });
+      return { success: true, message: "Referral person deleted successfully" };
+    } catch (error) {
+      console.error("Delete referral person error:", error);
+      return { success: false, message: "Failed to delete referral person" };
+    }
+  });
+  electron.ipcMain.handle("referral-persons:get-for-select", async (_, branchId) => {
+    try {
+      const session = getCurrentSession();
+      const targetBranchId = branchId || session?.branchId;
+      const data = await db2.select().from(referralPersons).where(
+        drizzleOrm.and(
+          targetBranchId ? drizzleOrm.eq(referralPersons.branchId, targetBranchId) : void 0,
+          drizzleOrm.eq(referralPersons.isActive, true)
+        )
+      ).orderBy(referralPersons.name);
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get referral persons for select error:", error);
+      return { success: false, message: "Failed to fetch referral persons" };
+    }
+  });
+  electron.ipcMain.handle("referral-persons:update-commission", async (_, id, amount, isPaid = false) => {
+    try {
+      const [existing] = await db2.select().from(referralPersons).where(drizzleOrm.eq(referralPersons.id, id)).limit(1);
+      if (!existing) {
+        return { success: false, message: "Referral person not found" };
+      }
+      const updates = {
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (isPaid) {
+        updates.totalCommissionPaid = (existing.totalCommissionPaid || 0) + amount;
+      } else {
+        updates.totalCommissionEarned = (existing.totalCommissionEarned || 0) + amount;
+      }
+      const [updated] = await db2.update(referralPersons).set(updates).where(drizzleOrm.eq(referralPersons.id, id)).returning();
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error("Update commission error:", error);
+      return { success: false, message: "Failed to update commission totals" };
+    }
+  });
+}
+function registerCashRegisterHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("cash-register:get-current-session", async (_, branchId) => {
+    try {
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const session = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+          drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+          drizzleOrm.eq(cashRegisterSessions.status, "open")
+        ),
+        with: {
+          branch: true,
+          openedByUser: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          transactions: {
+            orderBy: drizzleOrm.desc(cashTransactions.transactionDate),
+            limit: 10
+          }
+        }
+      });
+      if (!session) {
+        return { success: true, data: null, message: "No open session found" };
+      }
+      const transactionSums = await db2.select({
+        totalIn: drizzleOrm.sql`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+        totalOut: drizzleOrm.sql`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`
+      }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, session.id));
+      const totalIn = transactionSums[0]?.totalIn || 0;
+      const totalOut = transactionSums[0]?.totalOut || 0;
+      const currentBalance = session.openingBalance + totalIn - totalOut;
+      return {
+        success: true,
+        data: {
+          ...session,
+          currentBalance,
+          totalIn,
+          totalOut
+        }
+      };
+    } catch (error) {
+      console.error("Get current session error:", error);
+      return { success: false, message: "Failed to fetch current session" };
+    }
+  });
+  electron.ipcMain.handle("cash-register:open-session", async (_, data) => {
+    try {
+      const userSession = getCurrentSession();
+      if (!userSession) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const existingSession = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+          drizzleOrm.eq(cashRegisterSessions.sessionDate, today)
+        )
+      });
+      if (existingSession) {
+        if (existingSession.status === "open") {
+          return { success: false, message: "A cash register session is already open for today" };
+        }
+        return { success: false, message: "Cash register session for today has already been closed" };
+      }
+      const previousSession = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+          drizzleOrm.eq(cashRegisterSessions.status, "closed")
+        ),
+        orderBy: drizzleOrm.desc(cashRegisterSessions.sessionDate)
+      });
+      const [newSession] = await db2.insert(cashRegisterSessions).values({
+        branchId: data.branchId,
+        sessionDate: today,
+        openingBalance: data.openingBalance,
+        status: "open",
+        openedBy: userSession.userId,
+        notes: data.notes
+      }).returning();
+      await createAuditLog({
+        userId: userSession.userId,
+        branchId: data.branchId,
+        action: "create",
+        entityType: "cash_register_session",
+        entityId: newSession.id,
+        newValues: {
+          openingBalance: data.openingBalance,
+          sessionDate: today
+        },
+        description: `Opened cash register session with balance ${data.openingBalance}`
+      });
+      return {
+        success: true,
+        data: newSession,
+        previousClosingBalance: previousSession?.closingBalance
+      };
+    } catch (error) {
+      console.error("Open session error:", error);
+      return { success: false, message: "Failed to open cash register session" };
+    }
+  });
+  electron.ipcMain.handle("cash-register:close-session", async (_, data) => {
+    try {
+      const userSession = getCurrentSession();
+      if (!userSession) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const session = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.eq(cashRegisterSessions.id, data.sessionId)
+      });
+      if (!session) {
+        return { success: false, message: "Session not found" };
+      }
+      if (session.status !== "open") {
+        return { success: false, message: "Session is already closed" };
+      }
+      const transactionSums = await db2.select({
+        totalIn: drizzleOrm.sql`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+        totalOut: drizzleOrm.sql`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`
+      }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, data.sessionId));
+      const totalIn = transactionSums[0]?.totalIn || 0;
+      const totalOut = transactionSums[0]?.totalOut || 0;
+      const expectedBalance = session.openingBalance + totalIn - totalOut;
+      const variance = data.actualBalance - expectedBalance;
+      await db2.update(cashRegisterSessions).set({
+        closingBalance: data.actualBalance,
+        expectedBalance,
+        actualBalance: data.actualBalance,
+        variance,
+        status: "closed",
+        closedBy: userSession.userId,
+        closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        notes: data.notes ? `${session.notes || ""}
+${data.notes}`.trim() : session.notes,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(cashRegisterSessions.id, data.sessionId));
+      await createAuditLog({
+        userId: userSession.userId,
+        branchId: session.branchId,
+        action: "close",
+        entityType: "cash_register_session",
+        entityId: data.sessionId,
+        oldValues: {
+          status: "open",
+          openingBalance: session.openingBalance
+        },
+        newValues: {
+          status: "closed",
+          closingBalance: data.actualBalance,
+          expectedBalance,
+          variance
+        },
+        description: `Closed cash register session. Expected: ${expectedBalance}, Actual: ${data.actualBalance}, Variance: ${variance}`
+      });
+      return {
+        success: true,
+        data: {
+          closingBalance: data.actualBalance,
+          expectedBalance,
+          variance,
+          variancePercent: expectedBalance > 0 ? variance / expectedBalance * 100 : 0
+        }
+      };
+    } catch (error) {
+      console.error("Close session error:", error);
+      return { success: false, message: "Failed to close session" };
+    }
+  });
+  electron.ipcMain.handle("cash-register:record-transaction", async (_, data) => {
+    try {
+      const userSession = getCurrentSession();
+      if (!userSession) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const session = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.eq(cashRegisterSessions.id, data.sessionId)
+      });
+      if (!session) {
+        return { success: false, message: "Cash register session not found" };
+      }
+      if (session.status !== "open") {
+        return { success: false, message: "Cannot record transaction: session is closed" };
+      }
+      let adjustedAmount = data.amount;
+      const outflowTypes = ["refund", "expense", "ap_payment", "deposit", "petty_cash_out"];
+      if (outflowTypes.includes(data.transactionType)) {
+        adjustedAmount = -Math.abs(data.amount);
+      } else {
+        adjustedAmount = Math.abs(data.amount);
+      }
+      const [transaction] = await db2.insert(cashTransactions).values({
+        sessionId: data.sessionId,
+        branchId: data.branchId,
+        transactionType: data.transactionType,
+        amount: adjustedAmount,
+        referenceType: data.referenceType,
+        referenceId: data.referenceId,
+        description: data.description,
+        recordedBy: userSession.userId
+      }).returning();
+      return { success: true, data: transaction };
+    } catch (error) {
+      console.error("Record transaction error:", error);
+      return { success: false, message: "Failed to record transaction" };
+    }
+  });
+  electron.ipcMain.handle(
+    "cash-register:get-history",
+    async (_, params) => {
+      try {
+        const { branchId, startDate, endDate, page = 1, limit = 20 } = params;
+        const conditions = [];
+        if (branchId) conditions.push(drizzleOrm.eq(cashRegisterSessions.branchId, branchId));
+        if (startDate) conditions.push(drizzleOrm.gte(cashRegisterSessions.sessionDate, startDate));
+        if (endDate) conditions.push(drizzleOrm.lte(cashRegisterSessions.sessionDate, endDate));
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(cashRegisterSessions).where(whereClause);
+        const total = countResult[0]?.count ?? 0;
+        const sessions = await db2.query.cashRegisterSessions.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: drizzleOrm.desc(cashRegisterSessions.sessionDate),
+          with: {
+            branch: true,
+            openedByUser: {
+              columns: { id: true, username: true, fullName: true }
+            },
+            closedByUser: {
+              columns: { id: true, username: true, fullName: true }
+            }
+          }
+        });
+        return {
+          success: true,
+          data: sessions,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+      } catch (error) {
+        console.error("Get history error:", error);
+        return { success: false, message: "Failed to fetch session history" };
+      }
+    }
+  );
+  electron.ipcMain.handle("cash-register:get-transactions", async (_, sessionId) => {
+    try {
+      const transactions = await db2.query.cashTransactions.findMany({
+        where: drizzleOrm.eq(cashTransactions.sessionId, sessionId),
+        orderBy: drizzleOrm.desc(cashTransactions.transactionDate),
+        with: {
+          recordedByUser: {
+            columns: { id: true, username: true, fullName: true }
+          }
+        }
+      });
+      let totalIn = 0;
+      let totalOut = 0;
+      const byType = {};
+      for (const tx of transactions) {
+        if (tx.amount > 0) {
+          totalIn += tx.amount;
+        } else {
+          totalOut += Math.abs(tx.amount);
+        }
+        byType[tx.transactionType] = (byType[tx.transactionType] || 0) + tx.amount;
+      }
+      return {
+        success: true,
+        data: transactions,
+        summary: {
+          totalIn,
+          totalOut,
+          netFlow: totalIn - totalOut,
+          byType
+        }
+      };
+    } catch (error) {
+      console.error("Get transactions error:", error);
+      return { success: false, message: "Failed to fetch transactions" };
+    }
+  });
+  electron.ipcMain.handle(
+    "cash-register:get-cash-flow-summary",
+    async (_, params) => {
+      try {
+        const { branchId, days = 30 } = params;
+        const startDate = /* @__PURE__ */ new Date();
+        startDate.setDate(startDate.getDate() - days);
+        const startDateStr = startDate.toISOString().split("T")[0];
+        const conditions = [drizzleOrm.gte(cashRegisterSessions.sessionDate, startDateStr)];
+        if (branchId) conditions.push(drizzleOrm.eq(cashRegisterSessions.branchId, branchId));
+        const dailyFlow = await db2.select({
+          date: cashRegisterSessions.sessionDate,
+          openingBalance: cashRegisterSessions.openingBalance,
+          closingBalance: cashRegisterSessions.closingBalance,
+          variance: cashRegisterSessions.variance
+        }).from(cashRegisterSessions).where(drizzleOrm.and(...conditions, drizzleOrm.eq(cashRegisterSessions.status, "closed"))).orderBy(cashRegisterSessions.sessionDate);
+        const txConditions = [drizzleOrm.gte(cashTransactions.transactionDate, startDate.toISOString())];
+        if (branchId) txConditions.push(drizzleOrm.eq(cashTransactions.branchId, branchId));
+        const transactionBreakdown = await db2.select({
+          transactionType: cashTransactions.transactionType,
+          totalAmount: drizzleOrm.sql`sum(${cashTransactions.amount})`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(cashTransactions).where(drizzleOrm.and(...txConditions)).groupBy(cashTransactions.transactionType);
+        const inflows = transactionBreakdown.filter((t) => (t.totalAmount || 0) > 0).reduce((sum, t) => sum + (t.totalAmount || 0), 0);
+        const outflows = Math.abs(
+          transactionBreakdown.filter((t) => (t.totalAmount || 0) < 0).reduce((sum, t) => sum + (t.totalAmount || 0), 0)
+        );
+        const latestSession = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.status, "closed"),
+            ...branchId ? [drizzleOrm.eq(cashRegisterSessions.branchId, branchId)] : []
+          ),
+          orderBy: drizzleOrm.desc(cashRegisterSessions.sessionDate)
+        });
+        return {
+          success: true,
+          data: {
+            currentCashInHand: latestSession?.closingBalance || 0,
+            periodSummary: {
+              days,
+              totalInflows: inflows,
+              totalOutflows: outflows,
+              netCashFlow: inflows - outflows
+            },
+            dailyFlow,
+            transactionBreakdown
+          }
+        };
+      } catch (error) {
+        console.error("Get cash flow summary error:", error);
+        return { success: false, message: "Failed to fetch cash flow summary" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "cash-register:adjust",
+    async (_, data) => {
+      try {
+        const userSession = getCurrentSession();
+        if (!userSession) {
+          return { success: false, message: "Unauthorized" };
+        }
+        if (userSession.role !== "admin") {
+          return { success: false, message: "Only admins can make manual adjustments" };
+        }
+        const session = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.eq(cashRegisterSessions.id, data.sessionId)
+        });
+        if (!session) {
+          return { success: false, message: "Session not found" };
+        }
+        if (session.status !== "open") {
+          return { success: false, message: "Cannot adjust: session is closed" };
+        }
+        const [transaction] = await db2.insert(cashTransactions).values({
+          sessionId: data.sessionId,
+          branchId: session.branchId,
+          transactionType: "adjustment",
+          amount: data.amount,
+          description: `Manual adjustment: ${data.reason}`,
+          recordedBy: userSession.userId
+        }).returning();
+        await createAuditLog({
+          userId: userSession.userId,
+          branchId: session.branchId,
+          action: "adjustment",
+          entityType: "cash_register",
+          entityId: data.sessionId,
+          newValues: {
+            amount: data.amount,
+            reason: data.reason
+          },
+          description: `Manual cash adjustment of ${data.amount}: ${data.reason}`
+        });
+        return { success: true, data: transaction };
+      } catch (error) {
+        console.error("Adjustment error:", error);
+        return { success: false, message: "Failed to record adjustment" };
+      }
+    }
+  );
+}
+function registerChartOfAccountsHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("coa:get-all", async () => {
+    return db2.query.chartOfAccounts.findMany({
+      orderBy: [chartOfAccounts.accountCode],
+      with: {
+        parentAccount: true,
+        childAccounts: true
+      }
+    });
+  });
+  electron.ipcMain.handle(
+    "coa:get-by-type",
+    async (_, accountType) => {
+      return db2.query.chartOfAccounts.findMany({
+        where: drizzleOrm.eq(chartOfAccounts.accountType, accountType),
+        orderBy: [chartOfAccounts.accountCode]
+      });
+    }
+  );
+  electron.ipcMain.handle("coa:get-by-id", async (_, id) => {
+    return db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, id),
+      with: {
+        parentAccount: true,
+        childAccounts: true
+      }
+    });
+  });
+  electron.ipcMain.handle(
+    "coa:create",
+    async (_, data) => {
+      const [account] = await db2.insert(chartOfAccounts).values({
+        ...data,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).returning();
+      return account;
+    }
+  );
+  electron.ipcMain.handle(
+    "coa:update",
+    async (_, id, data) => {
+      const [account] = await db2.update(chartOfAccounts).set({
+        ...data,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(chartOfAccounts.id, id)).returning();
+      return account;
+    }
+  );
+  electron.ipcMain.handle("coa:delete", async (_, id) => {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, id)
+    });
+    if (account?.isSystemAccount) {
+      throw new Error("Cannot delete system accounts");
+    }
+    const hasEntries = await db2.query.journalEntryLines.findFirst({
+      where: drizzleOrm.eq(journalEntryLines.accountId, id)
+    });
+    if (hasEntries) {
+      throw new Error("Cannot delete account with existing transactions");
+    }
+    await db2.delete(chartOfAccounts).where(drizzleOrm.eq(chartOfAccounts.id, id));
+    return { success: true };
+  });
+  electron.ipcMain.handle("coa:get-balance-sheet", async (_, branchId) => {
+    const accounts = await db2.query.chartOfAccounts.findMany({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(chartOfAccounts.isActive, true),
+        drizzleOrm.sql`${chartOfAccounts.accountType} IN ('asset', 'liability', 'equity')`
+      ),
+      orderBy: [chartOfAccounts.accountType, chartOfAccounts.accountCode]
+    });
+    const assets = accounts.filter((a) => a.accountType === "asset");
+    const liabilities = accounts.filter((a) => a.accountType === "liability");
+    const equity = accounts.filter((a) => a.accountType === "equity");
+    const totalAssets = assets.reduce((sum, a) => sum + a.currentBalance, 0);
+    const totalLiabilities = liabilities.reduce((sum, a) => sum + a.currentBalance, 0);
+    const totalEquity = equity.reduce((sum, a) => sum + a.currentBalance, 0);
+    return {
+      assets: {
+        accounts: assets,
+        total: totalAssets
+      },
+      liabilities: {
+        accounts: liabilities,
+        total: totalLiabilities
+      },
+      equity: {
+        accounts: equity,
+        total: totalEquity
+      },
+      totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+    };
+  });
+  electron.ipcMain.handle(
+    "coa:get-income-statement",
+    async (_, startDate, endDate, branchId) => {
+      const accounts = await db2.query.chartOfAccounts.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(chartOfAccounts.isActive, true),
+          drizzleOrm.sql`${chartOfAccounts.accountType} IN ('revenue', 'expense')`
+        ),
+        orderBy: [chartOfAccounts.accountType, chartOfAccounts.accountCode]
+      });
+      const revenue = accounts.filter((a) => a.accountType === "revenue");
+      const expenses2 = accounts.filter((a) => a.accountType === "expense");
+      const totalRevenue = revenue.reduce((sum, a) => sum + a.currentBalance, 0);
+      const totalExpenses = expenses2.reduce((sum, a) => sum + a.currentBalance, 0);
+      const netIncome = totalRevenue - totalExpenses;
+      return {
+        revenue: {
+          accounts: revenue,
+          total: totalRevenue
+        },
+        expenses: {
+          accounts: expenses2,
+          total: totalExpenses
+        },
+        netIncome,
+        startDate,
+        endDate
+      };
+    }
+  );
+  electron.ipcMain.handle("coa:get-trial-balance", async (_, asOfDate) => {
+    const accounts = await db2.query.chartOfAccounts.findMany({
+      where: drizzleOrm.eq(chartOfAccounts.isActive, true),
+      orderBy: [chartOfAccounts.accountCode]
+    });
+    let totalDebits = 0;
+    let totalCredits = 0;
+    const trialBalanceData = accounts.map((account) => {
+      const debit = account.normalBalance === "debit" ? account.currentBalance : 0;
+      const credit = account.normalBalance === "credit" ? account.currentBalance : 0;
+      totalDebits += debit;
+      totalCredits += credit;
+      return {
+        ...account,
+        debit,
+        credit
+      };
+    });
+    return {
+      accounts: trialBalanceData,
+      totalDebits,
+      totalCredits,
+      isBalanced: Math.abs(totalDebits - totalCredits) < 0.01,
+      asOfDate: asOfDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0]
+    };
+  });
+  electron.ipcMain.handle(
+    "journal:create",
+    async (_, data) => {
+      const totalDebits = data.lines.reduce((sum, line) => sum + line.debitAmount, 0);
+      const totalCredits = data.lines.reduce((sum, line) => sum + line.creditAmount, 0);
+      if (Math.abs(totalDebits - totalCredits) > 0.01) {
+        throw new Error("Journal entry must be balanced (debits must equal credits)");
+      }
+      const year = (/* @__PURE__ */ new Date()).getFullYear();
+      const countResult = await db2.select({ count: drizzleOrm.sql`COUNT(*)` }).from(journalEntries).where(drizzleOrm.sql`${journalEntries.entryNumber} LIKE ${"JE-" + year + "-%"}`);
+      const count = countResult[0]?.count || 0;
+      const entryNumber = `JE-${year}-${String(count + 1).padStart(4, "0")}`;
+      const [entry] = await db2.insert(journalEntries).values({
+        entryNumber,
+        entryDate: data.entryDate,
+        description: data.description,
+        branchId: data.branchId,
+        referenceType: data.referenceType,
+        referenceId: data.referenceId,
+        createdBy: data.createdBy,
+        status: "draft",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).returning();
+      for (const line of data.lines) {
+        await db2.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: line.accountId,
+          debitAmount: line.debitAmount,
+          creditAmount: line.creditAmount,
+          description: line.description,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      }
+      return entry;
+    }
+  );
+  electron.ipcMain.handle("journal:post", async (_, entryId, postedBy) => {
+    const entry = await db2.query.journalEntries.findFirst({
+      where: drizzleOrm.eq(journalEntries.id, entryId),
+      with: {
+        lines: {
+          with: {
+            account: true
+          }
+        }
+      }
+    });
+    if (!entry) {
+      throw new Error("Journal entry not found");
+    }
+    if (entry.status !== "draft") {
+      throw new Error("Only draft entries can be posted");
+    }
+    for (const line of entry.lines) {
+      const account = line.account;
+      if (!account) continue;
+      let newBalance = account.currentBalance;
+      if (account.normalBalance === "debit") {
+        newBalance += line.debitAmount - line.creditAmount;
+      } else {
+        newBalance += line.creditAmount - line.debitAmount;
+      }
+      await db2.update(chartOfAccounts).set({
+        currentBalance: newBalance,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+    }
+    const [updated] = await db2.update(journalEntries).set({
+      status: "posted",
+      postedBy,
+      postedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(journalEntries.id, entryId)).returning();
+    return updated;
+  });
+  electron.ipcMain.handle(
+    "journal:get-all",
+    async (_, filters) => {
+      return db2.query.journalEntries.findMany({
+        orderBy: [drizzleOrm.desc(journalEntries.entryDate), drizzleOrm.desc(journalEntries.id)],
+        with: {
+          lines: {
+            with: {
+              account: true
+            }
+          },
+          createdByUser: true,
+          postedByUser: true
+        },
+        limit: 100
+      });
+    }
+  );
+  electron.ipcMain.handle("journal:get-by-id", async (_, id) => {
+    return db2.query.journalEntries.findFirst({
+      where: drizzleOrm.eq(journalEntries.id, id),
+      with: {
+        lines: {
+          with: {
+            account: true
+          }
+        },
+        createdByUser: true,
+        postedByUser: true
+      }
+    });
+  });
+  electron.ipcMain.handle(
+    "coa:get-ledger",
+    async (_, accountId, startDate, endDate) => {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (!account) {
+        throw new Error("Account not found");
+      }
+      const lines = await db2.query.journalEntryLines.findMany({
+        where: drizzleOrm.eq(journalEntryLines.accountId, accountId),
+        with: {
+          journalEntry: true
+        },
+        orderBy: [drizzleOrm.desc(journalEntryLines.createdAt)]
+      });
+      const postedLines = lines.filter((l) => l.journalEntry?.status === "posted");
+      let runningBalance = 0;
+      const ledgerEntries = postedLines.reverse().map((line) => {
+        if (account.normalBalance === "debit") {
+          runningBalance += line.debitAmount - line.creditAmount;
+        } else {
+          runningBalance += line.creditAmount - line.debitAmount;
+        }
+        return {
+          ...line,
+          runningBalance
+        };
+      });
+      return {
+        account,
+        entries: ledgerEntries.reverse(),
+        currentBalance: runningBalance
+      };
+    }
+  );
+}
+const fontSizeMap = {
+  small: { base: 10, header: 14, title: 18 },
+  medium: { base: 12, header: 16, title: 22 },
+  large: { base: 14, header: 18, title: 26 }
+};
+function formatCurrency(amount, settings2) {
+  const symbol = settings2.currencySymbol || "Rs.";
+  const position = settings2.currencyPosition || "prefix";
+  const formatted = amount.toFixed(settings2.decimalPlaces || 2);
+  return position === "prefix" ? `${symbol} ${formatted}` : `${formatted} ${symbol}`;
+}
+function getPaymentMethodLabel(method) {
+  const labels = {
+    cash: "Cash",
+    card: "Card",
+    credit: "Credit",
+    mixed: "Mixed",
+    mobile: "Mobile Payment",
+    cod: "Cash on Delivery",
+    receivable: "Pay Later",
+    bank_transfer: "Bank Transfer",
+    cheque: "Cheque"
+  };
+  return labels[method] || method;
+}
+function generatePDFReceiptHTML(data) {
+  const { sale, items, customer, businessSettings: settings2 } = data;
+  const fontSize = fontSizeMap[settings2.receiptFontSize] || fontSizeMap.medium;
+  const primaryColor = settings2.receiptPrimaryColor || "#1e40af";
+  const secondaryColor = settings2.receiptSecondaryColor || "#64748b";
+  const showTax = settings2.showTaxOnReceipt !== false;
+  const showLogo = settings2.receiptShowBusinessLogo !== false;
+  let customFieldsHTML = "";
+  if (settings2.receiptCustomField1Label && settings2.receiptCustomField1Value) {
+    customFieldsHTML += `<p><strong>${settings2.receiptCustomField1Label}:</strong> ${settings2.receiptCustomField1Value}</p>`;
+  }
+  if (settings2.receiptCustomField2Label && settings2.receiptCustomField2Value) {
+    customFieldsHTML += `<p><strong>${settings2.receiptCustomField2Label}:</strong> ${settings2.receiptCustomField2Value}</p>`;
+  }
+  if (settings2.receiptCustomField3Label && settings2.receiptCustomField3Value) {
+    customFieldsHTML += `<p><strong>${settings2.receiptCustomField3Label}:</strong> ${settings2.receiptCustomField3Value}</p>`;
+  }
+  const itemsHTML = items.map(
+    (item) => `
+      <tr>
+        <td>${item.productName}${item.serialNumber ? `<br><small style="color: ${secondaryColor};">S/N: ${item.serialNumber}</small>` : ""}</td>
+        <td class="text-center">${item.quantity}</td>
+        <td class="text-right">${formatCurrency(item.unitPrice, settings2)}</td>
+        ${showTax ? `<td class="text-right">${formatCurrency(item.taxAmount, settings2)}</td>` : ""}
+        <td class="text-right">${formatCurrency(item.totalPrice, settings2)}</td>
+      </tr>
+    `
+  ).join("");
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+          font-size: ${fontSize.base}px;
+          line-height: 1.5;
+          color: #333;
+          padding: 30px;
+        }
+        .receipt-container {
+          max-width: 800px;
+          margin: 0 auto;
+        }
+        .header {
+          text-align: center;
+          border-bottom: 3px solid ${primaryColor};
+          padding-bottom: 20px;
+          margin-bottom: 25px;
+        }
+        .business-logo {
+          max-width: 120px;
+          max-height: 80px;
+          margin-bottom: 10px;
+        }
+        .business-name {
+          font-size: ${fontSize.title}px;
+          font-weight: bold;
+          color: ${primaryColor};
+          margin-bottom: 5px;
+        }
+        .business-info {
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          margin-bottom: 8px;
+        }
+        .receipt-header-text {
+          font-size: ${fontSize.base}px;
+          color: #333;
+          margin-top: 10px;
+          font-style: italic;
+        }
+        .invoice-details {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 25px;
+          padding: 15px;
+          background: #f8fafc;
+          border-radius: 8px;
+        }
+        .invoice-left, .invoice-right {
+          flex: 1;
+        }
+        .invoice-right {
+          text-align: right;
+        }
+        .invoice-label {
+          font-size: ${fontSize.base - 2}px;
+          color: ${secondaryColor};
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .invoice-value {
+          font-size: ${fontSize.header}px;
+          font-weight: bold;
+          color: #1e293b;
+        }
+        .customer-info {
+          margin-bottom: 20px;
+          padding: 15px;
+          background: #f1f5f9;
+          border-left: 4px solid ${primaryColor};
+          border-radius: 4px;
+        }
+        .customer-label {
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          margin-bottom: 5px;
+        }
+        .customer-name {
+          font-size: ${fontSize.header}px;
+          font-weight: bold;
+          color: #1e293b;
+        }
+        .customer-contact {
+          font-size: ${fontSize.base}px;
+          color: #475569;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 20px 0;
+        }
+        thead {
+          background: ${primaryColor};
+          color: white;
+        }
+        th {
+          padding: 12px 10px;
+          text-align: left;
+          font-weight: 600;
+          font-size: ${fontSize.base}px;
+        }
+        td {
+          padding: 12px 10px;
+          border-bottom: 1px solid #e2e8f0;
+          font-size: ${fontSize.base}px;
+        }
+        tr:nth-child(even) {
+          background: #f8fafc;
+        }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .totals-section {
+          margin-top: 25px;
+          border-top: 2px solid #e2e8f0;
+          padding-top: 15px;
+        }
+        .totals-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 0;
+          font-size: ${fontSize.base}px;
+        }
+        .totals-row.grand-total {
+          font-size: ${fontSize.header}px;
+          font-weight: bold;
+          color: ${primaryColor};
+          border-top: 2px solid ${primaryColor};
+          margin-top: 10px;
+          padding-top: 15px;
+        }
+        .payment-info {
+          margin-top: 20px;
+          padding: 15px;
+          background: #ecfdf5;
+          border-radius: 8px;
+          border: 1px solid #10b981;
+        }
+        .payment-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 5px 0;
+        }
+        .payment-method {
+          display: inline-block;
+          padding: 4px 12px;
+          background: ${primaryColor};
+          color: white;
+          border-radius: 4px;
+          font-size: ${fontSize.base - 1}px;
+          font-weight: 600;
+        }
+        .custom-fields {
+          margin-top: 25px;
+          padding: 15px;
+          background: #fefce8;
+          border-radius: 8px;
+          font-size: ${fontSize.base}px;
+        }
+        .custom-fields p {
+          margin-bottom: 5px;
+        }
+        .footer {
+          margin-top: 30px;
+          padding-top: 20px;
+          border-top: 2px solid #e2e8f0;
+          text-align: center;
+        }
+        .footer-text {
+          font-size: ${fontSize.base}px;
+          color: #333;
+          margin-bottom: 15px;
+        }
+        .terms {
+          margin-top: 20px;
+          padding: 15px;
+          background: #f8fafc;
+          border-radius: 8px;
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          text-align: left;
+          white-space: pre-wrap;
+        }
+        .terms-title {
+          font-weight: bold;
+          color: #333;
+          margin-bottom: 8px;
+        }
+        .thank-you {
+          font-size: ${fontSize.header}px;
+          color: ${primaryColor};
+          font-weight: bold;
+          margin-top: 20px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="receipt-container">
+        <div class="header">
+          ${showLogo && settings2.businessLogo ? `<img src="${settings2.businessLogo}" class="business-logo" alt="Logo" />` : ""}
+          <div class="business-name">${settings2.businessName || "Business Name"}</div>
+          <div class="business-info">
+            ${settings2.businessAddress ? settings2.businessAddress + ", " : ""}
+            ${settings2.businessCity || ""}
+            ${settings2.businessState ? ", " + settings2.businessState : ""}
+          </div>
+          <div class="business-info">
+            ${settings2.businessPhone ? "Tel: " + settings2.businessPhone : ""}
+            ${settings2.businessPhone && settings2.businessEmail ? " | " : ""}
+            ${settings2.businessEmail ? settings2.businessEmail : ""}
+          </div>
+          ${settings2.receiptHeader ? `<div class="receipt-header-text">${settings2.receiptHeader}</div>` : ""}
+        </div>
+
+        <div class="invoice-details">
+          <div class="invoice-left">
+            <div class="invoice-label">Invoice Number</div>
+            <div class="invoice-value">${sale.invoiceNumber}</div>
+          </div>
+          <div class="invoice-right">
+            <div class="invoice-label">Date & Time</div>
+            <div class="invoice-value">${formatDateTime(new Date(sale.saleDate))}</div>
+          </div>
+        </div>
+
+        <div class="customer-info">
+          <div class="customer-label">Customer</div>
+          <div class="customer-name">${customer?.name || "Walk-in Customer"}</div>
+          ${customer?.phone ? `<div class="customer-contact">Phone: ${customer.phone}</div>` : ""}
+          ${customer?.email ? `<div class="customer-contact">Email: ${customer.email}</div>` : ""}
+          ${customer?.address ? `<div class="customer-contact">Address: ${customer.address}</div>` : ""}
+        </div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Item</th>
+              <th class="text-center">Qty</th>
+              <th class="text-right">Price</th>
+              ${showTax ? '<th class="text-right">Tax</th>' : ""}
+              <th class="text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHTML}
+          </tbody>
+        </table>
+
+        <div class="totals-section">
+          <div class="totals-row">
+            <span>Subtotal</span>
+            <span>${formatCurrency(sale.subtotal, settings2)}</span>
+          </div>
+          ${showTax ? `
+          <div class="totals-row">
+            <span>Tax</span>
+            <span>${formatCurrency(sale.taxAmount, settings2)}</span>
+          </div>
+          ` : ""}
+          ${sale.discountAmount > 0 ? `
+          <div class="totals-row">
+            <span>Discount</span>
+            <span style="color: #dc2626;">-${formatCurrency(sale.discountAmount, settings2)}</span>
+          </div>
+          ` : ""}
+          <div class="totals-row grand-total">
+            <span>Grand Total</span>
+            <span>${formatCurrency(sale.totalAmount, settings2)}</span>
+          </div>
+        </div>
+
+        <div class="payment-info">
+          <div class="payment-row">
+            <span>Payment Method</span>
+            <span class="payment-method">${getPaymentMethodLabel(sale.paymentMethod)}</span>
+          </div>
+          <div class="payment-row">
+            <span>Amount Paid</span>
+            <span><strong>${formatCurrency(sale.amountPaid, settings2)}</strong></span>
+          </div>
+          ${sale.amountPaid < sale.totalAmount ? `
+          <div class="payment-row" style="color: #dc2626;">
+            <span>Remaining Amount</span>
+            <span><strong>${formatCurrency(sale.totalAmount - sale.amountPaid, settings2)}</strong></span>
+          </div>
+          ` : ""}
+          ${sale.changeGiven > 0 ? `
+          <div class="payment-row">
+            <span>Change</span>
+            <span><strong>${formatCurrency(sale.changeGiven, settings2)}</strong></span>
+          </div>
+          ` : ""}
+        </div>
+
+        ${customFieldsHTML ? `<div class="custom-fields">${customFieldsHTML}</div>` : ""}
+
+        <div class="footer">
+          ${settings2.receiptFooter ? `<div class="footer-text">${settings2.receiptFooter}</div>` : ""}
+          ${settings2.receiptTermsAndConditions ? `
+          <div class="terms">
+            <div class="terms-title">Terms & Conditions</div>
+            ${settings2.receiptTermsAndConditions}
+          </div>
+          ` : ""}
+          <div class="thank-you">Thank You for Your Business!</div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+function generateThermalReceiptHTML(data) {
+  const { sale, items, customer, businessSettings: settings2 } = data;
+  const showTax = settings2.showTaxOnReceipt !== false;
+  const primaryColor = settings2.receiptPrimaryColor || "#1e40af";
+  const itemsHTML = items.map(
+    (item) => `
+      <div class="item-row">
+        <div class="item-name">${item.productName}</div>
+        ${item.serialNumber ? `<div class="item-serial">S/N: ${item.serialNumber}</div>` : ""}
+        <div class="item-details">
+          <span>${item.quantity} x ${formatCurrency(item.unitPrice, settings2)}</span>
+          <span class="item-total">${formatCurrency(item.totalPrice, settings2)}</span>
+        </div>
+      </div>
+    `
+  ).join("");
+  let customFieldsHTML = "";
+  if (settings2.receiptCustomField1Label && settings2.receiptCustomField1Value) {
+    customFieldsHTML += `<div class="custom-field">${settings2.receiptCustomField1Label}: ${settings2.receiptCustomField1Value}</div>`;
+  }
+  if (settings2.receiptCustomField2Label && settings2.receiptCustomField2Value) {
+    customFieldsHTML += `<div class="custom-field">${settings2.receiptCustomField2Label}: ${settings2.receiptCustomField2Value}</div>`;
+  }
+  if (settings2.receiptCustomField3Label && settings2.receiptCustomField3Value) {
+    customFieldsHTML += `<div class="custom-field">${settings2.receiptCustomField3Label}: ${settings2.receiptCustomField3Value}</div>`;
+  }
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          line-height: 1.4;
+          color: #000;
+          width: 302px;
+          padding: 10px;
+          background: white;
+        }
+        .header {
+          text-align: center;
+          border-bottom: 1px dashed #000;
+          padding-bottom: 10px;
+          margin-bottom: 10px;
+        }
+        .business-name {
+          font-size: 16px;
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+        .business-info {
+          font-size: 10px;
+          color: #333;
+        }
+        .receipt-header-text {
+          font-size: 10px;
+          font-style: italic;
+          margin-top: 5px;
+        }
+        .invoice-section {
+          margin: 10px 0;
+          border-bottom: 1px dashed #000;
+          padding-bottom: 10px;
+        }
+        .invoice-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+        }
+        .invoice-row strong {
+          font-size: 12px;
+        }
+        .customer-section {
+          margin: 10px 0;
+          padding: 8px;
+          background: #f5f5f5;
+          border-radius: 4px;
+        }
+        .customer-name {
+          font-weight: bold;
+          font-size: 12px;
+        }
+        .customer-contact {
+          font-size: 10px;
+          color: #333;
+        }
+        .items-section {
+          margin: 10px 0;
+          border-bottom: 1px dashed #000;
+          padding-bottom: 10px;
+        }
+        .items-header {
+          display: flex;
+          justify-content: space-between;
+          font-weight: bold;
+          border-bottom: 1px solid #000;
+          padding-bottom: 5px;
+          margin-bottom: 8px;
+          font-size: 11px;
+        }
+        .item-row {
+          margin-bottom: 8px;
+        }
+        .item-name {
+          font-weight: bold;
+          font-size: 11px;
+        }
+        .item-serial {
+          font-size: 9px;
+          color: #666;
+        }
+        .item-details {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+        }
+        .item-total {
+          font-weight: bold;
+        }
+        .totals-section {
+          margin: 10px 0;
+        }
+        .total-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+          padding: 3px 0;
+        }
+        .total-row.grand-total {
+          font-size: 14px;
+          font-weight: bold;
+          border-top: 2px solid #000;
+          border-bottom: 2px solid #000;
+          padding: 8px 0;
+          margin-top: 5px;
+        }
+        .payment-section {
+          margin: 10px 0;
+          padding: 8px;
+          background: #f0f0f0;
+          border-radius: 4px;
+        }
+        .payment-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+          padding: 2px 0;
+        }
+        .payment-method-badge {
+          font-weight: bold;
+          padding: 2px 6px;
+          background: ${primaryColor};
+          color: white;
+          border-radius: 3px;
+          font-size: 10px;
+        }
+        .custom-fields {
+          margin: 10px 0;
+          padding: 8px;
+          background: #fff8e1;
+          border-radius: 4px;
+          font-size: 10px;
+        }
+        .custom-field {
+          padding: 2px 0;
+        }
+        .footer {
+          margin-top: 10px;
+          text-align: center;
+          border-top: 1px dashed #000;
+          padding-top: 10px;
+        }
+        .footer-text {
+          font-size: 10px;
+          margin-bottom: 5px;
+        }
+        .terms {
+          margin-top: 8px;
+          padding: 8px;
+          background: #f5f5f5;
+          border-radius: 4px;
+          font-size: 9px;
+          text-align: left;
+          white-space: pre-wrap;
+        }
+        .thank-you {
+          font-size: 12px;
+          font-weight: bold;
+          margin-top: 10px;
+        }
+        .separator {
+          border-bottom: 1px dashed #000;
+          margin: 8px 0;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div class="business-name">${settings2.businessName || "Business"}</div>
+        <div class="business-info">
+          ${settings2.businessAddress || ""}
+          ${settings2.businessCity ? ", " + settings2.businessCity : ""}
+        </div>
+        ${settings2.businessPhone ? `<div class="business-info">Tel: ${settings2.businessPhone}</div>` : ""}
+        ${settings2.receiptHeader ? `<div class="receipt-header-text">${settings2.receiptHeader}</div>` : ""}
+      </div>
+
+      <div class="invoice-section">
+        <div class="invoice-row">
+          <span>Invoice:</span>
+          <strong>${sale.invoiceNumber}</strong>
+        </div>
+        <div class="invoice-row">
+          <span>Date:</span>
+          <span>${formatDateTime(new Date(sale.saleDate))}</span>
+        </div>
+      </div>
+
+      <div class="customer-section">
+        <div class="customer-name">${customer?.name || "Walk-in Customer"}</div>
+        ${customer?.phone ? `<div class="customer-contact">Tel: ${customer.phone}</div>` : ""}
+      </div>
+
+      <div class="items-section">
+        <div class="items-header">
+          <span>ITEM</span>
+          <span>TOTAL</span>
+        </div>
+        ${itemsHTML}
+      </div>
+
+      <div class="totals-section">
+        <div class="total-row">
+          <span>Subtotal:</span>
+          <span>${formatCurrency(sale.subtotal, settings2)}</span>
+        </div>
+        ${showTax ? `
+        <div class="total-row">
+          <span>Tax:</span>
+          <span>${formatCurrency(sale.taxAmount, settings2)}</span>
+        </div>
+        ` : ""}
+        ${sale.discountAmount > 0 ? `
+        <div class="total-row">
+          <span>Discount:</span>
+          <span>-${formatCurrency(sale.discountAmount, settings2)}</span>
+        </div>
+        ` : ""}
+        <div class="total-row grand-total">
+          <span>TOTAL:</span>
+          <span>${formatCurrency(sale.totalAmount, settings2)}</span>
+        </div>
+      </div>
+
+      <div class="payment-section">
+        <div class="payment-row">
+          <span>Payment:</span>
+          <span class="payment-method-badge">${getPaymentMethodLabel(sale.paymentMethod)}</span>
+        </div>
+        <div class="payment-row">
+          <span>Paid:</span>
+          <strong>${formatCurrency(sale.amountPaid, settings2)}</strong>
+        </div>
+        ${sale.amountPaid < sale.totalAmount ? `
+        <div class="payment-row" style="color: #dc2626;">
+          <span>Remaining:</span>
+          <strong>${formatCurrency(sale.totalAmount - sale.amountPaid, settings2)}</strong>
+        </div>
+        ` : ""}
+        ${sale.changeGiven > 0 ? `
+        <div class="payment-row">
+          <span>Change:</span>
+          <strong>${formatCurrency(sale.changeGiven, settings2)}</strong>
+        </div>
+        ` : ""}
+      </div>
+
+      ${customFieldsHTML ? `<div class="custom-fields">${customFieldsHTML}</div>` : ""}
+
+      <div class="footer">
+        ${settings2.receiptFooter ? `<div class="footer-text">${settings2.receiptFooter}</div>` : ""}
+        ${settings2.receiptTermsAndConditions ? `
+        <div class="terms">${settings2.receiptTermsAndConditions}</div>
+        ` : ""}
+        <div class="thank-you">Thank You!</div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+function generatePDFPaymentHistoryReceiptHTML(data) {
+  const { receivable, payments, sale, items, customer, businessSettings: settings2 } = data;
+  const fontSize = fontSizeMap[settings2.receiptFontSize] || fontSizeMap.medium;
+  const primaryColor = settings2.receiptPrimaryColor || "#1e40af";
+  const secondaryColor = settings2.receiptSecondaryColor || "#64748b";
+  const showTax = settings2.showTaxOnReceipt !== false;
+  const showLogo = settings2.receiptShowBusinessLogo !== false;
+  const statusColor = receivable.status === "paid" ? "#10b981" : receivable.status === "partial" ? "#f59e0b" : receivable.status === "overdue" ? "#dc2626" : "#64748b";
+  const itemsHTML = items.map(
+    (item) => `
+      <tr>
+        <td>${item.productName}${item.serialNumber ? `<br><small style="color: ${secondaryColor};">S/N: ${item.serialNumber}</small>` : ""}</td>
+        <td class="text-center">${item.quantity}</td>
+        <td class="text-right">${formatCurrency(item.unitPrice, settings2)}</td>
+        ${showTax ? `<td class="text-right">${formatCurrency(item.taxAmount, settings2)}</td>` : ""}
+        <td class="text-right">${formatCurrency(item.totalPrice, settings2)}</td>
+      </tr>
+    `
+  ).join("");
+  let runningBalance = 0;
+  const paymentsWithBalanceHTML = payments.map((payment) => {
+    runningBalance += payment.amount;
+    const remaining = Math.max(0, receivable.totalAmount - runningBalance);
+    return `
+        <tr>
+          <td>${formatDateTime(new Date(payment.paymentDate))}</td>
+          <td class="text-center">${getPaymentMethodLabel(payment.paymentMethod)}</td>
+          <td class="text-right">${formatCurrency(payment.amount, settings2)}</td>
+          <td class="text-right">${formatCurrency(runningBalance, settings2)}</td>
+          <td class="text-right" style="color: ${remaining > 0 ? "#dc2626" : "#10b981"}; font-weight: bold;">${formatCurrency(remaining, settings2)}</td>
+          <td class="text-center">${payment.referenceNumber || "-"}</td>
+          <td class="text-left">${payment.notes || "-"}</td>
+        </tr>
+      `;
+  }).join("");
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Segoe UI', Arial, sans-serif;
+          font-size: ${fontSize.base}px;
+          line-height: 1.5;
+          color: #1e293b;
+          padding: 40px;
+          background: white;
+        }
+        .receipt-container {
+          max-width: 800px;
+          margin: 0 auto;
+        }
+        .header {
+          text-align: center;
+          padding-bottom: 20px;
+          border-bottom: 2px solid ${primaryColor};
+          margin-bottom: 20px;
+        }
+        .business-logo {
+          max-width: 120px;
+          max-height: 80px;
+          margin-bottom: 10px;
+        }
+        .business-name {
+          font-size: ${fontSize.title}px;
+          font-weight: bold;
+          color: ${primaryColor};
+          margin-bottom: 5px;
+        }
+        .business-info {
+          font-size: ${fontSize.base}px;
+          color: ${secondaryColor};
+        }
+        .receipt-title {
+          font-size: ${fontSize.header + 2}px;
+          font-weight: bold;
+          color: ${primaryColor};
+          margin-top: 15px;
+          padding: 10px 20px;
+          background: linear-gradient(135deg, #dbeafe 0%, #e0f2fe 100%);
+          border-radius: 8px;
+          display: inline-block;
+        }
+        .invoice-details {
+          display: flex;
+          justify-content: space-between;
+          margin: 20px 0;
+          padding: 15px;
+          background: #f8fafc;
+          border-radius: 8px;
+        }
+        .invoice-label {
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          margin-bottom: 3px;
+        }
+        .invoice-value {
+          font-size: ${fontSize.base + 1}px;
+          font-weight: 600;
+        }
+        .status-badge {
+          display: inline-block;
+          padding: 6px 16px;
+          border-radius: 20px;
+          font-weight: bold;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          font-size: ${fontSize.base - 1}px;
+        }
+        .customer-info {
+          padding: 15px;
+          background: #f0f9ff;
+          border-radius: 8px;
+          margin-bottom: 20px;
+        }
+        .customer-label {
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          margin-bottom: 5px;
+        }
+        .customer-name {
+          font-size: ${fontSize.header}px;
+          font-weight: bold;
+          color: #0369a1;
+        }
+        .customer-contact {
+          font-size: ${fontSize.base}px;
+          color: #475569;
+          margin-top: 3px;
+        }
+        .balance-summary {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 20px;
+          gap: 15px;
+        }
+        .balance-card {
+          flex: 1;
+          padding: 15px;
+          border-radius: 8px;
+          text-align: center;
+        }
+        .balance-card.total { background: #e0f2fe; border: 1px solid #0ea5e9; }
+        .balance-card.paid { background: #dcfce7; border: 1px solid #22c55e; }
+        .balance-card.remaining { background: ${receivable.remainingAmount > 0 ? "#fee2e2" : "#dcfce7"}; border: 1px solid ${receivable.remainingAmount > 0 ? "#dc2626" : "#22c55e"}; }
+        .balance-label {
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          margin-bottom: 5px;
+        }
+        .balance-value {
+          font-size: ${fontSize.header + 2}px;
+          font-weight: bold;
+        }
+        .section-title {
+          font-size: ${fontSize.header}px;
+          font-weight: bold;
+          color: ${primaryColor};
+          margin: 20px 0 10px 0;
+          padding-bottom: 5px;
+          border-bottom: 2px solid #e2e8f0;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 15px;
+        }
+        th, td {
+          padding: 12px;
+          border-bottom: 1px solid #e2e8f0;
+          text-align: left;
+        }
+        th {
+          background: #f1f5f9;
+          font-weight: 600;
+          color: #475569;
+          font-size: ${fontSize.base}px;
+        }
+        tr:nth-child(even) { background: #f8fafc; }
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .text-left { text-align: left; }
+        .totals-section {
+          margin-top: 15px;
+          border-top: 2px solid #e2e8f0;
+          padding-top: 15px;
+        }
+        .totals-row {
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 0;
+          font-size: ${fontSize.base}px;
+        }
+        .totals-row.grand-total {
+          font-size: ${fontSize.header}px;
+          font-weight: bold;
+          color: ${primaryColor};
+          border-top: 2px solid ${primaryColor};
+          margin-top: 10px;
+          padding-top: 15px;
+        }
+        .payment-history-section {
+          background: #fefce8;
+          border: 1px solid #eab308;
+          border-radius: 8px;
+          padding: 15px;
+          margin: 20px 0;
+        }
+        .footer {
+          margin-top: 30px;
+          padding-top: 20px;
+          border-top: 2px solid #e2e8f0;
+          text-align: center;
+        }
+        .footer-text {
+          font-size: ${fontSize.base}px;
+          color: #333;
+          margin-bottom: 15px;
+        }
+        .terms {
+          margin-top: 20px;
+          padding: 15px;
+          background: #f8fafc;
+          border-radius: 8px;
+          font-size: ${fontSize.base - 1}px;
+          color: ${secondaryColor};
+          text-align: left;
+          white-space: pre-wrap;
+        }
+        .terms-title {
+          font-weight: bold;
+          color: #333;
+          margin-bottom: 8px;
+        }
+        .thank-you {
+          font-size: ${fontSize.header}px;
+          color: ${primaryColor};
+          font-weight: bold;
+          margin-top: 20px;
+        }
+        .empty-payments {
+          text-align: center;
+          padding: 30px;
+          color: ${secondaryColor};
+          font-style: italic;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="receipt-container">
+        <div class="header">
+          ${showLogo && settings2.businessLogo ? `<img src="${settings2.businessLogo}" class="business-logo" alt="Logo" />` : ""}
+          <div class="business-name">${settings2.businessName || "Business Name"}</div>
+          <div class="business-info">
+            ${settings2.businessAddress || ""}
+            ${settings2.businessCity || settings2.businessState ? ", " : ""}
+            ${settings2.businessCity || ""} ${settings2.businessState || ""}
+          </div>
+          <div class="business-info">
+            ${settings2.businessPhone ? "Tel: " + settings2.businessPhone : ""}
+            ${settings2.businessPhone && settings2.businessEmail ? " | " : ""}
+            ${settings2.businessEmail ? settings2.businessEmail : ""}
+          </div>
+          <div class="receipt-title">PAYMENT HISTORY RECEIPT</div>
+        </div>
+
+        <div class="invoice-details">
+          <div class="invoice-left">
+            <div class="invoice-label">Invoice Number</div>
+            <div class="invoice-value">${receivable.invoiceNumber}</div>
+            <div class="invoice-label" style="margin-top: 10px;">Original Sale Date</div>
+            <div class="invoice-value">${formatDateTime(new Date(sale.saleDate))}</div>
+            ${receivable.dueDate ? `
+            <div class="invoice-label" style="margin-top: 10px;">Due Date</div>
+            <div class="invoice-value">${formatDate(new Date(receivable.dueDate))}</div>
+            ` : ""}
+          </div>
+          <div class="invoice-right">
+            <div class="invoice-label">Receipt Date</div>
+            <div class="invoice-value">${formatDateTime(/* @__PURE__ */ new Date())}</div>
+            <div class="invoice-label" style="margin-top: 10px;">Status</div>
+            <div style="margin-top: 5px;">
+              <span class="status-badge" style="background-color: ${statusColor}; color: white;">${receivable.status.toUpperCase()}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="customer-info">
+          <div class="customer-label">Customer</div>
+          <div class="customer-name">${customer?.name || "Walk-in Customer"}</div>
+          ${customer?.phone ? `<div class="customer-contact">Phone: ${customer.phone}</div>` : ""}
+          ${customer?.email ? `<div class="customer-contact">Email: ${customer.email}</div>` : ""}
+          ${customer?.address ? `<div class="customer-contact">Address: ${customer.address}</div>` : ""}
+        </div>
+
+        <div class="balance-summary">
+          <div class="balance-card total">
+            <div class="balance-label">Total Amount</div>
+            <div class="balance-value">${formatCurrency(receivable.totalAmount, settings2)}</div>
+          </div>
+          <div class="balance-card paid">
+            <div class="balance-label">Amount Paid</div>
+            <div class="balance-value" style="color: #22c55e;">${formatCurrency(receivable.paidAmount, settings2)}</div>
+          </div>
+          <div class="balance-card remaining">
+            <div class="balance-label">Remaining</div>
+            <div class="balance-value" style="color: ${receivable.remainingAmount > 0 ? "#dc2626" : "#22c55e"};">${formatCurrency(receivable.remainingAmount, settings2)}</div>
+          </div>
+        </div>
+
+        ${items.length > 0 ? `
+        <div class="section-title">Items Purchased</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th class="text-center">Qty</th>
+              <th class="text-right">Unit Price</th>
+              ${showTax ? '<th class="text-right">Tax</th>' : ""}
+              <th class="text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemsHTML}
+          </tbody>
+        </table>
+
+        <div class="totals-section">
+          <div class="totals-row">
+            <span>Subtotal</span>
+            <span>${formatCurrency(sale.subtotal, settings2)}</span>
+          </div>
+          ${showTax ? `
+          <div class="totals-row">
+            <span>Tax</span>
+            <span>${formatCurrency(sale.taxAmount, settings2)}</span>
+          </div>
+          ` : ""}
+          ${sale.discountAmount > 0 ? `
+          <div class="totals-row">
+            <span>Discount</span>
+            <span>-${formatCurrency(sale.discountAmount, settings2)}</span>
+          </div>
+          ` : ""}
+          <div class="totals-row grand-total">
+            <span>Grand Total</span>
+            <span>${formatCurrency(sale.totalAmount, settings2)}</span>
+          </div>
+        </div>
+        ` : ""}
+
+        <div class="payment-history-section">
+          <div class="section-title" style="margin-top: 0;">Complete Payment History</div>
+          ${payments.length > 0 ? `
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th class="text-center">Method</th>
+                <th class="text-right">Amount</th>
+                <th class="text-right">Total Paid</th>
+                <th class="text-right">Balance</th>
+                <th class="text-center">Reference</th>
+                <th class="text-left">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${paymentsWithBalanceHTML}
+            </tbody>
+          </table>
+          ` : `
+          <div class="empty-payments">No payments have been recorded yet for this receivable.</div>
+          `}
+        </div>
+
+        <div class="footer">
+          <div style="font-size: ${fontSize.base}px; color: ${secondaryColor}; margin-bottom: 15px;">
+            This receipt serves as proof of payment history for the referenced invoice.
+          </div>
+          ${settings2.receiptFooter ? `<div class="footer-text">${settings2.receiptFooter}</div>` : ""}
+          ${settings2.receiptTermsAndConditions ? `
+          <div class="terms">
+            <div class="terms-title">Terms & Conditions</div>
+            ${settings2.receiptTermsAndConditions}
+          </div>
+          ` : ""}
+          <div class="thank-you">Thank You for Your Business!</div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+function generateThermalPaymentHistoryReceiptHTML(data) {
+  const { receivable, payments, sale, customer, businessSettings: settings2 } = data;
+  const showTax = settings2.showTaxOnReceipt !== false;
+  const statusIndicator = receivable.status === "paid" ? "[PAID]" : receivable.status === "partial" ? "[PARTIAL]" : receivable.status === "overdue" ? "[OVERDUE]" : "[PENDING]";
+  let runningBalance = 0;
+  const paymentsHTML = payments.map((payment) => {
+    runningBalance += payment.amount;
+    const remaining = Math.max(0, receivable.totalAmount - runningBalance);
+    return `
+      <div class="payment-entry">
+        <div class="payment-date">${formatDateTime(new Date(payment.paymentDate))}</div>
+        <div class="payment-details">
+          <span>${getPaymentMethodLabel(payment.paymentMethod)}</span>
+          <span class="payment-amount">${formatCurrency(payment.amount, settings2)}</span>
+        </div>
+        <div class="payment-balance">
+          <span>Paid: ${formatCurrency(runningBalance, settings2)}</span>
+          <span>Due: ${formatCurrency(remaining, settings2)}</span>
+        </div>
+        ${payment.referenceNumber ? `<div class="payment-ref">Ref: ${payment.referenceNumber}</div>` : ""}
+      </div>
+      <div class="separator"></div>
+    `;
+  }).join("");
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
+          line-height: 1.4;
+          color: #000;
+          width: 302px;
+          padding: 10px;
+          background: white;
+        }
+        .header {
+          text-align: center;
+          border-bottom: 1px dashed #000;
+          padding-bottom: 10px;
+          margin-bottom: 10px;
+        }
+        .business-name {
+          font-size: 16px;
+          font-weight: bold;
+          margin-bottom: 5px;
+        }
+        .business-info {
+          font-size: 10px;
+          color: #333;
+        }
+        .receipt-title {
+          font-size: 12px;
+          font-weight: bold;
+          margin-top: 8px;
+          text-decoration: underline;
+        }
+        .invoice-section {
+          margin: 10px 0;
+          border-bottom: 1px dashed #000;
+          padding-bottom: 10px;
+        }
+        .invoice-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+        }
+        .invoice-row strong {
+          font-size: 12px;
+        }
+        .status-row {
+          text-align: center;
+          font-size: 12px;
+          font-weight: bold;
+          padding: 5px;
+          background: #f0f0f0;
+          margin: 10px 0;
+          border-radius: 4px;
+        }
+        .balance-section {
+          background: #f5f5f5;
+          padding: 8px;
+          border-radius: 4px;
+          margin: 10px 0;
+        }
+        .balance-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+          padding: 3px 0;
+        }
+        .balance-row.total {
+          font-weight: bold;
+          border-top: 1px solid #000;
+          padding-top: 5px;
+        }
+        .payment-history-section {
+          background: #fff8e1;
+          padding: 8px;
+          border-radius: 4px;
+          margin: 10px 0;
+        }
+        .payment-history-title {
+          font-size: 11px;
+          font-weight: bold;
+          margin-bottom: 8px;
+          text-align: center;
+          text-decoration: underline;
+        }
+        .payment-entry {
+          margin-bottom: 8px;
+        }
+        .payment-date {
+          font-size: 10px;
+          color: #666;
+        }
+        .payment-details {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+        }
+        .payment-amount {
+          font-weight: bold;
+        }
+        .payment-balance {
+          display: flex;
+          justify-content: space-between;
+          font-size: 10px;
+          color: #666;
+        }
+        .payment-ref {
+          font-size: 9px;
+          color: #666;
+          font-style: italic;
+        }
+        .customer-section {
+          margin: 10px 0;
+          padding: 8px;
+          background: #f5f5f5;
+          border-radius: 4px;
+        }
+        .customer-name {
+          font-weight: bold;
+          font-size: 12px;
+        }
+        .totals-section {
+          margin: 10px 0;
+        }
+        .total-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11px;
+          padding: 3px 0;
+        }
+        .total-row.grand-total {
+          font-size: 14px;
+          font-weight: bold;
+          border-top: 2px solid #000;
+          border-bottom: 2px solid #000;
+          padding: 8px 0;
+          margin-top: 5px;
+        }
+        .footer {
+          margin-top: 10px;
+          text-align: center;
+          border-top: 1px dashed #000;
+          padding-top: 10px;
+        }
+        .footer-text {
+          font-size: 10px;
+          margin-bottom: 5px;
+        }
+        .thank-you {
+          font-size: 12px;
+          font-weight: bold;
+          margin-top: 10px;
+        }
+        .separator {
+          border-bottom: 1px dashed #ccc;
+          margin: 8px 0;
+        }
+        .empty-payments {
+          text-align: center;
+          padding: 10px;
+          font-style: italic;
+          font-size: 10px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div class="business-name">${settings2.businessName || "Business"}</div>
+        <div class="business-info">${settings2.businessAddress || ""} ${settings2.businessCity || ""}</div>
+        ${settings2.businessPhone ? `<div class="business-info">Tel: ${settings2.businessPhone}</div>` : ""}
+        <div class="receipt-title">PAYMENT HISTORY</div>
+      </div>
+
+      <div class="invoice-section">
+        <div class="invoice-row">
+          <span>Invoice:</span>
+          <strong>${receivable.invoiceNumber}</strong>
+        </div>
+        <div class="invoice-row">
+          <span>Date:</span>
+          <span>${formatDateTime(new Date(sale.saleDate))}</span>
+        </div>
+        <div class="invoice-row">
+          <span>Receipt:</span>
+          <span>${formatDateTime(/* @__PURE__ */ new Date())}</span>
+        </div>
+      </div>
+
+      <div class="customer-section">
+        <div class="customer-name">${customer?.name || "Walk-in Customer"}</div>
+        ${customer?.phone ? `<div>Tel: ${customer.phone}</div>` : ""}
+      </div>
+
+      <div class="status-row">
+        ${statusIndicator} - Status: ${receivable.status.toUpperCase()}
+      </div>
+
+      <div class="balance-section">
+        <div class="balance-row">
+          <span>Total Amount:</span>
+          <span>${formatCurrency(receivable.totalAmount, settings2)}</span>
+        </div>
+        <div class="balance-row">
+          <span>Total Paid:</span>
+          <span>${formatCurrency(receivable.paidAmount, settings2)}</span>
+        </div>
+        <div class="balance-row total">
+          <span>Remaining:</span>
+          <span style="color: ${receivable.remainingAmount > 0 ? "#dc2626" : "#10b981"};">${formatCurrency(receivable.remainingAmount, settings2)}</span>
+        </div>
+      </div>
+
+      <div class="payment-history-section">
+        <div class="payment-history-title">PAYMENT HISTORY</div>
+        ${payments.length > 0 ? paymentsHTML : '<div class="empty-payments">No payments recorded</div>'}
+      </div>
+
+      <div class="totals-section">
+        <div class="total-row">
+          <span>Subtotal:</span>
+          <span>${formatCurrency(sale.subtotal, settings2)}</span>
+        </div>
+        ${showTax ? `
+        <div class="total-row">
+          <span>Tax:</span>
+          <span>${formatCurrency(sale.taxAmount, settings2)}</span>
+        </div>
+        ` : ""}
+        ${sale.discountAmount > 0 ? `
+        <div class="total-row">
+          <span>Discount:</span>
+          <span>-${formatCurrency(sale.discountAmount, settings2)}</span>
+        </div>
+        ` : ""}
+        <div class="total-row grand-total">
+          <span>TOTAL:</span>
+          <span>${formatCurrency(sale.totalAmount, settings2)}</span>
+        </div>
+      </div>
+
+      <div class="footer">
+        ${settings2.receiptFooter ? `<div class="footer-text">${settings2.receiptFooter}</div>` : ""}
+        <div class="footer-text">Payment history receipt</div>
+        <div class="thank-you">Thank You!</div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+async function generatePaymentHistoryReceipt(data, options) {
+  const { format, autoDownload } = options;
+  const htmlContent = format === "thermal" ? generateThermalPaymentHistoryReceiptHTML(data) : generatePDFPaymentHistoryReceiptHTML(data);
+  const pageSettings = format === "thermal" ? {
+    pageSize: { width: 80 * 1e3, height: 297 * 1e3 },
+    margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 }
+  } : {
+    pageSize: "A4",
+    margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
+  };
+  const pdfWindow = new electron.BrowserWindow({
+    show: false,
+    width: format === "thermal" ? 400 : 900,
+    height: 1200,
+    webPreferences: {
+      nodeIntegration: false
+    }
+  });
+  try {
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const pdfData = await pdfWindow.webContents.printToPDF({
+      pageSize: pageSettings.pageSize,
+      printBackground: true,
+      landscape: false,
+      margins: pageSettings.margins
+    });
+    let filePath;
+    if (autoDownload) {
+      const downloadsPath = electron.app.getPath("downloads");
+      const fileName = `payment_history_${data.receivable.invoiceNumber}_${Date.now()}.pdf`;
+      filePath = path__namespace.join(downloadsPath, fileName);
+    } else {
+      const tempPath = electron.app.getPath("temp");
+      const fileName = `payment_history_${data.receivable.invoiceNumber}_${Date.now()}.pdf`;
+      filePath = path__namespace.join(tempPath, fileName);
+    }
+    fs__namespace.writeFileSync(filePath, pdfData);
+    return filePath;
+  } finally {
+    pdfWindow.close();
+  }
+}
+async function generateReceipt(data, options) {
+  const { format, autoDownload } = options;
+  const htmlContent = format === "thermal" ? generateThermalReceiptHTML(data) : generatePDFReceiptHTML(data);
+  const pageSettings = format === "thermal" ? {
+    pageSize: { width: 80 * 1e3, height: 297 * 1e3 },
+    // 80mm width, variable height
+    margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 }
+  } : {
+    pageSize: "A4",
+    margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
+  };
+  const pdfWindow = new electron.BrowserWindow({
+    show: false,
+    width: format === "thermal" ? 400 : 800,
+    height: 1200,
+    webPreferences: {
+      nodeIntegration: false
+    }
+  });
+  try {
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const pdfData = await pdfWindow.webContents.printToPDF({
+      pageSize: pageSettings.pageSize,
+      printBackground: true,
+      landscape: false,
+      margins: pageSettings.margins
+    });
+    let filePath;
+    if (autoDownload) {
+      const downloadsPath = electron.app.getPath("downloads");
+      const fileName = `receipt_${data.sale.invoiceNumber}_${Date.now()}.pdf`;
+      filePath = path__namespace.join(downloadsPath, fileName);
+    } else {
+      const tempPath = electron.app.getPath("temp");
+      const fileName = `receipt_${data.sale.invoiceNumber}_${Date.now()}.pdf`;
+      filePath = path__namespace.join(tempPath, fileName);
+    }
+    fs__namespace.writeFileSync(filePath, pdfData);
+    return filePath;
+  } finally {
+    pdfWindow.close();
+  }
+}
+function registerReceiptHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("receipt:generate", async (_, saleId) => {
+    try {
+      const sale = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, saleId)
+      });
+      if (!sale) {
+        return { success: false, message: "Sale not found" };
+      }
+      const items = await db2.select({
+        saleItem: saleItems,
+        product: products
+      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      let customer = null;
+      if (sale.customerId) {
+        const customerData = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, sale.customerId)
+        });
+        if (customerData) {
+          customer = {
+            name: `${customerData.firstName} ${customerData.lastName}`.trim(),
+            phone: customerData.phone || void 0,
+            email: customerData.email || void 0,
+            address: [customerData.address, customerData.city, customerData.state].filter(Boolean).join(", ") || void 0
+          };
+        }
+      }
+      let settings2 = null;
+      if (sale.branchId) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.branchId, sale.branchId)
+        });
+      }
+      if (!settings2) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.isNull(businessSettings.branchId)
+        });
+      }
+      if (!settings2) {
+        return { success: false, message: "Business settings not configured" };
+      }
+      const receiptSale = {
+        id: sale.id,
+        invoiceNumber: sale.invoiceNumber,
+        saleDate: sale.saleDate || (/* @__PURE__ */ new Date()).toISOString(),
+        subtotal: sale.subtotal || 0,
+        taxAmount: sale.taxAmount || 0,
+        discountAmount: sale.discountAmount || 0,
+        totalAmount: sale.totalAmount || 0,
+        amountPaid: sale.amountPaid || 0,
+        changeGiven: sale.changeGiven || 0,
+        paymentMethod: sale.paymentMethod || "cash",
+        paymentStatus: sale.paymentStatus || "paid",
+        notes: sale.notes || void 0
+      };
+      const receiptItems = items.map((item) => ({
+        productName: item.product.name,
+        productCode: item.product.code,
+        quantity: item.saleItem.quantity || 1,
+        unitPrice: item.saleItem.unitPrice || 0,
+        serialNumber: item.saleItem.serialNumber || void 0,
+        discountAmount: item.saleItem.discountAmount || 0,
+        taxAmount: item.saleItem.taxAmount || 0,
+        totalPrice: item.saleItem.totalPrice || 0
+      }));
+      const receiptData = {
+        sale: receiptSale,
+        items: receiptItems,
+        customer,
+        businessSettings: settings2
+      };
+      const options = {
+        format: settings2.receiptFormat || "pdf",
+        autoDownload: settings2.receiptAutoDownload !== false
+      };
+      const filePath = await generateReceipt(receiptData, options);
+      return {
+        success: true,
+        data: {
+          filePath,
+          format: options.format,
+          invoiceNumber: sale.invoiceNumber
+        }
+      };
+    } catch (error) {
+      console.error("Receipt generation error:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to generate receipt"
+      };
+    }
+  });
+  electron.ipcMain.handle("receipt:get-settings", async (_, branchId) => {
+    try {
+      let settings2 = null;
+      if (branchId) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.branchId, branchId)
+        });
+      }
+      if (!settings2) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.isNull(businessSettings.branchId)
+        });
+      }
+      if (!settings2) {
+        return {
+          success: true,
+          data: {
+            receiptFormat: "pdf",
+            receiptPrimaryColor: "#1e40af",
+            receiptSecondaryColor: "#64748b",
+            receiptFontSize: "medium",
+            receiptHeader: "",
+            receiptFooter: "",
+            showTaxOnReceipt: true,
+            receiptShowBusinessLogo: true,
+            receiptAutoDownload: true
+          }
+        };
+      }
+      return {
+        success: true,
+        data: {
+          receiptFormat: settings2.receiptFormat || "pdf",
+          receiptPrimaryColor: settings2.receiptPrimaryColor || "#1e40af",
+          receiptSecondaryColor: settings2.receiptSecondaryColor || "#64748b",
+          receiptFontSize: settings2.receiptFontSize || "medium",
+          receiptHeader: settings2.receiptHeader || "",
+          receiptFooter: settings2.receiptFooter || "",
+          receiptLogo: settings2.receiptLogo || "",
+          showTaxOnReceipt: settings2.showTaxOnReceipt !== false,
+          receiptCustomField1Label: settings2.receiptCustomField1Label || "",
+          receiptCustomField1Value: settings2.receiptCustomField1Value || "",
+          receiptCustomField2Label: settings2.receiptCustomField2Label || "",
+          receiptCustomField2Value: settings2.receiptCustomField2Value || "",
+          receiptCustomField3Label: settings2.receiptCustomField3Label || "",
+          receiptCustomField3Value: settings2.receiptCustomField3Value || "",
+          receiptTermsAndConditions: settings2.receiptTermsAndConditions || "",
+          receiptShowBusinessLogo: settings2.receiptShowBusinessLogo !== false,
+          receiptAutoDownload: settings2.receiptAutoDownload !== false
+        }
+      };
+    } catch (error) {
+      console.error("Error fetching receipt settings:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to fetch receipt settings"
+      };
+    }
+  });
+  electron.ipcMain.handle("receipt:generate-payment-history", async (_, receivableId) => {
+    try {
+      const receivable = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.id, receivableId)
+      });
+      if (!receivable) {
+        return { success: false, message: "Receivable not found" };
+      }
+      let sale = null;
+      if (receivable.saleId) {
+        sale = await db2.query.sales.findFirst({
+          where: drizzleOrm.eq(sales.id, receivable.saleId)
+        });
+      }
+      if (!sale) {
+        sale = {
+          invoiceNumber: receivable.invoiceNumber,
+          saleDate: receivable.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+          subtotal: receivable.totalAmount || 0,
+          taxAmount: 0,
+          discountAmount: 0,
+          totalAmount: receivable.totalAmount || 0
+        };
+      }
+      let receiptItems = [];
+      if (receivable.saleId) {
+        const items = await db2.select({
+          saleItem: saleItems,
+          product: products
+        }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, receivable.saleId));
+        receiptItems = items.map((item) => ({
+          productName: item.product.name,
+          productCode: item.product.code,
+          quantity: item.saleItem.quantity || 1,
+          unitPrice: item.saleItem.unitPrice || 0,
+          serialNumber: item.saleItem.serialNumber || void 0,
+          discountAmount: item.saleItem.discountAmount || 0,
+          taxAmount: item.saleItem.taxAmount || 0,
+          totalPrice: item.saleItem.totalPrice || 0
+        }));
+      }
+      const payments = await db2.select({
+        payment: receivablePayments,
+        user: users
+      }).from(receivablePayments).leftJoin(users, drizzleOrm.eq(receivablePayments.receivedBy, users.id)).where(drizzleOrm.eq(receivablePayments.receivableId, receivableId)).orderBy(drizzleOrm.asc(receivablePayments.paymentDate));
+      const formattedPayments = payments.map((p) => ({
+        id: p.payment.id,
+        amount: p.payment.amount || 0,
+        paymentMethod: p.payment.paymentMethod || "cash",
+        referenceNumber: p.payment.referenceNumber || void 0,
+        notes: p.payment.notes || void 0,
+        paymentDate: p.payment.paymentDate || (/* @__PURE__ */ new Date()).toISOString(),
+        receivedBy: p.user?.fullName || void 0
+      }));
+      let customer = null;
+      if (receivable.customerId) {
+        const customerData = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, receivable.customerId)
+        });
+        if (customerData) {
+          customer = {
+            name: `${customerData.firstName} ${customerData.lastName}`.trim(),
+            phone: customerData.phone || void 0,
+            email: customerData.email || void 0,
+            address: [customerData.address, customerData.city, customerData.state].filter(Boolean).join(", ") || void 0
+          };
+        }
+      }
+      let settings2 = null;
+      if (receivable.branchId) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.branchId, receivable.branchId)
+        });
+      }
+      if (!settings2) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.isNull(businessSettings.branchId)
+        });
+      }
+      if (!settings2) {
+        return { success: false, message: "Business settings not configured" };
+      }
+      const paymentHistoryData = {
+        receivable: {
+          id: receivable.id,
+          invoiceNumber: receivable.invoiceNumber,
+          totalAmount: receivable.totalAmount || 0,
+          paidAmount: receivable.paidAmount || 0,
+          remainingAmount: receivable.remainingAmount || 0,
+          status: receivable.status || "pending",
+          createdAt: receivable.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+          dueDate: receivable.dueDate || void 0
+        },
+        payments: formattedPayments,
+        sale: {
+          invoiceNumber: sale.invoiceNumber || receivable.invoiceNumber,
+          saleDate: sale.saleDate || receivable.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+          subtotal: sale.subtotal || receivable.totalAmount || 0,
+          taxAmount: sale.taxAmount || 0,
+          discountAmount: sale.discountAmount || 0,
+          totalAmount: sale.totalAmount || receivable.totalAmount || 0
+        },
+        items: receiptItems,
+        customer,
+        businessSettings: settings2
+      };
+      const options = {
+        format: settings2.receiptFormat || "pdf",
+        autoDownload: settings2.receiptAutoDownload !== false
+      };
+      const filePath = await generatePaymentHistoryReceipt(paymentHistoryData, options);
+      return {
+        success: true,
+        data: {
+          filePath,
+          format: options.format,
+          invoiceNumber: receivable.invoiceNumber
+        }
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : "";
+      console.error("Payment history receipt generation error:", errorMessage);
+      console.error("Stack trace:", errorStack);
+      return {
+        success: false,
+        message: `Failed to generate receipt: ${errorMessage}`
+      };
     }
   });
 }
@@ -3740,6 +11448,7 @@ function registerAllHandlers() {
   registerCustomerHandlers();
   registerSupplierHandlers();
   registerSalesHandlers();
+  registerSalesTabsHandlers();
   registerPurchaseHandlers();
   registerReturnHandlers();
   registerBranchHandlers();
@@ -3748,8 +11457,16 @@ function registerAllHandlers() {
   registerCommissionHandlers();
   registerAuditHandlers();
   registerSettingsHandlers();
+  registerBusinessSettingsHandlers();
   registerReportHandlers();
   registerLicenseHandlers();
+  registerDatabaseViewerHandlers();
+  registerAccountReceivablesHandlers();
+  registerAccountPayablesHandlers();
+  registerReferralPersonHandlers();
+  registerCashRegisterHandlers();
+  registerChartOfAccountsHandlers();
+  registerReceiptHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;

@@ -10,36 +10,57 @@
 import { getDatabase } from "../index";
 import { businessSettings } from "../schemas/business_settings";
 import { settings } from "../schemas/settings";
-import { sql, eq, and } from "drizzle-orm";
+import { sql, eq, isNull, and } from "drizzle-orm";
 
 export async function migrateToBusinessSettings() {
   console.log("Starting migration to business_settings table...");
   const db = getDatabase()
 
   try {
-    // Check if business_settings table already exists
-    const tableExists = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(businessSettings)
-      .limit(1);
+    // Check if business_settings table already exists by trying to query it
+    let tableExists = false
+    try {
+      await db.select({ count: sql<number>`count(*)` }).from(businessSettings).limit(1)
+      tableExists = true
+    } catch {
+      // Table doesn't exist yet
+      tableExists = false
+    }
 
-    // Check if settings table has data
-    const oldSettingsExist = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(settings)
-      .limit(1);
+    // Check if old settings table has data
+    let oldSettingsExist = false
+    try {
+      const oldSettingsCount = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(settings)
+        .limit(1)
+      oldSettingsExist = oldSettingsCount && (oldSettingsCount[0]?.count ?? 0) > 0
+    } catch {
+      oldSettingsExist = false
+    }
 
-    console.log(`business_settings table exists: ${tableExists !== undefined}`);
-    console.log(`Old settings table has data: ${oldSettingsExist && (oldSettingsExist[0]?.count ?? 0) > 0}`);
+    console.log(`business_settings table exists: ${tableExists}`)
+    console.log(`Old settings table has data: ${oldSettingsExist}`)
 
-    // Create global settings with defaults if no existing data
-    const globalSettingsExists = await db
-      .select()
-      .from(businessSettings)
-      .where(eq(businessSettings.branchId, null as unknown as typeof businessSettings.branchId))
-      .limit(1);
+    // Check if global settings already exist (branchId = NULL)
+    let globalSettingsExists = false
+    if (tableExists) {
+      try {
+        const globalSettings = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(businessSettings)
+          .where(isNull(businessSettings.branchId))
+          .limit(1)
+        globalSettingsExists = globalSettings && (globalSettings[0]?.count ?? 0) > 0
+        console.log(`Global settings already exist: ${globalSettingsExists}`)
+      } catch (err) {
+        console.error('Error checking global settings:', err)
+        globalSettingsExists = false
+      }
+    }
 
-    if (!globalSettingsExists || globalSettingsExists.length === 0) {
+    // Only create default global settings if they don't exist yet
+    if (!globalSettingsExists) {
       console.log("Creating default global settings...");
 
       // Create default global settings
@@ -148,7 +169,7 @@ export async function migrateToBusinessSettings() {
               ...updateData,
               updatedAt: new Date().toISOString(),
             })
-            .where(eq(businessSettings.branchId, null as unknown as typeof businessSettings.branchId));
+            .where(isNull(businessSettings.branchId));
 
           console.log("Old settings migrated successfully");
         }

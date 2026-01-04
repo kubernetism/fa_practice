@@ -1,26 +1,45 @@
 import { createHash } from 'node:crypto'
-import { networkInterfaces, cpus, hostname } from 'node:os'
+import { networkInterfaces, cpus, hostname, platform } from 'node:os'
 import { app } from 'electron'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+// Simple secret for license generation - change this for different license sets
+const LICENSE_SECRET = 'FIREARMS_POS_LICENSE_2024'
+
+export type LicenseStatus =
+  | 'TRIAL_ACTIVE'
+  | 'TRIAL_EXPIRED'
+  | 'LICENSE_ACTIVE'
+  | 'LICENSE_EXPIRED'
+  | 'NO_MACHINE_ID'
+
 interface LicenseData {
-  key: string
   machineId: string
-  activatedAt: string
-  expiresAt: string | null
-  features: string[]
+  licenseKey: string
+  licenseStartDate: string
+  licenseEndDate: string
+  isPermanent: boolean
+  createdAt: string
+  updatedAt: string
 }
 
-interface LicenseStatus {
+interface ExtendedLicenseStatus {
+  status: LicenseStatus
   isValid: boolean
   isActivated: boolean
+  isTrial: boolean
+  machineId: string
   expiresAt: string | null
-  features: string[]
+  daysRemaining: number
   message: string
+  installationDate: string | null
+  trialStartDate: string | null
+  trialEndDate: string | null
+  licenseStartDate: string | null
 }
 
-export function getMachineId(): string {
+function getMachineId(): string {
   const components: string[] = []
 
   // Get MAC addresses
@@ -39,99 +58,148 @@ export function getMachineId(): string {
     components.push(cpuInfo[0].model)
   }
 
-  // Get hostname
+  // Get hostname and platform
   components.push(hostname())
+  components.push(platform())
 
   // Create hash
   const hash = createHash('sha256')
   hash.update(components.join('|'))
-  return hash.digest('hex').substring(0, 32)
+  return hash.digest('hex').toUpperCase()
+}
+
+// Generate license key from machine ID
+export function generateLicenseKey(machineId: string): string {
+  const hash = createHash('sha256')
+  hash.update(`${machineId}|${LICENSE_SECRET}`)
+  return hash.digest('hex').toUpperCase()
+}
+
+export { getMachineId }
+
+export function getMachineIdForDisplay(): string {
+  return getMachineId()
+}
+
+export function validateLicenseKey(licenseKey: string, machineId: string): boolean {
+  const validKey = generateLicenseKey(machineId)
+  return licenseKey.toUpperCase() === validKey.toUpperCase()
 }
 
 function getLicenseFilePath(): string {
   return join(app.getPath('userData'), 'license.json')
 }
 
-export function getLicenseStatus(): LicenseStatus {
+export function getLicenseStatus(): ExtendedLicenseStatus {
+  const machineId = getMachineId()
   const licensePath = getLicenseFilePath()
 
-  if (!existsSync(licensePath)) {
-    return {
-      isValid: false,
-      isActivated: false,
-      expiresAt: null,
-      features: [],
-      message: 'No license found. Please activate your license.',
+  // Check if license file exists
+  if (existsSync(licensePath)) {
+    try {
+      const licenseData: LicenseData = JSON.parse(readFileSync(licensePath, 'utf-8'))
+
+      // Verify machine ID
+      if (licenseData.machineId !== machineId) {
+        return {
+          status: 'NO_MACHINE_ID',
+          isValid: false,
+          isActivated: false,
+          isTrial: false,
+          machineId,
+          expiresAt: null,
+          daysRemaining: 0,
+          message: 'License is not valid for this machine.',
+          installationDate: null,
+          trialStartDate: null,
+          trialEndDate: null,
+          licenseStartDate: null,
+        }
+      }
+
+      // Check license expiry
+      if (licenseData.licenseEndDate && new Date(licenseData.licenseEndDate) < new Date()) {
+        return {
+          status: 'LICENSE_EXPIRED',
+          isValid: false,
+          isActivated: true,
+          isTrial: false,
+          machineId,
+          expiresAt: licenseData.licenseEndDate,
+          daysRemaining: 0,
+          message: 'License has expired. Please renew your license.',
+          installationDate: null,
+          trialStartDate: null,
+          trialEndDate: null,
+          licenseStartDate: licenseData.licenseStartDate,
+        }
+      }
+
+      const daysRemaining = licenseData.licenseEndDate
+        ? Math.max(0, Math.ceil((new Date(licenseData.licenseEndDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+        : 0
+
+      return {
+        status: 'LICENSE_ACTIVE',
+        isValid: true,
+        isActivated: true,
+        isTrial: false,
+        machineId,
+        expiresAt: licenseData.licenseEndDate,
+        daysRemaining,
+        message: 'License is active and valid.',
+        installationDate: null,
+        trialStartDate: null,
+        trialEndDate: null,
+        licenseStartDate: licenseData.licenseStartDate,
+      }
+    } catch {
+      // Continue to check application_info
     }
   }
 
-  try {
-    const licenseData: LicenseData = JSON.parse(readFileSync(licensePath, 'utf-8'))
-
-    // Verify machine ID
-    if (licenseData.machineId !== getMachineId()) {
-      return {
-        isValid: false,
-        isActivated: false,
-        expiresAt: null,
-        features: [],
-        message: 'License is not valid for this machine.',
-      }
-    }
-
-    // Check expiry
-    if (licenseData.expiresAt && new Date(licenseData.expiresAt) < new Date()) {
-      return {
-        isValid: false,
-        isActivated: true,
-        expiresAt: licenseData.expiresAt,
-        features: licenseData.features,
-        message: 'License has expired. Please renew your license.',
-      }
-    }
-
-    return {
-      isValid: true,
-      isActivated: true,
-      expiresAt: licenseData.expiresAt,
-      features: licenseData.features,
-      message: 'License is valid.',
-    }
-  } catch {
-    return {
-      isValid: false,
-      isActivated: false,
-      expiresAt: null,
-      features: [],
-      message: 'Failed to read license file.',
-    }
+  // Return trial status placeholder (actual status comes from application_info)
+  return {
+    status: 'TRIAL_ACTIVE',
+    isValid: true,
+    isActivated: false,
+    isTrial: true,
+    machineId,
+    expiresAt: null,
+    daysRemaining: 30,
+    message: 'Trial period active.',
+    installationDate: null,
+    trialStartDate: null,
+    trialEndDate: null,
+    licenseStartDate: null,
   }
 }
 
 export function activateLicense(licenseKey: string): { success: boolean; message: string } {
-  // In a real application, this would validate with a license server
-  // For this demo, we'll use a simple validation
+  const machineId = getMachineId()
+  const licensePath = getLicenseFilePath()
 
-  // Simple license key format: XXXX-XXXX-XXXX-XXXX
-  const keyPattern = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/
-  if (!keyPattern.test(licenseKey)) {
-    return { success: false, message: 'Invalid license key format.' }
+  // Validate license key matches this machine
+  const validKey = generateLicenseKey(machineId)
+  if (licenseKey.toUpperCase() !== validKey.toUpperCase()) {
+    return { success: false, message: 'License key is not valid for this machine.' }
   }
 
-  // Demo: Accept any properly formatted key
   const licenseData: LicenseData = {
-    key: licenseKey,
-    machineId: getMachineId(),
-    activatedAt: new Date().toISOString(),
-    expiresAt: null, // Perpetual license for demo
-    features: ['pos', 'inventory', 'reports', 'multi-branch'],
+    machineId,
+    licenseKey: licenseKey.toUpperCase(),
+    licenseStartDate: new Date().toISOString(),
+    licenseEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year
+    isPermanent: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   }
 
   try {
-    writeFileSync(getLicenseFilePath(), JSON.stringify(licenseData, null, 2))
-    return { success: true, message: 'License activated successfully.' }
+    writeFileSync(licensePath, JSON.stringify(licenseData, null, 2))
+    return { success: true, message: 'License activated successfully for 1 year.' }
   } catch {
-    return { success: false, message: 'Failed to save license.' }
+    return { success: false, message: 'Failed to save license file.' }
   }
 }
 
@@ -148,5 +216,19 @@ export function deactivateLicense(): { success: boolean; message: string } {
     return { success: true, message: 'License deactivated successfully.' }
   } catch {
     return { success: false, message: 'Failed to deactivate license.' }
+  }
+}
+
+export function getLicenseInfo(): LicenseData | null {
+  const licensePath = getLicenseFilePath()
+
+  if (!existsSync(licensePath)) {
+    return null
+  }
+
+  try {
+    return JSON.parse(readFileSync(licensePath, 'utf-8'))
+  } catch {
+    return null
   }
 }

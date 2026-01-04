@@ -10,6 +10,8 @@ import {
   Receipt,
   X,
   AlertCircle,
+  Package,
+  Clock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,10 +38,16 @@ interface CartItem {
   serialNumber?: string
 }
 
+interface AvailableProduct {
+  product: Product
+  quantity: number
+}
+
 export function POSScreen() {
   const { currentBranch } = useBranch()
   const [searchQuery, setSearchQuery] = useState('')
-  const [products, setProducts] = useState<Product[]>([])
+  const [allProducts, setAllProducts] = useState<AvailableProduct[]>([])
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true)
   const [cart, setCart] = useState<CartItem[]>([])
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [customerSearch, setCustomerSearch] = useState('')
@@ -49,10 +57,16 @@ export function POSScreen() {
   const [showSerialDialog, setShowSerialDialog] = useState(false)
   const [pendingSerialProduct, setPendingSerialProduct] = useState<Product | null>(null)
   const [serialNumber, setSerialNumber] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card'>('cash')
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'cod' | 'receivable'>('cash')
   const [amountPaid, setAmountPaid] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState('')
+
+  // COD fields
+  const [codName, setCodName] = useState('')
+  const [codPhone, setCodPhone] = useState('')
+  const [codAddress, setCodAddress] = useState('')
+  const [codCity, setCodCity] = useState('')
 
   // Calculate totals
   const subtotal = cart.reduce((sum, item) => sum + item.product.sellingPrice * item.quantity, 0)
@@ -60,29 +74,39 @@ export function POSScreen() {
   const taxAmount = subtotal * (taxRate / 100)
   const total = subtotal + taxAmount
 
-  // Search products
-  const searchProducts = useCallback(
-    debounce(async (query: string) => {
-      if (!query.trim()) {
-        setProducts([])
-        return
-      }
+  // Load all available products on mount and when branch changes
+  const loadAvailableProducts = useCallback(async () => {
+    if (!currentBranch) return
 
-      try {
-        const result = await window.api.products.search(query)
-        if (result.success && result.data) {
-          setProducts(result.data)
-        }
-      } catch (error) {
-        console.error('Search failed:', error)
+    setIsLoadingProducts(true)
+    try {
+      const result = await window.api.salesTabs.getAvailableProducts({
+        branchId: currentBranch.id,
+        limit: 500,
+      })
+      if (result.success && result.data) {
+        setAllProducts(result.data)
       }
-    }, 300),
-    []
-  )
+    } catch (error) {
+      console.error('Failed to load products:', error)
+    } finally {
+      setIsLoadingProducts(false)
+    }
+  }, [currentBranch])
 
   useEffect(() => {
-    searchProducts(searchQuery)
-  }, [searchQuery, searchProducts])
+    loadAvailableProducts()
+  }, [loadAvailableProducts])
+
+  // Filter products based on search query
+  const filteredProducts = searchQuery.trim()
+    ? allProducts.filter(
+        (item) =>
+          item.product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.product.code?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          item.product.barcode?.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : allProducts
 
   // Search customers
   const searchCustomers = useCallback(
@@ -109,10 +133,19 @@ export function POSScreen() {
   }, [customerSearch, searchCustomers])
 
   // Add to cart
-  const addToCart = (product: Product) => {
+  const addToCart = (product: Product, availableQty: number) => {
     if (product.isSerialTracked) {
       setPendingSerialProduct(product)
       setShowSerialDialog(true)
+      return
+    }
+
+    // Check if we have enough stock
+    const existingInCart = cart.find((item) => item.product.id === product.id)
+    const currentCartQty = existingInCart?.quantity ?? 0
+
+    if (currentCartQty >= availableQty) {
+      setError(`Only ${availableQty} units available in stock`)
       return
     }
 
@@ -125,8 +158,7 @@ export function POSScreen() {
       }
       return [...prevCart, { product, quantity: 1 }]
     })
-    setSearchQuery('')
-    setProducts([])
+    setError('')
   }
 
   // Add serial tracked item
@@ -185,10 +217,49 @@ export function POSScreen() {
       return
     }
 
+    // Receivable requires customer
+    if (paymentMethod === 'receivable' && !selectedCustomer) {
+      setError('Customer selection is required for Pay Later / Receivable')
+      return
+    }
+
+    // Partial payment requires customer (for creating receivable)
+    const paidAmount = paymentMethod === 'cash' ? parseFloat(amountPaid) || 0 : total
+    const isPartialPayment = paymentMethod === 'cash' && paidAmount > 0 && paidAmount < total
+    if (isPartialPayment && !selectedCustomer) {
+      setError('Customer selection is required for partial payments. The remaining amount will be added to Account Receivables.')
+      return
+    }
+
+    // COD validation
+    if (paymentMethod === 'cod') {
+      if (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim()) {
+        setError('All COD fields are required')
+        return
+      }
+    }
+
     setIsProcessing(true)
     setError('')
 
     try {
+      // Build notes for COD
+      let notes = ''
+      if (paymentMethod === 'cod') {
+        notes = `COD Details:\nName: ${codName}\nPhone: ${codPhone}\nAddress: ${codAddress}, ${codCity}`
+      }
+
+      // Calculate payment status based on amount paid
+      const actualAmountPaid = paymentMethod === 'receivable' ? 0 : paymentMethod === 'cash' ? parseFloat(amountPaid) || 0 : total
+      const remainingAmount = total - actualAmountPaid
+
+      let paymentStatus: 'paid' | 'partial' | 'pending' = 'paid'
+      if (paymentMethod === 'receivable') {
+        paymentStatus = 'pending'
+      } else if (actualAmountPaid < total && actualAmountPaid > 0) {
+        paymentStatus = 'partial'
+      }
+
       const saleData = {
         customerId: selectedCustomer?.id,
         branchId: currentBranch.id,
@@ -201,18 +272,68 @@ export function POSScreen() {
           taxRate: item.product.isTaxable ? taxRate : 0,
         })),
         paymentMethod,
-        amountPaid: paymentMethod === 'cash' ? parseFloat(amountPaid) : total,
+        paymentStatus,
+        amountPaid: actualAmountPaid,
+        notes: notes || undefined,
       }
 
       const result = await window.api.sales.create(saleData)
 
       if (result.success) {
+        // Create account receivable for full receivable or partial payment
+        const shouldCreateReceivable =
+          (paymentMethod === 'receivable' && selectedCustomer) ||
+          (paymentStatus === 'partial' && selectedCustomer && remainingAmount > 0)
+
+        if (shouldCreateReceivable) {
+          const receivableAmount = paymentMethod === 'receivable' ? total : remainingAmount
+          const receivableResult = await window.api.receivables.create({
+            customerId: selectedCustomer!.id,
+            saleId: result.data.id,
+            branchId: currentBranch.id,
+            invoiceNumber: result.data.invoiceNumber,
+            totalAmount: receivableAmount,
+          })
+          if (!receivableResult.success) {
+            console.error('Failed to create receivable:', receivableResult.message)
+            setError('Sale completed but failed to create receivable entry. Please check Account Receivables.')
+            setIsProcessing(false)
+            return
+          }
+        }
+
+        // Generate receipt automatically
+        try {
+          const receiptResult = await window.api.receipt.generate(result.data.id)
+          if (receiptResult.success) {
+            console.log('Receipt generated:', receiptResult.data.filePath)
+          } else {
+            console.error('Receipt generation failed:', receiptResult.message)
+          }
+        } catch (receiptError) {
+          console.error('Receipt generation error:', receiptError)
+          // Don't block the sale completion on receipt error
+        }
+
         // Clear cart and show success
         clearCart()
         setShowPaymentDialog(false)
         setAmountPaid('')
-        // You could show a receipt dialog here
-        alert(`Sale completed! Invoice: ${result.data.invoiceNumber}`)
+        setCodName('')
+        setCodPhone('')
+        setCodAddress('')
+        setCodCity('')
+
+        // Reload products to update stock quantities
+        loadAvailableProducts()
+
+        let message = `Sale completed! Invoice: ${result.data.invoiceNumber}`
+        if (paymentMethod === 'receivable') {
+          message += `\n\nFull amount (${formatCurrency(total)}) added to customer's receivables.`
+        } else if (paymentStatus === 'partial') {
+          message += `\n\nPaid: ${formatCurrency(actualAmountPaid)}\nRemaining: ${formatCurrency(remainingAmount)} added to customer's receivables.`
+        }
+        alert(message)
       } else {
         setError(result.message || 'Failed to process sale')
       }
@@ -240,40 +361,69 @@ export function POSScreen() {
           </div>
         </div>
 
-        <Card className="flex-1">
-          <CardContent className="p-4">
-            {products.length > 0 ? (
+        <Card className="flex-1 overflow-hidden">
+          <CardContent className="p-4 h-full">
+            {isLoadingProducts ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              </div>
+            ) : filteredProducts.length > 0 ? (
               <ScrollArea className="h-[calc(100vh-20rem)]">
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {products.map((product) => (
-                    <button
-                      key={product.id}
-                      onClick={() => addToCart(product)}
-                      className="flex flex-col rounded-lg border p-4 text-left transition-colors hover:bg-accent"
-                    >
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <p className="font-medium">{product.name}</p>
-                          <p className="text-sm text-muted-foreground">{product.code}</p>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {filteredProducts.map((item) => {
+                    const cartItem = cart.find((c) => c.product.id === item.product.id)
+                    const inCartQty = cartItem?.quantity ?? 0
+                    const remainingStock = item.quantity - inCartQty
+
+                    return (
+                      <button
+                        key={item.product.id}
+                        onClick={() => addToCart(item.product, item.quantity)}
+                        disabled={remainingStock <= 0 && !item.product.isSerialTracked}
+                        className="flex flex-col rounded-lg border p-3 text-left transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{item.product.name}</p>
+                            <p className="text-xs text-muted-foreground">{item.product.code}</p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            {item.product.isSerialTracked && (
+                              <Badge variant="outline" className="text-xs">
+                                Serial
+                              </Badge>
+                            )}
+                            <Badge
+                              variant={remainingStock <= 5 ? "destructive" : "secondary"}
+                              className="text-xs"
+                            >
+                              {remainingStock} left
+                            </Badge>
+                          </div>
                         </div>
-                        {product.isSerialTracked && (
-                          <Badge variant="outline" className="text-xs">
-                            Serial
-                          </Badge>
-                        )}
-                      </div>
-                      <p className="mt-2 text-lg font-bold">{formatCurrency(product.sellingPrice)}</p>
-                    </button>
-                  ))}
+                        <div className="mt-2 flex items-center justify-between">
+                          <p className="text-lg font-bold">{formatCurrency(item.product.sellingPrice)}</p>
+                          {inCartQty > 0 && (
+                            <Badge variant="default" className="text-xs">
+                              {inCartQty} in cart
+                            </Badge>
+                          )}
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
               </ScrollArea>
             ) : searchQuery ? (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
-                No products found
+              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                <Package className="h-12 w-12 mb-4" />
+                <p>No products found for "{searchQuery}"</p>
               </div>
             ) : (
-              <div className="flex h-full items-center justify-center text-muted-foreground">
-                Search for products to add to cart
+              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                <Package className="h-12 w-12 mb-4" />
+                <p>No products available in inventory</p>
+                <p className="text-sm">Add products to inventory first</p>
               </div>
             )}
           </CardContent>
@@ -426,6 +576,32 @@ export function POSScreen() {
                 <CreditCard className="mr-2 h-4 w-4" />
                 Card
               </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                disabled={cart.length === 0}
+                onClick={() => {
+                  setPaymentMethod('cod')
+                  setAmountPaid(total.toString())
+                  setShowPaymentDialog(true)
+                }}
+              >
+                <Package className="mr-2 h-4 w-4" />
+                COD
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                disabled={cart.length === 0}
+                onClick={() => {
+                  setPaymentMethod('receivable')
+                  setAmountPaid('0')
+                  setShowPaymentDialog(true)
+                }}
+              >
+                <Clock className="mr-2 h-4 w-4" />
+                Pay Later
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -515,11 +691,11 @@ export function POSScreen() {
 
       {/* Payment Dialog */}
       <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Complete Payment</DialogTitle>
             <DialogDescription>
-              Total: {formatCurrency(total)} | Method: {paymentMethod.toUpperCase()}
+              Total: {formatCurrency(total)} | Method: {paymentMethod === 'receivable' ? 'Pay Later' : paymentMethod.toUpperCase()}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -534,10 +710,28 @@ export function POSScreen() {
                   onChange={(e) => setAmountPaid(e.target.value)}
                   placeholder="Enter amount"
                 />
-                {parseFloat(amountPaid) >= total && (
-                  <p className="mt-2 text-sm text-success">
+                {parseFloat(amountPaid) > 0 && parseFloat(amountPaid) >= total && (
+                  <p className="mt-2 text-sm text-green-600">
                     Change: {formatCurrency(parseFloat(amountPaid) - total)}
                   </p>
+                )}
+                {parseFloat(amountPaid) > 0 && parseFloat(amountPaid) < total && (
+                  <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <div className="flex items-start gap-2 text-sm">
+                      <AlertCircle className="h-4 w-4 mt-0.5 text-amber-600 flex-shrink-0" />
+                      <div>
+                        <p className="font-medium text-amber-800">Partial Payment</p>
+                        <p className="text-amber-700">
+                          Remaining: <strong>{formatCurrency(total - parseFloat(amountPaid))}</strong> will be added to Account Receivables.
+                        </p>
+                        {!selectedCustomer && (
+                          <p className="mt-2 text-red-600 font-medium">
+                            Please select a customer for partial payment!
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -545,6 +739,65 @@ export function POSScreen() {
               <p className="text-center text-muted-foreground">
                 Process card payment on terminal
               </p>
+            )}
+            {paymentMethod === 'cod' && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">Enter delivery details for COD</p>
+                <div>
+                  <Label htmlFor="cod-name">Name *</Label>
+                  <Input
+                    id="cod-name"
+                    value={codName}
+                    onChange={(e) => setCodName(e.target.value)}
+                    placeholder="Customer name"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cod-phone">Phone *</Label>
+                  <Input
+                    id="cod-phone"
+                    value={codPhone}
+                    onChange={(e) => setCodPhone(e.target.value)}
+                    placeholder="Phone number"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cod-address">Address *</Label>
+                  <Input
+                    id="cod-address"
+                    value={codAddress}
+                    onChange={(e) => setCodAddress(e.target.value)}
+                    placeholder="Delivery address"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="cod-city">City *</Label>
+                  <Input
+                    id="cod-city"
+                    value={codCity}
+                    onChange={(e) => setCodCity(e.target.value)}
+                    placeholder="City"
+                  />
+                </div>
+              </div>
+            )}
+            {paymentMethod === 'receivable' && (
+              <div className="rounded-lg bg-muted p-4">
+                <div className="flex items-start gap-2 text-sm">
+                  <AlertCircle className="h-4 w-4 mt-0.5 text-yellow-600" />
+                  <div>
+                    <p className="font-medium">Payment will be recorded as receivable</p>
+                    <p className="text-muted-foreground">
+                      The amount will be added to the customer's balance. Full payment is expected later.
+                    </p>
+                    {!selectedCustomer && (
+                      <p className="mt-2 text-destructive font-medium">
+                        Please select a customer first!
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
             )}
           </div>
           <DialogFooter>
@@ -555,7 +808,9 @@ export function POSScreen() {
               onClick={processPayment}
               disabled={
                 isProcessing ||
-                (paymentMethod === 'cash' && parseFloat(amountPaid) < total)
+                (paymentMethod === 'cash' && (parseFloat(amountPaid) <= 0 || (parseFloat(amountPaid) < total && !selectedCustomer))) ||
+                (paymentMethod === 'receivable' && !selectedCustomer) ||
+                (paymentMethod === 'cod' && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim()))
               }
             >
               {isProcessing ? (

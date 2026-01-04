@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../contexts/auth-context'
 import {
   Card,
@@ -40,7 +40,50 @@ import {
   RefreshCw,
   Shield,
   Server,
+  Bug,
 } from 'lucide-react'
+
+// Error Boundary Component
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('ErrorBoundary caught error:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="flex flex-col items-center justify-center py-16 text-red-500">
+          <Bug className="w-16 h-16 mb-4" />
+          <h2 className="text-xl font-bold">Something went wrong</h2>
+          <p className="text-muted-foreground mt-2">{this.state.error?.message}</p>
+          <Button
+            variant="outline"
+            className="mt-4"
+            onClick={() => {
+              this.setState({ hasError: false, error: null })
+              window.location.reload()
+            }}
+          >
+            Refresh Page
+          </Button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 interface TableInfo {
   name: string
@@ -58,7 +101,7 @@ interface ColumnInfo {
 
 interface TableData {
   columns: string[]
-  rows: unknown[][]
+  rows: Record<string, unknown>[]
   count: number
   page?: number
   limit?: number
@@ -167,11 +210,17 @@ export function DatabaseViewerScreen() {
 
   // Handle table selection
   const handleTableSelect = async (tableName: string) => {
-    setSelectedTable(tableName)
-    setCurrentPage(1)
-    setError(null)
-    await loadTableInfo(tableName)
-    await loadTableData(tableName, 1)
+    try {
+      setSelectedTable(tableName)
+      setCurrentPage(1)
+      setError(null)
+      setTableData(null)
+      await loadTableInfo(tableName)
+      await loadTableData(tableName, 1)
+    } catch (err) {
+      console.error('Error selecting table:', err)
+      setError('Failed to load table data')
+    }
   }
 
   // Handle pagination
@@ -353,90 +402,94 @@ export function DatabaseViewerScreen() {
               <div className="flex items-center justify-center py-16">
                 <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
               </div>
-            ) : tableData?.rows.length === 0 ? (
+            ) : !tableData || tableData.rows.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <TableIcon className="w-16 h-16 mb-4 opacity-20" />
                 <p>This table is empty</p>
               </div>
             ) : (
-              <>
-                {/* Table Columns Info */}
-                <div className="mb-4 flex flex-wrap gap-2">
-                  {tableColumns.map((col) => (
-                    <Badge
-                      key={col.name}
-                      variant={col.pk ? 'default' : 'outline'}
-                      className="text-xs"
-                    >
-                      {col.name}
-                      {col.type && <span className="ml-1 opacity-60">({col.type})</span>}
-                    </Badge>
-                  ))}
-                </div>
+              <ErrorBoundary>
+                <div className="space-y-4">
+                  {/* Table Columns Info */}
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {tableColumns.map((col) => (
+                      <Badge
+                        key={col.name}
+                        variant={col.pk ? 'default' : 'outline'}
+                        className="text-xs"
+                      >
+                        {col.name}
+                        {col.type && <span className="ml-1 opacity-60">({col.type})</span>}
+                      </Badge>
+                    ))}
+                  </div>
 
-                {/* Data Table */}
-                <div className="border rounded-lg overflow-auto max-h-[500px]">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-muted">
-                      <TableRow>
-                        {tableData.columns.map((col) => (
-                          <TableHead key={col} className="whitespace-nowrap">
-                            {col}
-                          </TableHead>
-                        ))}
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {tableData.rows.map((row, idx) => (
-                        <TableRow key={idx}>
-                          {tableData.columns.map((col) => (
-                            <TableCell key={col} className="whitespace-nowrap max-w-[300px] truncate">
-                              {row[col] === null || row[col] === undefined ? (
-                                <span className="text-muted-foreground italic">NULL</span>
-                              ) : typeof row[col] === 'object' ? (
-                                <span className="text-muted-foreground text-xs">
-                                  {JSON.stringify(row[col]).substring(0, 50)}...
-                                </span>
-                              ) : (
-                                String(row[col])
-                              )}
-                            </TableCell>
+                  {/* Data Table */}
+                  <div className="border rounded-lg overflow-auto max-h-[500px]">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-muted">
+                        <TableRow>
+                          {Array.isArray(tableData.columns) && tableData.columns.map((col) => (
+                            <TableHead key={col} className="whitespace-nowrap">
+                              {col}
+                            </TableHead>
                           ))}
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Pagination */}
-                {tableData && tableData.totalPages && tableData.totalPages > 1 && (
-                  <div className="flex items-center justify-between mt-4">
-                    <div className="text-sm text-muted-foreground">
-                      Page {tableData.page} of {tableData.totalPages}
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage - 1)}
-                        disabled={currentPage === 1}
-                      >
-                        <ChevronLeft className="w-4 h-4" />
-                        Previous
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handlePageChange(currentPage + 1)}
-                        disabled={currentPage === tableData.totalPages}
-                      >
-                        Next
-                        <ChevronRight className="w-4 h-4" />
-                      </Button>
-                    </div>
+                      </TableHeader>
+                      <TableBody>
+                        {Array.isArray(tableData.rows) && tableData.rows.map((row, idx) => (
+                          <TableRow key={idx}>
+                            {Array.isArray(tableData.columns) && tableData.columns.map((col) => {
+                              const cellValue = row && typeof row === 'object' ? (row as Record<string, unknown>)[col] : null
+                              return (
+                                <TableCell key={col} className="whitespace-nowrap max-w-[300px] truncate">
+                                  {cellValue === null || cellValue === undefined ? (
+                                    <span className="text-muted-foreground italic">NULL</span>
+                                  ) : typeof cellValue === 'object' ? (
+                                    <span className="text-muted-foreground text-xs">
+                                      {JSON.stringify(cellValue).substring(0, 50)}...
+                                    </span>
+                                  ) : (
+                                    String(cellValue)
+                                  )}
+                                </TableCell>
+                              )
+                            })}
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
-                )}
-              </>
+                </div>
+              </ErrorBoundary>
+            )}
+            {/* Pagination */}
+            {tableData && tableData.totalPages && tableData.totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4">
+                <div className="text-sm text-muted-foreground">
+                  Page {tableData.page} of {tableData.totalPages}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Previous
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === tableData.totalPages}
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -557,21 +610,24 @@ export function DatabaseViewerScreen() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {queryResult.rows.map((row, idx) => (
+                    {Array.isArray(queryResult.rows) && queryResult.rows.map((row, idx) => (
                       <TableRow key={idx}>
-                        {queryResult.columns.map((col) => (
-                          <TableCell key={col} className="whitespace-nowrap max-w-[300px] truncate">
-                            {row[col] === null || row[col] === undefined ? (
-                              <span className="text-muted-foreground italic">NULL</span>
-                            ) : typeof row[col] === 'object' ? (
-                              <span className="text-muted-foreground text-xs">
-                                {JSON.stringify(row[col]).substring(0, 50)}...
-                              </span>
-                            ) : (
-                              String(row[col])
-                            )}
-                          </TableCell>
-                        ))}
+                        {Array.isArray(queryResult.columns) && queryResult.columns.map((col) => {
+                          const cellValue = row && typeof row === 'object' ? (row as Record<string, unknown>)[col] : null
+                          return (
+                            <TableCell key={col} className="whitespace-nowrap max-w-[300px] truncate">
+                              {cellValue === null || cellValue === undefined ? (
+                                <span className="text-muted-foreground italic">NULL</span>
+                              ) : typeof cellValue === 'object' ? (
+                                <span className="text-muted-foreground text-xs">
+                                  {JSON.stringify(cellValue).substring(0, 50)}...
+                                </span>
+                              ) : (
+                                String(cellValue)
+                              )}
+                            </TableCell>
+                          )
+                        })}
                       </TableRow>
                     ))}
                   </TableBody>
