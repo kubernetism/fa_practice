@@ -2708,6 +2708,20 @@ function registerSalesHandlers() {
           status: "pending"
         });
       }
+      const outstandingAmount = totalAmount - data.amountPaid;
+      if (outstandingAmount > 0 && data.customerId) {
+        await db2.insert(accountReceivables).values({
+          customerId: data.customerId,
+          saleId: sale.id,
+          branchId: data.branchId,
+          invoiceNumber,
+          totalAmount: outstandingAmount,
+          paidAmount: 0,
+          remainingAmount: outstandingAmount,
+          status: "pending",
+          createdBy: session?.userId
+        });
+      }
       await createAuditLog({
         userId: session?.userId,
         branchId: data.branchId,
@@ -8242,10 +8256,9 @@ Cancelled: ${reason}`.trim() : receivable.notes,
         totalAmount: drizzleOrm.sql`sum(${accountReceivables.totalAmount})`,
         remainingAmount: drizzleOrm.sql`sum(${accountReceivables.remainingAmount})`
       }).from(accountReceivables).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(accountReceivables.status);
-      const totalsQuery = await db2.select({
+      const outstandingQuery = await db2.select({
         totalReceivables: drizzleOrm.sql`count(*)`,
         totalAmount: drizzleOrm.sql`sum(${accountReceivables.totalAmount})`,
-        totalPaid: drizzleOrm.sql`sum(${accountReceivables.paidAmount})`,
         totalRemaining: drizzleOrm.sql`sum(${accountReceivables.remainingAmount})`
       }).from(accountReceivables).where(
         drizzleOrm.and(
@@ -8257,7 +8270,26 @@ Cancelled: ${reason}`.trim() : receivable.notes,
           )
         )
       );
+      const collectedQuery = await db2.select({
+        totalPaid: drizzleOrm.sql`sum(${accountReceivables.paidAmount})`
+      }).from(accountReceivables).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0);
       const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      let todayCollectionResult;
+      if (branchId) {
+        todayCollectionResult = await db2.all(
+          drizzleOrm.sql`SELECT COALESCE(SUM(rp.amount), 0) as todayCollected
+              FROM receivable_payments rp
+              INNER JOIN account_receivables ar ON rp.receivable_id = ar.id
+              WHERE date(rp.payment_date) = date('now') AND ar.branch_id = ${branchId}`
+        );
+      } else {
+        todayCollectionResult = await db2.all(
+          drizzleOrm.sql`SELECT COALESCE(SUM(rp.amount), 0) as todayCollected
+              FROM receivable_payments rp
+              WHERE date(rp.payment_date) = date('now')`
+        );
+      }
+      const todayCollected = todayCollectionResult[0]?.todayCollected ?? 0;
       const overdueQuery = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(accountReceivables).where(
         drizzleOrm.and(
           ...conditions.length > 0 ? conditions : [],
@@ -8275,11 +8307,12 @@ Cancelled: ${reason}`.trim() : receivable.notes,
         success: true,
         data: {
           byStatus: statusQuery,
-          totals: totalsQuery[0] ?? {
-            totalReceivables: 0,
-            totalAmount: 0,
-            totalPaid: 0,
-            totalRemaining: 0
+          totals: {
+            totalReceivables: outstandingQuery[0]?.totalReceivables ?? 0,
+            totalAmount: outstandingQuery[0]?.totalAmount ?? 0,
+            totalPaid: collectedQuery[0]?.totalPaid ?? 0,
+            totalRemaining: outstandingQuery[0]?.totalRemaining ?? 0,
+            todayCollected
           },
           overdueCount: overdueQuery[0]?.count ?? 0
         }

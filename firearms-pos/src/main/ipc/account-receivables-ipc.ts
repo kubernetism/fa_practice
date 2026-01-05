@@ -489,22 +489,25 @@ export function registerAccountReceivablesHandlers(): void {
         .from(accountReceivables)
         .where(conditions.length > 0 ? and(...conditions) : undefined)
 
-      // Get today's collections from receivable payments
+      // Get today's collections from receivable payments using raw SQL
       const today = new Date().toISOString().split('T')[0]
-      const todayCollectionQuery = await db
-        .select({
-          todayCollected: sql<number>`COALESCE(sum(${receivablePayments.amount}), 0)`,
-        })
-        .from(receivablePayments)
-        .innerJoin(accountReceivables, eq(receivablePayments.receivableId, accountReceivables.id))
-        .where(
-          branchId
-            ? and(
-                sql`date(${receivablePayments.paymentDate}) = date('now')`,
-                eq(accountReceivables.branchId, branchId)
-              )
-            : sql`date(${receivablePayments.paymentDate}) = date('now')`
+      let todayCollectionResult: { todayCollected: number }[]
+
+      if (branchId) {
+        todayCollectionResult = await db.all<{ todayCollected: number }>(
+          sql`SELECT COALESCE(SUM(rp.amount), 0) as todayCollected
+              FROM receivable_payments rp
+              INNER JOIN account_receivables ar ON rp.receivable_id = ar.id
+              WHERE date(rp.payment_date) = date('now') AND ar.branch_id = ${branchId}`
         )
+      } else {
+        todayCollectionResult = await db.all<{ todayCollected: number }>(
+          sql`SELECT COALESCE(SUM(rp.amount), 0) as todayCollected
+              FROM receivable_payments rp
+              WHERE date(rp.payment_date) = date('now')`
+        )
+      }
+      const todayCollected = todayCollectionResult[0]?.todayCollected ?? 0
 
       // Get overdue count (receivables past due date)
       const overdueQuery = await db
@@ -538,7 +541,7 @@ export function registerAccountReceivablesHandlers(): void {
             totalAmount: outstandingQuery[0]?.totalAmount ?? 0,
             totalPaid: collectedQuery[0]?.totalPaid ?? 0,
             totalRemaining: outstandingQuery[0]?.totalRemaining ?? 0,
-            todayCollected: todayCollectionQuery[0]?.todayCollected ?? 0,
+            todayCollected: todayCollected,
           },
           overdueCount: overdueQuery[0]?.count ?? 0,
         },
