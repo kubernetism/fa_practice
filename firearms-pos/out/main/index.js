@@ -429,21 +429,134 @@ const returnItems = sqliteCore.sqliteTable("return_items", {
   restockable: sqliteCore.integer("restockable", { mode: "boolean" }).notNull().default(true),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
-const expenses = sqliteCore.sqliteTable("expenses", {
-  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-  branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
-  userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
-  category: sqliteCore.text("category", {
-    enum: ["rent", "utilities", "salaries", "supplies", "maintenance", "marketing", "other"]
-  }).notNull().default("other"),
-  amount: sqliteCore.real("amount").notNull(),
-  description: sqliteCore.text("description"),
-  paymentMethod: sqliteCore.text("payment_method", { enum: ["cash", "card", "check", "transfer"] }).notNull().default("cash"),
-  reference: sqliteCore.text("reference"),
-  expenseDate: sqliteCore.text("expense_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
-});
+const accountPayables = sqliteCore.sqliteTable(
+  "account_payables",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    supplierId: sqliteCore.integer("supplier_id").notNull().references(() => suppliers.id),
+    purchaseId: sqliteCore.integer("purchase_id").references(() => purchases.id),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    invoiceNumber: sqliteCore.text("invoice_number").notNull(),
+    totalAmount: sqliteCore.real("total_amount").notNull(),
+    // Original amount owed
+    paidAmount: sqliteCore.real("paid_amount").notNull().default(0),
+    // Amount paid so far
+    remainingAmount: sqliteCore.real("remaining_amount").notNull(),
+    // Amount still owed
+    status: sqliteCore.text("status", { enum: ["pending", "partial", "paid", "overdue", "cancelled"] }).notNull().default("pending"),
+    dueDate: sqliteCore.text("due_date"),
+    // Payment due date
+    paymentTerms: sqliteCore.text("payment_terms"),
+    // e.g., "Net 30", "Net 60"
+    notes: sqliteCore.text("notes"),
+    createdBy: sqliteCore.integer("created_by").references(() => users.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    supplierIdx: sqliteCore.index("payables_supplier_idx").on(table.supplierId),
+    statusIdx: sqliteCore.index("payables_status_idx").on(table.status),
+    branchIdx: sqliteCore.index("payables_branch_idx").on(table.branchId),
+    dueDateIdx: sqliteCore.index("payables_due_date_idx").on(table.dueDate)
+  })
+);
+const payablePayments = sqliteCore.sqliteTable(
+  "payable_payments",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    payableId: sqliteCore.integer("payable_id").notNull().references(() => accountPayables.id, { onDelete: "cascade" }),
+    amount: sqliteCore.real("amount").notNull(),
+    paymentMethod: sqliteCore.text("payment_method", {
+      enum: ["cash", "card", "bank_transfer", "cheque", "mobile"]
+    }).notNull().default("bank_transfer"),
+    referenceNumber: sqliteCore.text("reference_number"),
+    // Cheque number, transaction ID, etc.
+    notes: sqliteCore.text("notes"),
+    paidBy: sqliteCore.integer("paid_by").references(() => users.id),
+    paymentDate: sqliteCore.text("payment_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    payableIdx: sqliteCore.index("payable_payments_payable_idx").on(table.payableId),
+    dateIdx: sqliteCore.index("payable_payments_date_idx").on(table.paymentDate)
+  })
+);
+const accountPayablesRelations = drizzleOrm.relations(accountPayables, ({ one, many }) => ({
+  supplier: one(suppliers, {
+    fields: [accountPayables.supplierId],
+    references: [suppliers.id]
+  }),
+  purchase: one(purchases, {
+    fields: [accountPayables.purchaseId],
+    references: [purchases.id]
+  }),
+  branch: one(branches, {
+    fields: [accountPayables.branchId],
+    references: [branches.id]
+  }),
+  createdByUser: one(users, {
+    fields: [accountPayables.createdBy],
+    references: [users.id]
+  }),
+  payments: many(payablePayments)
+}));
+const payablePaymentsRelations = drizzleOrm.relations(payablePayments, ({ one }) => ({
+  payable: one(accountPayables, {
+    fields: [payablePayments.payableId],
+    references: [accountPayables.id]
+  }),
+  paidByUser: one(users, {
+    fields: [payablePayments.paidBy],
+    references: [users.id]
+  })
+}));
+const expenses = sqliteCore.sqliteTable(
+  "expenses",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
+    category: sqliteCore.text("category", {
+      enum: ["rent", "utilities", "salaries", "supplies", "maintenance", "marketing", "other"]
+    }).notNull().default("other"),
+    amount: sqliteCore.real("amount").notNull(),
+    description: sqliteCore.text("description"),
+    paymentMethod: sqliteCore.text("payment_method", { enum: ["cash", "card", "check", "transfer"] }).notNull().default("cash"),
+    reference: sqliteCore.text("reference"),
+    expenseDate: sqliteCore.text("expense_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    // New fields for unpaid expense tracking
+    paymentStatus: sqliteCore.text("payment_status", { enum: ["paid", "unpaid"] }).notNull().default("paid"),
+    supplierId: sqliteCore.integer("supplier_id").references(() => suppliers.id),
+    payableId: sqliteCore.integer("payable_id").references(() => accountPayables.id),
+    dueDate: sqliteCore.text("due_date"),
+    paymentTerms: sqliteCore.text("payment_terms"),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    paymentStatusIdx: sqliteCore.index("expenses_payment_status_idx").on(table.paymentStatus),
+    supplierIdx: sqliteCore.index("expenses_supplier_idx").on(table.supplierId),
+    payableIdx: sqliteCore.index("expenses_payable_idx").on(table.payableId)
+  })
+);
+const expensesRelations = drizzleOrm.relations(expenses, ({ one }) => ({
+  branch: one(branches, {
+    fields: [expenses.branchId],
+    references: [branches.id]
+  }),
+  user: one(users, {
+    fields: [expenses.userId],
+    references: [users.id]
+  }),
+  supplier: one(suppliers, {
+    fields: [expenses.supplierId],
+    references: [suppliers.id]
+  }),
+  payable: one(accountPayables, {
+    fields: [expenses.payableId],
+    references: [accountPayables.id]
+  })
+}));
 const referralPersons = sqliteCore.sqliteTable(
   "referral_persons",
   {
@@ -784,87 +897,6 @@ const receivablePaymentsRelations = drizzleOrm.relations(receivablePayments, ({ 
     references: [users.id]
   })
 }));
-const accountPayables = sqliteCore.sqliteTable(
-  "account_payables",
-  {
-    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-    supplierId: sqliteCore.integer("supplier_id").notNull().references(() => suppliers.id),
-    purchaseId: sqliteCore.integer("purchase_id").references(() => purchases.id),
-    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
-    invoiceNumber: sqliteCore.text("invoice_number").notNull(),
-    totalAmount: sqliteCore.real("total_amount").notNull(),
-    // Original amount owed
-    paidAmount: sqliteCore.real("paid_amount").notNull().default(0),
-    // Amount paid so far
-    remainingAmount: sqliteCore.real("remaining_amount").notNull(),
-    // Amount still owed
-    status: sqliteCore.text("status", { enum: ["pending", "partial", "paid", "overdue", "cancelled"] }).notNull().default("pending"),
-    dueDate: sqliteCore.text("due_date"),
-    // Payment due date
-    paymentTerms: sqliteCore.text("payment_terms"),
-    // e.g., "Net 30", "Net 60"
-    notes: sqliteCore.text("notes"),
-    createdBy: sqliteCore.integer("created_by").references(() => users.id),
-    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
-  },
-  (table) => ({
-    supplierIdx: sqliteCore.index("payables_supplier_idx").on(table.supplierId),
-    statusIdx: sqliteCore.index("payables_status_idx").on(table.status),
-    branchIdx: sqliteCore.index("payables_branch_idx").on(table.branchId),
-    dueDateIdx: sqliteCore.index("payables_due_date_idx").on(table.dueDate)
-  })
-);
-const payablePayments = sqliteCore.sqliteTable(
-  "payable_payments",
-  {
-    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-    payableId: sqliteCore.integer("payable_id").notNull().references(() => accountPayables.id, { onDelete: "cascade" }),
-    amount: sqliteCore.real("amount").notNull(),
-    paymentMethod: sqliteCore.text("payment_method", {
-      enum: ["cash", "card", "bank_transfer", "cheque", "mobile"]
-    }).notNull().default("bank_transfer"),
-    referenceNumber: sqliteCore.text("reference_number"),
-    // Cheque number, transaction ID, etc.
-    notes: sqliteCore.text("notes"),
-    paidBy: sqliteCore.integer("paid_by").references(() => users.id),
-    paymentDate: sqliteCore.text("payment_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
-  },
-  (table) => ({
-    payableIdx: sqliteCore.index("payable_payments_payable_idx").on(table.payableId),
-    dateIdx: sqliteCore.index("payable_payments_date_idx").on(table.paymentDate)
-  })
-);
-const accountPayablesRelations = drizzleOrm.relations(accountPayables, ({ one, many }) => ({
-  supplier: one(suppliers, {
-    fields: [accountPayables.supplierId],
-    references: [suppliers.id]
-  }),
-  purchase: one(purchases, {
-    fields: [accountPayables.purchaseId],
-    references: [purchases.id]
-  }),
-  branch: one(branches, {
-    fields: [accountPayables.branchId],
-    references: [branches.id]
-  }),
-  createdByUser: one(users, {
-    fields: [accountPayables.createdBy],
-    references: [users.id]
-  }),
-  payments: many(payablePayments)
-}));
-const payablePaymentsRelations = drizzleOrm.relations(payablePayments, ({ one }) => ({
-  payable: one(accountPayables, {
-    fields: [payablePayments.payableId],
-    references: [accountPayables.id]
-  }),
-  paidByUser: one(users, {
-    fields: [payablePayments.paidBy],
-    references: [users.id]
-  })
-}));
 const cashRegisterSessions = sqliteCore.sqliteTable(
   "cash_register_sessions",
   {
@@ -1182,6 +1214,7 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   commissions,
   customers,
   expenses,
+  expensesRelations,
   inventory,
   journalEntries,
   journalEntriesRelations,
@@ -4370,7 +4403,19 @@ function registerExpenseHandlers() {
           where: whereClause,
           limit,
           offset: (page - 1) * limit,
-          orderBy: sortOrder === "desc" ? drizzleOrm.desc(expenses.expenseDate) : expenses.expenseDate
+          orderBy: sortOrder === "desc" ? drizzleOrm.desc(expenses.expenseDate) : expenses.expenseDate,
+          with: {
+            supplier: true,
+            payable: true,
+            branch: true,
+            user: {
+              columns: {
+                id: true,
+                username: true,
+                fullName: true
+              }
+            }
+          }
         });
         const result = {
           data,
@@ -4389,7 +4434,19 @@ function registerExpenseHandlers() {
   electron.ipcMain.handle("expenses:get-by-id", async (_, id) => {
     try {
       const expense = await db2.query.expenses.findFirst({
-        where: drizzleOrm.eq(expenses.id, id)
+        where: drizzleOrm.eq(expenses.id, id),
+        with: {
+          supplier: true,
+          payable: true,
+          branch: true,
+          user: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          }
+        }
       });
       if (!expense) {
         return { success: false, message: "Expense not found" };
@@ -4403,21 +4460,82 @@ function registerExpenseHandlers() {
   electron.ipcMain.handle("expenses:create", async (_, data) => {
     try {
       const session = getCurrentSession();
+      if (data.paymentStatus === "unpaid" && !data.supplierId) {
+        return {
+          success: false,
+          message: "Supplier is required for unpaid expenses"
+        };
+      }
+      if (data.paymentStatus === "unpaid" && !data.dueDate) {
+        return {
+          success: false,
+          message: "Due date is required for unpaid expenses"
+        };
+      }
+      let payableId = void 0;
       const result = await db2.insert(expenses).values({
         ...data,
-        userId: session?.userId ?? 0
+        userId: session?.userId ?? 0,
+        payableId: void 0
+        // Will be updated after payable creation
       }).returning();
       const newExpense = result[0];
+      if (data.paymentStatus === "unpaid" && data.supplierId) {
+        try {
+          const invoiceNumber = `EXP-${newExpense.id}-${Date.now()}`;
+          const payableResult = await db2.insert(accountPayables).values({
+            supplierId: data.supplierId,
+            purchaseId: null,
+            branchId: data.branchId,
+            invoiceNumber,
+            totalAmount: data.amount,
+            paidAmount: 0,
+            remainingAmount: data.amount,
+            status: "pending",
+            dueDate: data.dueDate,
+            paymentTerms: data.paymentTerms,
+            notes: `Auto-created from expense: ${data.category} - ${data.description || "No description"}`,
+            createdBy: session?.userId
+          }).returning();
+          const newPayable = payableResult[0];
+          payableId = newPayable.id;
+          await db2.update(expenses).set({ payableId: newPayable.id }).where(drizzleOrm.eq(expenses.id, newExpense.id));
+          await createAuditLog({
+            userId: session?.userId,
+            branchId: data.branchId,
+            action: "create",
+            entityType: "account_payable",
+            entityId: newPayable.id,
+            newValues: {
+              supplierId: data.supplierId,
+              invoiceNumber,
+              totalAmount: data.amount,
+              source: "expense",
+              expenseId: newExpense.id
+            },
+            description: `Auto-created payable from expense #${newExpense.id}`
+          });
+        } catch (payableError) {
+          console.error("Failed to create payable for expense:", payableError);
+        }
+      }
       await createAuditLog({
         userId: session?.userId,
         branchId: data.branchId,
         action: "create",
         entityType: "expense",
         entityId: newExpense.id,
-        newValues: sanitizeForAudit(data),
-        description: `Created expense: ${data.category} - $${data.amount}`
+        newValues: sanitizeForAudit({
+          ...data,
+          payableId
+        }),
+        description: `Created ${data.paymentStatus || "paid"} expense: ${data.category} - $${data.amount}`
       });
-      return { success: true, data: newExpense };
+      return {
+        success: true,
+        data: { ...newExpense, payableId },
+        payableCreated: !!payableId
+      };
     } catch (error) {
       console.error("Create expense error:", error);
       return { success: false, message: "Failed to create expense" };
@@ -4427,10 +4545,98 @@ function registerExpenseHandlers() {
     try {
       const session = getCurrentSession();
       const existing = await db2.query.expenses.findFirst({
-        where: drizzleOrm.eq(expenses.id, id)
+        where: drizzleOrm.eq(expenses.id, id),
+        with: {
+          payable: true
+        }
       });
       if (!existing) {
         return { success: false, message: "Expense not found" };
+      }
+      if (data.paymentStatus === "unpaid" && !data.supplierId && !existing.supplierId) {
+        return {
+          success: false,
+          message: "Supplier is required for unpaid expenses"
+        };
+      }
+      if (existing.payableId && data.amount && data.amount !== existing.amount) {
+        const payable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.id, existing.payableId)
+        });
+        if (payable && payable.paidAmount > 0) {
+          return {
+            success: false,
+            message: "Cannot change amount - payable has existing payments"
+          };
+        }
+        if (payable) {
+          await db2.update(accountPayables).set({
+            totalAmount: data.amount,
+            remainingAmount: data.amount,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
+        }
+      }
+      if (existing.paymentStatus === "unpaid" && data.paymentStatus === "paid") {
+        if (existing.payableId) {
+          const payable = await db2.query.accountPayables.findFirst({
+            where: drizzleOrm.eq(accountPayables.id, existing.payableId)
+          });
+          if (payable && payable.status !== "paid") {
+            return {
+              success: false,
+              message: "Cannot mark expense as paid - linked payable is not fully paid"
+            };
+          }
+        }
+      }
+      if (existing.paymentStatus === "paid" && data.paymentStatus === "unpaid") {
+        const supplierIdToUse = data.supplierId || existing.supplierId;
+        if (!supplierIdToUse) {
+          return {
+            success: false,
+            message: "Supplier is required to change expense to unpaid"
+          };
+        }
+        if (!data.dueDate && !existing.dueDate) {
+          return {
+            success: false,
+            message: "Due date is required to change expense to unpaid"
+          };
+        }
+        if (!existing.payableId) {
+          const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
+          const payableResult = await db2.insert(accountPayables).values({
+            supplierId: supplierIdToUse,
+            purchaseId: null,
+            branchId: existing.branchId,
+            invoiceNumber,
+            totalAmount: data.amount || existing.amount,
+            paidAmount: 0,
+            remainingAmount: data.amount || existing.amount,
+            status: "pending",
+            dueDate: data.dueDate || existing.dueDate,
+            paymentTerms: data.paymentTerms || existing.paymentTerms,
+            notes: `Created from expense status change: ${existing.category}`,
+            createdBy: session?.userId
+          }).returning();
+          data.payableId = payableResult[0].id;
+          await createAuditLog({
+            userId: session?.userId,
+            branchId: existing.branchId,
+            action: "create",
+            entityType: "account_payable",
+            entityId: payableResult[0].id,
+            newValues: {
+              supplierId: supplierIdToUse,
+              invoiceNumber,
+              totalAmount: data.amount || existing.amount,
+              source: "expense_status_change",
+              expenseId: existing.id
+            },
+            description: `Created payable from expense #${existing.id} status change`
+          });
+        }
       }
       const result = await db2.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
       await createAuditLog({
@@ -4453,10 +4659,42 @@ function registerExpenseHandlers() {
     try {
       const session = getCurrentSession();
       const existing = await db2.query.expenses.findFirst({
-        where: drizzleOrm.eq(expenses.id, id)
+        where: drizzleOrm.eq(expenses.id, id),
+        with: {
+          payable: true
+        }
       });
       if (!existing) {
         return { success: false, message: "Expense not found" };
+      }
+      if (existing.payableId) {
+        const payable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.id, existing.payableId)
+        });
+        if (payable && payable.paidAmount > 0) {
+          return {
+            success: false,
+            message: "Cannot delete expense - linked payable has existing payments"
+          };
+        }
+        if (payable && payable.status !== "cancelled") {
+          await db2.update(accountPayables).set({
+            status: "cancelled",
+            notes: `${payable.notes || ""}
+Cancelled: Expense deleted`.trim(),
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
+          await createAuditLog({
+            userId: session?.userId,
+            branchId: existing.branchId,
+            action: "update",
+            entityType: "account_payable",
+            entityId: existing.payableId,
+            oldValues: { status: payable.status },
+            newValues: { status: "cancelled" },
+            description: `Cancelled payable #${existing.payableId} due to expense deletion`
+          });
+        }
       }
       await db2.delete(expenses).where(drizzleOrm.eq(expenses.id, id));
       await createAuditLog({
@@ -8719,6 +8957,27 @@ function registerAccountPayablesHandlers() {
         status: newStatus,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
+      if (newStatus === "paid") {
+        const linkedExpense = await db2.query.expenses.findFirst({
+          where: drizzleOrm.eq(expenses.payableId, payable.id)
+        });
+        if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
+          await db2.update(expenses).set({
+            paymentStatus: "paid",
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+          await createAuditLog({
+            userId: session.userId,
+            branchId: linkedExpense.branchId,
+            action: "update",
+            entityType: "expense",
+            entityId: linkedExpense.id,
+            oldValues: { paymentStatus: "unpaid" },
+            newValues: { paymentStatus: "paid" },
+            description: `Auto-updated expense status to paid (payable #${payable.id} fully paid)`
+          });
+        }
+      }
       await createAuditLog({
         userId: session.userId,
         branchId: payable.branchId,

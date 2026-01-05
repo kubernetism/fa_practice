@@ -57,6 +57,20 @@
       "when": 1767600000000,
       "tag": "0008_receipt_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1736098000000,
+      "tag": "0009_expenses_payment_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1736099000000,
+      "tag": "0010_referral_persons_table",
+      "breakpoints": true
     }
   ]
 }

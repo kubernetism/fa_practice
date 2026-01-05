@@ -7,6 +7,7 @@ import {
   suppliers,
   purchases,
   branches,
+  expenses,
   type NewAccountPayable,
   type NewPayablePayment,
 } from '../db/schema'
@@ -333,6 +334,36 @@ export function registerAccountPayablesHandlers(): void {
           updatedAt: new Date().toISOString(),
         })
         .where(eq(accountPayables.id, data.payableId))
+
+      // Bidirectional sync: Update expense status when payable is fully paid
+      if (newStatus === 'paid') {
+        // Check if this payable is linked to an expense
+        const linkedExpense = await db.query.expenses.findFirst({
+          where: eq(expenses.payableId, payable.id),
+        })
+
+        if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
+          // Auto-update expense to paid
+          await db
+            .update(expenses)
+            .set({
+              paymentStatus: 'paid',
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(expenses.id, linkedExpense.id))
+
+          await createAuditLog({
+            userId: session.userId,
+            branchId: linkedExpense.branchId,
+            action: 'update',
+            entityType: 'expense',
+            entityId: linkedExpense.id,
+            oldValues: { paymentStatus: 'unpaid' },
+            newValues: { paymentStatus: 'paid' },
+            description: `Auto-updated expense status to paid (payable #${payable.id} fully paid)`,
+          })
+        }
+      }
 
       await createAuditLog({
         userId: session.userId,

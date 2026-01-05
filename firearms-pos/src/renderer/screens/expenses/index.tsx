@@ -30,8 +30,22 @@ interface Expense {
   paymentMethod: string
   reference: string | null
   expenseDate: string
+  paymentStatus: 'paid' | 'unpaid'
+  supplierId: number | null
+  payableId: number | null
+  dueDate: string | null
+  paymentTerms: string | null
   createdAt: string
   updatedAt: string
+  supplier?: {
+    id: number
+    name: string
+  }
+  payable?: {
+    id: number
+    status: string
+    remainingAmount: number
+  }
 }
 
 interface ExpenseFormData {
@@ -41,6 +55,10 @@ interface ExpenseFormData {
   paymentMethod: string
   reference: string
   expenseDate: string
+  paymentStatus: 'paid' | 'unpaid'
+  supplierId: string
+  dueDate: string
+  paymentTerms: string
 }
 
 const EXPENSE_CATEGORIES = [
@@ -60,6 +78,14 @@ const PAYMENT_METHODS = [
   { value: 'transfer', label: 'Bank Transfer' },
 ]
 
+const PAYMENT_TERMS = [
+  { value: 'Net 15', label: 'Net 15' },
+  { value: 'Net 30', label: 'Net 30' },
+  { value: 'Net 45', label: 'Net 45' },
+  { value: 'Net 60', label: 'Net 60' },
+  { value: 'Due on Receipt', label: 'Due on Receipt' },
+]
+
 const initialFormData: ExpenseFormData = {
   category: 'other',
   amount: '',
@@ -67,10 +93,15 @@ const initialFormData: ExpenseFormData = {
   paymentMethod: 'cash',
   reference: '',
   expenseDate: new Date().toISOString().split('T')[0],
+  paymentStatus: 'paid',
+  supplierId: '',
+  dueDate: '',
+  paymentTerms: '',
 }
 
 export default function ExpensesScreen() {
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
@@ -78,6 +109,7 @@ export default function ExpensesScreen() {
 
   useEffect(() => {
     fetchExpenses()
+    fetchSuppliers()
   }, [])
 
   const fetchExpenses = async () => {
@@ -101,6 +133,20 @@ export default function ExpensesScreen() {
     }
   }
 
+  const fetchSuppliers = async () => {
+    try {
+      const response = await window.api.suppliers.getAll({
+        isActive: true,
+        limit: 1000,
+      })
+      if (response?.success && response?.data) {
+        setSuppliers(response.data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch suppliers:', error)
+    }
+  }
+
   const handleOpenDialog = () => {
     setFormData(initialFormData)
     setIsDialogOpen(true)
@@ -119,20 +165,48 @@ export default function ExpensesScreen() {
       return
     }
 
+    // Validation for unpaid expenses
+    if (formData.paymentStatus === 'unpaid') {
+      if (!formData.supplierId) {
+        alert('Please select a supplier for unpaid expenses')
+        return
+      }
+      if (!formData.dueDate) {
+        alert('Please enter a due date for unpaid expenses')
+        return
+      }
+    }
+
     try {
-      const expenseData = {
+      const expenseData: any = {
         category: formData.category,
         amount: parseFloat(formData.amount),
         description: formData.description || undefined,
-        paymentMethod: formData.paymentMethod,
-        reference: formData.reference || undefined,
         expenseDate: formData.expenseDate,
+        paymentStatus: formData.paymentStatus,
+      }
+
+      // Conditional fields based on payment status
+      if (formData.paymentStatus === 'paid') {
+        expenseData.paymentMethod = formData.paymentMethod
+        expenseData.reference = formData.reference || undefined
+      } else {
+        expenseData.supplierId = parseInt(formData.supplierId)
+        expenseData.dueDate = formData.dueDate
+        expenseData.paymentTerms = formData.paymentTerms || undefined
       }
 
       const response = await window.api.expenses.create(expenseData)
       if (response.success) {
         await fetchExpenses()
         handleCloseDialog()
+
+        // Show success message
+        if (response.payableCreated) {
+          alert('Expense created and account payable generated successfully!')
+        } else {
+          alert('Expense created successfully!')
+        }
       } else {
         alert(response.message || 'Failed to create expense')
       }
@@ -206,15 +280,56 @@ export default function ExpensesScreen() {
             <div className="space-y-2">
               {expenses.map((expense) => (
                 <div key={expense.id} className="flex items-center justify-between p-4 border rounded">
-                  <div>
-                    <p className="font-medium">{expense.category}</p>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <p className="font-medium capitalize">{expense.category}</p>
+                      {/* Payment Status Badge */}
+                      <span
+                        className={`px-2 py-0.5 text-xs rounded font-medium ${
+                          expense.paymentStatus === 'paid'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}
+                      >
+                        {expense.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}
+                      </span>
+                    </div>
+
                     <p className="text-sm text-muted-foreground">
                       Rs. {expense.amount.toFixed(2)} - {new Date(expense.expenseDate).toLocaleDateString()}
                     </p>
+
+                    {/* Show supplier for unpaid expenses */}
+                    {expense.paymentStatus === 'unpaid' && expense.supplier && (
+                      <p className="text-sm text-muted-foreground">
+                        Supplier: {expense.supplier.name}
+                        {expense.dueDate && (
+                          <> | Due: {new Date(expense.dueDate).toLocaleDateString()}</>
+                        )}
+                      </p>
+                    )}
+
+                    {/* Show payment method for paid expenses */}
+                    {expense.paymentStatus === 'paid' && expense.paymentMethod && (
+                      <p className="text-sm text-muted-foreground">
+                        Payment: {expense.paymentMethod}
+                        {expense.reference && <> | Ref: {expense.reference}</>}
+                      </p>
+                    )}
+
                     {expense.description && (
                       <p className="text-sm text-muted-foreground">{expense.description}</p>
                     )}
+
+                    {/* Show link to payable */}
+                    {expense.payableId && expense.payable && (
+                      <p className="text-xs text-blue-600 mt-1">
+                        Linked Payable #{expense.payableId} - Status: {expense.payable.status} -
+                        Remaining: Rs. {expense.payable.remainingAmount.toFixed(2)}
+                      </p>
+                    )}
                   </div>
+
                   <div className="flex gap-2">
                     <Button variant="ghost" size="sm">
                       <Pencil className="h-4 w-4" />
@@ -232,15 +347,35 @@ export default function ExpensesScreen() {
 
       {/* Add Expense Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Add New Expense</DialogTitle>
             <DialogDescription>Enter the details for the new expense.</DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleSubmit}>
-            <div className="space-y-4 py-4">
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+            <div className="space-y-3 py-3 overflow-y-auto px-1">
+              {/* Payment Status */}
               <div className="space-y-2">
-                <Label htmlFor="category">Category</Label>
+                <Label htmlFor="paymentStatus">Payment Status *</Label>
+                <Select
+                  value={formData.paymentStatus}
+                  onValueChange={(value) =>
+                    setFormData({ ...formData, paymentStatus: value as 'paid' | 'unpaid' })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="unpaid">Unpaid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Category */}
+              <div className="space-y-2">
+                <Label htmlFor="category">Category *</Label>
                 <Select
                   value={formData.category}
                   onValueChange={(value) => setFormData({ ...formData, category: value })}
@@ -258,6 +393,7 @@ export default function ExpensesScreen() {
                 </Select>
               </div>
 
+              {/* Amount */}
               <div className="space-y-2">
                 <Label htmlFor="amount">Amount (Rs.) *</Label>
                 <Input
@@ -272,45 +408,113 @@ export default function ExpensesScreen() {
                 />
               </div>
 
+              {/* Expense Date */}
               <div className="space-y-2">
-                <Label htmlFor="expenseDate">Date</Label>
+                <Label htmlFor="expenseDate">Expense Date *</Label>
                 <Input
                   id="expenseDate"
                   type="date"
                   value={formData.expenseDate}
                   onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
+                  required
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="paymentMethod">Payment Method</Label>
-                <Select
-                  value={formData.paymentMethod}
-                  onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select payment method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAYMENT_METHODS.map((method) => (
-                      <SelectItem key={method.value} value={method.value}>
-                        {method.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {/* Supplier (shown only for unpaid) */}
+              {formData.paymentStatus === 'unpaid' && (
+                <div className="space-y-2">
+                  <Label htmlFor="supplier">Supplier *</Label>
+                  <Select
+                    value={formData.supplierId}
+                    onValueChange={(value) => setFormData({ ...formData, supplierId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {suppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id.toString()}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
-              <div className="space-y-2">
-                <Label htmlFor="reference">Reference Number</Label>
-                <Input
-                  id="reference"
-                  value={formData.reference}
-                  onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                  placeholder="Invoice #, Receipt #, etc."
-                />
-              </div>
+              {/* Due Date (shown only for unpaid) */}
+              {formData.paymentStatus === 'unpaid' && (
+                <div className="space-y-2">
+                  <Label htmlFor="dueDate">Due Date *</Label>
+                  <Input
+                    id="dueDate"
+                    type="date"
+                    value={formData.dueDate}
+                    onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                    min={new Date().toISOString().split('T')[0]}
+                    required
+                  />
+                </div>
+              )}
 
+              {/* Payment Terms (shown only for unpaid) */}
+              {formData.paymentStatus === 'unpaid' && (
+                <div className="space-y-2">
+                  <Label htmlFor="paymentTerms">Payment Terms</Label>
+                  <Select
+                    value={formData.paymentTerms}
+                    onValueChange={(value) => setFormData({ ...formData, paymentTerms: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select terms" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_TERMS.map((term) => (
+                        <SelectItem key={term.value} value={term.value}>
+                          {term.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* Payment Method (shown only for paid) */}
+              {formData.paymentStatus === 'paid' && (
+                <div className="space-y-2">
+                  <Label htmlFor="paymentMethod">Payment Method *</Label>
+                  <Select
+                    value={formData.paymentMethod}
+                    onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select payment method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_METHODS.map((method) => (
+                        <SelectItem key={method.value} value={method.value}>
+                          {method.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+
+              {/* Reference (shown only for paid) */}
+              {formData.paymentStatus === 'paid' && (
+                <div className="space-y-2">
+                  <Label htmlFor="reference">Reference Number</Label>
+                  <Input
+                    id="reference"
+                    value={formData.reference}
+                    onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+                    placeholder="Invoice #, Receipt #, etc."
+                  />
+                </div>
+              )}
+
+              {/* Description - always shown */}
               <div className="space-y-2">
                 <Label htmlFor="description">Description</Label>
                 <Textarea
@@ -318,7 +522,7 @@ export default function ExpensesScreen() {
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   placeholder="Enter expense details..."
-                  rows={3}
+                  rows={2}
                 />
               </div>
             </div>

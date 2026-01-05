@@ -380,14 +380,21 @@ export function POSScreen() {
                         key={item.product.id}
                         onClick={() => addToCart(item.product, item.quantity)}
                         disabled={remainingStock <= 0 && !item.product.isSerialTracked}
-                        className="flex flex-col rounded-lg border p-3 text-left transition-colors hover:bg-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed h-full group"
                       >
-                        <div className="flex items-start justify-between gap-2">
+                        {/* Plus Icon - appears on hover */}
+                        <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                          <Plus className="h-12 w-12 text-green-600" strokeWidth={3} />
+                        </div>
+
+                        <div className="flex items-start justify-between gap-2 mb-2">
                           <div className="flex-1 min-w-0">
-                            <p className="font-medium truncate">{item.product.name}</p>
-                            <p className="text-xs text-muted-foreground">{item.product.code}</p>
+                            <p className="font-medium break-words whitespace-normal leading-tight text-sm">
+                              {item.product.name}
+                            </p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{item.product.code}</p>
                           </div>
-                          <div className="flex flex-col items-end gap-1">
+                          <div className="flex flex-col items-end gap-1 flex-shrink-0">
                             {item.product.isSerialTracked && (
                               <Badge variant="outline" className="text-xs">
                                 Serial
@@ -395,13 +402,13 @@ export function POSScreen() {
                             )}
                             <Badge
                               variant={remainingStock <= 5 ? "destructive" : "secondary"}
-                              className="text-xs"
+                              className="text-xs whitespace-nowrap"
                             >
                               {remainingStock} left
                             </Badge>
                           </div>
                         </div>
-                        <div className="mt-2 flex items-center justify-between">
+                        <div className="mt-auto flex items-center justify-between pt-2 border-t">
                           <p className="text-lg font-bold">{formatCurrency(item.product.sellingPrice)}</p>
                           {inCartQty > 0 && (
                             <Badge variant="default" className="text-xs">

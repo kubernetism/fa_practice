@@ -557,14 +557,16 @@ export function InventoryScreen() {
                 >
                   <CardHeader className="pb-2">
                     <div className="flex items-start justify-between">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-start gap-2 flex-1 min-w-0">
                         {status === 'low' ? (
-                          <AlertTriangle className="h-5 w-5 text-destructive" />
+                          <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
                         ) : (
-                          <Boxes className="h-5 w-5 text-muted-foreground" />
+                          <Boxes className="h-5 w-5 text-muted-foreground flex-shrink-0" />
                         )}
-                        <div>
-                          <CardTitle className="text-base">{row.productName}</CardTitle>
+                        <div className="flex-1 min-w-0">
+                          <CardTitle className="text-base break-words whitespace-normal leading-tight">
+                            {row.productName}
+                          </CardTitle>
                           <p className="text-sm text-muted-foreground font-mono">{row.productCode}</p>
                         </div>
                       </div>
