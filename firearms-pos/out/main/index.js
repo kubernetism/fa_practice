@@ -11480,23 +11480,23 @@ async function generatePaymentHistoryReceipt(data, options) {
   const { format, autoDownload } = options;
   const htmlContent = format === "thermal" ? generateThermalPaymentHistoryReceiptHTML(data) : generatePDFPaymentHistoryReceiptHTML(data);
   const pageSettings = format === "thermal" ? {
-    pageSize: { width: 80 * 1e3, height: 297 * 1e3 },
-    margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 }
+    pageSize: { width: 80 * 1e3, height: 210 * 1e3 },
+    margins: { top: 0, bottom: 0, left: 0, right: 0 }
   } : {
     pageSize: "A4",
     margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
   };
   const pdfWindow = new electron.BrowserWindow({
     show: false,
-    width: format === "thermal" ? 400 : 900,
-    height: 1200,
+    width: format === "thermal" ? 320 : 900,
+    height: format === "thermal" ? 1800 : 1200,
     webPreferences: {
       nodeIntegration: false
     }
   });
   try {
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, format === "thermal" ? 1e3 : 500));
     const pdfData = await pdfWindow.webContents.printToPDF({
       pageSize: pageSettings.pageSize,
       printBackground: true,
@@ -11523,24 +11523,24 @@ async function generateReceipt(data, options) {
   const { format, autoDownload } = options;
   const htmlContent = format === "thermal" ? generateThermalReceiptHTML(data) : generatePDFReceiptHTML(data);
   const pageSettings = format === "thermal" ? {
-    pageSize: { width: 80 * 1e3, height: 297 * 1e3 },
-    // 80mm width, variable height
-    margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 }
+    pageSize: { width: 80 * 1e3, height: 210 * 1e3 },
+    // 80mm width, 210mm height
+    margins: { top: 0, bottom: 0, left: 0, right: 0 }
   } : {
     pageSize: "A4",
     margins: { top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 }
   };
   const pdfWindow = new electron.BrowserWindow({
     show: false,
-    width: format === "thermal" ? 400 : 800,
-    height: 1200,
+    width: format === "thermal" ? 320 : 800,
+    height: format === "thermal" ? 1800 : 1200,
     webPreferences: {
       nodeIntegration: false
     }
   });
   try {
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, format === "thermal" ? 1e3 : 500));
     const pdfData = await pdfWindow.webContents.printToPDF({
       pageSize: pageSettings.pageSize,
       printBackground: true,

@@ -1536,8 +1536,8 @@ export async function generatePaymentHistoryReceipt(
   const pageSettings =
     format === 'thermal'
       ? {
-          pageSize: { width: 80 * 1000, height: 297 * 1000 } as Electron.Size,
-          margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 },
+          pageSize: { width: 80 * 1000, height: 210 * 1000 } as Electron.Size,
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
         }
       : {
           pageSize: 'A4' as const,
@@ -1547,8 +1547,8 @@ export async function generatePaymentHistoryReceipt(
   // Create hidden window for PDF generation
   const pdfWindow = new BrowserWindow({
     show: false,
-    width: format === 'thermal' ? 400 : 900,
-    height: 1200,
+    width: format === 'thermal' ? 320 : 900,
+    height: format === 'thermal' ? 1800 : 1200,
     webPreferences: {
       nodeIntegration: false,
     },
@@ -1558,8 +1558,8 @@ export async function generatePaymentHistoryReceipt(
     // Load HTML content
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`)
 
-    // Wait for content to render
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Wait for content to render - longer for thermal to ensure all content loads
+    await new Promise((resolve) => setTimeout(resolve, format === 'thermal' ? 1000 : 500))
 
     // Generate PDF
     const pdfData = await pdfWindow.webContents.printToPDF({
@@ -1602,8 +1602,8 @@ export async function generateReceipt(data: ReceiptData, options: ReceiptOptions
   const pageSettings =
     format === 'thermal'
       ? {
-          pageSize: { width: 80 * 1000, height: 297 * 1000 } as Electron.Size, // 80mm width, variable height
-          margins: { top: 0.1, bottom: 0.1, left: 0.1, right: 0.1 },
+          pageSize: { width: 80 * 1000, height: 210 * 1000 } as Electron.Size, // 80mm width, 210mm height
+          margins: { top: 0, bottom: 0, left: 0, right: 0 },
         }
       : {
           pageSize: 'A4' as const,
@@ -1613,8 +1613,8 @@ export async function generateReceipt(data: ReceiptData, options: ReceiptOptions
   // Create hidden window for PDF generation
   const pdfWindow = new BrowserWindow({
     show: false,
-    width: format === 'thermal' ? 400 : 800,
-    height: 1200,
+    width: format === 'thermal' ? 320 : 800,
+    height: format === 'thermal' ? 1800 : 1200,
     webPreferences: {
       nodeIntegration: false,
     },
@@ -1624,8 +1624,8 @@ export async function generateReceipt(data: ReceiptData, options: ReceiptOptions
     // Load HTML content
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`)
 
-    // Wait for content to render
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    // Wait for content to render - longer for thermal to ensure all content loads
+    await new Promise((resolve) => setTimeout(resolve, format === 'thermal' ? 1000 : 500))
 
     // Generate PDF
     const pdfData = await pdfWindow.webContents.printToPDF({
