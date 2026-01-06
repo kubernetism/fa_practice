@@ -1192,6 +1192,47 @@ const accountBalancesRelations = drizzleOrm.relations(accountBalances, ({ one })
     references: [branches.id]
   })
 }));
+const todos = sqliteCore.sqliteTable(
+  "todos",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    title: sqliteCore.text("title").notNull(),
+    description: sqliteCore.text("description"),
+    status: sqliteCore.text("status", { enum: ["pending", "in_progress", "completed", "cancelled"] }).notNull().default("pending"),
+    priority: sqliteCore.text("priority", { enum: ["low", "medium", "high", "urgent"] }).notNull().default("medium"),
+    dueDate: sqliteCore.text("due_date"),
+    createdBy: sqliteCore.integer("created_by").notNull().references(() => users.id),
+    assignedTo: sqliteCore.integer("assigned_to").notNull().references(() => users.id),
+    assignedToRole: sqliteCore.text("assigned_to_role", { enum: ["admin", "manager", "cashier"] }).notNull(),
+    branchId: sqliteCore.integer("branch_id").references(() => branches.id),
+    completedAt: sqliteCore.text("completed_at"),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    assignedToIdx: sqliteCore.index("todos_assigned_to_idx").on(table.assignedTo),
+    assignedToRoleIdx: sqliteCore.index("todos_assigned_to_role_idx").on(table.assignedToRole),
+    statusIdx: sqliteCore.index("todos_status_idx").on(table.status),
+    createdByIdx: sqliteCore.index("todos_created_by_idx").on(table.createdBy),
+    branchIdx: sqliteCore.index("todos_branch_idx").on(table.branchId)
+  })
+);
+const todosRelations = drizzleOrm.relations(todos, ({ one }) => ({
+  creator: one(users, {
+    fields: [todos.createdBy],
+    references: [users.id],
+    relationName: "todoCreator"
+  }),
+  assignee: one(users, {
+    fields: [todos.assignedTo],
+    references: [users.id],
+    relationName: "todoAssignee"
+  }),
+  branch: one(branches, {
+    fields: [todos.branchId],
+    references: [branches.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1240,6 +1281,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   stockAdjustments,
   stockTransfers,
   suppliers,
+  todos,
+  todosRelations,
   users
 }, Symbol.toStringTag, { value: "Module" }));
 let db = null;
@@ -1274,6 +1317,12 @@ function closeDatabase() {
     sqlite = null;
     db = null;
   }
+}
+function getRawDatabase() {
+  if (!sqlite) {
+    throw new Error("Database not initialized. Call initDatabase() first.");
+  }
+  return sqlite;
 }
 async function migrateToBusinessSettings() {
   console.log("Starting migration to business_settings table...");
@@ -11797,6 +11846,317 @@ function registerReceiptHandlers() {
     }
   });
 }
+function registerTodosHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("todos:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const assignedUser = await db2.query.users.findFirst({
+        where: drizzleOrm.eq(users.id, data.assignedTo)
+      });
+      if (!assignedUser) {
+        return { success: false, message: "Assigned user not found" };
+      }
+      const [newTodo] = await db2.insert(todos).values({
+        title: data.title,
+        description: data.description,
+        priority: data.priority || "medium",
+        dueDate: data.dueDate,
+        createdBy: session.userId,
+        assignedTo: data.assignedTo,
+        assignedToRole: assignedUser.role,
+        branchId: data.branchId || session.branchId,
+        status: "pending"
+      }).returning();
+      await createAuditLog({
+        userId: session.userId,
+        branchId: session.branchId,
+        action: "create",
+        entityType: "todo",
+        entityId: newTodo.id,
+        newValues: {
+          title: data.title,
+          assignedTo: data.assignedTo
+        },
+        description: `Created todo: ${data.title}`
+      });
+      return { success: true, data: newTodo };
+    } catch (error) {
+      console.error("Create todo error:", error);
+      return { success: false, message: "Failed to create todo" };
+    }
+  });
+  electron.ipcMain.handle("todos:get-all", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const userTodos = await db2.query.todos.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(todos.assignedToRole, session.role),
+          drizzleOrm.eq(todos.assignedTo, session.userId)
+        ),
+        orderBy: [drizzleOrm.desc(todos.createdAt)],
+        with: {
+          creator: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          assignee: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true
+            }
+          },
+          branch: true
+        }
+      });
+      return { success: true, data: userTodos };
+    } catch (error) {
+      console.error("Get todos error:", error);
+      return { success: false, message: "Failed to fetch todos" };
+    }
+  });
+  electron.ipcMain.handle("todos:get-by-id", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const todo = await db2.query.todos.findFirst({
+        where: drizzleOrm.eq(todos.id, id),
+        with: {
+          creator: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true
+            }
+          },
+          assignee: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true
+            }
+          },
+          branch: true
+        }
+      });
+      if (!todo) {
+        return { success: false, message: "Todo not found" };
+      }
+      if (todo.assignedTo !== session.userId) {
+        return { success: false, message: "Access denied" };
+      }
+      return { success: true, data: todo };
+    } catch (error) {
+      console.error("Get todo error:", error);
+      return { success: false, message: "Failed to fetch todo" };
+    }
+  });
+  electron.ipcMain.handle("todos:update", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const existingTodo = await db2.query.todos.findFirst({
+        where: drizzleOrm.eq(todos.id, data.id)
+      });
+      if (!existingTodo) {
+        return { success: false, message: "Todo not found" };
+      }
+      if (existingTodo.assignedTo !== session.userId) {
+        return { success: false, message: "Access denied" };
+      }
+      const updateData = {
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      if (data.title !== void 0) updateData.title = data.title;
+      if (data.description !== void 0) updateData.description = data.description;
+      if (data.status !== void 0) {
+        updateData.status = data.status;
+        if (data.status === "completed") {
+          updateData.completedAt = (/* @__PURE__ */ new Date()).toISOString();
+        }
+      }
+      if (data.priority !== void 0) updateData.priority = data.priority;
+      if (data.dueDate !== void 0) updateData.dueDate = data.dueDate;
+      const [updatedTodo] = await db2.update(todos).set(updateData).where(drizzleOrm.eq(todos.id, data.id)).returning();
+      await createAuditLog({
+        userId: session.userId,
+        branchId: session.branchId,
+        action: "update",
+        entityType: "todo",
+        entityId: data.id,
+        oldValues: {
+          status: existingTodo.status,
+          priority: existingTodo.priority
+        },
+        newValues: {
+          status: data.status,
+          priority: data.priority
+        },
+        description: `Updated todo: ${existingTodo.title}`
+      });
+      return { success: true, data: updatedTodo };
+    } catch (error) {
+      console.error("Update todo error:", error);
+      return { success: false, message: "Failed to update todo" };
+    }
+  });
+  electron.ipcMain.handle("todos:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const existingTodo = await db2.query.todos.findFirst({
+        where: drizzleOrm.eq(todos.id, id)
+      });
+      if (!existingTodo) {
+        return { success: false, message: "Todo not found" };
+      }
+      if (existingTodo.createdBy !== session.userId && existingTodo.assignedTo !== session.userId) {
+        return { success: false, message: "Access denied" };
+      }
+      await db2.delete(todos).where(drizzleOrm.eq(todos.id, id));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: session.branchId,
+        action: "delete",
+        entityType: "todo",
+        entityId: id,
+        oldValues: {
+          title: existingTodo.title
+        },
+        description: `Deleted todo: ${existingTodo.title}`
+      });
+      return { success: true, message: "Todo deleted successfully" };
+    } catch (error) {
+      console.error("Delete todo error:", error);
+      return { success: false, message: "Failed to delete todo" };
+    }
+  });
+  electron.ipcMain.handle("todos:get-counts", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const userTodos = await db2.query.todos.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(todos.assignedToRole, session.role),
+          drizzleOrm.eq(todos.assignedTo, session.userId)
+        )
+      });
+      const counts = {
+        total: userTodos.length,
+        pending: userTodos.filter((t) => t.status === "pending").length,
+        in_progress: userTodos.filter((t) => t.status === "in_progress").length,
+        completed: userTodos.filter((t) => t.status === "completed").length,
+        cancelled: userTodos.filter((t) => t.status === "cancelled").length
+      };
+      return { success: true, data: counts };
+    } catch (error) {
+      console.error("Get todo counts error:", error);
+      return { success: false, message: "Failed to fetch todo counts" };
+    }
+  });
+  electron.ipcMain.handle("todos:get-assignable-users", async (_, role) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const targetRole = role || session.role;
+      const assignableUsers = await db2.query.users.findMany({
+        where: drizzleOrm.eq(users.role, targetRole),
+        columns: {
+          id: true,
+          username: true,
+          fullName: true,
+          role: true
+        }
+      });
+      return { success: true, data: assignableUsers };
+    } catch (error) {
+      console.error("Get assignable users error:", error);
+      return { success: false, message: "Failed to fetch assignable users" };
+    }
+  });
+}
+function registerManualMigrationHandlers() {
+  electron.ipcMain.handle("migration:check-todos-table", async () => {
+    try {
+      const db2 = getRawDatabase();
+      const tableCheck = db2.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='todos'`
+      ).get();
+      return {
+        success: true,
+        exists: !!tableCheck,
+        message: tableCheck ? "Todos table exists" : "Todos table does NOT exist"
+      };
+    } catch (error) {
+      return { success: false, message: `Check failed: ${error}` };
+    }
+  });
+  electron.ipcMain.handle("migration:create-todos-table", async () => {
+    try {
+      const db2 = getRawDatabase();
+      const tableCheck = db2.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='todos'`
+      ).get();
+      if (tableCheck) {
+        return { success: true, message: "Todos table already exists" };
+      }
+      const migrationSQL = `
+        CREATE TABLE IF NOT EXISTS "todos" (
+          "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+          "title" text NOT NULL,
+          "description" text,
+          "status" text DEFAULT 'pending' NOT NULL,
+          "priority" text DEFAULT 'medium' NOT NULL,
+          "due_date" text,
+          "created_by" integer NOT NULL,
+          "assigned_to" integer NOT NULL,
+          "assigned_to_role" text NOT NULL,
+          "branch_id" integer,
+          "completed_at" text,
+          "created_at" text NOT NULL,
+          "updated_at" text NOT NULL,
+          FOREIGN KEY ("created_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+          FOREIGN KEY ("assigned_to") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+          FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+        );
+
+        CREATE INDEX IF NOT EXISTS "todos_assigned_to_idx" ON "todos" ("assigned_to");
+        CREATE INDEX IF NOT EXISTS "todos_assigned_to_role_idx" ON "todos" ("assigned_to_role");
+        CREATE INDEX IF NOT EXISTS "todos_status_idx" ON "todos" ("status");
+        CREATE INDEX IF NOT EXISTS "todos_created_by_idx" ON "todos" ("created_by");
+        CREATE INDEX IF NOT EXISTS "todos_branch_idx" ON "todos" ("branch_id");
+      `;
+      db2.exec(migrationSQL);
+      console.log("Todos table created successfully via manual migration");
+      return { success: true, message: "Todos table created successfully" };
+    } catch (error) {
+      console.error("Manual migration error:", error);
+      return { success: false, message: `Migration failed: ${error}` };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -11824,6 +12184,8 @@ function registerAllHandlers() {
   registerCashRegisterHandlers();
   registerChartOfAccountsHandlers();
   registerReceiptHandlers();
+  registerTodosHandlers();
+  registerManualMigrationHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;

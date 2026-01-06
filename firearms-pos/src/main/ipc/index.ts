@@ -24,6 +24,8 @@ import { registerReferralPersonHandlers } from './referral-persons-ipc'
 import { registerCashRegisterHandlers } from './cash-register-ipc'
 import { registerChartOfAccountsHandlers } from './chart-of-accounts-ipc'
 import { registerReceiptHandlers } from './receipt-ipc'
+import { registerTodosHandlers } from './todos-ipc'
+import { registerManualMigrationHandlers } from './manual-migration-ipc'
 
 export function registerAllHandlers(): void {
   registerAuthHandlers()
@@ -52,6 +54,8 @@ export function registerAllHandlers(): void {
   registerCashRegisterHandlers()
   registerChartOfAccountsHandlers()
   registerReceiptHandlers()
+  registerTodosHandlers()
+  registerManualMigrationHandlers()
 
   console.log('All IPC handlers registered')
 }

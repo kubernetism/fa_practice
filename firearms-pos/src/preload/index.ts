@@ -387,6 +387,23 @@ const api = {
     generatePaymentHistory: (receivableId: number) =>
       ipcRenderer.invoke('receipt:generate-payment-history', receivableId),
   },
+
+  // Todos
+  todos: {
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('todos:create', data),
+    getAll: () => ipcRenderer.invoke('todos:get-all'),
+    getById: (id: number) => ipcRenderer.invoke('todos:get-by-id', id),
+    update: (data: Record<string, unknown>) => ipcRenderer.invoke('todos:update', data),
+    delete: (id: number) => ipcRenderer.invoke('todos:delete', id),
+    getCounts: () => ipcRenderer.invoke('todos:get-counts'),
+    getAssignableUsers: (role?: string) => ipcRenderer.invoke('todos:get-assignable-users', role),
+  },
+
+  // Manual Migration
+  migration: {
+    createTodosTable: () => ipcRenderer.invoke('migration:create-todos-table'),
+    checkTodosTable: () => ipcRenderer.invoke('migration:check-todos-table'),
+  },
 }
 
 // Expose the API to the renderer process

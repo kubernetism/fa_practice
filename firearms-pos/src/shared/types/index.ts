@@ -48,6 +48,8 @@ export type {
   NewAccountReceivable,
   ReceivablePayment,
   NewReceivablePayment,
+  Todo,
+  NewTodo,
 } from '../../main/db/schema'
 
 // API Response types
@@ -489,4 +491,31 @@ export interface TabFilters {
   branchId?: number
   status?: SalesTabStatus
   userId?: number
+}
+
+// Todo types
+export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+export type TodoPriority = 'low' | 'medium' | 'high' | 'urgent'
+
+export interface TodoWithDetails extends Todo {
+  creator?: {
+    id: number
+    username: string
+    fullName: string
+  }
+  assignee?: {
+    id: number
+    username: string
+    fullName: string
+    role: string
+  }
+  branch?: Branch
+}
+
+export interface TodoCounts {
+  total: number
+  pending: number
+  in_progress: number
+  completed: number
+  cancelled: number
 }

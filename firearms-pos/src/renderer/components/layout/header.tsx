@@ -1,7 +1,8 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, User, Bell, ChevronDown, Building2, Sun, Moon, Monitor } from 'lucide-react'
+import { LogOut, User, Building2, Sun, Moon, Monitor } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { TodosPanel } from '@/components/todos/todos-panel'
 import {
   Select,
   SelectContent,
@@ -97,12 +98,7 @@ export function Header() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-5 w-5" />
-          <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-[10px] text-white">
-            3
-          </span>
-        </Button>
+        <TodosPanel />
 
         <div className="flex items-center gap-3 border-l pl-4">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">

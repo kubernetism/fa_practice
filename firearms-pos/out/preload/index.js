@@ -274,6 +274,21 @@ const api = {
     generate: (saleId) => electron.ipcRenderer.invoke("receipt:generate", saleId),
     getSettings: (branchId) => electron.ipcRenderer.invoke("receipt:get-settings", branchId),
     generatePaymentHistory: (receivableId) => electron.ipcRenderer.invoke("receipt:generate-payment-history", receivableId)
+  },
+  // Todos
+  todos: {
+    create: (data) => electron.ipcRenderer.invoke("todos:create", data),
+    getAll: () => electron.ipcRenderer.invoke("todos:get-all"),
+    getById: (id) => electron.ipcRenderer.invoke("todos:get-by-id", id),
+    update: (data) => electron.ipcRenderer.invoke("todos:update", data),
+    delete: (id) => electron.ipcRenderer.invoke("todos:delete", id),
+    getCounts: () => electron.ipcRenderer.invoke("todos:get-counts"),
+    getAssignableUsers: (role) => electron.ipcRenderer.invoke("todos:get-assignable-users", role)
+  },
+  // Manual Migration
+  migration: {
+    createTodosTable: () => electron.ipcRenderer.invoke("migration:create-todos-table"),
+    checkTodosTable: () => electron.ipcRenderer.invoke("migration:check-todos-table")
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

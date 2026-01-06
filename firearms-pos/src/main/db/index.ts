@@ -49,4 +49,11 @@ export function closeDatabase(): void {
   }
 }
 
+export function getRawDatabase(): Database.Database {
+  if (!sqlite) {
+    throw new Error('Database not initialized. Call initDatabase() first.')
+  }
+  return sqlite
+}
+
 export { schema }
