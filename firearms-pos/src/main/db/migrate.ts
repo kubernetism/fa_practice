@@ -44,6 +44,56 @@ export async function runMigrations(): Promise<void> {
     console.error('Business settings migration error:', error)
     // Don't throw - the IPC handler can create defaults if needed
   }
+
+  // Manual migration for referral_persons table if missing
+  try {
+    await ensureReferralPersonsTable()
+  } catch (error) {
+    console.error('Referral persons table migration error:', error)
+    // Don't throw - log error but continue
+  }
+}
+
+async function ensureReferralPersonsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if table exists
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='referral_persons'`
+  ).get()
+
+  if (tableCheck) {
+    console.log('referral_persons table exists: true')
+    return
+  }
+
+  console.log('Starting migration for referral_persons table...')
+
+  // Create the referral_persons table
+  const migrationSQL = `
+    CREATE TABLE IF NOT EXISTS "referral_persons" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "branch_id" integer NOT NULL,
+      "name" text NOT NULL,
+      "contact" text,
+      "address" text,
+      "notes" text,
+      "is_active" integer DEFAULT true NOT NULL,
+      "total_commission_earned" real DEFAULT 0 NOT NULL,
+      "total_commission_paid" real DEFAULT 0 NOT NULL,
+      "commission_rate" real,
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL,
+      FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+    );
+
+    CREATE INDEX IF NOT EXISTS "referral_persons_branch_idx" ON "referral_persons" ("branch_id");
+    CREATE INDEX IF NOT EXISTS "referral_persons_name_idx" ON "referral_persons" ("name");
+  `
+
+  db.exec(migrationSQL)
+  console.log('referral_persons table migration completed successfully!')
 }
 
 export async function seedInitialData(): Promise<void> {

@@ -1324,6 +1324,15 @@ function getRawDatabase() {
   }
   return sqlite;
 }
+const index = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
+  __proto__: null,
+  closeDatabase,
+  getDatabase,
+  getDbPath,
+  getRawDatabase,
+  initDatabase,
+  schema
+}, Symbol.toStringTag, { value: "Module" }));
 async function migrateToBusinessSettings() {
   console.log("Starting migration to business_settings table...");
   const db2 = getDatabase();
@@ -1508,6 +1517,45 @@ async function runMigrations() {
   } catch (error) {
     console.error("Business settings migration error:", error);
   }
+  try {
+    await ensureReferralPersonsTable();
+  } catch (error) {
+    console.error("Referral persons table migration error:", error);
+  }
+}
+async function ensureReferralPersonsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='referral_persons'`
+  ).get();
+  if (tableCheck) {
+    console.log("referral_persons table exists: true");
+    return;
+  }
+  console.log("Starting migration for referral_persons table...");
+  const migrationSQL = `
+    CREATE TABLE IF NOT EXISTS "referral_persons" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "branch_id" integer NOT NULL,
+      "name" text NOT NULL,
+      "contact" text,
+      "address" text,
+      "notes" text,
+      "is_active" integer DEFAULT true NOT NULL,
+      "total_commission_earned" real DEFAULT 0 NOT NULL,
+      "total_commission_paid" real DEFAULT 0 NOT NULL,
+      "commission_rate" real,
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL,
+      FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+    );
+
+    CREATE INDEX IF NOT EXISTS "referral_persons_branch_idx" ON "referral_persons" ("branch_id");
+    CREATE INDEX IF NOT EXISTS "referral_persons_name_idx" ON "referral_persons" ("name");
+  `;
+  db2.exec(migrationSQL);
+  console.log("referral_persons table migration completed successfully!");
 }
 async function seedInitialData() {
   const db2 = getDatabase();
@@ -12151,6 +12199,58 @@ function registerManualMigrationHandlers() {
       db2.exec(migrationSQL);
       console.log("Todos table created successfully via manual migration");
       return { success: true, message: "Todos table created successfully" };
+    } catch (error) {
+      console.error("Manual migration error:", error);
+      return { success: false, message: `Migration failed: ${error}` };
+    }
+  });
+  electron.ipcMain.handle("migration:check-referral-persons-table", async () => {
+    try {
+      const db2 = getRawDatabase();
+      const tableCheck = db2.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='referral_persons'`
+      ).get();
+      return {
+        success: true,
+        exists: !!tableCheck,
+        message: tableCheck ? "Referral persons table exists" : "Referral persons table does NOT exist"
+      };
+    } catch (error) {
+      return { success: false, message: `Check failed: ${error}` };
+    }
+  });
+  electron.ipcMain.handle("migration:create-referral-persons-table", async () => {
+    try {
+      const db2 = getRawDatabase();
+      const tableCheck = db2.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='referral_persons'`
+      ).get();
+      if (tableCheck) {
+        return { success: true, message: "Referral persons table already exists" };
+      }
+      const migrationSQL = `
+        CREATE TABLE IF NOT EXISTS "referral_persons" (
+          "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+          "branch_id" integer NOT NULL,
+          "name" text NOT NULL,
+          "contact" text,
+          "address" text,
+          "notes" text,
+          "is_active" integer DEFAULT true NOT NULL,
+          "total_commission_earned" real DEFAULT 0 NOT NULL,
+          "total_commission_paid" real DEFAULT 0 NOT NULL,
+          "commission_rate" real,
+          "created_at" text NOT NULL,
+          "updated_at" text NOT NULL,
+          FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+        );
+
+        CREATE INDEX IF NOT EXISTS "referral_persons_branch_idx" ON "referral_persons" ("branch_id");
+        CREATE INDEX IF NOT EXISTS "referral_persons_name_idx" ON "referral_persons" ("name");
+      `;
+      db2.exec(migrationSQL);
+      console.log("Referral persons table created successfully via manual migration");
+      return { success: true, message: "Referral persons table created successfully" };
     } catch (error) {
       console.error("Manual migration error:", error);
       return { success: false, message: `Migration failed: ${error}` };
