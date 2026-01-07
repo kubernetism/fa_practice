@@ -36,6 +36,7 @@ import {
 } from '../components/ui/dialog'
 import { Badge } from '../components/ui/badge'
 import { Separator } from '../components/ui/separator'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import {
   Building2,
   Receipt,
@@ -57,6 +58,7 @@ import {
   RefreshCw,
   AlertCircle,
   Printer,
+  List,
 } from 'lucide-react'
 import type { Branch, BusinessSettings } from '@shared/types'
 
@@ -361,8 +363,49 @@ export function BusinessSettingsScreen() {
       {/* Settings Form */}
       {currentSettings && (
         <form onSubmit={handleSaveSettings}>
-          {/* Business Info Tab */}
-          <Card className="mb-6">
+          <Tabs defaultValue="business" className="w-full">
+            <TabsList className="grid w-full grid-cols-5 lg:grid-cols-9 mb-6 h-auto gap-1">
+              <TabsTrigger value="business" className="flex items-center gap-1 px-2 py-1.5">
+                <Building2 className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Business</span>
+              </TabsTrigger>
+              <TabsTrigger value="tax" className="flex items-center gap-1 px-2 py-1.5">
+                <DollarSign className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Tax</span>
+              </TabsTrigger>
+              <TabsTrigger value="receipt" className="flex items-center gap-1 px-2 py-1.5">
+                <Receipt className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Receipt</span>
+              </TabsTrigger>
+              <TabsTrigger value="customize" className="flex items-center gap-1 px-2 py-1.5">
+                <Printer className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Customize</span>
+              </TabsTrigger>
+              <TabsTrigger value="inventory" className="flex items-center gap-1 px-2 py-1.5">
+                <Package className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Inventory</span>
+              </TabsTrigger>
+              <TabsTrigger value="sales" className="flex items-center gap-1 px-2 py-1.5">
+                <ShoppingCart className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Sales</span>
+              </TabsTrigger>
+              <TabsTrigger value="hours" className="flex items-center gap-1 px-2 py-1.5">
+                <Clock className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Hours</span>
+              </TabsTrigger>
+              <TabsTrigger value="system" className="flex items-center gap-1 px-2 py-1.5">
+                <SettingsIcon className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">System</span>
+              </TabsTrigger>
+              <TabsTrigger value="all" className="flex items-center gap-1 px-2 py-1.5">
+                <List className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">All</span>
+              </TabsTrigger>
+            </TabsList>
+
+            {/* Business Info Tab */}
+            <TabsContent value="business">
+              <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Building2 className="w-5 h-5" />
@@ -516,9 +559,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* Tax & Currency Tab */}
-          <Card className="mb-6">
+            <TabsContent value="tax">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <DollarSign className="w-5 h-5" />
@@ -626,9 +671,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* Receipt/Invoice Tab */}
-          <Card className="mb-6">
+            <TabsContent value="receipt">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Receipt className="w-5 h-5" />
@@ -707,9 +754,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* Receipt Customization Tab */}
-          <Card className="mb-6">
+            <TabsContent value="customize">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Printer className="w-5 h-5" />
@@ -954,9 +1003,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* Inventory Tab */}
-          <Card className="mb-6">
+            <TabsContent value="inventory">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Package className="w-5 h-5" />
@@ -1021,9 +1072,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* Sales & Payment Tab */}
-          <Card className="mb-6">
+            <TabsContent value="sales">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <ShoppingCart className="w-5 h-5" />
@@ -1096,9 +1149,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* Working Hours Tab */}
-          <Card className="mb-6">
+            <TabsContent value="hours">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Clock className="w-5 h-5" />
@@ -1175,9 +1230,11 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
 
           {/* System Preferences Tab */}
-          <Card className="mb-6">
+            <TabsContent value="system">
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <SettingsIcon className="w-5 h-5" />
@@ -1297,9 +1354,94 @@ export function BusinessSettingsScreen() {
               </div>
             </CardContent>
           </Card>
+            </TabsContent>
+
+            {/* All Settings Tab */}
+            <TabsContent value="all">
+              <Card>
+                <CardHeader>
+                  <CardTitle>All Business Settings</CardTitle>
+                  <CardDescription>
+                    Overview of all business configurations across branches
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Business Name</TableHead>
+                        <TableHead>Branch</TableHead>
+                        <TableHead>Currency</TableHead>
+                        <TableHead>Tax Rate</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {allSettings.map((setting) => (
+                        <TableRow key={setting.settingId}>
+                          <TableCell className="font-medium">{setting.businessName}</TableCell>
+                          <TableCell>
+                            {setting.branchId === null ? (
+                              <Badge variant="outline" className="flex items-center gap-1 w-fit">
+                                <Globe className="w-3 h-3" />
+                                Global
+                              </Badge>
+                            ) : (
+                              <span>{setting.branch?.name || `Branch ${setting.branchId}`}</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {setting.currencySymbol} ({setting.currencyCode})
+                          </TableCell>
+                          <TableCell>{setting.taxRate}%</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant={setting.isActive ? 'default' : 'destructive'}
+                            >
+                              {setting.isActive ? 'Active' : 'Inactive'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleBranchChange(setting.branchId)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                              {setting.branchId !== null && (
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => handleDeleteSettings(setting.settingId)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {allSettings.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                            No business settings configured yet. Create global settings first.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
 
           {/* Save Button */}
-          <div className="flex justify-end gap-3">
+          <div className="flex justify-end gap-3 mt-6">
             <Button type="button" variant="outline" onClick={fetchData}>
               <RefreshCw className="w-4 h-4 mr-2" />
               Reset
@@ -1311,85 +1453,6 @@ export function BusinessSettingsScreen() {
           </div>
         </form>
       )}
-
-      {/* All Settings Table */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>All Business Settings</CardTitle>
-          <CardDescription>
-            Overview of all business configurations across branches
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Business Name</TableHead>
-                <TableHead>Branch</TableHead>
-                <TableHead>Currency</TableHead>
-                <TableHead>Tax Rate</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {allSettings.map((setting) => (
-                <TableRow key={setting.settingId}>
-                  <TableCell className="font-medium">{setting.businessName}</TableCell>
-                  <TableCell>
-                    {setting.branchId === null ? (
-                      <Badge variant="outline" className="flex items-center gap-1 w-fit">
-                        <Globe className="w-3 h-3" />
-                        Global
-                      </Badge>
-                    ) : (
-                      <span>{setting.branch?.name || `Branch ${setting.branchId}`}</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    {setting.currencySymbol} ({setting.currencyCode})
-                  </TableCell>
-                  <TableCell>{setting.taxRate}%</TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={setting.isActive ? 'default' : 'destructive'}
-                    >
-                      {setting.isActive ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleBranchChange(setting.branchId)}
-                      >
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      {setting.branchId !== null && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleDeleteSettings(setting.settingId)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {allSettings.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                    No business settings configured yet. Create global settings first.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
 
       {/* Clone/Create Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>

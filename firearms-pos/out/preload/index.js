@@ -65,7 +65,9 @@ const api = {
     getAll: (params) => electron.ipcRenderer.invoke("sales:get-all", params),
     getById: (id) => electron.ipcRenderer.invoke("sales:get-by-id", id),
     void: (id, reason) => electron.ipcRenderer.invoke("sales:void", id, reason),
-    getDailySummary: (branchId, date) => electron.ipcRenderer.invoke("sales:get-daily-summary", branchId, date)
+    getDailySummary: (branchId, date) => electron.ipcRenderer.invoke("sales:get-daily-summary", branchId, date),
+    fixPaymentStatus: (invoiceNumber) => electron.ipcRenderer.invoke("sales:fix-payment-status", invoiceNumber),
+    fixOrphanedReceivables: () => electron.ipcRenderer.invoke("sales:fix-orphaned-receivables")
   },
   // Sales Tabs
   salesTabs: {
@@ -289,6 +291,16 @@ const api = {
   migration: {
     createTodosTable: () => electron.ipcRenderer.invoke("migration:create-todos-table"),
     checkTodosTable: () => electron.ipcRenderer.invoke("migration:check-todos-table")
+  },
+  // Messages
+  messages: {
+    send: (data) => electron.ipcRenderer.invoke("messages:send", data),
+    getAll: () => electron.ipcRenderer.invoke("messages:get-all"),
+    markRead: (messageId) => electron.ipcRenderer.invoke("messages:mark-read", messageId),
+    markAllRead: () => electron.ipcRenderer.invoke("messages:mark-all-read"),
+    delete: (messageId) => electron.ipcRenderer.invoke("messages:delete", messageId),
+    getUnreadCount: () => electron.ipcRenderer.invoke("messages:get-unread-count"),
+    getUsers: () => electron.ipcRenderer.invoke("messages:get-users")
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

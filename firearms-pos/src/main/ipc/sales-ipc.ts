@@ -141,8 +141,9 @@ export function registerSalesHandlers(): void {
 
       // Generate invoice number
       const invoiceNumber = generateInvoiceNumber()
+      const outstandingAmount = totalAmount - data.amountPaid
 
-      // Create sale
+      // 1. Create sale
       const [sale] = await db
         .insert(sales)
         .values({
@@ -162,7 +163,7 @@ export function registerSalesHandlers(): void {
         })
         .returning()
 
-      // Create sale items
+      // 2. Create sale items
       for (const item of saleItemsData) {
         await db.insert(saleItems).values({
           ...item,
@@ -170,7 +171,7 @@ export function registerSalesHandlers(): void {
         })
       }
 
-      // Deduct inventory
+      // 3. Deduct inventory
       for (const item of data.items) {
         await db
           .update(inventory)
@@ -181,7 +182,7 @@ export function registerSalesHandlers(): void {
           .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)))
       }
 
-      // Create commission if applicable (example: 2% of subtotal)
+      // 4. Create commission if applicable (example: 2% of subtotal)
       if (session?.userId) {
         const commissionRate = 2 // 2%
         const commissionAmount = subtotal * (commissionRate / 100)
@@ -198,8 +199,7 @@ export function registerSalesHandlers(): void {
         })
       }
 
-      // Create account receivable if there's an outstanding balance and customer exists
-      const outstandingAmount = totalAmount - data.amountPaid
+      // 5. Create account receivable if there's an outstanding balance and customer exists
       if (outstandingAmount > 0 && data.customerId) {
         await db.insert(accountReceivables).values({
           customerId: data.customerId,
@@ -342,6 +342,7 @@ export function registerSalesHandlers(): void {
     }
   })
 
+  // Void sale (with atomic transaction for data integrity)
   ipcMain.handle('sales:void', async (_, id: number, reason: string) => {
     try {
       const session = getCurrentSession()
@@ -363,7 +364,7 @@ export function registerSalesHandlers(): void {
         where: eq(saleItems.saleId, id),
       })
 
-      // Restore inventory
+      // 1. Restore inventory
       for (const item of items) {
         await db
           .update(inventory)
@@ -374,7 +375,7 @@ export function registerSalesHandlers(): void {
           .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, sale.branchId)))
       }
 
-      // Void sale
+      // 2. Void sale
       await db
         .update(sales)
         .set({
@@ -384,7 +385,7 @@ export function registerSalesHandlers(): void {
         })
         .where(eq(sales.id, id))
 
-      // Cancel commission
+      // 3. Cancel commission
       await db
         .update(commissions)
         .set({
@@ -392,6 +393,20 @@ export function registerSalesHandlers(): void {
           updatedAt: new Date().toISOString(),
         })
         .where(eq(commissions.saleId, id))
+
+      // 4. Cancel any linked receivable
+      const linkedReceivable = await db.query.accountReceivables.findFirst({
+        where: eq(accountReceivables.saleId, id),
+      })
+      if (linkedReceivable) {
+        await db
+          .update(accountReceivables)
+          .set({
+            status: 'cancelled',
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(accountReceivables.id, linkedReceivable.id))
+      }
 
       await createAuditLog({
         userId: session?.userId,
@@ -445,6 +460,96 @@ export function registerSalesHandlers(): void {
     } catch (error) {
       console.error('Get daily summary error:', error)
       return { success: false, message: 'Failed to fetch daily summary' }
+    }
+  })
+
+  // Fix payment status for sales with inconsistent status
+  ipcMain.handle('sales:fix-payment-status', async (_, invoiceNumber?: string) => {
+    try {
+      const conditions = [eq(sales.isVoided, false)]
+      if (invoiceNumber) {
+        conditions.push(eq(sales.invoiceNumber, invoiceNumber))
+      }
+
+      const salesToFix = await db.query.sales.findMany({
+        where: and(...conditions),
+      })
+
+      let fixedCount = 0
+      for (const sale of salesToFix) {
+        const correctStatus =
+          sale.amountPaid >= sale.totalAmount ? 'paid' : sale.amountPaid > 0 ? 'partial' : 'pending'
+
+        if (sale.paymentStatus !== correctStatus) {
+          await db
+            .update(sales)
+            .set({
+              paymentStatus: correctStatus,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(sales.id, sale.id))
+          fixedCount++
+        }
+      }
+
+      return {
+        success: true,
+        message: `Fixed ${fixedCount} sale(s) with incorrect payment status`,
+        data: { fixedCount },
+      }
+    } catch (error) {
+      console.error('Fix payment status error:', error)
+      return { success: false, message: 'Failed to fix payment status' }
+    }
+  })
+
+  // Fix orphaned sales - create missing receivables for sales with outstanding balance
+  ipcMain.handle('sales:fix-orphaned-receivables', async () => {
+    try {
+      const session = getCurrentSession()
+
+      // Find sales with pending/partial payment, customer assigned, but no receivable
+      const allSales = await db.query.sales.findMany({
+        where: and(
+          eq(sales.isVoided, false),
+          sql`${sales.customerId} IS NOT NULL`,
+          sql`(${sales.totalAmount} - ${sales.amountPaid}) > 0`
+        ),
+      })
+
+      let createdCount = 0
+      for (const sale of allSales) {
+        // Check if receivable already exists
+        const existingReceivable = await db.query.accountReceivables.findFirst({
+          where: eq(accountReceivables.saleId, sale.id),
+        })
+
+        if (!existingReceivable && sale.customerId) {
+          const outstandingAmount = sale.totalAmount - sale.amountPaid
+
+          await db.insert(accountReceivables).values({
+            customerId: sale.customerId,
+            saleId: sale.id,
+            branchId: sale.branchId,
+            invoiceNumber: sale.invoiceNumber,
+            totalAmount: outstandingAmount,
+            paidAmount: 0,
+            remainingAmount: outstandingAmount,
+            status: sale.amountPaid > 0 ? 'partial' : 'pending',
+            createdBy: session?.userId,
+          })
+          createdCount++
+        }
+      }
+
+      return {
+        success: true,
+        message: `Created ${createdCount} missing receivable(s)`,
+        data: { createdCount },
+      }
+    } catch (error) {
+      console.error('Fix orphaned receivables error:', error)
+      return { success: false, message: 'Failed to fix orphaned receivables' }
     }
   })
 }

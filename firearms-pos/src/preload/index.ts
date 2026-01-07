@@ -97,6 +97,9 @@ const api = {
     void: (id: number, reason: string) => ipcRenderer.invoke('sales:void', id, reason),
     getDailySummary: (branchId: number, date?: string) =>
       ipcRenderer.invoke('sales:get-daily-summary', branchId, date),
+    fixPaymentStatus: (invoiceNumber?: string) =>
+      ipcRenderer.invoke('sales:fix-payment-status', invoiceNumber),
+    fixOrphanedReceivables: () => ipcRenderer.invoke('sales:fix-orphaned-receivables'),
   },
 
   // Sales Tabs
@@ -403,6 +406,18 @@ const api = {
   migration: {
     createTodosTable: () => ipcRenderer.invoke('migration:create-todos-table'),
     checkTodosTable: () => ipcRenderer.invoke('migration:check-todos-table'),
+  },
+
+  // Messages
+  messages: {
+    send: (data: { content: string; recipientId?: number }) =>
+      ipcRenderer.invoke('messages:send', data),
+    getAll: () => ipcRenderer.invoke('messages:get-all'),
+    markRead: (messageId: number) => ipcRenderer.invoke('messages:mark-read', messageId),
+    markAllRead: () => ipcRenderer.invoke('messages:mark-all-read'),
+    delete: (messageId: number) => ipcRenderer.invoke('messages:delete', messageId),
+    getUnreadCount: () => ipcRenderer.invoke('messages:get-unread-count'),
+    getUsers: () => ipcRenderer.invoke('messages:get-users'),
   },
 }
 

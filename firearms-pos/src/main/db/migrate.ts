@@ -52,6 +52,14 @@ export async function runMigrations(): Promise<void> {
     console.error('Referral persons table migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Manual migration for messages table if missing
+  try {
+    await ensureMessagesTable()
+  } catch (error) {
+    console.error('Messages table migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -94,6 +102,44 @@ async function ensureReferralPersonsTable(): Promise<void> {
 
   db.exec(migrationSQL)
   console.log('referral_persons table migration completed successfully!')
+}
+
+async function ensureMessagesTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if table exists
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`
+  ).get()
+
+  if (tableCheck) {
+    console.log('messages table exists: true')
+    return
+  }
+
+  console.log('Starting migration for messages table...')
+
+  // Create the messages table
+  const migrationSQL = `
+    CREATE TABLE IF NOT EXISTS "messages" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "content" text NOT NULL,
+      "sender_id" integer NOT NULL,
+      "recipient_id" integer,
+      "is_read" integer DEFAULT 0 NOT NULL,
+      "created_at" text NOT NULL,
+      FOREIGN KEY ("sender_id") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+      FOREIGN KEY ("recipient_id") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+    );
+
+    CREATE INDEX IF NOT EXISTS "messages_sender_idx" ON "messages" ("sender_id");
+    CREATE INDEX IF NOT EXISTS "messages_recipient_idx" ON "messages" ("recipient_id");
+    CREATE INDEX IF NOT EXISTS "messages_created_at_idx" ON "messages" ("created_at");
+  `
+
+  db.exec(migrationSQL)
+  console.log('messages table migration completed successfully!')
 }
 
 export async function seedInitialData(): Promise<void> {

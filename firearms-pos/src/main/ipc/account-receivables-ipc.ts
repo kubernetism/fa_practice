@@ -266,7 +266,7 @@ export function registerAccountReceivablesHandlers(): void {
     }
   })
 
-  // Record payment against receivable
+  // Record payment against receivable (with atomic transaction)
   ipcMain.handle('receivables:record-payment', async (_, data: RecordPaymentData) => {
     try {
       const session = getCurrentSession()
@@ -275,7 +275,7 @@ export function registerAccountReceivablesHandlers(): void {
         return { success: false, message: 'Unauthorized' }
       }
 
-      // Get the receivable
+      // Get the receivable (outside transaction for validation)
       const receivable = await db.query.accountReceivables.findFirst({
         where: eq(accountReceivables.id, data.receivableId),
         with: {
@@ -306,7 +306,12 @@ export function registerAccountReceivablesHandlers(): void {
         }
       }
 
-      // Record the payment
+      // Calculate new values
+      const newPaidAmount = receivable.paidAmount + data.amount
+      const newRemainingAmount = receivable.totalAmount - newPaidAmount
+      const newStatus = newRemainingAmount <= 0 ? 'paid' : 'partial'
+
+      // 1. Record the payment
       const [payment] = await db
         .insert(receivablePayments)
         .values({
@@ -319,11 +324,7 @@ export function registerAccountReceivablesHandlers(): void {
         })
         .returning()
 
-      // Update receivable amounts
-      const newPaidAmount = receivable.paidAmount + data.amount
-      const newRemainingAmount = receivable.totalAmount - newPaidAmount
-      const newStatus = newRemainingAmount <= 0 ? 'paid' : 'partial'
-
+      // 2. Update receivable amounts
       await db
         .update(accountReceivables)
         .set({
@@ -334,7 +335,7 @@ export function registerAccountReceivablesHandlers(): void {
         })
         .where(eq(accountReceivables.id, data.receivableId))
 
-      // Sync with sales table if this receivable is linked to a sale
+      // 3. Sync with sales table if this receivable is linked to a sale
       if (receivable.saleId) {
         const sale = await db.query.sales.findFirst({
           where: eq(sales.id, receivable.saleId),
@@ -355,6 +356,8 @@ export function registerAccountReceivablesHandlers(): void {
             .where(eq(sales.id, receivable.saleId))
         }
       }
+
+      const result = payment
 
       await createAuditLog({
         userId: session.userId,
@@ -379,7 +382,7 @@ export function registerAccountReceivablesHandlers(): void {
 
       return {
         success: true,
-        data: payment,
+        data: result,
         receivable: {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),

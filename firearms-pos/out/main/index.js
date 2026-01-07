@@ -1233,6 +1233,35 @@ const todosRelations = drizzleOrm.relations(todos, ({ one }) => ({
     references: [branches.id]
   })
 }));
+const messages = sqliteCore.sqliteTable(
+  "messages",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    content: sqliteCore.text("content").notNull(),
+    senderId: sqliteCore.integer("sender_id").notNull().references(() => users.id),
+    // If recipientId is null, it's a broadcast message to all users
+    recipientId: sqliteCore.integer("recipient_id").references(() => users.id),
+    isRead: sqliteCore.integer("is_read", { mode: "boolean" }).notNull().default(false),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    senderIdx: sqliteCore.index("messages_sender_idx").on(table.senderId),
+    recipientIdx: sqliteCore.index("messages_recipient_idx").on(table.recipientId),
+    createdAtIdx: sqliteCore.index("messages_created_at_idx").on(table.createdAt)
+  })
+);
+const messagesRelations = drizzleOrm.relations(messages, ({ one }) => ({
+  sender: one(users, {
+    fields: [messages.senderId],
+    references: [users.id],
+    relationName: "messageSender"
+  }),
+  recipient: one(users, {
+    fields: [messages.recipientId],
+    references: [users.id],
+    relationName: "messageRecipient"
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1261,6 +1290,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   journalEntriesRelations,
   journalEntryLines,
   journalEntryLinesRelations,
+  messages,
+  messagesRelations,
   payablePayments,
   payablePaymentsRelations,
   products,
@@ -1522,6 +1553,11 @@ async function runMigrations() {
   } catch (error) {
     console.error("Referral persons table migration error:", error);
   }
+  try {
+    await ensureMessagesTable();
+  } catch (error) {
+    console.error("Messages table migration error:", error);
+  }
 }
 async function ensureReferralPersonsTable() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -1556,6 +1592,36 @@ async function ensureReferralPersonsTable() {
   `;
   db2.exec(migrationSQL);
   console.log("referral_persons table migration completed successfully!");
+}
+async function ensureMessagesTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='messages'`
+  ).get();
+  if (tableCheck) {
+    console.log("messages table exists: true");
+    return;
+  }
+  console.log("Starting migration for messages table...");
+  const migrationSQL = `
+    CREATE TABLE IF NOT EXISTS "messages" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "content" text NOT NULL,
+      "sender_id" integer NOT NULL,
+      "recipient_id" integer,
+      "is_read" integer DEFAULT 0 NOT NULL,
+      "created_at" text NOT NULL,
+      FOREIGN KEY ("sender_id") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+      FOREIGN KEY ("recipient_id") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+    );
+
+    CREATE INDEX IF NOT EXISTS "messages_sender_idx" ON "messages" ("sender_id");
+    CREATE INDEX IF NOT EXISTS "messages_recipient_idx" ON "messages" ("recipient_id");
+    CREATE INDEX IF NOT EXISTS "messages_created_at_idx" ON "messages" ("created_at");
+  `;
+  db2.exec(migrationSQL);
+  console.log("messages table migration completed successfully!");
 }
 async function seedInitialData() {
   const db2 = getDatabase();
@@ -2797,6 +2863,7 @@ function registerSalesHandlers() {
       const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0;
       const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
       const invoiceNumber = generateInvoiceNumber();
+      const outstandingAmount = totalAmount - data.amountPaid;
       const [sale] = await db2.insert(sales).values({
         invoiceNumber,
         customerId: data.customerId,
@@ -2838,7 +2905,6 @@ function registerSalesHandlers() {
           status: "pending"
         });
       }
-      const outstandingAmount = totalAmount - data.amountPaid;
       if (outstandingAmount > 0 && data.customerId) {
         await db2.insert(accountReceivables).values({
           customerId: data.customerId,
@@ -2981,6 +3047,15 @@ function registerSalesHandlers() {
         status: "cancelled",
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(commissions.saleId, id));
+      const linkedReceivable = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.saleId, id)
+      });
+      if (linkedReceivable) {
+        await db2.update(accountReceivables).set({
+          status: "cancelled",
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
+      }
       await createAuditLog({
         userId: session?.userId,
         branchId: sale.branchId,
@@ -3026,6 +3101,77 @@ function registerSalesHandlers() {
     } catch (error) {
       console.error("Get daily summary error:", error);
       return { success: false, message: "Failed to fetch daily summary" };
+    }
+  });
+  electron.ipcMain.handle("sales:fix-payment-status", async (_, invoiceNumber) => {
+    try {
+      const conditions = [drizzleOrm.eq(sales.isVoided, false)];
+      if (invoiceNumber) {
+        conditions.push(drizzleOrm.eq(sales.invoiceNumber, invoiceNumber));
+      }
+      const salesToFix = await db2.query.sales.findMany({
+        where: drizzleOrm.and(...conditions)
+      });
+      let fixedCount = 0;
+      for (const sale of salesToFix) {
+        const correctStatus = sale.amountPaid >= sale.totalAmount ? "paid" : sale.amountPaid > 0 ? "partial" : "pending";
+        if (sale.paymentStatus !== correctStatus) {
+          await db2.update(sales).set({
+            paymentStatus: correctStatus,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(sales.id, sale.id));
+          fixedCount++;
+        }
+      }
+      return {
+        success: true,
+        message: `Fixed ${fixedCount} sale(s) with incorrect payment status`,
+        data: { fixedCount }
+      };
+    } catch (error) {
+      console.error("Fix payment status error:", error);
+      return { success: false, message: "Failed to fix payment status" };
+    }
+  });
+  electron.ipcMain.handle("sales:fix-orphaned-receivables", async () => {
+    try {
+      const session = getCurrentSession();
+      const allSales = await db2.query.sales.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.sql`${sales.customerId} IS NOT NULL`,
+          drizzleOrm.sql`(${sales.totalAmount} - ${sales.amountPaid}) > 0`
+        )
+      });
+      let createdCount = 0;
+      for (const sale of allSales) {
+        const existingReceivable = await db2.query.accountReceivables.findFirst({
+          where: drizzleOrm.eq(accountReceivables.saleId, sale.id)
+        });
+        if (!existingReceivable && sale.customerId) {
+          const outstandingAmount = sale.totalAmount - sale.amountPaid;
+          await db2.insert(accountReceivables).values({
+            customerId: sale.customerId,
+            saleId: sale.id,
+            branchId: sale.branchId,
+            invoiceNumber: sale.invoiceNumber,
+            totalAmount: outstandingAmount,
+            paidAmount: 0,
+            remainingAmount: outstandingAmount,
+            status: sale.amountPaid > 0 ? "partial" : "pending",
+            createdBy: session?.userId
+          });
+          createdCount++;
+        }
+      }
+      return {
+        success: true,
+        message: `Created ${createdCount} missing receivable(s)`,
+        data: { createdCount }
+      };
+    } catch (error) {
+      console.error("Fix orphaned receivables error:", error);
+      return { success: false, message: "Failed to fix orphaned receivables" };
     }
   });
 }
@@ -8475,6 +8621,9 @@ function registerAccountReceivablesHandlers() {
           message: `Payment amount cannot exceed remaining balance of ${receivable.remainingAmount}`
         };
       }
+      const newPaidAmount = receivable.paidAmount + data.amount;
+      const newRemainingAmount = receivable.totalAmount - newPaidAmount;
+      const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
       const [payment] = await db2.insert(receivablePayments).values({
         receivableId: data.receivableId,
         amount: data.amount,
@@ -8483,9 +8632,6 @@ function registerAccountReceivablesHandlers() {
         notes: data.notes,
         receivedBy: session.userId
       }).returning();
-      const newPaidAmount = receivable.paidAmount + data.amount;
-      const newRemainingAmount = receivable.totalAmount - newPaidAmount;
-      const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
       await db2.update(accountReceivables).set({
         paidAmount: newPaidAmount,
         remainingAmount: Math.max(0, newRemainingAmount),
@@ -8507,6 +8653,7 @@ function registerAccountReceivablesHandlers() {
           }).where(drizzleOrm.eq(sales.id, receivable.saleId));
         }
       }
+      const result = payment;
       await createAuditLog({
         userId: session.userId,
         branchId: receivable.branchId,
@@ -8529,7 +8676,7 @@ function registerAccountReceivablesHandlers() {
       });
       return {
         success: true,
-        data: payment,
+        data: result,
         receivable: {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),
@@ -12257,6 +12404,219 @@ function registerManualMigrationHandlers() {
     }
   });
 }
+function registerMessagesHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("messages:send", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const [newMessage] = await db2.insert(messages).values({
+        content: data.content,
+        senderId: session.userId,
+        recipientId: data.recipientId || null,
+        isRead: false
+      }).returning();
+      const messageWithSender = await db2.query.messages.findFirst({
+        where: drizzleOrm.eq(messages.id, newMessage.id),
+        with: {
+          sender: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true
+            }
+          },
+          recipient: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true
+            }
+          }
+        }
+      });
+      await createAuditLog({
+        userId: session.userId,
+        branchId: session.branchId,
+        action: "create",
+        entityType: "message",
+        entityId: newMessage.id,
+        newValues: {
+          content: data.content.substring(0, 100),
+          recipientId: data.recipientId
+        },
+        description: `Sent message${data.recipientId ? " to user" : " to all"}`
+      });
+      return { success: true, data: messageWithSender };
+    } catch (error) {
+      console.error("Send message error:", error);
+      return { success: false, message: "Failed to send message" };
+    }
+  });
+  electron.ipcMain.handle("messages:get-all", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const userMessages = await db2.query.messages.findMany({
+        where: drizzleOrm.or(
+          drizzleOrm.eq(messages.recipientId, session.userId),
+          drizzleOrm.isNull(messages.recipientId),
+          drizzleOrm.eq(messages.senderId, session.userId)
+        ),
+        orderBy: [drizzleOrm.desc(messages.createdAt)],
+        with: {
+          sender: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true
+            }
+          },
+          recipient: {
+            columns: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true
+            }
+          }
+        }
+      });
+      return { success: true, data: userMessages };
+    } catch (error) {
+      console.error("Get messages error:", error);
+      return { success: false, message: "Failed to fetch messages" };
+    }
+  });
+  electron.ipcMain.handle("messages:mark-read", async (_, messageId) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const existingMessage = await db2.query.messages.findFirst({
+        where: drizzleOrm.eq(messages.id, messageId)
+      });
+      if (!existingMessage) {
+        return { success: false, message: "Message not found" };
+      }
+      if (existingMessage.recipientId !== null && existingMessage.recipientId !== session.userId) {
+        return { success: false, message: "Access denied" };
+      }
+      await db2.update(messages).set({ isRead: true }).where(drizzleOrm.eq(messages.id, messageId));
+      return { success: true, message: "Message marked as read" };
+    } catch (error) {
+      console.error("Mark message read error:", error);
+      return { success: false, message: "Failed to mark message as read" };
+    }
+  });
+  electron.ipcMain.handle("messages:mark-all-read", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      await db2.update(messages).set({ isRead: true }).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(messages.isRead, false),
+          drizzleOrm.or(
+            drizzleOrm.eq(messages.recipientId, session.userId),
+            drizzleOrm.isNull(messages.recipientId)
+          )
+        )
+      );
+      return { success: true, message: "All messages marked as read" };
+    } catch (error) {
+      console.error("Mark all messages read error:", error);
+      return { success: false, message: "Failed to mark messages as read" };
+    }
+  });
+  electron.ipcMain.handle("messages:delete", async (_, messageId) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      if (session.role !== "admin") {
+        return { success: false, message: "Only administrators can delete messages" };
+      }
+      const existingMessage = await db2.query.messages.findFirst({
+        where: drizzleOrm.eq(messages.id, messageId)
+      });
+      if (!existingMessage) {
+        return { success: false, message: "Message not found" };
+      }
+      await db2.delete(messages).where(drizzleOrm.eq(messages.id, messageId));
+      await createAuditLog({
+        userId: session.userId,
+        branchId: session.branchId,
+        action: "delete",
+        entityType: "message",
+        entityId: messageId,
+        oldValues: {
+          content: existingMessage.content.substring(0, 100)
+        },
+        description: "Deleted message"
+      });
+      return { success: true, message: "Message deleted successfully" };
+    } catch (error) {
+      console.error("Delete message error:", error);
+      return { success: false, message: "Failed to delete message" };
+    }
+  });
+  electron.ipcMain.handle("messages:get-unread-count", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const unreadMessages = await db2.query.messages.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(messages.isRead, false),
+          drizzleOrm.or(
+            drizzleOrm.eq(messages.recipientId, session.userId),
+            drizzleOrm.isNull(messages.recipientId)
+          ),
+          // Don't count messages sent by the user themselves
+          drizzleOrm.not(drizzleOrm.eq(messages.senderId, session.userId))
+        )
+      });
+      return { success: true, data: unreadMessages.length };
+    } catch (error) {
+      console.error("Get unread count error:", error);
+      return { success: false, message: "Failed to get unread count" };
+    }
+  });
+  electron.ipcMain.handle("messages:get-users", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const allUsers = await db2.query.users.findMany({
+        columns: {
+          id: true,
+          username: true,
+          fullName: true,
+          role: true
+        },
+        where: drizzleOrm.eq(users.isActive, true)
+      });
+      const otherUsers = allUsers.filter((u) => u.id !== session.userId);
+      return { success: true, data: otherUsers };
+    } catch (error) {
+      console.error("Get users error:", error);
+      return { success: false, message: "Failed to fetch users" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -12286,6 +12646,7 @@ function registerAllHandlers() {
   registerReceiptHandlers();
   registerTodosHandlers();
   registerManualMigrationHandlers();
+  registerMessagesHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;

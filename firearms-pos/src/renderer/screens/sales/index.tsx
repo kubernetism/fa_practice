@@ -177,6 +177,8 @@ export function SalesHistoryScreen() {
   const fetchData = useCallback(async () => {
     try {
       setIsLoading(true)
+      // NOTE: Removed fixPaymentStatus() call - root cause fixed by removing duplicate
+      // receivable creation in POS. Use admin sync utility if needed for legacy data.
       const [salesResult, productsResult, customersResult, usersResult] = await Promise.all([
         window.api.sales.getAll({ limit: 1000 }),
         window.api.products.getAll({ limit: 1000 }),

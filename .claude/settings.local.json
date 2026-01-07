@@ -42,7 +42,8 @@
       "Bash(git fsck:*)",
       "Bash(xargs -I {} git checkout ad3d2bca80b5061090e7fc73f3a59abb18d22882 -- {})",
       "Bash(pnpm db:migrate:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm run typecheck:*)"
     ]
   }
 }

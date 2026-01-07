@@ -256,8 +256,8 @@ export function POSScreen() {
       let paymentStatus: 'paid' | 'partial' | 'pending' = 'paid'
       if (paymentMethod === 'receivable') {
         paymentStatus = 'pending'
-      } else if (actualAmountPaid < total && actualAmountPaid > 0) {
-        paymentStatus = 'partial'
+      } else if (actualAmountPaid < total) {
+        paymentStatus = actualAmountPaid > 0 ? 'partial' : 'pending'
       }
 
       const saleData = {
@@ -280,27 +280,9 @@ export function POSScreen() {
       const result = await window.api.sales.create(saleData)
 
       if (result.success) {
-        // Create account receivable for full receivable or partial payment
-        const shouldCreateReceivable =
-          (paymentMethod === 'receivable' && selectedCustomer) ||
-          (paymentStatus === 'partial' && selectedCustomer && remainingAmount > 0)
-
-        if (shouldCreateReceivable) {
-          const receivableAmount = paymentMethod === 'receivable' ? total : remainingAmount
-          const receivableResult = await window.api.receivables.create({
-            customerId: selectedCustomer!.id,
-            saleId: result.data.id,
-            branchId: currentBranch.id,
-            invoiceNumber: result.data.invoiceNumber,
-            totalAmount: receivableAmount,
-          })
-          if (!receivableResult.success) {
-            console.error('Failed to create receivable:', receivableResult.message)
-            setError('Sale completed but failed to create receivable entry. Please check Account Receivables.')
-            setIsProcessing(false)
-            return
-          }
-        }
+        // NOTE: Receivable is automatically created by the backend (sales-ipc.ts)
+        // when there's an outstanding balance and customer exists.
+        // Do NOT create receivable here to avoid duplicates.
 
         // Generate receipt automatically
         try {

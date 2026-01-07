@@ -1,8 +1,9 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, User, Building2, Sun, Moon, Monitor } from 'lucide-react'
+import { LogOut, Building2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { TodosPanel } from '@/components/todos/todos-panel'
+import { MessagesPanel } from '@/components/messages/messages-panel'
 import {
   Select,
   SelectContent,
@@ -10,22 +11,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
-import { useTheme } from '@/contexts/theme-context'
 import { getInitials } from '@/lib/utils'
 
 export function Header() {
   const navigate = useNavigate()
   const { user, logout } = useAuth()
   const { branches, currentBranch, setCurrentBranch } = useBranch()
-  const { theme, setTheme, resolvedTheme } = useTheme()
 
   const handleLogout = async () => {
     await logout()
@@ -68,35 +61,8 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-4">
-        {/* Theme Toggle */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" title="Toggle theme">
-              {resolvedTheme === 'dark' ? (
-                <Moon className="h-5 w-5" />
-              ) : (
-                <Sun className="h-5 w-5" />
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setTheme('light')}>
-              <Sun className="mr-2 h-4 w-4" />
-              Light
-              {theme === 'light' && <span className="ml-auto text-xs text-muted-foreground">Active</span>}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setTheme('dark')}>
-              <Moon className="mr-2 h-4 w-4" />
-              Dark
-              {theme === 'dark' && <span className="ml-auto text-xs text-muted-foreground">Active</span>}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setTheme('system')}>
-              <Monitor className="mr-2 h-4 w-4" />
-              System
-              {theme === 'system' && <span className="ml-auto text-xs text-muted-foreground">Active</span>}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {/* Messages */}
+        <MessagesPanel />
 
         <TodosPanel />
 
