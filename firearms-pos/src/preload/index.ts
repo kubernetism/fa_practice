@@ -419,6 +419,12 @@ const api = {
     getUnreadCount: () => ipcRenderer.invoke('messages:get-unread-count'),
     getUsers: () => ipcRenderer.invoke('messages:get-users'),
   },
+
+  // Dashboard
+  dashboard: {
+    getStats: (params: { branchId: number; timePeriod: string }) =>
+      ipcRenderer.invoke('dashboard:get-stats', params),
+  },
 }
 
 // Expose the API to the renderer process

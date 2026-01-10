@@ -12617,6 +12617,171 @@ function registerMessagesHandlers() {
     }
   });
 }
+function registerDashboardHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("dashboard:get-stats", async (_, params) => {
+    try {
+      const { branchId, timePeriod } = params;
+      const dateRange = getDateRange(timePeriod);
+      const profitResult = await db2.select({
+        revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+        cost: drizzleOrm.sql`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
+        tax: drizzleOrm.sql`COALESCE(SUM(${saleItems.taxAmount}), 0)`
+      }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const commissionResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${commissions.commissionAmount}), 0)`
+      }).from(commissions).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(commissions.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const revenue = profitResult[0]?.revenue || 0;
+      const cost = profitResult[0]?.cost || 0;
+      const tax = profitResult[0]?.tax || 0;
+      const commissionTotal = commissionResult[0]?.total || 0;
+      const totalProfit = revenue - cost - commissionTotal - tax;
+      const productsResult = await db2.select({ count: drizzleOrm.sql`COUNT(*)` }).from(products).where(drizzleOrm.eq(products.isActive, true));
+      const soldResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${saleItems.quantity}), 0)`
+      }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const purchasesResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${purchases.totalAmount}), 0)`
+      }).from(purchases).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(purchases.branchId, branchId),
+          drizzleOrm.between(purchases.createdAt, dateRange.start, dateRange.end)
+        )
+      );
+      const expensesResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${expenses.amount}), 0)`
+      }).from(expenses).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(expenses.branchId, branchId),
+          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end)
+        )
+      );
+      const returnsResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${returns.totalAmount}), 0)`
+      }).from(returns).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(returns.branchId, branchId),
+          drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end)
+        )
+      );
+      const receivablesPendingResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${accountReceivables.remainingAmount}), 0)`
+      }).from(accountReceivables).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(accountReceivables.branchId, branchId),
+          drizzleOrm.or(
+            drizzleOrm.eq(accountReceivables.status, "pending"),
+            drizzleOrm.eq(accountReceivables.status, "partial"),
+            drizzleOrm.eq(accountReceivables.status, "overdue")
+          )
+        )
+      );
+      const receivablesReceivedResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${receivablePayments.amount}), 0)`
+      }).from(receivablePayments).innerJoin(
+        accountReceivables,
+        drizzleOrm.eq(receivablePayments.receivableId, accountReceivables.id)
+      ).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(accountReceivables.branchId, branchId),
+          drizzleOrm.between(receivablePayments.paymentDate, dateRange.start, dateRange.end)
+        )
+      );
+      const payablesPendingResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${accountPayables.remainingAmount}), 0)`
+      }).from(accountPayables).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(accountPayables.branchId, branchId),
+          drizzleOrm.or(
+            drizzleOrm.eq(accountPayables.status, "pending"),
+            drizzleOrm.eq(accountPayables.status, "partial"),
+            drizzleOrm.eq(accountPayables.status, "overdue")
+          )
+        )
+      );
+      const payablesPaidResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${payablePayments.amount}), 0)`
+      }).from(payablePayments).innerJoin(accountPayables, drizzleOrm.eq(payablePayments.payableId, accountPayables.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(accountPayables.branchId, branchId),
+          drizzleOrm.between(payablePayments.paymentDate, dateRange.start, dateRange.end)
+        )
+      );
+      let cashInHand = 0;
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const openSession = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+          drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+          drizzleOrm.eq(cashRegisterSessions.status, "open")
+        )
+      });
+      if (openSession) {
+        const txSums = await db2.select({
+          totalIn: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${cashTransactions.amount} > 0 THEN ${cashTransactions.amount} ELSE 0 END), 0)`,
+          totalOut: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${cashTransactions.amount} < 0 THEN ABS(${cashTransactions.amount}) ELSE 0 END), 0)`
+        }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, openSession.id));
+        const totalIn = txSums[0]?.totalIn || 0;
+        const totalOut = txSums[0]?.totalOut || 0;
+        cashInHand = openSession.openingBalance + totalIn - totalOut;
+      } else {
+        const lastClosed = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+            drizzleOrm.eq(cashRegisterSessions.status, "closed")
+          ),
+          orderBy: drizzleOrm.desc(cashRegisterSessions.sessionDate)
+        });
+        cashInHand = lastClosed?.closingBalance || 0;
+      }
+      const lowStockResult = await db2.select({ count: drizzleOrm.sql`COUNT(*)` }).from(inventory).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(inventory.branchId, branchId),
+          drizzleOrm.lte(inventory.quantity, inventory.minQuantity)
+        )
+      );
+      const stats = {
+        totalProfit,
+        totalProducts: productsResult[0]?.count || 0,
+        totalProductsSold: soldResult[0]?.total || 0,
+        totalPurchases: purchasesResult[0]?.total || 0,
+        totalExpense: expensesResult[0]?.total || 0,
+        totalReturns: returnsResult[0]?.total || 0,
+        receivablesPending: receivablesPendingResult[0]?.total || 0,
+        receivablesReceived: receivablesReceivedResult[0]?.total || 0,
+        payablesPending: payablesPendingResult[0]?.total || 0,
+        payablesPaid: payablesPaidResult[0]?.total || 0,
+        cashInHand,
+        lowStockCount: lowStockResult[0]?.count || 0
+      };
+      return {
+        success: true,
+        data: stats
+      };
+    } catch (error) {
+      console.error("Dashboard stats error:", error);
+      return { success: false, message: "Failed to fetch dashboard stats" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -12647,6 +12812,7 @@ function registerAllHandlers() {
   registerTodosHandlers();
   registerManualMigrationHandlers();
   registerMessagesHandlers();
+  registerDashboardHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;

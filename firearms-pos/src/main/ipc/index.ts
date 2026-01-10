@@ -27,6 +27,7 @@ import { registerReceiptHandlers } from './receipt-ipc'
 import { registerTodosHandlers } from './todos-ipc'
 import { registerManualMigrationHandlers } from './manual-migration-ipc'
 import { registerMessagesHandlers } from './messages-ipc'
+import { registerDashboardHandlers } from './dashboard-ipc'
 
 export function registerAllHandlers(): void {
   registerAuthHandlers()
@@ -58,6 +59,7 @@ export function registerAllHandlers(): void {
   registerTodosHandlers()
   registerManualMigrationHandlers()
   registerMessagesHandlers()
+  registerDashboardHandlers()
 
   console.log('All IPC handlers registered')
 }

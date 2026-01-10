@@ -301,6 +301,10 @@ const api = {
     delete: (messageId) => electron.ipcRenderer.invoke("messages:delete", messageId),
     getUnreadCount: () => electron.ipcRenderer.invoke("messages:get-unread-count"),
     getUsers: () => electron.ipcRenderer.invoke("messages:get-users")
+  },
+  // Dashboard
+  dashboard: {
+    getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params)
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

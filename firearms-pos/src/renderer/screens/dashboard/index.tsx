@@ -5,18 +5,34 @@ import {
   Package,
   AlertTriangle,
   TrendingUp,
-  TrendingDown,
+  Receipt,
+  RotateCcw,
+  Wallet,
+  Banknote,
   Users,
+  ArrowDownCircle,
+  ArrowUpCircle,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBranch } from '@/contexts/branch-context'
 import { formatCurrency, formatNumber } from '@/lib/utils'
 
+type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
+
 interface DashboardStats {
-  totalSales: number
-  totalRevenue: number
-  avgOrderValue: number
+  totalProfit: number
+  totalProducts: number
+  totalProductsSold: number
+  totalPurchases: number
+  totalExpense: number
+  totalReturns: number
+  receivablesPending: number
+  receivablesReceived: number
+  payablesPending: number
+  payablesPaid: number
+  cashInHand: number
   lowStockCount: number
 }
 
@@ -28,10 +44,18 @@ interface LowStockItem {
   minQuantity: number
 }
 
+const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
+  daily: 'Today',
+  weekly: 'This Week',
+  monthly: 'This Month',
+  yearly: 'This Year',
+}
+
 export function DashboardScreen() {
   const { currentBranch } = useBranch()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
+  const [timePeriod, setTimePeriod] = useState<TimePeriod>('daily')
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -40,17 +64,14 @@ export function DashboardScreen() {
 
       setIsLoading(true)
       try {
-        // Fetch daily summary
-        const summaryResult = await window.api.sales.getDailySummary(currentBranch.id)
-        if (summaryResult.success && summaryResult.data) {
-          setStats({
-            totalSales: summaryResult.data.totalSales || 0,
-            totalRevenue: summaryResult.data.totalRevenue || 0,
-            avgOrderValue: summaryResult.data.totalRevenue && summaryResult.data.totalSales
-              ? summaryResult.data.totalRevenue / summaryResult.data.totalSales
-              : 0,
-            lowStockCount: 0,
-          })
+        // Fetch dashboard stats with time period
+        const statsResult = await window.api.dashboard.getStats({
+          branchId: currentBranch.id,
+          timePeriod,
+        })
+
+        if (statsResult.success && statsResult.data) {
+          setStats(statsResult.data)
         }
 
         // Fetch low stock items
@@ -64,7 +85,6 @@ export function DashboardScreen() {
             minQuantity: item.inventory.minQuantity,
           }))
           setLowStockItems(items)
-          setStats((prev) => prev ? { ...prev, lowStockCount: items.length } : null)
         }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error)
@@ -74,7 +94,7 @@ export function DashboardScreen() {
     }
 
     fetchDashboardData()
-  }, [currentBranch])
+  }, [currentBranch, timePeriod])
 
   if (isLoading) {
     return (
@@ -86,69 +106,184 @@ export function DashboardScreen() {
 
   return (
     <div className="space-y-6">
+      {/* Header with Time Period Selector */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome back! Here's what's happening at {currentBranch?.name || 'your store'}.
+          </p>
+        </div>
+        <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
+          <TabsList>
+            {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
+              <TabsTrigger key={period} value={period}>
+                {TIME_PERIOD_LABELS[period]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+
+      {/* Financial Metrics */}
       <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Welcome back! Here's what's happening at {currentBranch?.name || 'your store'} today.
-        </p>
+        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Financial Overview</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
+              <TrendingUp className="h-4 w-4 text-green-500" />
+            </CardHeader>
+            <CardContent>
+              <div className={`text-2xl font-bold ${(stats?.totalProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatCurrency(stats?.totalProfit || 0)}
+              </div>
+              <p className="text-xs text-muted-foreground">Revenue - Cost - Commission - Tax</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Purchases</CardTitle>
+              <Receipt className="h-4 w-4 text-purple-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.totalPurchases || 0)}</div>
+              <p className="text-xs text-muted-foreground">Purchase orders value</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Expense</CardTitle>
+              <Wallet className="h-4 w-4 text-red-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.totalExpense || 0)}</div>
+              <p className="text-xs text-muted-foreground">Operating expenses</p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Revenue</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(stats?.totalRevenue || 0)}</div>
-            <p className="text-xs text-muted-foreground">
-              <TrendingUp className="mr-1 inline h-3 w-3 text-success" />
-              +12.5% from yesterday
-            </p>
-          </CardContent>
-        </Card>
+      {/* Sales Metrics */}
+      <div>
+        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Sales & Inventory</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Products</CardTitle>
+              <Package className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatNumber(stats?.totalProducts || 0)}</div>
+              <p className="text-xs text-muted-foreground">Active products in catalog</p>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-            <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatNumber(stats?.totalSales || 0)}</div>
-            <p className="text-xs text-muted-foreground">
-              <TrendingUp className="mr-1 inline h-3 w-3 text-success" />
-              +3 from yesterday
-            </p>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Products Sold</CardTitle>
+              <ShoppingCart className="h-4 w-4 text-indigo-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatNumber(stats?.totalProductsSold || 0)}</div>
+              <p className="text-xs text-muted-foreground">Units sold in period</p>
+            </CardContent>
+          </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg. Order Value</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(stats?.avgOrderValue || 0)}</div>
-            <p className="text-xs text-muted-foreground">
-              <TrendingDown className="mr-1 inline h-3 w-3 text-destructive" />
-              -2.1% from yesterday
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Low Stock Alerts</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-warning" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatNumber(stats?.lowStockCount || 0)}</div>
-            <p className="text-xs text-muted-foreground">Items need restock</p>
-          </CardContent>
-        </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Total Returns</CardTitle>
+              <RotateCcw className="h-4 w-4 text-orange-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.totalReturns || 0)}</div>
+              <p className="text-xs text-muted-foreground">Returned goods value</p>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
+      {/* Receivables & Payables */}
+      <div>
+        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Receivables & Payables</h2>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">AR Pending</CardTitle>
+              <ArrowDownCircle className="h-4 w-4 text-yellow-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.receivablesPending || 0)}</div>
+              <p className="text-xs text-muted-foreground">Outstanding customer dues</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">AR Received</CardTitle>
+              <ArrowDownCircle className="h-4 w-4 text-green-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.receivablesReceived || 0)}</div>
+              <p className="text-xs text-muted-foreground">Collected in period</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">AP Pending</CardTitle>
+              <ArrowUpCircle className="h-4 w-4 text-red-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.payablesPending || 0)}</div>
+              <p className="text-xs text-muted-foreground">Outstanding supplier dues</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">AP Paid</CardTitle>
+              <ArrowUpCircle className="h-4 w-4 text-green-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.payablesPaid || 0)}</div>
+              <p className="text-xs text-muted-foreground">Paid in period</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Cash & Alerts */}
+      <div>
+        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Cash & Alerts</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Cash In Hand</CardTitle>
+              <Banknote className="h-4 w-4 text-emerald-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatCurrency(stats?.cashInHand || 0)}</div>
+              <p className="text-xs text-muted-foreground">Current cash register balance</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Low Stock Alerts</CardTitle>
+              <AlertTriangle className="h-4 w-4 text-warning" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{formatNumber(stats?.lowStockCount || 0)}</div>
+              <p className="text-xs text-muted-foreground">Items need restock</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Bottom Section: Low Stock Items & Quick Actions */}
       <div className="grid gap-4 md:grid-cols-2">
         {/* Low Stock Items */}
         <Card>
@@ -161,9 +296,7 @@ export function DashboardScreen() {
           </CardHeader>
           <CardContent>
             {lowStockItems.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                All stock levels are healthy
-              </p>
+              <p className="py-8 text-center text-muted-foreground">All stock levels are healthy</p>
             ) : (
               <div className="space-y-4">
                 {lowStockItems.slice(0, 5).map((item) => (
