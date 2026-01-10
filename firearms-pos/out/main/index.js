@@ -379,6 +379,7 @@ const purchases = sqliteCore.sqliteTable("purchases", {
   taxAmount: sqliteCore.real("tax_amount").notNull().default(0),
   shippingCost: sqliteCore.real("shipping_cost").notNull().default(0),
   totalAmount: sqliteCore.real("total_amount").notNull().default(0),
+  paymentMethod: sqliteCore.text("payment_method", { enum: ["cash", "cheque", "pay_later"] }).notNull().default("cash"),
   paymentStatus: sqliteCore.text("payment_status", { enum: ["paid", "partial", "pending"] }).notNull().default("pending"),
   status: sqliteCore.text("status", { enum: ["draft", "ordered", "partial", "received", "cancelled"] }).notNull().default("draft"),
   expectedDeliveryDate: sqliteCore.text("expected_delivery_date"),
@@ -1558,6 +1559,16 @@ async function runMigrations() {
   } catch (error) {
     console.error("Messages table migration error:", error);
   }
+  try {
+    await ensurePurchasesPaymentMethod();
+  } catch (error) {
+    console.error("Purchases payment_method migration error:", error);
+  }
+  try {
+    await ensureExpensesPaymentStatus();
+  } catch (error) {
+    console.error("Expenses payment_status migration error:", error);
+  }
 }
 async function ensureReferralPersonsTable() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -1622,6 +1633,46 @@ async function ensureMessagesTable() {
   `;
   db2.exec(migrationSQL);
   console.log("messages table migration completed successfully!");
+}
+async function ensurePurchasesPaymentMethod() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableInfo = db2.prepare(`PRAGMA table_info(purchases)`).all();
+  const hasPaymentMethod = tableInfo.some((col) => col.name === "payment_method");
+  if (hasPaymentMethod) {
+    console.log("purchases.payment_method column exists: true");
+    return;
+  }
+  console.log("Starting migration for purchases.payment_method column...");
+  const migrationSQL = `
+    ALTER TABLE purchases ADD COLUMN payment_method TEXT DEFAULT 'cash' NOT NULL;
+  `;
+  db2.exec(migrationSQL);
+  console.log("purchases.payment_method column migration completed successfully!");
+}
+async function ensureExpensesPaymentStatus() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get();
+  if (!tableCheck) {
+    console.log("expenses table does not exist, skipping payment_status migration");
+    return;
+  }
+  const tableInfo = db2.prepare(`PRAGMA table_info(expenses)`).all();
+  const hasPaymentStatus = tableInfo.some((col) => col.name === "payment_status");
+  if (hasPaymentStatus) {
+    console.log("expenses.payment_status column exists: true");
+    return;
+  }
+  console.log("Starting migration for expenses.payment_status column...");
+  const migrationSQL = `
+    ALTER TABLE expenses ADD COLUMN payment_status TEXT DEFAULT 'paid' NOT NULL;
+    CREATE INDEX IF NOT EXISTS "expenses_payment_status_idx" ON "expenses" ("payment_status");
+  `;
+  db2.exec(migrationSQL);
+  console.log("expenses.payment_status column migration completed successfully!");
 }
 async function seedInitialData() {
   const db2 = getDatabase();
@@ -3842,6 +3893,8 @@ function registerPurchaseHandlers() {
       const shippingCost = data.shippingCost || 0;
       const totalAmount = subtotal + shippingCost;
       const purchaseOrderNumber = generatePurchaseOrderNumber();
+      const paymentMethod = data.paymentMethod || "cash";
+      const paymentStatus = paymentMethod === "pay_later" ? "pending" : "paid";
       const [purchase] = await db2.insert(purchases).values({
         purchaseOrderNumber,
         supplierId: data.supplierId,
@@ -3851,7 +3904,8 @@ function registerPurchaseHandlers() {
         taxAmount: 0,
         shippingCost,
         totalAmount,
-        paymentStatus: "pending",
+        paymentMethod,
+        paymentStatus,
         status: "draft",
         expectedDeliveryDate: data.expectedDeliveryDate,
         notes: data.notes
@@ -3860,6 +3914,20 @@ function registerPurchaseHandlers() {
         await db2.insert(purchaseItems).values({
           ...item,
           purchaseId: purchase.id
+        });
+      }
+      if (paymentMethod === "pay_later") {
+        await db2.insert(accountPayables).values({
+          supplierId: data.supplierId,
+          purchaseId: purchase.id,
+          branchId: data.branchId,
+          invoiceNumber: purchaseOrderNumber,
+          totalAmount,
+          paidAmount: 0,
+          remainingAmount: totalAmount,
+          status: "pending",
+          notes: `Auto-generated from Purchase Order: ${purchaseOrderNumber}`,
+          createdBy: session?.userId
         });
       }
       await createAuditLog({
@@ -3871,9 +3939,11 @@ function registerPurchaseHandlers() {
         newValues: {
           purchaseOrderNumber,
           totalAmount,
-          itemCount: data.items.length
+          itemCount: data.items.length,
+          paymentMethod,
+          paymentStatus
         },
-        description: `Created purchase order: ${purchaseOrderNumber}`
+        description: `Created purchase order: ${purchaseOrderNumber} (Payment: ${paymentMethod})`
       });
       return { success: true, data: purchase };
     } catch (error) {
@@ -4045,6 +4115,60 @@ function registerPurchaseHandlers() {
       return { success: false, message: "Failed to update status" };
     }
   });
+  electron.ipcMain.handle(
+    "purchases:pay-off",
+    async (_, purchaseId, paymentData) => {
+      try {
+        const session = getCurrentSession();
+        const purchase = await db2.query.purchases.findFirst({
+          where: drizzleOrm.eq(purchases.id, purchaseId)
+        });
+        if (!purchase) {
+          return { success: false, message: "Purchase order not found" };
+        }
+        if (purchase.paymentStatus === "paid") {
+          return { success: false, message: "Purchase is already paid" };
+        }
+        await db2.update(purchases).set({
+          paymentStatus: "paid",
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(purchases.id, purchaseId));
+        const payable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+        });
+        if (payable) {
+          await db2.insert(payablePayments).values({
+            payableId: payable.id,
+            amount: payable.remainingAmount,
+            paymentMethod: paymentData.paymentMethod,
+            referenceNumber: paymentData.referenceNumber,
+            notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
+            paidBy: session?.userId
+          });
+          await db2.update(accountPayables).set({
+            paidAmount: payable.totalAmount,
+            remainingAmount: 0,
+            status: "paid",
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountPayables.id, payable.id));
+        }
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: purchase.branchId,
+          action: "update",
+          entityType: "purchase",
+          entityId: purchaseId,
+          oldValues: { paymentStatus: purchase.paymentStatus },
+          newValues: { paymentStatus: "paid", paymentMethod: paymentData.paymentMethod },
+          description: `Paid off purchase order: ${purchase.purchaseOrderNumber}`
+        });
+        return { success: true, message: "Purchase paid off successfully" };
+      } catch (error) {
+        console.error("Pay off purchase error:", error);
+        return { success: false, message: "Failed to pay off purchase" };
+      }
+    }
+  );
 }
 function registerReturnHandlers() {
   const db2 = getDatabase();

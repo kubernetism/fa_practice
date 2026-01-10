@@ -7,6 +7,8 @@ import {
   inventory,
   products,
   suppliers,
+  accountPayables,
+  payablePayments,
   type NewPurchase,
   type NewPurchaseItem,
 } from '../db/schema'
@@ -27,6 +29,7 @@ interface CreatePurchaseData {
   shippingCost?: number
   expectedDeliveryDate?: string
   notes?: string
+  paymentMethod: 'cash' | 'cheque' | 'pay_later'
 }
 
 export function registerPurchaseHandlers(): void {
@@ -62,6 +65,10 @@ export function registerPurchaseHandlers(): void {
 
       const purchaseOrderNumber = generatePurchaseOrderNumber()
 
+      // Determine payment status based on payment method
+      const paymentMethod = data.paymentMethod || 'cash'
+      const paymentStatus = paymentMethod === 'pay_later' ? 'pending' : 'paid'
+
       const [purchase] = await db
         .insert(purchases)
         .values({
@@ -73,7 +80,8 @@ export function registerPurchaseHandlers(): void {
           taxAmount: 0,
           shippingCost,
           totalAmount,
-          paymentStatus: 'pending',
+          paymentMethod,
+          paymentStatus,
           status: 'draft',
           expectedDeliveryDate: data.expectedDeliveryDate,
           notes: data.notes,
@@ -87,6 +95,22 @@ export function registerPurchaseHandlers(): void {
         })
       }
 
+      // If pay_later, create account payable record
+      if (paymentMethod === 'pay_later') {
+        await db.insert(accountPayables).values({
+          supplierId: data.supplierId,
+          purchaseId: purchase.id,
+          branchId: data.branchId,
+          invoiceNumber: purchaseOrderNumber,
+          totalAmount,
+          paidAmount: 0,
+          remainingAmount: totalAmount,
+          status: 'pending',
+          notes: `Auto-generated from Purchase Order: ${purchaseOrderNumber}`,
+          createdBy: session?.userId,
+        })
+      }
+
       await createAuditLog({
         userId: session?.userId,
         branchId: data.branchId,
@@ -97,8 +121,10 @@ export function registerPurchaseHandlers(): void {
           purchaseOrderNumber,
           totalAmount,
           itemCount: data.items.length,
+          paymentMethod,
+          paymentStatus,
         },
-        description: `Created purchase order: ${purchaseOrderNumber}`,
+        description: `Created purchase order: ${purchaseOrderNumber} (Payment: ${paymentMethod})`,
       })
 
       return { success: true, data: purchase }
@@ -331,4 +357,87 @@ export function registerPurchaseHandlers(): void {
       return { success: false, message: 'Failed to update status' }
     }
   })
+
+  // Pay off a purchase (for Pay Later purchases)
+  ipcMain.handle(
+    'purchases:pay-off',
+    async (
+      _,
+      purchaseId: number,
+      paymentData: {
+        paymentMethod: 'cash' | 'cheque' | 'bank_transfer'
+        referenceNumber?: string
+        notes?: string
+      }
+    ) => {
+      try {
+        const session = getCurrentSession()
+
+        const purchase = await db.query.purchases.findFirst({
+          where: eq(purchases.id, purchaseId),
+        })
+
+        if (!purchase) {
+          return { success: false, message: 'Purchase order not found' }
+        }
+
+        if (purchase.paymentStatus === 'paid') {
+          return { success: false, message: 'Purchase is already paid' }
+        }
+
+        // Update purchase payment status
+        await db
+          .update(purchases)
+          .set({
+            paymentStatus: 'paid',
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(purchases.id, purchaseId))
+
+        // Find and update the related payable
+        const payable = await db.query.accountPayables.findFirst({
+          where: eq(accountPayables.purchaseId, purchaseId),
+        })
+
+        if (payable) {
+          // Record payment on the payable
+          await db.insert(payablePayments).values({
+            payableId: payable.id,
+            amount: payable.remainingAmount,
+            paymentMethod: paymentData.paymentMethod,
+            referenceNumber: paymentData.referenceNumber,
+            notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
+            paidBy: session?.userId,
+          })
+
+          // Update payable status
+          await db
+            .update(accountPayables)
+            .set({
+              paidAmount: payable.totalAmount,
+              remainingAmount: 0,
+              status: 'paid',
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(accountPayables.id, payable.id))
+        }
+
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: purchase.branchId,
+          action: 'update',
+          entityType: 'purchase',
+          entityId: purchaseId,
+          oldValues: { paymentStatus: purchase.paymentStatus },
+          newValues: { paymentStatus: 'paid', paymentMethod: paymentData.paymentMethod },
+          description: `Paid off purchase order: ${purchase.purchaseOrderNumber}`,
+        })
+
+        return { success: true, message: 'Purchase paid off successfully' }
+      } catch (error) {
+        console.error('Pay off purchase error:', error)
+        return { success: false, message: 'Failed to pay off purchase' }
+      }
+    }
+  )
 }

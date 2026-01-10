@@ -20,6 +20,9 @@ export const purchases = sqliteTable('purchases', {
   taxAmount: real('tax_amount').notNull().default(0),
   shippingCost: real('shipping_cost').notNull().default(0),
   totalAmount: real('total_amount').notNull().default(0),
+  paymentMethod: text('payment_method', { enum: ['cash', 'cheque', 'pay_later'] })
+    .notNull()
+    .default('cash'),
   paymentStatus: text('payment_status', { enum: ['paid', 'partial', 'pending'] })
     .notNull()
     .default('pending'),

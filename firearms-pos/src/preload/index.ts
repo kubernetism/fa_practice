@@ -132,6 +132,10 @@ const api = {
       ipcRenderer.invoke('purchases:receive', purchaseId, receivedItems),
     updateStatus: (id: number, status: string) =>
       ipcRenderer.invoke('purchases:update-status', id, status),
+    payOff: (
+      purchaseId: number,
+      paymentData: { paymentMethod: string; referenceNumber?: string; notes?: string }
+    ) => ipcRenderer.invoke('purchases:pay-off', purchaseId, paymentData),
   },
 
   // Returns

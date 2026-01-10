@@ -60,6 +60,22 @@ export async function runMigrations(): Promise<void> {
     console.error('Messages table migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Manual migration for purchases payment_method column
+  try {
+    await ensurePurchasesPaymentMethod()
+  } catch (error) {
+    console.error('Purchases payment_method migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Manual migration for expenses payment_status column
+  try {
+    await ensureExpensesPaymentStatus()
+  } catch (error) {
+    console.error('Expenses payment_status migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -140,6 +156,65 @@ async function ensureMessagesTable(): Promise<void> {
 
   db.exec(migrationSQL)
   console.log('messages table migration completed successfully!')
+}
+
+async function ensurePurchasesPaymentMethod(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if payment_method column exists
+  const tableInfo = db.prepare(`PRAGMA table_info(purchases)`).all() as Array<{ name: string }>
+  const hasPaymentMethod = tableInfo.some((col) => col.name === 'payment_method')
+
+  if (hasPaymentMethod) {
+    console.log('purchases.payment_method column exists: true')
+    return
+  }
+
+  console.log('Starting migration for purchases.payment_method column...')
+
+  // Add payment_method column with default 'cash'
+  const migrationSQL = `
+    ALTER TABLE purchases ADD COLUMN payment_method TEXT DEFAULT 'cash' NOT NULL;
+  `
+
+  db.exec(migrationSQL)
+  console.log('purchases.payment_method column migration completed successfully!')
+}
+
+async function ensureExpensesPaymentStatus(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if expenses table exists first
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('expenses table does not exist, skipping payment_status migration')
+    return
+  }
+
+  // Check if payment_status column exists
+  const tableInfo = db.prepare(`PRAGMA table_info(expenses)`).all() as Array<{ name: string }>
+  const hasPaymentStatus = tableInfo.some((col) => col.name === 'payment_status')
+
+  if (hasPaymentStatus) {
+    console.log('expenses.payment_status column exists: true')
+    return
+  }
+
+  console.log('Starting migration for expenses.payment_status column...')
+
+  // Add payment_status column with default 'paid'
+  const migrationSQL = `
+    ALTER TABLE expenses ADD COLUMN payment_status TEXT DEFAULT 'paid' NOT NULL;
+    CREATE INDEX IF NOT EXISTS "expenses_payment_status_idx" ON "expenses" ("payment_status");
+  `
+
+  db.exec(migrationSQL)
+  console.log('expenses.payment_status column migration completed successfully!')
 }
 
 export async function seedInitialData(): Promise<void> {

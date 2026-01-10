@@ -89,7 +89,8 @@ const api = {
     getAll: (params) => electron.ipcRenderer.invoke("purchases:get-all", params),
     getById: (id) => electron.ipcRenderer.invoke("purchases:get-by-id", id),
     receive: (purchaseId, receivedItems) => electron.ipcRenderer.invoke("purchases:receive", purchaseId, receivedItems),
-    updateStatus: (id, status) => electron.ipcRenderer.invoke("purchases:update-status", id, status)
+    updateStatus: (id, status) => electron.ipcRenderer.invoke("purchases:update-status", id, status),
+    payOff: (purchaseId, paymentData) => electron.ipcRenderer.invoke("purchases:pay-off", purchaseId, paymentData)
   },
   // Returns
   returns: {

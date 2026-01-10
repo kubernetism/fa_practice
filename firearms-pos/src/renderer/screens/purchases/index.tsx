@@ -18,6 +18,8 @@ import {
   Clock,
   PackageCheck,
   RefreshCw,
+  CreditCard,
+  Banknote,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -62,6 +64,7 @@ interface Purchase {
   taxAmount: number
   shippingCost: number
   totalAmount: number
+  paymentMethod: 'cash' | 'cheque' | 'pay_later'
   paymentStatus: 'paid' | 'partial' | 'pending'
   status: 'draft' | 'ordered' | 'partial' | 'received' | 'cancelled'
   expectedDeliveryDate: string | null
@@ -126,6 +129,12 @@ const PAYMENT_STATUSES = [
   { value: 'paid', label: 'Paid' },
 ]
 
+const PAYMENT_METHODS = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'pay_later', label: 'Pay Later' },
+]
+
 const ITEMS_PER_PAGE = 10
 
 export function PurchasesScreen() {
@@ -157,7 +166,16 @@ export function PurchasesScreen() {
   const [expectedDeliveryDate, setExpectedDeliveryDate] = useState<string>('')
   const [notes, setNotes] = useState<string>('')
   const [purchaseItems, setPurchaseItems] = useState<PurchaseItemInput[]>([])
+  const [paymentMethod, setPaymentMethod] = useState<string>('cash')
   const [isSaving, setIsSaving] = useState(false)
+
+  // Pay off dialog state
+  const [isPayOffDialogOpen, setIsPayOffDialogOpen] = useState(false)
+  const [payingOffPurchase, setPayingOffPurchase] = useState<Purchase | null>(null)
+  const [payOffMethod, setPayOffMethod] = useState<string>('cash')
+  const [payOffReference, setPayOffReference] = useState<string>('')
+  const [payOffNotes, setPayOffNotes] = useState<string>('')
+  const [isPayingOff, setIsPayingOff] = useState(false)
 
   // Add item state
   const [selectedProductId, setSelectedProductId] = useState<string>('')
@@ -384,6 +402,7 @@ export function PurchasesScreen() {
     setSelectedProductId('')
     setItemQuantity('1')
     setItemUnitCost('')
+    setPaymentMethod('cash')
   }
 
   // Open create dialog
@@ -413,6 +432,7 @@ export function PurchasesScreen() {
         shippingCost: parseFloat(shippingCost) || 0,
         expectedDeliveryDate: expectedDeliveryDate || undefined,
         notes: notes || undefined,
+        paymentMethod: paymentMethod as 'cash' | 'cheque' | 'pay_later',
       })
 
       if (result.success) {
@@ -520,6 +540,42 @@ export function PurchasesScreen() {
       }
     } catch (error) {
       console.error('Update status error:', error)
+    }
+  }
+
+  // Open pay off dialog
+  const handleOpenPayOffDialog = (purchase: Purchase) => {
+    setPayingOffPurchase(purchase)
+    setPayOffMethod('cash')
+    setPayOffReference('')
+    setPayOffNotes('')
+    setIsPayOffDialogOpen(true)
+  }
+
+  // Pay off purchase
+  const handlePayOffPurchase = async () => {
+    if (!payingOffPurchase) return
+
+    setIsPayingOff(true)
+    try {
+      const result = await window.api.purchases.payOff(payingOffPurchase.id, {
+        paymentMethod: payOffMethod,
+        referenceNumber: payOffReference || undefined,
+        notes: payOffNotes || undefined,
+      })
+
+      if (result.success) {
+        setIsPayOffDialogOpen(false)
+        setPayingOffPurchase(null)
+        fetchData()
+      } else {
+        alert(result.message || 'Failed to pay off purchase')
+      }
+    } catch (error) {
+      console.error('Pay off error:', error)
+      alert('An error occurred while paying off purchase')
+    } finally {
+      setIsPayingOff(false)
     }
   }
 
@@ -823,6 +879,16 @@ export function PurchasesScreen() {
                             <PackageCheck className="h-4 w-4 text-success" />
                           </Button>
                         )}
+                        {purchase.paymentStatus === 'pending' && purchase.status !== 'cancelled' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleOpenPayOffDialog(purchase)}
+                            title="Pay Off"
+                          >
+                            <Banknote className="h-4 w-4 text-primary" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -952,6 +1018,28 @@ export function PurchasesScreen() {
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Optional notes..."
               />
+            </div>
+
+            {/* Payment Method */}
+            <div className="space-y-2">
+              <Label>Payment Method *</Label>
+              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment method" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHODS.map((method) => (
+                    <SelectItem key={method.value} value={method.value}>
+                      {method.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {paymentMethod === 'pay_later' && (
+                <p className="text-xs text-muted-foreground">
+                  This will create an account payable entry for tracking
+                </p>
+              )}
             </div>
 
             <Separator />
@@ -1107,6 +1195,12 @@ export function PurchasesScreen() {
                   {getStatusBadge(viewingPurchase.status)}
                 </div>
                 <div>
+                  <p className="text-sm text-muted-foreground">Payment Method</p>
+                  <p className="font-medium capitalize">
+                    {viewingPurchase.paymentMethod?.replace('_', ' ') || 'N/A'}
+                  </p>
+                </div>
+                <div>
                   <p className="text-sm text-muted-foreground">Payment Status</p>
                   {getPaymentStatusBadge(viewingPurchase.paymentStatus)}
                 </div>
@@ -1205,6 +1299,18 @@ export function PurchasesScreen() {
             <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
               Close
             </Button>
+            {viewingPurchase && viewingPurchase.paymentStatus === 'pending' && viewingPurchase.status !== 'cancelled' && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setIsViewDialogOpen(false)
+                  handleOpenPayOffDialog(viewingPurchase)
+                }}
+              >
+                <Banknote className="mr-2 h-4 w-4" />
+                Pay Off
+              </Button>
+            )}
             {viewingPurchase && viewingPurchase.status !== 'received' && viewingPurchase.status !== 'cancelled' && (
               <Button onClick={() => {
                 setIsViewDialogOpen(false)
@@ -1284,6 +1390,83 @@ export function PurchasesScreen() {
             </Button>
             <Button onClick={handleReceiveItems} disabled={isReceiving}>
               {isReceiving ? 'Receiving...' : 'Confirm Receipt'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pay Off Purchase Dialog */}
+      <Dialog open={isPayOffDialogOpen} onOpenChange={setIsPayOffDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Banknote className="h-5 w-5 text-primary" />
+              Pay Off Purchase
+            </DialogTitle>
+            <DialogDescription>
+              Record payment for {payingOffPurchase?.purchaseOrderNumber}
+            </DialogDescription>
+          </DialogHeader>
+
+          {payingOffPurchase && (
+            <div className="space-y-4">
+              {/* Amount Display */}
+              <div className="rounded-lg bg-muted p-4 text-center">
+                <p className="text-sm text-muted-foreground">Amount to Pay</p>
+                <p className="text-2xl font-bold text-primary">
+                  {formatCurrency(payingOffPurchase.totalAmount)}
+                </p>
+              </div>
+
+              {/* Payment Method */}
+              <div className="space-y-2">
+                <Label>Payment Method *</Label>
+                <Select value={payOffMethod} onValueChange={setPayOffMethod}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select payment method" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Reference Number */}
+              <div className="space-y-2">
+                <Label>Reference Number</Label>
+                <Input
+                  value={payOffReference}
+                  onChange={(e) => setPayOffReference(e.target.value)}
+                  placeholder={payOffMethod === 'cheque' ? 'Cheque number' : 'Transaction reference'}
+                />
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <Input
+                  value={payOffNotes}
+                  onChange={(e) => setPayOffNotes(e.target.value)}
+                  placeholder="Optional notes..."
+                />
+              </div>
+
+              <div className="rounded-lg bg-green-50 dark:bg-green-950 p-3 text-sm">
+                <p className="text-green-700 dark:text-green-300">
+                  This will mark the purchase as paid and update the associated payable record.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsPayOffDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handlePayOffPurchase} disabled={isPayingOff}>
+              {isPayingOff ? 'Processing...' : 'Confirm Payment'}
             </Button>
           </DialogFooter>
         </DialogContent>
