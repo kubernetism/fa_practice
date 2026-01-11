@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { useSetup } from '@/contexts/setup-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -12,56 +11,13 @@ import {
 } from '@/components/ui/select'
 import { Building2 } from 'lucide-react'
 
-// Debug logging helper
-const DEBUG = true
-const log = (message: string, ...args: unknown[]) => {
-  if (DEBUG) {
-    console.log(`[BusinessInfoStep] ${message}`, ...args)
-  }
-}
-
 const BUSINESS_TYPES = ['Retail', 'Wholesale', 'Mixed']
 
 export function BusinessInfoStep() {
   const { businessInfo, updateBusinessInfo } = useSetup()
-  const businessNameRef = useRef<HTMLInputElement>(null)
 
-  // Track render count
-  const renderCount = useRef(0)
-  renderCount.current += 1
-
-  // Log every render
-  useEffect(() => {
-    log(`Component rendered - count: ${renderCount.current}`)
-  })
-
-  // Log when businessInfo changes
-  useEffect(() => {
-    log(`BusinessInfo in step:`, {
-      businessName: businessInfo.businessName?.substring(0, 20),
-      businessType: businessInfo.businessType,
-    })
-  }, [businessInfo])
-
-  // Warning for excessive renders
-  useEffect(() => {
-    if (renderCount.current > 50) {
-      console.error('[BusinessInfoStep] WARNING: Excessive renders detected!', renderCount.current)
-    }
-  })
-
-  // Auto-focus on business name field when step loads
-  useEffect(() => {
-    log('Setting up auto-focus timer')
-    const timer = setTimeout(() => {
-      log('Auto-focus executing')
-      businessNameRef.current?.focus()
-    }, 100)
-    return () => {
-      log('Cleaning up auto-focus timer')
-      clearTimeout(timer)
-    }
-  }, [])
+  // STRIPPED DOWN - No useEffect, no logging, no auto-focus
+  // Pure render component only
 
   return (
     <div className="space-y-6">
@@ -84,14 +40,10 @@ export function BusinessInfoStep() {
             Business Name <span className="text-destructive">*</span>
           </Label>
           <Input
-            ref={businessNameRef}
             id="businessName"
             placeholder="Enter your business name"
             value={businessInfo.businessName}
-            onChange={(e) => {
-              log('Business name onChange:', e.target.value.substring(0, 20))
-              updateBusinessInfo({ businessName: e.target.value })
-            }}
+            onChange={(e) => updateBusinessInfo({ businessName: e.target.value })}
             autoComplete="off"
             required
           />

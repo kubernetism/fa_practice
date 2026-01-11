@@ -14,82 +14,14 @@ const log = (message: string, ...args: unknown[]) => {
   }
 }
 
-// Track if auto-fill has been done globally (persists across remounts)
-let hasAutoFilledGlobal = false
-let hasGeneratedCodeGlobal = false
-
 export function BranchSetupStep() {
   const { branchInfo, updateBranchInfo, businessInfo, generateBranchCode } = useSetup()
-  const branchNameRef = useRef<HTMLInputElement>(null)
 
-  // Track render count
-  const renderCount = useRef(0)
-  renderCount.current += 1
+  // NO AUTO-FILL, NO AUTO-FOCUS, NO AUTO-GENERATE
+  // User must manually fill in all fields
+  // This is to isolate the freeze issue
 
-  // Log renders (only every 10 renders to reduce noise)
-  useEffect(() => {
-    if (renderCount.current % 10 === 1) {
-      log(`Rendered - count: ${renderCount.current}`)
-    }
-  })
-
-  // Warn for excessive renders
-  useEffect(() => {
-    if (renderCount.current > 50) {
-      console.error('[BranchSetupStep] WARNING: Excessive renders!', renderCount.current)
-    }
-  })
-
-  // Auto-fill branch info from business info - ONLY ONCE EVER
-  useEffect(() => {
-    // Skip if already done globally
-    if (hasAutoFilledGlobal) {
-      log('Auto-fill already done globally, skipping')
-      return
-    }
-
-    // Only auto-fill if branch name is empty and business name exists
-    if (!branchInfo.name && businessInfo.businessName) {
-      log('Auto-filling branch info from business info (first time)')
-      hasAutoFilledGlobal = true
-      updateBranchInfo({
-        name: businessInfo.businessName + ' - Main',
-        address: businessInfo.businessAddress,
-        phone: businessInfo.businessPhone,
-        email: businessInfo.businessEmail,
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // Generate branch code - ONLY ONCE EVER
-  useEffect(() => {
-    // Skip if already done globally
-    if (hasGeneratedCodeGlobal) {
-      log('Code generation already done globally, skipping')
-      return
-    }
-
-    // Generate branch code if empty
-    if (!branchInfo.code && businessInfo.businessName) {
-      log('Generating branch code (first time)...')
-      hasGeneratedCodeGlobal = true
-
-      const doGenerate = async () => {
-        try {
-          const code = await generateBranchCode(businessInfo.businessName)
-          log(`Generated code: ${code}`)
-          if (code) {
-            updateBranchInfo({ code })
-          }
-        } catch (error) {
-          console.error('[BranchSetupStep] Error generating code:', error)
-        }
-      }
-      doGenerate()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  console.log('[BranchSetupStep] Rendered once')
 
   const handleRegenerateCode = async () => {
     if (businessInfo.businessName) {

@@ -66,34 +66,8 @@ export function SetupWizardScreen() {
   const { currentStep, nextStep, prevStep, completeSetup, isLoading, error, businessInfo } =
     useSetup()
 
-  // Track render count to detect infinite re-renders
-  const renderCount = useRef(0)
-  renderCount.current += 1
-
-  // Log every render
-  useEffect(() => {
-    log(`Component rendered - count: ${renderCount.current}, step: ${currentStep}, isLoading: ${isLoading}`)
-  })
-
-  // Log when step changes
-  useEffect(() => {
-    log(`Step changed to: ${currentStep}`)
-  }, [currentStep])
-
-  // Log when businessInfo changes
-  useEffect(() => {
-    log(`BusinessInfo changed:`, {
-      businessName: businessInfo.businessName,
-      hasName: businessInfo.businessName.trim() !== ''
-    })
-  }, [businessInfo])
-
-  // Warning for excessive renders
-  useEffect(() => {
-    if (renderCount.current > 100) {
-      console.error('[SetupWizard] WARNING: Excessive renders detected!', renderCount.current)
-    }
-  })
+  // DISABLED ALL LOGGING TO FIX FREEZE
+  // console.log('[SetupWizard] Rendered, step:', currentStep)
 
   const canProceed = useCallback(() => {
     switch (currentStep) {

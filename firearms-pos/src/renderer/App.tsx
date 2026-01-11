@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from '@/contexts/auth-context'
 import { BranchProvider } from '@/contexts/branch-context'
@@ -8,48 +8,16 @@ import { ThemeProvider } from '@/contexts/theme-context'
 import { SetupProvider, useSetup } from '@/contexts/setup-context'
 import { AppRoutes } from './routes'
 
-// Debug logging helper
-const DEBUG = true
-const log = (message: string, ...args: unknown[]) => {
-  if (DEBUG) {
-    console.log(`[SetupGuard] ${message}`, ...args)
-  }
-}
-
 function SetupGuard({ children }: { children: React.ReactNode }) {
   const navigate = useNavigate()
   const location = useLocation()
   const { needsSetup, isCheckingSetup } = useSetup()
 
-  // Track render count
-  const renderCount = useRef(0)
-  renderCount.current += 1
-
-  // Log renders
+  // STRIPPED DOWN - no logging, no render tracking
   useEffect(() => {
-    log(`Rendered - count: ${renderCount.current}, path: ${location.pathname}, needsSetup: ${needsSetup}, isChecking: ${isCheckingSetup}`)
-  })
-
-  // Warn for excessive renders
-  useEffect(() => {
-    if (renderCount.current > 50) {
-      console.error('[SetupGuard] WARNING: Excessive renders!', renderCount.current)
-    }
-  })
-
-  useEffect(() => {
-    // Don't redirect while still checking setup status
-    if (isCheckingSetup) {
-      log('Still checking setup status, skipping redirect')
-      return
-    }
-
-    // If setup is needed and we're not already on setup page, redirect to setup
+    if (isCheckingSetup) return
     if (needsSetup && location.pathname !== '/setup') {
-      log(`Redirecting to /setup from ${location.pathname}`)
       navigate('/setup', { replace: true })
-    } else {
-      log(`No redirect needed - needsSetup: ${needsSetup}, path: ${location.pathname}`)
     }
   }, [needsSetup, isCheckingSetup, location.pathname, navigate])
 

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 
-// Debug logging helper
-const DEBUG = true
+// Debug logging helper - DISABLED
+const DEBUG = false
 const log = (message: string, ...args: unknown[]) => {
   if (DEBUG) {
     console.log(`[SetupContext] ${message}`, ...args)
@@ -139,22 +139,8 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   const [taxCurrencyInfo, setTaxCurrencyInfo] = useState<TaxCurrencyInfo>(defaultTaxCurrencyInfo)
   const [operationsInfo, setOperationsInfo] = useState<OperationsInfo>(defaultOperationsInfo)
 
-  // Track render and update counts
-  const renderCount = useRef(0)
+  // DISABLED - render tracking was causing issues
   const businessInfoUpdateCount = useRef(0)
-  renderCount.current += 1
-
-  // Log provider renders
-  useEffect(() => {
-    log(`Provider rendered - count: ${renderCount.current}, step: ${currentStep}`)
-  })
-
-  // Warning for excessive renders
-  useEffect(() => {
-    if (renderCount.current > 100) {
-      console.error('[SetupContext] WARNING: Excessive provider renders!', renderCount.current)
-    }
-  })
 
   const checkSetupStatus = useCallback(async () => {
     log('checkSetupStatus called')
@@ -194,14 +180,6 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const updateBusinessInfo = useCallback((info: Partial<BusinessInfo>) => {
-    businessInfoUpdateCount.current += 1
-    log(`updateBusinessInfo called - count: ${businessInfoUpdateCount.current}`, Object.keys(info))
-
-    // Warn if called too frequently
-    if (businessInfoUpdateCount.current > 100) {
-      console.error('[SetupContext] WARNING: updateBusinessInfo called too many times!', businessInfoUpdateCount.current)
-    }
-
     setBusinessInfo((prev) => ({ ...prev, ...info }))
   }, [])
 
