@@ -1569,6 +1569,11 @@ async function runMigrations() {
   } catch (error) {
     console.error("Expenses payment_status migration error:", error);
   }
+  try {
+    await ensureApplicationInfoSetupCompleted();
+  } catch (error) {
+    console.error("Application info setup_completed migration error:", error);
+  }
 }
 async function ensureReferralPersonsTable() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -1673,6 +1678,29 @@ async function ensureExpensesPaymentStatus() {
   `;
   db2.exec(migrationSQL);
   console.log("expenses.payment_status column migration completed successfully!");
+}
+async function ensureApplicationInfoSetupCompleted() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='application_info'`
+  ).get();
+  if (!tableCheck) {
+    console.log("application_info table does not exist, skipping setup_completed migration");
+    return;
+  }
+  const tableInfo = db2.prepare(`PRAGMA table_info(application_info)`).all();
+  const hasSetupCompleted = tableInfo.some((col) => col.name === "setup_completed");
+  if (hasSetupCompleted) {
+    console.log("application_info.setup_completed column exists: true");
+    return;
+  }
+  console.log("Starting migration for application_info.setup_completed column...");
+  const migrationSQL = `
+    ALTER TABLE application_info ADD COLUMN setup_completed INTEGER DEFAULT 0;
+  `;
+  db2.exec(migrationSQL);
+  console.log("application_info.setup_completed column migration completed successfully!");
 }
 async function seedInitialData() {
   const db2 = getDatabase();
@@ -12910,20 +12938,26 @@ function registerDashboardHandlers() {
 function registerSetupHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("setup:check-first-run", async () => {
+    console.log("[Setup IPC] check-first-run called");
     try {
+      console.log("[Setup IPC] Querying application_info table...");
       const appInfo = db2.select().from(applicationInfo).limit(1).get();
+      console.log("[Setup IPC] Query result:", appInfo ? "record found" : "no record");
       if (!appInfo) {
+        console.log("[Setup IPC] No app info, setup needed");
         return { success: true, data: { needsSetup: true } };
       }
-      return {
+      const result = {
         success: true,
         data: {
           needsSetup: !appInfo.setupCompleted,
           installationDate: appInfo.installationDate
         }
       };
+      console.log("[Setup IPC] Returning:", result);
+      return result;
     } catch (error) {
-      console.error("Check first run error:", error);
+      console.error("[Setup IPC] Check first run error:", error);
       return { success: false, message: "Failed to check setup status" };
     }
   });

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useSetup } from '@/contexts/setup-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -30,6 +31,15 @@ const STOCK_VALUATION_METHODS = [
 
 export function OperationsStep() {
   const { operationsInfo, updateOperationsInfo } = useSetup()
+  const lowStockRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus on low stock threshold when step loads
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      lowStockRef.current?.focus()
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [])
 
   const handlePaymentMethodToggle = (method: string) => {
     const current = operationsInfo.allowedPaymentMethods.split(',').filter(Boolean)
@@ -199,6 +209,7 @@ export function OperationsStep() {
           <div className="grid gap-2">
             <Label htmlFor="lowStockThreshold">Low Stock Threshold</Label>
             <Input
+              ref={lowStockRef}
               id="lowStockThreshold"
               type="number"
               min="0"
@@ -206,6 +217,7 @@ export function OperationsStep() {
               onChange={(e) =>
                 updateOperationsInfo({ lowStockThreshold: parseInt(e.target.value) || 0 })
               }
+              autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
               Alert when stock falls below this quantity

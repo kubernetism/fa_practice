@@ -1,4 +1,12 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo } from 'react'
+
+// Debug logging helper
+const DEBUG = true
+const log = (message: string, ...args: unknown[]) => {
+  if (DEBUG) {
+    console.log(`[SetupContext] ${message}`, ...args)
+  }
+}
 
 export interface BusinessInfo {
   businessName: string
@@ -131,21 +139,45 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   const [taxCurrencyInfo, setTaxCurrencyInfo] = useState<TaxCurrencyInfo>(defaultTaxCurrencyInfo)
   const [operationsInfo, setOperationsInfo] = useState<OperationsInfo>(defaultOperationsInfo)
 
+  // Track render and update counts
+  const renderCount = useRef(0)
+  const businessInfoUpdateCount = useRef(0)
+  renderCount.current += 1
+
+  // Log provider renders
+  useEffect(() => {
+    log(`Provider rendered - count: ${renderCount.current}, step: ${currentStep}`)
+  })
+
+  // Warning for excessive renders
+  useEffect(() => {
+    if (renderCount.current > 100) {
+      console.error('[SetupContext] WARNING: Excessive provider renders!', renderCount.current)
+    }
+  })
+
   const checkSetupStatus = useCallback(async () => {
+    log('checkSetupStatus called')
     setIsCheckingSetup(true)
     try {
+      log('Calling window.api.setup.checkFirstRun...')
       const result = await window.api.setup.checkFirstRun()
+      log('checkFirstRun result:', result)
       if (result.success && result.data) {
         setNeedsSetup(result.data.needsSetup)
+        log('needsSetup set to:', result.data.needsSetup)
       } else {
         // If check fails, assume setup is needed
         setNeedsSetup(true)
+        log('checkFirstRun failed, setting needsSetup to true')
       }
     } catch (err) {
       console.error('Failed to check setup status:', err)
+      log('checkSetupStatus error:', err)
       setNeedsSetup(true)
     } finally {
       setIsCheckingSetup(false)
+      log('checkSetupStatus finished')
     }
   }, [])
 
@@ -162,6 +194,14 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const updateBusinessInfo = useCallback((info: Partial<BusinessInfo>) => {
+    businessInfoUpdateCount.current += 1
+    log(`updateBusinessInfo called - count: ${businessInfoUpdateCount.current}`, Object.keys(info))
+
+    // Warn if called too frequently
+    if (businessInfoUpdateCount.current > 100) {
+      console.error('[SetupContext] WARNING: updateBusinessInfo called too many times!', businessInfoUpdateCount.current)
+    }
+
     setBusinessInfo((prev) => ({ ...prev, ...info }))
   }, [])
 
@@ -220,30 +260,54 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
     }
   }, [businessInfo, branchInfo, taxCurrencyInfo, operationsInfo])
 
+  // Memoize context value to prevent unnecessary re-renders
+  const contextValue = useMemo(
+    () => ({
+      currentStep,
+      isLoading,
+      isCheckingSetup,
+      needsSetup,
+      error,
+      businessInfo,
+      branchInfo,
+      taxCurrencyInfo,
+      operationsInfo,
+      setCurrentStep,
+      nextStep,
+      prevStep,
+      updateBusinessInfo,
+      updateBranchInfo,
+      updateTaxCurrencyInfo,
+      updateOperationsInfo,
+      completeSetup,
+      checkSetupStatus,
+      generateBranchCode,
+    }),
+    [
+      currentStep,
+      isLoading,
+      isCheckingSetup,
+      needsSetup,
+      error,
+      businessInfo,
+      branchInfo,
+      taxCurrencyInfo,
+      operationsInfo,
+      setCurrentStep,
+      nextStep,
+      prevStep,
+      updateBusinessInfo,
+      updateBranchInfo,
+      updateTaxCurrencyInfo,
+      updateOperationsInfo,
+      completeSetup,
+      checkSetupStatus,
+      generateBranchCode,
+    ]
+  )
+
   return (
-    <SetupContext.Provider
-      value={{
-        currentStep,
-        isLoading,
-        isCheckingSetup,
-        needsSetup,
-        error,
-        businessInfo,
-        branchInfo,
-        taxCurrencyInfo,
-        operationsInfo,
-        setCurrentStep,
-        nextStep,
-        prevStep,
-        updateBusinessInfo,
-        updateBranchInfo,
-        updateTaxCurrencyInfo,
-        updateOperationsInfo,
-        completeSetup,
-        checkSetupStatus,
-        generateBranchCode,
-      }}
-    >
+    <SetupContext.Provider value={contextValue}>
       {children}
     </SetupContext.Provider>
   )

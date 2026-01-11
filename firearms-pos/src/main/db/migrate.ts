@@ -76,6 +76,14 @@ export async function runMigrations(): Promise<void> {
     console.error('Expenses payment_status migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Manual migration for application_info setup_completed column
+  try {
+    await ensureApplicationInfoSetupCompleted()
+  } catch (error) {
+    console.error('Application info setup_completed migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -215,6 +223,40 @@ async function ensureExpensesPaymentStatus(): Promise<void> {
 
   db.exec(migrationSQL)
   console.log('expenses.payment_status column migration completed successfully!')
+}
+
+async function ensureApplicationInfoSetupCompleted(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if application_info table exists first
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='application_info'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('application_info table does not exist, skipping setup_completed migration')
+    return
+  }
+
+  // Check if setup_completed column exists
+  const tableInfo = db.prepare(`PRAGMA table_info(application_info)`).all() as Array<{ name: string }>
+  const hasSetupCompleted = tableInfo.some((col) => col.name === 'setup_completed')
+
+  if (hasSetupCompleted) {
+    console.log('application_info.setup_completed column exists: true')
+    return
+  }
+
+  console.log('Starting migration for application_info.setup_completed column...')
+
+  // Add setup_completed column with default false
+  const migrationSQL = `
+    ALTER TABLE application_info ADD COLUMN setup_completed INTEGER DEFAULT 0;
+  `
+
+  db.exec(migrationSQL)
+  console.log('application_info.setup_completed column migration completed successfully!')
 }
 
 export async function seedInitialData(): Promise<void> {

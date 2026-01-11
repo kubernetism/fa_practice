@@ -1,5 +1,14 @@
+import { useCallback, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSetup } from '@/contexts/setup-context'
+
+// Debug logging helper
+const DEBUG = true
+const log = (message: string, ...args: unknown[]) => {
+  if (DEBUG) {
+    console.log(`[SetupWizard] ${message}`, ...args)
+  }
+}
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight, Check, Loader2 } from 'lucide-react'
@@ -57,26 +66,36 @@ export function SetupWizardScreen() {
   const { currentStep, nextStep, prevStep, completeSetup, isLoading, error, businessInfo } =
     useSetup()
 
-  const handleNext = () => {
-    if (currentStep < 5) {
-      nextStep()
-    }
-  }
+  // Track render count to detect infinite re-renders
+  const renderCount = useRef(0)
+  renderCount.current += 1
 
-  const handlePrev = () => {
-    if (currentStep > 1) {
-      prevStep()
-    }
-  }
+  // Log every render
+  useEffect(() => {
+    log(`Component rendered - count: ${renderCount.current}, step: ${currentStep}, isLoading: ${isLoading}`)
+  })
 
-  const handleComplete = async () => {
-    const success = await completeSetup()
-    if (success) {
-      navigate('/login')
-    }
-  }
+  // Log when step changes
+  useEffect(() => {
+    log(`Step changed to: ${currentStep}`)
+  }, [currentStep])
 
-  const canProceed = () => {
+  // Log when businessInfo changes
+  useEffect(() => {
+    log(`BusinessInfo changed:`, {
+      businessName: businessInfo.businessName,
+      hasName: businessInfo.businessName.trim() !== ''
+    })
+  }, [businessInfo])
+
+  // Warning for excessive renders
+  useEffect(() => {
+    if (renderCount.current > 100) {
+      console.error('[SetupWizard] WARNING: Excessive renders detected!', renderCount.current)
+    }
+  })
+
+  const canProceed = useCallback(() => {
     switch (currentStep) {
       case 1:
         return true // Welcome step can always proceed
@@ -91,7 +110,78 @@ export function SetupWizardScreen() {
       default:
         return true
     }
-  }
+  }, [currentStep, businessInfo.businessName])
+
+  const handleNext = useCallback(() => {
+    if (currentStep < 5 && canProceed()) {
+      nextStep()
+    }
+  }, [currentStep, canProceed, nextStep])
+
+  const handlePrev = useCallback(() => {
+    if (currentStep > 1) {
+      prevStep()
+    }
+  }, [currentStep, prevStep])
+
+  const handleComplete = useCallback(async () => {
+    const success = await completeSetup()
+    if (success) {
+      navigate('/login')
+    }
+  }, [completeSetup, navigate])
+
+  // TEMPORARILY DISABLED - Keyboard navigation was causing issues
+  // TODO: Re-enable after debugging the freeze issue
+  /*
+  // Track keyboard handler setup count
+  const keyboardSetupCount = useRef(0)
+
+  // Keyboard navigation - Enter key to proceed, Escape to go back
+  useEffect(() => {
+    keyboardSetupCount.current += 1
+    log(`Keyboard handler setup - count: ${keyboardSetupCount.current}, step: ${currentStep}`)
+
+    // Warn if being set up too many times
+    if (keyboardSetupCount.current > 20) {
+      console.error('[SetupWizard] WARNING: Keyboard handler being set up too many times!', keyboardSetupCount.current)
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is in a textarea or select dropdown
+      const target = e.target as HTMLElement
+      if (
+        target.tagName === 'TEXTAREA' ||
+        target.getAttribute('role') === 'listbox' ||
+        target.getAttribute('role') === 'option'
+      ) {
+        return
+      }
+
+      log(`Key pressed: ${e.key}, step: ${currentStep}, isLoading: ${isLoading}`)
+
+      if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
+        e.preventDefault()
+        log('Enter key - proceeding to next step')
+        if (currentStep < 5) {
+          handleNext()
+        } else {
+          handleComplete()
+        }
+      } else if (e.key === 'Escape' && currentStep > 1 && !isLoading) {
+        e.preventDefault()
+        log('Escape key - going back')
+        handlePrev()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      log('Keyboard handler cleanup')
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [currentStep, isLoading, handleNext, handlePrev, handleComplete])
+  */
 
   const renderStep = () => {
     switch (currentStep) {
@@ -155,8 +245,10 @@ export function SetupWizardScreen() {
                 Previous
               </Button>
 
-              <div className="text-sm text-muted-foreground">
-                Step {currentStep} of {STEPS.length}
+              <div className="text-center">
+                <div className="text-sm text-muted-foreground">
+                  Step {currentStep} of {STEPS.length}
+                </div>
               </div>
 
               {currentStep < 5 ? (

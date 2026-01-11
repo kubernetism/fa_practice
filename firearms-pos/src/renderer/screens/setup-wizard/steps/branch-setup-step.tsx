@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useSetup } from '@/contexts/setup-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -6,12 +6,52 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { MapPin, RefreshCw, Copy } from 'lucide-react'
 
+// Debug logging helper
+const DEBUG = true
+const log = (message: string, ...args: unknown[]) => {
+  if (DEBUG) {
+    console.log(`[BranchSetupStep] ${message}`, ...args)
+  }
+}
+
+// Track if auto-fill has been done globally (persists across remounts)
+let hasAutoFilledGlobal = false
+let hasGeneratedCodeGlobal = false
+
 export function BranchSetupStep() {
   const { branchInfo, updateBranchInfo, businessInfo, generateBranchCode } = useSetup()
+  const branchNameRef = useRef<HTMLInputElement>(null)
 
-  // Auto-fill branch info from business info if empty
+  // Track render count
+  const renderCount = useRef(0)
+  renderCount.current += 1
+
+  // Log renders (only every 10 renders to reduce noise)
   useEffect(() => {
+    if (renderCount.current % 10 === 1) {
+      log(`Rendered - count: ${renderCount.current}`)
+    }
+  })
+
+  // Warn for excessive renders
+  useEffect(() => {
+    if (renderCount.current > 50) {
+      console.error('[BranchSetupStep] WARNING: Excessive renders!', renderCount.current)
+    }
+  })
+
+  // Auto-fill branch info from business info - ONLY ONCE EVER
+  useEffect(() => {
+    // Skip if already done globally
+    if (hasAutoFilledGlobal) {
+      log('Auto-fill already done globally, skipping')
+      return
+    }
+
+    // Only auto-fill if branch name is empty and business name exists
     if (!branchInfo.name && businessInfo.businessName) {
+      log('Auto-filling branch info from business info (first time)')
+      hasAutoFilledGlobal = true
       updateBranchInfo({
         name: businessInfo.businessName + ' - Main',
         address: businessInfo.businessAddress,
@@ -19,20 +59,37 @@ export function BranchSetupStep() {
         email: businessInfo.businessEmail,
       })
     }
-  }, [businessInfo, branchInfo.name, updateBranchInfo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-  // Generate branch code when business name changes and code is empty
+  // Generate branch code - ONLY ONCE EVER
   useEffect(() => {
-    const generateCode = async () => {
-      if (!branchInfo.code && businessInfo.businessName) {
-        const code = await generateBranchCode(businessInfo.businessName)
-        if (code) {
-          updateBranchInfo({ code })
+    // Skip if already done globally
+    if (hasGeneratedCodeGlobal) {
+      log('Code generation already done globally, skipping')
+      return
+    }
+
+    // Generate branch code if empty
+    if (!branchInfo.code && businessInfo.businessName) {
+      log('Generating branch code (first time)...')
+      hasGeneratedCodeGlobal = true
+
+      const doGenerate = async () => {
+        try {
+          const code = await generateBranchCode(businessInfo.businessName)
+          log(`Generated code: ${code}`)
+          if (code) {
+            updateBranchInfo({ code })
+          }
+        } catch (error) {
+          console.error('[BranchSetupStep] Error generating code:', error)
         }
       }
+      doGenerate()
     }
-    generateCode()
-  }, [businessInfo.businessName, branchInfo.code, generateBranchCode, updateBranchInfo])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleRegenerateCode = async () => {
     if (businessInfo.businessName) {
@@ -80,10 +137,15 @@ export function BranchSetupStep() {
               Branch Name <span className="text-destructive">*</span>
             </Label>
             <Input
+              ref={branchNameRef}
               id="branchName"
               placeholder="Main Store"
               value={branchInfo.name}
-              onChange={(e) => updateBranchInfo({ name: e.target.value })}
+              onChange={(e) => {
+                log('Branch name onChange:', e.target.value.substring(0, 20))
+                updateBranchInfo({ name: e.target.value })
+              }}
+              autoComplete="off"
               required
             />
           </div>

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useSetup } from '@/contexts/setup-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -27,6 +28,15 @@ const CURRENCY_POSITIONS = [
 
 export function TaxCurrencyStep() {
   const { taxCurrencyInfo, updateTaxCurrencyInfo } = useSetup()
+  const taxNameRef = useRef<HTMLInputElement>(null)
+
+  // Auto-focus on tax name field when step loads
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      taxNameRef.current?.focus()
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [])
 
   const handleCurrencyChange = (code: string) => {
     const currency = COMMON_CURRENCIES.find((c) => c.code === code)
@@ -151,10 +161,12 @@ export function TaxCurrencyStep() {
           <div className="grid gap-2">
             <Label htmlFor="taxName">Tax Name</Label>
             <Input
+              ref={taxNameRef}
               id="taxName"
               placeholder="GST"
               value={taxCurrencyInfo.taxName}
               onChange={(e) => updateTaxCurrencyInfo({ taxName: e.target.value })}
+              autoComplete="off"
             />
           </div>
 

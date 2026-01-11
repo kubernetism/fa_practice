@@ -54,23 +54,29 @@ export function registerSetupHandlers(): void {
 
   // Check if setup is needed (first run)
   ipcMain.handle('setup:check-first-run', async () => {
+    console.log('[Setup IPC] check-first-run called')
     try {
       // Check if application_info record exists and setupCompleted is true
+      console.log('[Setup IPC] Querying application_info table...')
       const appInfo = db.select().from(applicationInfo).limit(1).get()
+      console.log('[Setup IPC] Query result:', appInfo ? 'record found' : 'no record')
 
       if (!appInfo) {
+        console.log('[Setup IPC] No app info, setup needed')
         return { success: true, data: { needsSetup: true } }
       }
 
-      return {
+      const result = {
         success: true,
         data: {
           needsSetup: !appInfo.setupCompleted,
           installationDate: appInfo.installationDate,
         },
       }
+      console.log('[Setup IPC] Returning:', result)
+      return result
     } catch (error) {
-      console.error('Check first run error:', error)
+      console.error('[Setup IPC] Check first run error:', error)
       return { success: false, message: 'Failed to check setup status' }
     }
   })
