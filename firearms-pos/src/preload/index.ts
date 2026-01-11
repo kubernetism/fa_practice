@@ -429,6 +429,14 @@ const api = {
     getStats: (params: { branchId: number; timePeriod: string }) =>
       ipcRenderer.invoke('dashboard:get-stats', params),
   },
+
+  // Setup Wizard
+  setup: {
+    checkFirstRun: () => ipcRenderer.invoke('setup:check-first-run'),
+    complete: (data: Record<string, unknown>) => ipcRenderer.invoke('setup:complete', data),
+    generateBranchCode: (businessName: string) =>
+      ipcRenderer.invoke('setup:generate-branch-code', businessName),
+  },
 }
 
 // Expose the API to the renderer process

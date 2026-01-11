@@ -28,6 +28,7 @@ import { registerTodosHandlers } from './todos-ipc'
 import { registerManualMigrationHandlers } from './manual-migration-ipc'
 import { registerMessagesHandlers } from './messages-ipc'
 import { registerDashboardHandlers } from './dashboard-ipc'
+import { registerSetupHandlers } from './setup-ipc'
 
 export function registerAllHandlers(): void {
   registerAuthHandlers()
@@ -60,6 +61,7 @@ export function registerAllHandlers(): void {
   registerManualMigrationHandlers()
   registerMessagesHandlers()
   registerDashboardHandlers()
+  registerSetupHandlers()
 
   console.log('All IPC handlers registered')
 }

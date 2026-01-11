@@ -306,6 +306,12 @@ const api = {
   // Dashboard
   dashboard: {
     getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params)
+  },
+  // Setup Wizard
+  setup: {
+    checkFirstRun: () => electron.ipcRenderer.invoke("setup:check-first-run"),
+    complete: (data) => electron.ipcRenderer.invoke("setup:complete", data),
+    generateBranchCode: (businessName) => electron.ipcRenderer.invoke("setup:generate-branch-code", businessName)
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

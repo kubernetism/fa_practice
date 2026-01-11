@@ -8156,6 +8156,7 @@ const applicationInfo = sqliteCore.sqliteTable("application_info", {
   licenseEndDate: sqliteCore.text("license_end_date"),
   machineId: sqliteCore.text("machine_id").notNull(),
   licenseKey: sqliteCore.text("license_key"),
+  setupCompleted: sqliteCore.integer("setup_completed", { mode: "boolean" }).default(false),
   createdAt: sqliteCore.text("created_at").default(drizzleOrm.sql`CURRENT_TIMESTAMP`),
   updatedAt: sqliteCore.text("updated_at").default(drizzleOrm.sql`CURRENT_TIMESTAMP`)
 });
@@ -12906,6 +12907,145 @@ function registerDashboardHandlers() {
     }
   });
 }
+function registerSetupHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("setup:check-first-run", async () => {
+    try {
+      const appInfo = db2.select().from(applicationInfo).limit(1).get();
+      if (!appInfo) {
+        return { success: true, data: { needsSetup: true } };
+      }
+      return {
+        success: true,
+        data: {
+          needsSetup: !appInfo.setupCompleted,
+          installationDate: appInfo.installationDate
+        }
+      };
+    } catch (error) {
+      console.error("Check first run error:", error);
+      return { success: false, message: "Failed to check setup status" };
+    }
+  });
+  electron.ipcMain.handle("setup:complete", async (_, data) => {
+    try {
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const trialEndDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1e3).toISOString();
+      const machineId = getMachineIdForDisplay();
+      let appInfo = db2.select().from(applicationInfo).limit(1).get();
+      if (!appInfo) {
+        appInfo = db2.insert(applicationInfo).values({
+          installationDate: now,
+          firstRunDate: now,
+          trialStartDate: now,
+          trialEndDate,
+          isLicensed: false,
+          machineId,
+          setupCompleted: true
+        }).returning().get();
+      } else {
+        db2.update(applicationInfo).set({
+          setupCompleted: true,
+          updatedAt: now
+        }).run();
+      }
+      const branchData = {
+        name: data.branch.name,
+        code: data.branch.code.toUpperCase(),
+        address: data.branch.address || data.business.businessAddress,
+        phone: data.branch.phone || data.business.businessPhone,
+        email: data.branch.email || data.business.businessEmail,
+        licenseNumber: data.branch.licenseNumber,
+        isActive: true,
+        isMain: true
+      };
+      const newBranch = db2.insert(branches).values(branchData).returning().get();
+      const settingsData = {
+        branchId: newBranch.id,
+        // Business Info
+        businessName: data.business.businessName,
+        businessRegistrationNo: data.business.businessRegistrationNo,
+        businessType: data.business.businessType,
+        businessAddress: data.business.businessAddress,
+        businessCity: data.business.businessCity,
+        businessState: data.business.businessState,
+        businessCountry: data.business.businessCountry,
+        businessPostalCode: data.business.businessPostalCode,
+        businessPhone: data.business.businessPhone,
+        businessEmail: data.business.businessEmail,
+        businessWebsite: data.business.businessWebsite,
+        businessLogo: data.business.businessLogo,
+        // Tax & Currency
+        currencyCode: data.taxCurrency.currencyCode,
+        currencySymbol: data.taxCurrency.currencySymbol,
+        currencyPosition: data.taxCurrency.currencyPosition,
+        decimalPlaces: data.taxCurrency.decimalPlaces,
+        taxName: data.taxCurrency.taxName,
+        taxRate: data.taxCurrency.taxRate,
+        taxId: data.taxCurrency.taxId,
+        // Operations
+        workingDaysStart: data.operations.workingDaysStart,
+        workingDaysEnd: data.operations.workingDaysEnd,
+        openingTime: data.operations.openingTime,
+        closingTime: data.operations.closingTime,
+        defaultPaymentMethod: data.operations.defaultPaymentMethod,
+        allowedPaymentMethods: data.operations.allowedPaymentMethods,
+        lowStockThreshold: data.operations.lowStockThreshold,
+        stockValuationMethod: data.operations.stockValuationMethod,
+        // Status
+        isActive: true,
+        isDefault: true
+      };
+      const newSettings = db2.insert(businessSettings).values(settingsData).returning().get();
+      const globalSettingsData = {
+        ...settingsData,
+        branchId: null,
+        isDefault: true
+      };
+      db2.insert(businessSettings).values(globalSettingsData).run();
+      console.log("[Setup] Completed successfully:", {
+        branchId: newBranch.id,
+        settingsId: newSettings.settingId
+      });
+      return {
+        success: true,
+        data: {
+          branch: newBranch,
+          settings: newSettings
+        }
+      };
+    } catch (error) {
+      console.error("Setup complete error:", error);
+      return { success: false, message: "Failed to complete setup" };
+    }
+  });
+  electron.ipcMain.handle("setup:generate-branch-code", async (_, businessName) => {
+    try {
+      const words = businessName.trim().split(/\s+/);
+      let code = "";
+      if (words.length === 1) {
+        code = words[0].substring(0, 4).toUpperCase();
+      } else {
+        code = words.slice(0, 4).map((w) => w[0]).join("").toUpperCase();
+      }
+      code = code + "01";
+      let finalCode = code;
+      let counter = 1;
+      while (true) {
+        const existing = db2.query.branches.findFirst({
+          where: (b, { eq }) => eq(b.code, finalCode)
+        });
+        if (!existing) break;
+        counter++;
+        finalCode = code.slice(0, -2) + String(counter).padStart(2, "0");
+      }
+      return { success: true, data: finalCode };
+    } catch (error) {
+      console.error("Generate branch code error:", error);
+      return { success: false, message: "Failed to generate branch code" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -12937,6 +13077,7 @@ function registerAllHandlers() {
   registerManualMigrationHandlers();
   registerMessagesHandlers();
   registerDashboardHandlers();
+  registerSetupHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;

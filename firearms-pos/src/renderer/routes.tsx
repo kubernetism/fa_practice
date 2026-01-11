@@ -32,6 +32,7 @@ const BusinessSettingsScreen = lazy(() => import('@/screens/business-settings').
 const AuditLogsScreen = lazy(() => import('@/screens/audit-logs').then(m => ({ default: m.AuditLogsScreen })))
 const DatabaseViewerScreen = lazy(() => import('@/screens/database-viewer').then(m => ({ default: m.DatabaseViewerScreen })))
 const LicenseSettingsScreen = lazy(() => import('@/screens/license-settings').then(m => ({ default: m.LicenseSettingsScreen })))
+const SetupWizardScreen = lazy(() => import('@/screens/setup-wizard').then(m => ({ default: m.SetupWizardScreen })))
 
 // Wrapper component for lazy loaded routes
 function LazyRoute({ children }: { children: React.ReactNode }) {
@@ -41,6 +42,14 @@ function LazyRoute({ children }: { children: React.ReactNode }) {
 export function AppRoutes() {
   return (
     <Routes>
+      <Route
+        path="/setup"
+        element={
+          <LazyRoute>
+            <SetupWizardScreen />
+          </LazyRoute>
+        }
+      />
       <Route
         path="/login"
         element={

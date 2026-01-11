@@ -12,6 +12,7 @@ export const applicationInfo = sqliteTable('application_info', {
   licenseEndDate: text('license_end_date'),
   machineId: text('machine_id').notNull(),
   licenseKey: text('license_key'),
+  setupCompleted: integer('setup_completed', { mode: 'boolean' }).default(false),
   createdAt: text('created_at').default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text('updated_at').default(sql`CURRENT_TIMESTAMP`),
 })
