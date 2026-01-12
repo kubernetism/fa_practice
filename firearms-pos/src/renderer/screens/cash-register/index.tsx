@@ -122,8 +122,10 @@ export default function CashRegisterScreen() {
   const branchId = currentBranch?.id || 1
 
   useEffect(() => {
-    loadData()
-  }, [branchId])
+    if (currentBranch) {
+      loadData()
+    }
+  }, [branchId, currentBranch])
 
   const loadData = async () => {
     setLoading(true)
@@ -313,7 +315,7 @@ export default function CashRegisterScreen() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Cash Register</h1>
-          <p className="text-muted-foreground">Manage daily cash sessions and transactions</p>
+          <p className="text-muted-foreground">Manage daily cash sessions and transactions {currentBranch && `- ${currentBranch.name}`}</p>
         </div>
         <div className="flex gap-2">
           {!currentSession && (

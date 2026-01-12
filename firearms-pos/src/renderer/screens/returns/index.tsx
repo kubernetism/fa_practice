@@ -224,11 +224,13 @@ export function ReturnsScreen() {
 
   // Fetch all data
   const fetchData = useCallback(async () => {
+    if (!currentBranch) return
+
     try {
       setIsLoading(true)
       const [returnsResult, salesResult, productsResult, customersResult, usersResult] = await Promise.all([
-        window.api.returns.getAll({ limit: 1000 }),
-        window.api.sales.getAll({ limit: 1000 }),
+        window.api.returns.getAll({ limit: 1000, branchId: currentBranch.id }),
+        window.api.sales.getAll({ limit: 1000, branchId: currentBranch.id }),
         window.api.products.getAll({ limit: 1000 }),
         window.api.customers.getAll({ limit: 1000 }),
         window.api.users.getAll({ limit: 1000 }),
@@ -239,8 +241,8 @@ export function ReturnsScreen() {
         calculateSummary(returnsResult.data)
       }
       if (salesResult.success && salesResult.data) {
-        // Filter out voided sales
-        setSales(salesResult.data.filter((s: Sale) => !s.isVoided))
+        // Filter out voided sales and filter by branch
+        setSales(salesResult.data.filter((s: Sale) => !s.isVoided && s.branchId === currentBranch.id))
       }
       if (productsResult.success && productsResult.data) {
         setProducts(productsResult.data)
@@ -256,11 +258,13 @@ export function ReturnsScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [currentBranch])
 
   useEffect(() => {
-    fetchData()
-  }, [fetchData])
+    if (currentBranch) {
+      fetchData()
+    }
+  }, [fetchData, currentBranch])
 
   // Calculate summary statistics
   const calculateSummary = (returnsData: Return[]) => {
@@ -554,7 +558,7 @@ export function ReturnsScreen() {
         <div>
           <h1 className="text-3xl font-bold">Returns</h1>
           <p className="text-muted-foreground">
-            Process and manage product returns from sales
+            Process and manage product returns from sales {currentBranch && `- ${currentBranch.name}`}
           </p>
         </div>
         <Button onClick={() => setIsProcessDialogOpen(true)}>

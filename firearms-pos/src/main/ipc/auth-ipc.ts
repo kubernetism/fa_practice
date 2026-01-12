@@ -10,6 +10,7 @@ interface SessionData {
   username: string
   fullName: string
   email: string
+  phone?: string | null
   role: string
   permissions: string[]
   branchId: number | null
@@ -61,6 +62,7 @@ export function registerAuthHandlers(): void {
         username: user.username,
         fullName: user.fullName,
         email: user.email,
+        phone: user.phone,
         role: user.role,
         permissions: (user.permissions as string[]) ?? [],
         branchId: user.branchId,

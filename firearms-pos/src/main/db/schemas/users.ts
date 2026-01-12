@@ -6,6 +6,7 @@ export const users = sqliteTable('users', {
   password: text('password').notNull(),
   email: text('email').notNull().unique(),
   fullName: text('full_name').notNull(),
+  phone: text('phone'),
   role: text('role', { enum: ['admin', 'manager', 'cashier'] })
     .notNull()
     .default('cashier'),

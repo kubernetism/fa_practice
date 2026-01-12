@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useBranch } from '@/contexts/branch-context'
 
 interface Expense {
   id: number
@@ -100,6 +101,7 @@ const initialFormData: ExpenseFormData = {
 }
 
 export default function ExpensesScreen() {
+  const { currentBranch } = useBranch()
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -108,16 +110,24 @@ export default function ExpensesScreen() {
   const [formData, setFormData] = useState<ExpenseFormData>(initialFormData)
 
   useEffect(() => {
-    fetchExpenses()
+    if (currentBranch) {
+      fetchExpenses()
+    }
+  }, [currentBranch])
+
+  useEffect(() => {
     fetchSuppliers()
   }, [])
 
   const fetchExpenses = async () => {
+    if (!currentBranch) return
+
     try {
       setIsLoading(true)
       const response = await window.api.expenses.getAll({
         page: 1,
-        limit: 20,
+        limit: 1000,
+        branchId: currentBranch.id,
       })
 
       if (response?.success && response?.data) {
@@ -177,8 +187,14 @@ export default function ExpensesScreen() {
       }
     }
 
+    if (!currentBranch) {
+      alert('No branch selected')
+      return
+    }
+
     try {
       const expenseData: any = {
+        branchId: currentBranch.id,
         category: formData.category,
         amount: parseFloat(formData.amount),
         description: formData.description || undefined,
@@ -246,7 +262,9 @@ export default function ExpensesScreen() {
     <div className="flex flex-col h-full p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Expense Management</h1>
-        <p className="text-muted-foreground">Track and manage all business expenses</p>
+        <p className="text-muted-foreground">
+          Track and manage all business expenses • {currentBranch?.name || 'Select a branch'}
+        </p>
       </div>
 
       <div className="flex items-center gap-4 mb-6">

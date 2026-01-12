@@ -110,6 +110,7 @@ const initialFormData: CommissionFormData = {
 }
 
 export default function CommissionsScreen() {
+  const { currentBranch } = useBranch()
   const [commissions, setCommissions] = useState<Commission[]>([])
   const [referralPersons, setReferralPersons] = useState<ReferralPerson[]>([])
   const [availableInvoices, setAvailableInvoices] = useState<Sale[]>([])
@@ -125,20 +126,28 @@ export default function CommissionsScreen() {
   const [selectedTab, setSelectedTab] = useState<'referral' | 'employee'>('referral')
 
   useEffect(() => {
-    fetchInitialData()
-  }, [])
+    if (currentBranch) {
+      fetchInitialData()
+    }
+  }, [currentBranch])
 
   const fetchInitialData = async () => {
     await Promise.all([fetchCommissions(), fetchReferralPersons()])
   }
 
   const fetchCommissions = async () => {
+    if (!currentBranch) return
+
     try {
       setIsLoading(true)
-      const response = await window.api.commissions.getAll({ page: 1, limit: 100 })
+      const response = await window.api.commissions.getAll({ page: 1, limit: 100, branchId: currentBranch.id })
 
       if (response?.success && response?.data) {
-        setCommissions(response.data.map((item: any) => ({
+        // Filter by branch on client side as well
+        const filteredData = response.data.filter((item: any) =>
+          item.commission.branchId === currentBranch.id
+        )
+        setCommissions(filteredData.map((item: any) => ({
           ...item.commission,
           user: item.user,
           referralPerson: item.referralPerson,
@@ -237,6 +246,11 @@ export default function CommissionsScreen() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    if (!currentBranch) {
+      alert('Please select a branch first')
+      return
+    }
+
     const isReferralCommission = formData.commissionType === 'referral'
     if (isReferralCommission && !formData.referralPersonId) {
       alert('Please select a referral person')
@@ -266,6 +280,7 @@ export default function CommissionsScreen() {
     try {
       const commissionData = {
         saleId: parseInt(formData.saleId),
+        branchId: currentBranch.id,
         commissionType: formData.commissionType,
         baseAmount,
         rate,
@@ -391,7 +406,7 @@ export default function CommissionsScreen() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Commission Management</h1>
         <p className="text-muted-foreground">
-          Pay commissions to Referral Persons and Employees based on sales invoices
+          Pay commissions to Referral Persons and Employees based on sales invoices {currentBranch && `- ${currentBranch.name}`}
         </p>
       </div>
 

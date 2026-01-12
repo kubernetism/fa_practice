@@ -30,9 +30,15 @@ import {
 } from '@/components/ui/select'
 import { formatCurrency, debounce } from '@/lib/utils'
 import type { Product, Category } from '@shared/types'
+import { useBranch } from '@/contexts/branch-context'
+
+interface ProductWithInventory extends Product {
+  stock?: number
+}
 
 export function ProductsScreen() {
-  const [products, setProducts] = useState<Product[]>([])
+  const { currentBranch } = useBranch()
+  const [products, setProducts] = useState<ProductWithInventory[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
@@ -58,28 +64,48 @@ export function ProductsScreen() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
 
-  // Fetch products
+  // Fetch products with inventory for current branch
   const fetchProducts = useCallback(async () => {
+    if (!currentBranch) return
+
     setIsLoading(true)
     try {
-      const result = await window.api.products.getAll({
-        page,
-        limit: 20,
-        search: searchQuery,
-        categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
-        isActive: true,
-      })
+      // Fetch products and inventory in parallel
+      const [productsResult, inventoryResult] = await Promise.all([
+        window.api.products.getAll({
+          page,
+          limit: 20,
+          search: searchQuery,
+          categoryId: selectedCategory ? parseInt(selectedCategory) : undefined,
+          isActive: true,
+        }),
+        window.api.inventory.getByBranch(currentBranch.id)
+      ])
 
-      if (result.success) {
-        setProducts(result.data || [])
-        setTotalPages(result.totalPages || 1)
+      if (productsResult.success && productsResult.data) {
+        // Create a map of productId -> quantity for quick lookup
+        const inventoryMap = new Map<number, number>()
+        if (inventoryResult.success && inventoryResult.data) {
+          inventoryResult.data.forEach((item: any) => {
+            inventoryMap.set(item.inventory.productId, item.inventory.quantity)
+          })
+        }
+
+        // Merge products with inventory data
+        const productsWithInventory = productsResult.data.map((product: Product) => ({
+          ...product,
+          stock: inventoryMap.get(product.id) || 0
+        }))
+
+        setProducts(productsWithInventory)
+        setTotalPages(productsResult.totalPages || 1)
       }
     } catch (error) {
       console.error('Failed to fetch products:', error)
     } finally {
       setIsLoading(false)
     }
-  }, [page, searchQuery, selectedCategory])
+  }, [page, searchQuery, selectedCategory, currentBranch])
 
   // Fetch categories
   const fetchCategories = useCallback(async () => {
@@ -211,7 +237,9 @@ export function ProductsScreen() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Products</h1>
-          <p className="text-muted-foreground">Manage your product catalog</p>
+          <p className="text-muted-foreground">
+            Manage your product catalog • Stock levels for {currentBranch?.name || 'selected branch'}
+          </p>
         </div>
         <Button onClick={handleNewProduct}>
           <Plus className="mr-2 h-4 w-4" />
@@ -270,6 +298,7 @@ export function ProductsScreen() {
                   <TableHead>Code</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Category</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
                   <TableHead className="text-right">Cost</TableHead>
                   <TableHead className="text-right">Price</TableHead>
                   <TableHead>Type</TableHead>
@@ -283,6 +312,11 @@ export function ProductsScreen() {
                     <TableCell className="font-medium">{product.name}</TableCell>
                     <TableCell>
                       {categories.find((c) => c.id === product.categoryId)?.name || '-'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className={product.stock === 0 ? 'text-destructive' : product.stock && product.stock < product.reorderLevel ? 'text-warning' : ''}>
+                        {product.stock ?? 0}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right">{formatCurrency(product.costPrice)}</TableCell>
                     <TableCell className="text-right font-medium">

@@ -59,6 +59,8 @@ import {
   AlertCircle,
   Printer,
   List,
+  AlertTriangle,
+  Database,
 } from 'lucide-react'
 import type { Branch, BusinessSettings } from '@shared/types'
 
@@ -103,6 +105,14 @@ export function BusinessSettingsScreen() {
   const [cloneSourceBranchId, setCloneSourceBranchId] = useState<number | null>(null)
   const [cloneTargetBranchId, setCloneTargetBranchId] = useState<string>('')
   const [createBranchId, setCreateBranchId] = useState<string>('')
+
+  // Hard Reset state
+  const [isResetDialogOpen, setIsResetDialogOpen] = useState(false)
+  const [resetConfirmationText, setResetConfirmationText] = useState('')
+  const [resetAdminUsername, setResetAdminUsername] = useState('')
+  const [resetAdminPassword, setResetAdminPassword] = useState('')
+  const [isResetting, setIsResetting] = useState(false)
+  const [resetStep, setResetStep] = useState<'warning' | 'confirm' | 'auth' | 'progress'>('warning')
 
   // Admin access check
   const isAdmin = user?.role?.toLowerCase() === 'admin'
@@ -244,6 +254,72 @@ export function BusinessSettingsScreen() {
     }
   }
 
+  const handleOpenResetDialog = () => {
+    setIsResetDialogOpen(true)
+    setResetStep('warning')
+    setResetConfirmationText('')
+    setResetAdminUsername('')
+    setResetAdminPassword('')
+  }
+
+  const handleResetDialogNext = () => {
+    if (resetStep === 'warning') {
+      setResetStep('confirm')
+    } else if (resetStep === 'confirm') {
+      if (resetConfirmationText === 'RESET') {
+        setResetStep('auth')
+      } else {
+        alert('Please type "RESET" exactly to continue.')
+      }
+    }
+  }
+
+  const handleHardReset = async () => {
+    if (!resetAdminUsername || !resetAdminPassword) {
+      alert('Please enter admin credentials')
+      return
+    }
+
+    setIsResetting(true)
+    setResetStep('progress')
+
+    try {
+      // First verify admin credentials
+      const verifyResult = await window.api.database.verifyAdmin(
+        resetAdminUsername,
+        resetAdminPassword
+      )
+
+      if (!verifyResult.success) {
+        alert(verifyResult.message || 'Invalid admin credentials')
+        setIsResetting(false)
+        setResetStep('auth')
+        return
+      }
+
+      // Proceed with hard reset
+      const result = await window.api.database.hardReset(resetConfirmationText)
+
+      if (result.success) {
+        alert(result.message + '\n\nThe application will now restart.')
+        // Close the dialog
+        setIsResetDialogOpen(false)
+        // Logout and reload
+        await window.api.auth.logout()
+        window.location.reload()
+      } else {
+        alert(result.message || 'Failed to reset database')
+        setResetStep('auth')
+      }
+    } catch (err) {
+      console.error('Hard reset error:', err)
+      alert('An error occurred during database reset')
+      setResetStep('auth')
+    } finally {
+      setIsResetting(false)
+    }
+  }
+
   // Render access denied for non-admins
   if (!isAdmin) {
     return (
@@ -364,7 +440,7 @@ export function BusinessSettingsScreen() {
       {currentSettings && (
         <form onSubmit={handleSaveSettings}>
           <Tabs defaultValue="business" className="w-full">
-            <TabsList className="grid w-full grid-cols-5 lg:grid-cols-9 mb-6 h-auto gap-1">
+            <TabsList className="grid w-full grid-cols-5 lg:grid-cols-10 mb-6 h-auto gap-1">
               <TabsTrigger value="business" className="flex items-center gap-1 px-2 py-1.5">
                 <Building2 className="w-4 h-4" />
                 <span className="hidden sm:inline text-xs">Business</span>
@@ -400,6 +476,10 @@ export function BusinessSettingsScreen() {
               <TabsTrigger value="all" className="flex items-center gap-1 px-2 py-1.5">
                 <List className="w-4 h-4" />
                 <span className="hidden sm:inline text-xs">All</span>
+              </TabsTrigger>
+              <TabsTrigger value="danger" className="flex items-center gap-1 px-2 py-1.5 text-destructive">
+                <AlertTriangle className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Danger</span>
               </TabsTrigger>
             </TabsList>
 
@@ -1438,6 +1518,77 @@ export function BusinessSettingsScreen() {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            {/* Danger Zone Tab */}
+            <TabsContent value="danger">
+              <Card className="border-destructive">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-destructive">
+                    <AlertTriangle className="w-5 h-5" />
+                    Danger Zone
+                  </CardTitle>
+                  <CardDescription>
+                    Dangerous operations that can permanently affect your data. Use with extreme caution.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* Hard Reset Database Section */}
+                  <div className="border border-destructive rounded-lg p-6 bg-destructive/5">
+                    <div className="flex items-start gap-4">
+                      <div className="p-3 bg-destructive/10 rounded-lg">
+                        <Database className="w-6 h-6 text-destructive" />
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-semibold text-destructive mb-2">
+                          Hard Reset Database
+                        </h3>
+                        <p className="text-sm text-muted-foreground mb-4">
+                          This will permanently delete all data from the database and return the
+                          application to a fresh install state. Only the default admin account
+                          (username: admin, password: admin123) will remain.
+                        </p>
+                        <div className="bg-background border rounded-lg p-4 mb-4">
+                          <h4 className="font-medium text-sm mb-2">What will be deleted:</h4>
+                          <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
+                            <li>All sales, purchases, expenses, and returns</li>
+                            <li>All products, categories, and inventory records</li>
+                            <li>All customers, suppliers, and referral persons</li>
+                            <li>All user accounts (except the default admin)</li>
+                            <li>All branches and business settings</li>
+                            <li>All audit logs, commissions, and financial records</li>
+                            <li>All cash register sessions and transactions</li>
+                            <li>All messages, todos, and chart of accounts</li>
+                          </ul>
+                        </div>
+                        <div className="bg-amber-500/10 border border-amber-500/50 rounded-lg p-4 mb-4">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <h4 className="font-medium text-sm text-amber-900 dark:text-amber-100 mb-1">
+                                Warning: This action cannot be undone!
+                              </h4>
+                              <p className="text-xs text-amber-800 dark:text-amber-200">
+                                All data will be permanently deleted. Make sure you have a backup
+                                before proceeding. The application will restart after the reset.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={handleOpenResetDialog}
+                          className="w-full sm:w-auto"
+                        >
+                          <AlertTriangle className="w-4 h-4 mr-2" />
+                          Reset Database
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
           </Tabs>
 
           {/* Save Button */}
@@ -1559,6 +1710,166 @@ export function BusinessSettingsScreen() {
             >
               {dialogMode === 'clone' ? 'Clone Settings' : 'Create Settings'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Hard Reset Database Dialog */}
+      <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <AlertTriangle className="w-5 h-5" />
+              Hard Reset Database
+            </DialogTitle>
+            <DialogDescription>
+              {resetStep === 'warning' && 'Read the warning carefully before proceeding'}
+              {resetStep === 'confirm' && 'Type RESET to confirm this action'}
+              {resetStep === 'auth' && 'Enter admin credentials to authorize'}
+              {resetStep === 'progress' && 'Resetting database...'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {/* Step 1: Warning */}
+            {resetStep === 'warning' && (
+              <div className="space-y-4">
+                <div className="bg-destructive/10 border border-destructive rounded-lg p-4">
+                  <h4 className="font-semibold text-destructive mb-2 flex items-center gap-2">
+                    <AlertCircle className="w-5 h-5" />
+                    DANGER: This action cannot be undone!
+                  </h4>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    This will permanently delete ALL data in the database, including:
+                  </p>
+                  <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside ml-2">
+                    <li>All sales, purchases, expenses, and financial records</li>
+                    <li>All products, categories, inventory, and stock records</li>
+                    <li>All customers, suppliers, and referral persons</li>
+                    <li>All user accounts (a new default admin will be created)</li>
+                    <li>All branches and business settings</li>
+                    <li>All audit logs and system history</li>
+                  </ul>
+                  <p className="text-sm font-semibold text-destructive mt-3">
+                    Only the default admin account (username: admin, password: admin123) will remain.
+                  </p>
+                </div>
+                <div className="bg-amber-500/10 border border-amber-500/50 rounded-lg p-4">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    <strong>Important:</strong> Make sure you have a complete backup before proceeding.
+                    The application will restart after the reset is complete.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Step 2: Confirmation Text */}
+            {resetStep === 'confirm' && (
+              <div className="space-y-4">
+                <div className="bg-muted rounded-lg p-4">
+                  <p className="text-sm mb-3">
+                    To confirm this action, please type <strong className="text-destructive">RESET</strong> in the box below:
+                  </p>
+                  <Input
+                    value={resetConfirmationText}
+                    onChange={(e) => setResetConfirmationText(e.target.value)}
+                    placeholder="Type RESET here"
+                    className="font-mono"
+                    autoFocus
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Admin Authentication */}
+            {resetStep === 'auth' && (
+              <div className="space-y-4">
+                <div className="bg-muted rounded-lg p-4">
+                  <p className="text-sm mb-4">
+                    For security, please enter your admin credentials to authorize this operation:
+                  </p>
+                  <div className="space-y-3">
+                    <div>
+                      <Label htmlFor="reset-username">Admin Username</Label>
+                      <Input
+                        id="reset-username"
+                        value={resetAdminUsername}
+                        onChange={(e) => setResetAdminUsername(e.target.value)}
+                        placeholder="Enter admin username"
+                        autoFocus
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="reset-password">Admin Password</Label>
+                      <Input
+                        id="reset-password"
+                        type="password"
+                        value={resetAdminPassword}
+                        onChange={(e) => setResetAdminPassword(e.target.value)}
+                        placeholder="Enter admin password"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 4: Progress */}
+            {resetStep === 'progress' && (
+              <div className="space-y-4">
+                <div className="flex flex-col items-center justify-center py-8">
+                  <RefreshCw className="w-12 h-12 text-destructive animate-spin mb-4" />
+                  <p className="text-lg font-medium mb-2">Resetting Database...</p>
+                  <p className="text-sm text-muted-foreground text-center">
+                    Please wait while all data is being deleted. This may take a few moments.
+                    <br />
+                    Do not close this window.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            {resetStep !== 'progress' && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setIsResetDialogOpen(false)
+                    setResetStep('warning')
+                    setResetConfirmationText('')
+                    setResetAdminUsername('')
+                    setResetAdminPassword('')
+                  }}
+                  disabled={isResetting}
+                >
+                  Cancel
+                </Button>
+                {resetStep === 'warning' && (
+                  <Button onClick={handleResetDialogNext}>
+                    Continue
+                  </Button>
+                )}
+                {resetStep === 'confirm' && (
+                  <Button
+                    onClick={handleResetDialogNext}
+                    disabled={resetConfirmationText !== 'RESET'}
+                  >
+                    Next
+                  </Button>
+                )}
+                {resetStep === 'auth' && (
+                  <Button
+                    variant="destructive"
+                    onClick={handleHardReset}
+                    disabled={!resetAdminUsername || !resetAdminPassword || isResetting}
+                  >
+                    {isResetting ? 'Resetting...' : 'Reset Database'}
+                  </Button>
+                )}
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -310,6 +310,9 @@ const api = {
     executeQuery: (params: { query: string; userId: number }) =>
       ipcRenderer.invoke('database:execute-query', params),
     getInfo: () => ipcRenderer.invoke('database:get-info'),
+    hardReset: (confirmationText: string) => ipcRenderer.invoke('database:hard-reset', confirmationText),
+    verifyAdmin: (username: string, password: string) =>
+      ipcRenderer.invoke('database:verify-admin', username, password),
   },
 
   // Account Receivables

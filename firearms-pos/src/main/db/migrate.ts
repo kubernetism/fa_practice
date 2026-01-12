@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 import { migrateToBusinessSettings } from './migrations/migrate_to_business_settings'
+import { addPhoneToUsers } from './migrations/add_phone_to_users'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -82,6 +83,14 @@ export async function runMigrations(): Promise<void> {
     await ensureApplicationInfoSetupCompleted()
   } catch (error) {
     console.error('Application info setup_completed migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Manual migration for users phone column
+  try {
+    await addPhoneToUsers()
+  } catch (error) {
+    console.error('Users phone column migration error:', error)
     // Don't throw - log error but continue
   }
 }
@@ -204,25 +213,44 @@ async function ensureExpensesPaymentStatus(): Promise<void> {
     return
   }
 
-  // Check if payment_status column exists
+  // Check which columns exist
   const tableInfo = db.prepare(`PRAGMA table_info(expenses)`).all() as Array<{ name: string }>
-  const hasPaymentStatus = tableInfo.some((col) => col.name === 'payment_status')
+  const existingColumns = new Set(tableInfo.map((col) => col.name))
 
-  if (hasPaymentStatus) {
-    console.log('expenses.payment_status column exists: true')
-    return
+  // Add missing columns one by one
+  const columnsToAdd = [
+    { name: 'payment_status', sql: `ALTER TABLE expenses ADD COLUMN payment_status TEXT DEFAULT 'paid' NOT NULL` },
+    { name: 'supplier_id', sql: `ALTER TABLE expenses ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)` },
+    { name: 'payable_id', sql: `ALTER TABLE expenses ADD COLUMN payable_id INTEGER REFERENCES account_payables(id)` },
+    { name: 'due_date', sql: `ALTER TABLE expenses ADD COLUMN due_date TEXT` },
+    { name: 'payment_terms', sql: `ALTER TABLE expenses ADD COLUMN payment_terms TEXT` },
+  ]
+
+  for (const column of columnsToAdd) {
+    if (!existingColumns.has(column.name)) {
+      console.log(`Adding expenses.${column.name} column...`)
+      try {
+        db.exec(column.sql)
+        console.log(`expenses.${column.name} column added successfully`)
+      } catch (error) {
+        console.error(`Error adding expenses.${column.name} column:`, error)
+      }
+    } else {
+      console.log(`expenses.${column.name} column exists: true`)
+    }
   }
 
-  console.log('Starting migration for expenses.payment_status column...')
+  // Create indexes if they don't exist
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS "expenses_payment_status_idx" ON "expenses" ("payment_status")`)
+    db.exec(`CREATE INDEX IF NOT EXISTS "expenses_supplier_idx" ON "expenses" ("supplier_id")`)
+    db.exec(`CREATE INDEX IF NOT EXISTS "expenses_payable_idx" ON "expenses" ("payable_id")`)
+    console.log('expenses indexes created/verified successfully')
+  } catch (error) {
+    console.error('Error creating expenses indexes:', error)
+  }
 
-  // Add payment_status column with default 'paid'
-  const migrationSQL = `
-    ALTER TABLE expenses ADD COLUMN payment_status TEXT DEFAULT 'paid' NOT NULL;
-    CREATE INDEX IF NOT EXISTS "expenses_payment_status_idx" ON "expenses" ("payment_status");
-  `
-
-  db.exec(migrationSQL)
-  console.log('expenses.payment_status column migration completed successfully!')
+  console.log('expenses payment_status migration completed successfully!')
 }
 
 async function ensureApplicationInfoSetupCompleted(): Promise<void> {

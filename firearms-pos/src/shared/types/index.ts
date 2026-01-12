@@ -72,6 +72,7 @@ export interface SessionUser {
   username: string
   fullName: string
   email: string
+  phone?: string | null
   role: 'admin' | 'manager' | 'cashier'
   permissions: string[]
   branchId: number | null

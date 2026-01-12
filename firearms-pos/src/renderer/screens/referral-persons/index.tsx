@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useBranch } from '@/contexts/branch-context'
 
 interface ReferralPerson {
   id: number
@@ -56,6 +57,7 @@ const initialFormData: ReferralPersonFormData = {
 }
 
 export default function ReferralPersonsScreen() {
+  const { currentBranch } = useBranch()
   const [referralPersons, setReferralPersons] = useState<ReferralPerson[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -65,16 +67,24 @@ export default function ReferralPersonsScreen() {
   const [editingReferralPerson, setEditingReferralPerson] = useState<ReferralPerson | null>(null)
 
   useEffect(() => {
-    fetchData()
-  }, [])
+    if (currentBranch) {
+      fetchData()
+    }
+  }, [currentBranch])
 
   const fetchData = async () => {
+    if (!currentBranch) return
+
     try {
       setIsLoading(true)
-      const response = await window.api.referralPersons.getAll({ page: 1, limit: 100 })
+      const response = await window.api.referralPersons.getAll({ page: 1, limit: 100, branchId: currentBranch.id })
 
       if (response?.success && response?.data) {
-        setReferralPersons(response.data)
+        // Filter by branch on client side as well
+        const filteredData = response.data.filter((rp: ReferralPerson) =>
+          rp.branchId === currentBranch.id
+        )
+        setReferralPersons(filteredData)
       } else {
         setReferralPersons([])
       }
@@ -113,6 +123,11 @@ export default function ReferralPersonsScreen() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    if (!currentBranch) {
+      alert('Please select a branch first')
+      return
+    }
+
     if (!formData.name.trim()) {
       alert('Please enter a name')
       return
@@ -126,6 +141,7 @@ export default function ReferralPersonsScreen() {
         notes: formData.notes.trim() || null,
         commissionRate: formData.commissionRate ? parseFloat(formData.commissionRate) : null,
         isActive: formData.isActive,
+        branchId: currentBranch.id,
       }
 
       if (editingReferralPerson) {
@@ -215,7 +231,7 @@ export default function ReferralPersonsScreen() {
     <div className="flex flex-col h-full p-6">
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Referral Persons</h1>
-        <p className="text-muted-foreground">Manage commission referral persons and track their earnings</p>
+        <p className="text-muted-foreground">Manage commission referral persons and track their earnings {currentBranch && `- ${currentBranch.name}`}</p>
       </div>
 
       {/* Stats Cards */}

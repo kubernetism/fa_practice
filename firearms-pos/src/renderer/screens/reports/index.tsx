@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { useAuth } from '@/contexts/auth-context'
+import { useBranch } from '@/contexts/branch-context'
 import { Navigate } from 'react-router-dom'
 import {
   FileText,
@@ -129,10 +130,11 @@ const reportCards: ReportCard[] = [
 
 export default function ReportsScreen() {
   const { user } = useAuth()
+  const { currentBranch } = useBranch()
   const [branches, setBranches] = useState<Branch[]>([])
   const [selectedReport, setSelectedReport] = useState<ReportType | null>(null)
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('monthly')
-  const [selectedBranch, setSelectedBranch] = useState<string>('all')
+  const [selectedBranch, setSelectedBranch] = useState<string>(currentBranch?.id?.toString() || 'all')
   const [startDate, setStartDate] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
   )
@@ -150,6 +152,13 @@ export default function ReportsScreen() {
   useEffect(() => {
     fetchBranches()
   }, [])
+
+  // Update selected branch when current branch changes
+  useEffect(() => {
+    if (currentBranch && selectedBranch === 'all') {
+      setSelectedBranch(currentBranch.id.toString())
+    }
+  }, [currentBranch])
 
   useEffect(() => {
     // Auto-update date range when time period changes

@@ -1,7 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, Building2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Building2 } from 'lucide-react'
 import { TodosPanel } from '@/components/todos/todos-panel'
 import { MessagesPanel } from '@/components/messages/messages-panel'
 import {
@@ -13,16 +12,17 @@ import {
 } from '@/components/ui/select'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
-import { getInitials } from '@/lib/utils'
+import { UserDropdownMenu } from '@/components/user/user-dropdown-menu'
 
 export function Header() {
   const navigate = useNavigate()
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
   const { branches, currentBranch, setCurrentBranch } = useBranch()
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
-  const handleLogout = async () => {
-    await logout()
-    navigate('/login')
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
   }
 
   const handleBranchChange = (branchId: string) => {
@@ -66,19 +66,25 @@ export function Header() {
 
         <TodosPanel />
 
-        <div className="flex items-center gap-3 border-l pl-4">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary text-primary-foreground">
-            <span className="text-sm font-medium">{user ? getInitials(user.fullName) : 'U'}</span>
-          </div>
-          <div className="hidden md:block">
-            <p className="text-sm font-medium">{user?.fullName}</p>
-            <p className="text-xs text-muted-foreground capitalize">{user?.role}</p>
-          </div>
-          <Button variant="ghost" size="icon" onClick={handleLogout} title="Logout">
-            <LogOut className="h-4 w-4" />
-          </Button>
+        <div className="border-l pl-4">
+          <UserDropdownMenu onShowToast={showToast} />
         </div>
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed top-4 right-4 z-50 animate-in fade-in slide-in-from-top-2">
+          <div
+            className={`rounded-lg border px-4 py-3 shadow-lg ${
+              toast.type === 'success'
+                ? 'border-green-200 bg-green-50 text-green-900 dark:border-green-800 dark:bg-green-950 dark:text-green-100'
+                : 'border-red-200 bg-red-50 text-red-900 dark:border-red-800 dark:bg-red-950 dark:text-red-100'
+            }`}
+          >
+            <p className="text-sm font-medium">{toast.message}</p>
+          </div>
+        </div>
+      )}
     </header>
   )
 }

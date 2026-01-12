@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { useSetup } from '@/contexts/setup-context'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -69,7 +68,6 @@ export function BranchSetupStep() {
               Branch Name <span className="text-destructive">*</span>
             </Label>
             <Input
-              ref={branchNameRef}
               id="branchName"
               placeholder="Main Store"
               value={branchInfo.name}

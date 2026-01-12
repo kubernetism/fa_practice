@@ -214,7 +214,9 @@ const api = {
     getTableInfo: (tableName) => electron.ipcRenderer.invoke("database:get-table-info", tableName),
     getTableData: (params) => electron.ipcRenderer.invoke("database:get-table-data", params),
     executeQuery: (params) => electron.ipcRenderer.invoke("database:execute-query", params),
-    getInfo: () => electron.ipcRenderer.invoke("database:get-info")
+    getInfo: () => electron.ipcRenderer.invoke("database:get-info"),
+    hardReset: (confirmationText) => electron.ipcRenderer.invoke("database:hard-reset", confirmationText),
+    verifyAdmin: (username, password) => electron.ipcRenderer.invoke("database:verify-admin", username, password)
   },
   // Account Receivables
   receivables: {

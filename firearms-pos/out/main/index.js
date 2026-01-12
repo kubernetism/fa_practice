@@ -152,6 +152,7 @@ const users = sqliteCore.sqliteTable("users", {
   password: sqliteCore.text("password").notNull(),
   email: sqliteCore.text("email").notNull().unique(),
   fullName: sqliteCore.text("full_name").notNull(),
+  phone: sqliteCore.text("phone"),
   role: sqliteCore.text("role", { enum: ["admin", "manager", "cashier"] }).notNull().default("cashier"),
   permissions: sqliteCore.text("permissions", { mode: "json" }).$type().default([]),
   isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
@@ -1513,6 +1514,30 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+async function addPhoneToUsers() {
+  console.log("Starting migration to add phone field to users table...");
+  const db2 = getDatabase();
+  try {
+    let columnExists = false;
+    try {
+      const result = await db2.all(drizzleOrm.sql`PRAGMA table_info(users)`);
+      columnExists = result.some((col) => col.name === "phone");
+    } catch (error) {
+      console.error("Error checking for phone column:", error);
+    }
+    if (columnExists) {
+      console.log("Phone column already exists, skipping migration");
+      return { success: true, message: "Phone column already exists" };
+    }
+    console.log("Adding phone column to users table...");
+    await db2.run(drizzleOrm.sql`ALTER TABLE users ADD COLUMN phone TEXT`);
+    console.log("Phone column added successfully");
+    return { success: true, message: "Phone column added successfully" };
+  } catch (error) {
+    console.error("Migration failed:", error);
+    return { success: false, message: `Migration failed: ${error}` };
+  }
+}
 async function runMigrations() {
   const db2 = getDatabase();
   const possiblePaths = [
@@ -1573,6 +1598,11 @@ async function runMigrations() {
     await ensureApplicationInfoSetupCompleted();
   } catch (error) {
     console.error("Application info setup_completed migration error:", error);
+  }
+  try {
+    await addPhoneToUsers();
+  } catch (error) {
+    console.error("Users phone column migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -1666,18 +1696,36 @@ async function ensureExpensesPaymentStatus() {
     return;
   }
   const tableInfo = db2.prepare(`PRAGMA table_info(expenses)`).all();
-  const hasPaymentStatus = tableInfo.some((col) => col.name === "payment_status");
-  if (hasPaymentStatus) {
-    console.log("expenses.payment_status column exists: true");
-    return;
+  const existingColumns = new Set(tableInfo.map((col) => col.name));
+  const columnsToAdd = [
+    { name: "payment_status", sql: `ALTER TABLE expenses ADD COLUMN payment_status TEXT DEFAULT 'paid' NOT NULL` },
+    { name: "supplier_id", sql: `ALTER TABLE expenses ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)` },
+    { name: "payable_id", sql: `ALTER TABLE expenses ADD COLUMN payable_id INTEGER REFERENCES account_payables(id)` },
+    { name: "due_date", sql: `ALTER TABLE expenses ADD COLUMN due_date TEXT` },
+    { name: "payment_terms", sql: `ALTER TABLE expenses ADD COLUMN payment_terms TEXT` }
+  ];
+  for (const column of columnsToAdd) {
+    if (!existingColumns.has(column.name)) {
+      console.log(`Adding expenses.${column.name} column...`);
+      try {
+        db2.exec(column.sql);
+        console.log(`expenses.${column.name} column added successfully`);
+      } catch (error) {
+        console.error(`Error adding expenses.${column.name} column:`, error);
+      }
+    } else {
+      console.log(`expenses.${column.name} column exists: true`);
+    }
   }
-  console.log("Starting migration for expenses.payment_status column...");
-  const migrationSQL = `
-    ALTER TABLE expenses ADD COLUMN payment_status TEXT DEFAULT 'paid' NOT NULL;
-    CREATE INDEX IF NOT EXISTS "expenses_payment_status_idx" ON "expenses" ("payment_status");
-  `;
-  db2.exec(migrationSQL);
-  console.log("expenses.payment_status column migration completed successfully!");
+  try {
+    db2.exec(`CREATE INDEX IF NOT EXISTS "expenses_payment_status_idx" ON "expenses" ("payment_status")`);
+    db2.exec(`CREATE INDEX IF NOT EXISTS "expenses_supplier_idx" ON "expenses" ("supplier_id")`);
+    db2.exec(`CREATE INDEX IF NOT EXISTS "expenses_payable_idx" ON "expenses" ("payable_id")`);
+    console.log("expenses indexes created/verified successfully");
+  } catch (error) {
+    console.error("Error creating expenses indexes:", error);
+  }
+  console.log("expenses payment_status migration completed successfully!");
 }
 async function ensureApplicationInfoSetupCompleted() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -1867,6 +1915,7 @@ function registerAuthHandlers() {
         username: user.username,
         fullName: user.fullName,
         email: user.email,
+        phone: user.phone,
         role: user.role,
         permissions: user.permissions ?? [],
         branchId: user.branchId,
@@ -13080,6 +13129,125 @@ function registerSetupHandlers() {
     }
   });
 }
+function registerDatabaseResetHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("database:hard-reset", async (_, confirmationText) => {
+    try {
+      if (confirmationText !== "RESET") {
+        return {
+          success: false,
+          message: 'Confirmation text does not match. Please type "RESET" exactly.'
+        };
+      }
+      const rawDb = getRawDatabase();
+      console.log("Starting hard reset...");
+      rawDb.pragma("foreign_keys = OFF");
+      try {
+        console.log("Deleting commissions...");
+        rawDb.prepare("DELETE FROM commissions").run();
+        console.log("Deleting audit logs...");
+        rawDb.prepare("DELETE FROM audit_logs").run();
+        console.log("Deleting messages...");
+        rawDb.prepare("DELETE FROM messages").run();
+        console.log("Deleting todos...");
+        rawDb.prepare("DELETE FROM todos").run();
+        console.log("Deleting account receivables...");
+        rawDb.prepare("DELETE FROM account_receivables").run();
+        console.log("Deleting account payables...");
+        rawDb.prepare("DELETE FROM account_payables").run();
+        console.log("Deleting cash register entries...");
+        rawDb.prepare("DELETE FROM cash_register").run();
+        console.log("Deleting stock adjustments...");
+        rawDb.prepare("DELETE FROM stock_adjustments").run();
+        console.log("Deleting stock transfers...");
+        rawDb.prepare("DELETE FROM stock_transfers").run();
+        console.log("Deleting returns...");
+        rawDb.prepare("DELETE FROM returns").run();
+        console.log("Deleting sales tabs...");
+        rawDb.prepare("DELETE FROM sales_tabs").run();
+        console.log("Deleting sales...");
+        rawDb.prepare("DELETE FROM sales").run();
+        console.log("Deleting purchases...");
+        rawDb.prepare("DELETE FROM purchases").run();
+        console.log("Deleting expenses...");
+        rawDb.prepare("DELETE FROM expenses").run();
+        console.log("Deleting inventory...");
+        rawDb.prepare("DELETE FROM inventory").run();
+        console.log("Deleting products...");
+        rawDb.prepare("DELETE FROM products").run();
+        console.log("Deleting categories...");
+        rawDb.prepare("DELETE FROM categories").run();
+        console.log("Deleting customers...");
+        rawDb.prepare("DELETE FROM customers").run();
+        console.log("Deleting suppliers...");
+        rawDb.prepare("DELETE FROM suppliers").run();
+        console.log("Deleting referral persons...");
+        rawDb.prepare("DELETE FROM referral_persons").run();
+        console.log("Deleting chart of accounts...");
+        rawDb.prepare("DELETE FROM chart_of_accounts").run();
+        console.log("Deleting all users...");
+        rawDb.prepare("DELETE FROM users").run();
+        console.log("Deleting business settings...");
+        rawDb.prepare("DELETE FROM business_settings").run();
+        console.log("Deleting general settings...");
+        rawDb.prepare("DELETE FROM settings").run();
+        console.log("Deleting branches...");
+        rawDb.prepare("DELETE FROM branches").run();
+        console.log("Resetting application info...");
+        rawDb.prepare("UPDATE application_info SET setup_completed = 0").run();
+        rawDb.pragma("foreign_keys = ON");
+        console.log("Data deleted. Creating default admin user...");
+        const hashedPassword = await bcrypt.hash("admin123", 12);
+        await db2.insert(users).values({
+          username: "admin",
+          password: hashedPassword,
+          email: "admin@example.com",
+          fullName: "Administrator",
+          role: "admin",
+          permissions: ["*"],
+          isActive: true,
+          branchId: null
+        });
+        console.log("Default admin user created successfully");
+        console.log("Hard reset completed successfully!");
+        return {
+          success: true,
+          message: "Database has been reset successfully. Please restart the application."
+        };
+      } catch (error) {
+        rawDb.pragma("foreign_keys = ON");
+        throw error;
+      }
+    } catch (error) {
+      console.error("Hard reset error:", error);
+      return {
+        success: false,
+        message: `Failed to reset database: ${error instanceof Error ? error.message : "Unknown error"}`
+      };
+    }
+  });
+  electron.ipcMain.handle("database:verify-admin", async (_, username, password) => {
+    try {
+      const user = await db2.query.users.findFirst({
+        where: drizzleOrm.eq(users.username, username)
+      });
+      if (!user) {
+        return { success: false, message: "Invalid credentials" };
+      }
+      if (user.role !== "admin") {
+        return { success: false, message: "Only administrators can perform this action" };
+      }
+      const validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword) {
+        return { success: false, message: "Invalid credentials" };
+      }
+      return { success: true };
+    } catch (error) {
+      console.error("Admin verification error:", error);
+      return { success: false, message: "Failed to verify credentials" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -13112,6 +13280,7 @@ function registerAllHandlers() {
   registerMessagesHandlers();
   registerDashboardHandlers();
   registerSetupHandlers();
+  registerDatabaseResetHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;
