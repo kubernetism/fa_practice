@@ -47,7 +47,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { format } from 'date-fns'
-import { useSettings } from '@/contexts/settings-context'
+import { useBranch } from '@/contexts/branch-context'
 
 interface Account {
   id: number
@@ -92,7 +92,7 @@ interface TrialBalance {
 }
 
 export default function ChartOfAccountsScreen() {
-  const { activeBranch } = useSettings()
+  const { currentBranch } = useBranch()
   const [activeTab, setActiveTab] = useState('accounts')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [balanceSheet, setBalanceSheet] = useState<BalanceSheet | null>(null)
@@ -119,10 +119,12 @@ export default function ChartOfAccountsScreen() {
   // Filter states
   const [typeFilter, setTypeFilter] = useState<string>('all')
 
-  const branchId = activeBranch?.id
+  const branchId = currentBranch?.id
 
   useEffect(() => {
-    loadData()
+    if (currentBranch) {
+      loadData()
+    }
   }, [branchId])
 
   const loadData = async () => {
@@ -304,7 +306,10 @@ export default function ChartOfAccountsScreen() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Chart of Accounts</h1>
-          <p className="text-muted-foreground">Manage your accounting structure and view financial reports</p>
+          <p className="text-muted-foreground">
+            Manage your accounting structure and view financial reports
+            {currentBranch && <span className="text-primary font-medium"> - {currentBranch.name}</span>}
+          </p>
         </div>
         <div className="flex gap-2">
           <Button onClick={() => loadData()} variant="outline">

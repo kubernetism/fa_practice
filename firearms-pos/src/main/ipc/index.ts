@@ -30,6 +30,7 @@ import { registerMessagesHandlers } from './messages-ipc'
 import { registerDashboardHandlers } from './dashboard-ipc'
 import { registerSetupHandlers } from './setup-ipc'
 import { registerDatabaseResetHandlers } from './database-reset-ipc'
+import { registerBackupHandlers } from './backup-ipc'
 
 export function registerAllHandlers(): void {
   registerAuthHandlers()
@@ -64,6 +65,7 @@ export function registerAllHandlers(): void {
   registerDashboardHandlers()
   registerSetupHandlers()
   registerDatabaseResetHandlers()
+  registerBackupHandlers()
 
   console.log('All IPC handlers registered')
 }

@@ -61,6 +61,12 @@ import {
   List,
   AlertTriangle,
   Database,
+  Download,
+  Upload,
+  HardDrive,
+  FolderOpen,
+  Calendar,
+  FileArchive,
 } from 'lucide-react'
 import type { Branch, BusinessSettings } from '@shared/types'
 
@@ -113,6 +119,41 @@ export function BusinessSettingsScreen() {
   const [resetAdminPassword, setResetAdminPassword] = useState('')
   const [isResetting, setIsResetting] = useState(false)
   const [resetStep, setResetStep] = useState<'warning' | 'confirm' | 'auth' | 'progress'>('warning')
+
+  // Backup state
+  interface BackupConfig {
+    autoBackupEnabled: boolean
+    autoBackupOnClose: boolean
+    autoBackupFrequency: 'daily' | 'weekly' | 'monthly' | 'custom'
+    autoBackupTime: string
+    autoBackupDay: number
+    backupRetentionDays: number
+    lastBackupTime: string | null
+  }
+
+  interface BackupFile {
+    name: string
+    path: string
+    size: number
+    createdAt: string
+  }
+
+  const [backupConfig, setBackupConfig] = useState<BackupConfig>({
+    autoBackupEnabled: false,
+    autoBackupOnClose: false,
+    autoBackupFrequency: 'daily',
+    autoBackupTime: '23:00',
+    autoBackupDay: 0,
+    backupRetentionDays: 30,
+    lastBackupTime: null
+  })
+  const [backupList, setBackupList] = useState<BackupFile[]>([])
+  const [isBackingUp, setIsBackingUp] = useState(false)
+  const [isRestoring, setIsRestoring] = useState(false)
+  const [isLoadingBackups, setIsLoadingBackups] = useState(false)
+  const [backupDirectory, setBackupDirectory] = useState('')
+  const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false)
+  const [selectedBackupForRestore, setSelectedBackupForRestore] = useState<BackupFile | null>(null)
 
   // Admin access check
   const isAdmin = user?.role?.toLowerCase() === 'admin'
@@ -261,6 +302,198 @@ export function BusinessSettingsScreen() {
     setResetAdminUsername('')
     setResetAdminPassword('')
   }
+
+  // Backup functions
+  const loadBackupData = async () => {
+    setIsLoadingBackups(true)
+    try {
+      const [configResult, listResult, dirResult] = await Promise.all([
+        window.api.backup.getConfig(),
+        window.api.backup.list(),
+        window.api.backup.getDirectory()
+      ])
+
+      if (configResult.success && configResult.data) {
+        setBackupConfig(configResult.data)
+      }
+      if (listResult.success && listResult.data) {
+        setBackupList(listResult.data)
+      }
+      if (dirResult.success && dirResult.data) {
+        setBackupDirectory(dirResult.data)
+      }
+    } catch (err) {
+      console.error('Failed to load backup data:', err)
+    } finally {
+      setIsLoadingBackups(false)
+    }
+  }
+
+  const handleCreateBackup = async () => {
+    if (!user) return
+    setIsBackingUp(true)
+    try {
+      const result = await window.api.backup.create(user.userId)
+      if (result.success) {
+        alert(result.message)
+        await loadBackupData()
+      } else {
+        alert(result.message || 'Failed to create backup')
+      }
+    } catch (err) {
+      console.error('Backup creation failed:', err)
+      alert('Failed to create backup')
+    } finally {
+      setIsBackingUp(false)
+    }
+  }
+
+  const handleExportBackup = async () => {
+    if (!user) return
+    try {
+      const result = await window.api.backup.export(user.userId)
+      if (result.success) {
+        alert(result.message)
+      } else {
+        if (result.message !== 'Export cancelled') {
+          alert(result.message || 'Failed to export backup')
+        }
+      }
+    } catch (err) {
+      console.error('Export failed:', err)
+      alert('Failed to export backup')
+    }
+  }
+
+  const handleImportBackup = async () => {
+    if (!user) return
+    if (!confirm('Warning: Importing a backup will replace all current data. Are you sure you want to continue?')) {
+      return
+    }
+    setIsRestoring(true)
+    try {
+      const result = await window.api.backup.import(user.userId)
+      if (result.success) {
+        alert(result.message + '\n\nThe application will now restart.')
+        window.location.reload()
+      } else {
+        if (result.message !== 'Import cancelled') {
+          alert(result.message || 'Failed to import backup')
+        }
+      }
+    } catch (err) {
+      console.error('Import failed:', err)
+      alert('Failed to import backup')
+    } finally {
+      setIsRestoring(false)
+    }
+  }
+
+  const handleRestoreBackup = async (backup: BackupFile) => {
+    setSelectedBackupForRestore(backup)
+    setIsRestoreDialogOpen(true)
+  }
+
+  const confirmRestoreBackup = async () => {
+    if (!user || !selectedBackupForRestore) return
+    setIsRestoring(true)
+    try {
+      const result = await window.api.backup.restore(selectedBackupForRestore.path, user.userId)
+      if (result.success) {
+        alert(result.message + '\n\nThe application will now restart.')
+        setIsRestoreDialogOpen(false)
+        window.location.reload()
+      } else {
+        alert(result.message || 'Failed to restore backup')
+      }
+    } catch (err) {
+      console.error('Restore failed:', err)
+      alert('Failed to restore backup')
+    } finally {
+      setIsRestoring(false)
+    }
+  }
+
+  const handleDeleteBackup = async (backup: BackupFile) => {
+    if (!user) return
+    if (!confirm(`Are you sure you want to delete this backup?\n\n${backup.name}`)) {
+      return
+    }
+    try {
+      const result = await window.api.backup.delete(backup.path, user.userId)
+      if (result.success) {
+        alert(result.message)
+        await loadBackupData()
+      } else {
+        alert(result.message || 'Failed to delete backup')
+      }
+    } catch (err) {
+      console.error('Delete failed:', err)
+      alert('Failed to delete backup')
+    }
+  }
+
+  const handleUpdateBackupConfig = async (updates: Partial<BackupConfig>) => {
+    if (!user) return
+    try {
+      const newConfig = { ...backupConfig, ...updates }
+      const result = await window.api.backup.updateConfig(newConfig, user.userId)
+      if (result.success && result.data) {
+        setBackupConfig(result.data)
+        // Show feedback for important changes
+        if ('autoBackupEnabled' in updates) {
+          console.log(updates.autoBackupEnabled
+            ? 'Scheduled automatic backups enabled'
+            : 'Scheduled automatic backups disabled')
+        }
+        if ('autoBackupOnClose' in updates) {
+          console.log(updates.autoBackupOnClose
+            ? 'Backup on close enabled'
+            : 'Backup on close disabled')
+        }
+      } else {
+        alert(result.message || 'Failed to update backup configuration')
+      }
+    } catch (err) {
+      console.error('Config update failed:', err)
+      alert('Failed to update backup configuration')
+    }
+  }
+
+  const handleCleanOldBackups = async () => {
+    if (!confirm(`This will delete all backups older than ${backupConfig.backupRetentionDays} days. Continue?`)) {
+      return
+    }
+    try {
+      const result = await window.api.backup.cleanOld(backupConfig.backupRetentionDays)
+      if (result.success) {
+        alert(result.message)
+        await loadBackupData()
+      } else {
+        alert(result.message || 'Failed to clean old backups')
+      }
+    } catch (err) {
+      console.error('Clean failed:', err)
+      alert('Failed to clean old backups')
+    }
+  }
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  const formatDate = (dateString: string): string => {
+    return new Date(dateString).toLocaleString()
+  }
+
+  // Load backup data when component mounts
+  useEffect(() => {
+    if (isAdmin) {
+      loadBackupData()
+    }
+  }, [isAdmin])
 
   const handleResetDialogNext = () => {
     if (resetStep === 'warning') {
@@ -1314,6 +1547,7 @@ export function BusinessSettingsScreen() {
 
           {/* System Preferences Tab */}
             <TabsContent value="system">
+          <div className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1396,44 +1630,267 @@ export function BusinessSettingsScreen() {
                     }
                   />
                 </div>
-                <div>
-                  <Label htmlFor="autoBackupFrequency">Backup Frequency</Label>
-                  <Select
-                    value={currentSettings.autoBackupFrequency || 'daily'}
-                    onValueChange={(val) =>
-                      setCurrentSettings({ ...currentSettings, autoBackupFrequency: val })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {BACKUP_FREQUENCIES.map((freq) => (
-                        <SelectItem key={freq} value={freq}>
-                          {freq.charAt(0).toUpperCase() + freq.slice(1)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="backupRetentionDays">Backup Retention (Days)</Label>
-                  <Input
-                    id="backupRetentionDays"
-                    type="number"
-                    min="1"
-                    value={currentSettings.backupRetentionDays ?? 30}
-                    onChange={(e) =>
-                      setCurrentSettings({
-                        ...currentSettings,
-                        backupRetentionDays: parseInt(e.target.value) || 30,
-                      })
-                    }
-                  />
-                </div>
               </div>
             </CardContent>
           </Card>
+
+          {/* Backup & Restore Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <HardDrive className="w-5 h-5" />
+                Backup & Restore
+              </CardTitle>
+              <CardDescription>
+                Create backups, restore from backups, and configure automatic backup settings
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Quick Actions */}
+              <div>
+                <h4 className="font-medium mb-3">Quick Actions</h4>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    type="button"
+                    onClick={handleCreateBackup}
+                    disabled={isBackingUp}
+                  >
+                    {isBackingUp ? (
+                      <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4 mr-2" />
+                    )}
+                    {isBackingUp ? 'Creating Backup...' : 'Create Backup Now'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleExportBackup}
+                  >
+                    <FolderOpen className="w-4 h-4 mr-2" />
+                    Export to File
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleImportBackup}
+                    disabled={isRestoring}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Import from File
+                  </Button>
+                </div>
+                {backupConfig.lastBackupTime && (
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Last backup: {formatDate(backupConfig.lastBackupTime)}
+                  </p>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Automatic Backup Settings */}
+              <div>
+                <h4 className="font-medium mb-3">Automatic Backup Settings</h4>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="flex items-center gap-3 col-span-full">
+                    <input
+                      type="checkbox"
+                      id="autoBackupOnClose"
+                      checked={backupConfig.autoBackupOnClose}
+                      onChange={(e) => handleUpdateBackupConfig({ autoBackupOnClose: e.target.checked })}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="autoBackupOnClose" className="cursor-pointer">
+                      Create backup when application closes
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-3 col-span-full">
+                    <input
+                      type="checkbox"
+                      id="autoBackupEnabled"
+                      checked={backupConfig.autoBackupEnabled}
+                      onChange={(e) => handleUpdateBackupConfig({ autoBackupEnabled: e.target.checked })}
+                      className="h-4 w-4 rounded border-gray-300"
+                    />
+                    <Label htmlFor="autoBackupEnabled" className="cursor-pointer">
+                      Enable scheduled automatic backups
+                    </Label>
+                  </div>
+
+                  {backupConfig.autoBackupEnabled && (
+                    <>
+                      <div>
+                        <Label htmlFor="autoBackupFrequency">Backup Frequency</Label>
+                        <Select
+                          value={backupConfig.autoBackupFrequency}
+                          onValueChange={(val: 'daily' | 'weekly' | 'monthly') =>
+                            handleUpdateBackupConfig({ autoBackupFrequency: val })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="daily">Daily</SelectItem>
+                            <SelectItem value="weekly">Weekly</SelectItem>
+                            <SelectItem value="monthly">Monthly</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label htmlFor="autoBackupTime">Backup Time</Label>
+                        <Input
+                          id="autoBackupTime"
+                          type="time"
+                          value={backupConfig.autoBackupTime}
+                          onChange={(e) => handleUpdateBackupConfig({ autoBackupTime: e.target.value })}
+                        />
+                      </div>
+                      {backupConfig.autoBackupFrequency === 'weekly' && (
+                        <div>
+                          <Label htmlFor="autoBackupDay">Day of Week</Label>
+                          <Select
+                            value={backupConfig.autoBackupDay.toString()}
+                            onValueChange={(val) => handleUpdateBackupConfig({ autoBackupDay: parseInt(val) })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="0">Sunday</SelectItem>
+                              <SelectItem value="1">Monday</SelectItem>
+                              <SelectItem value="2">Tuesday</SelectItem>
+                              <SelectItem value="3">Wednesday</SelectItem>
+                              <SelectItem value="4">Thursday</SelectItem>
+                              <SelectItem value="5">Friday</SelectItem>
+                              <SelectItem value="6">Saturday</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                      {backupConfig.autoBackupFrequency === 'monthly' && (
+                        <div>
+                          <Label htmlFor="autoBackupDayMonth">Day of Month</Label>
+                          <Input
+                            id="autoBackupDayMonth"
+                            type="number"
+                            min="1"
+                            max="28"
+                            value={backupConfig.autoBackupDay}
+                            onChange={(e) => handleUpdateBackupConfig({ autoBackupDay: parseInt(e.target.value) || 1 })}
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <div>
+                    <Label htmlFor="backupRetentionDays">Keep Backups For (Days)</Label>
+                    <Input
+                      id="backupRetentionDays"
+                      type="number"
+                      min="1"
+                      max="365"
+                      value={backupConfig.backupRetentionDays}
+                      onChange={(e) => handleUpdateBackupConfig({ backupRetentionDays: parseInt(e.target.value) || 30 })}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Existing Backups */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="font-medium">Existing Backups</h4>
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={loadBackupData}
+                      disabled={isLoadingBackups}
+                    >
+                      <RefreshCw className={`w-4 h-4 mr-1 ${isLoadingBackups ? 'animate-spin' : ''}`} />
+                      Refresh
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCleanOldBackups}
+                    >
+                      <Trash2 className="w-4 h-4 mr-1" />
+                      Clean Old
+                    </Button>
+                  </div>
+                </div>
+                {backupDirectory && (
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Backup location: {backupDirectory}
+                  </p>
+                )}
+
+                {isLoadingBackups ? (
+                  <div className="flex items-center justify-center py-8">
+                    <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : backupList.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <FileArchive className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <p>No backups found</p>
+                    <p className="text-sm">Create your first backup using the button above</p>
+                  </div>
+                ) : (
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Backup Name</TableHead>
+                          <TableHead>Date Created</TableHead>
+                          <TableHead>Size</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {backupList.map((backup) => (
+                          <TableRow key={backup.path}>
+                            <TableCell className="font-mono text-sm">{backup.name}</TableCell>
+                            <TableCell>{formatDate(backup.createdAt)}</TableCell>
+                            <TableCell>{formatFileSize(backup.size)}</TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleRestoreBackup(backup)}
+                                  disabled={isRestoring}
+                                >
+                                  <Upload className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={() => handleDeleteBackup(backup)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          </div>
             </TabsContent>
 
             {/* All Settings Tab */}
@@ -1709,6 +2166,78 @@ export function BusinessSettingsScreen() {
               }
             >
               {dialogMode === 'clone' ? 'Clone Settings' : 'Create Settings'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Restore Backup Confirmation Dialog */}
+      <Dialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-600">
+              <AlertTriangle className="w-5 h-5" />
+              Confirm Restore
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to restore from this backup?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="bg-amber-500/10 border border-amber-500/50 rounded-lg p-4 mb-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-medium text-sm text-amber-900 dark:text-amber-100 mb-1">
+                    Warning: This will replace all current data!
+                  </h4>
+                  <p className="text-xs text-amber-800 dark:text-amber-200">
+                    A safety backup will be created before restoring. The application will restart after the restore is complete.
+                  </p>
+                </div>
+              </div>
+            </div>
+            {selectedBackupForRestore && (
+              <div className="bg-muted rounded-lg p-4">
+                <p className="text-sm">
+                  <strong>Backup:</strong> {selectedBackupForRestore.name}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Created: {formatDate(selectedBackupForRestore.createdAt)}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Size: {formatFileSize(selectedBackupForRestore.size)}
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsRestoreDialogOpen(false)
+                setSelectedBackupForRestore(null)
+              }}
+              disabled={isRestoring}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="default"
+              onClick={confirmRestoreBackup}
+              disabled={isRestoring}
+            >
+              {isRestoring ? (
+                <>
+                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                  Restoring...
+                </>
+              ) : (
+                <>
+                  <Upload className="w-4 h-4 mr-2" />
+                  Restore Backup
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

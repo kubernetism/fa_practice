@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase } from './db'
 import { runMigrations, seedInitialData } from './db/migrate'
 import { registerAllHandlers } from './ipc'
+import { performCloseBackup, stopBackupScheduler } from './ipc/backup-ipc'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -78,7 +79,10 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('window-all-closed', () => {
+app.on('window-all-closed', async () => {
+  // Perform backup on close if enabled
+  await performCloseBackup()
+  stopBackupScheduler()
   closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()
@@ -86,6 +90,9 @@ app.on('window-all-closed', () => {
 })
 
 // Handle app quit
-app.on('before-quit', () => {
+app.on('before-quit', async () => {
+  // Perform backup on close if enabled
+  await performCloseBackup()
+  stopBackupScheduler()
   closeDatabase()
 })

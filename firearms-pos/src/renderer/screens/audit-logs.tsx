@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
+import { useBranch } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -117,6 +118,7 @@ const CRITICAL_ACTIONS = ['delete', 'void', 'refund']
 
 export function AuditLogsScreen() {
   const { user } = useAuth()
+  const { currentBranch } = useBranch()
 
   // Admin access check
   if (user?.role !== 'admin') {
@@ -148,7 +150,6 @@ export function AuditLogsScreen() {
 
   // Filters
   const [searchQuery, setSearchQuery] = useState('')
-  const [selectedBranch, setSelectedBranch] = useState<string>('all')
   const [selectedUser, setSelectedUser] = useState<string>('all')
   const [selectedAction, setSelectedAction] = useState<string>('all')
   const [selectedEntityType, setSelectedEntityType] = useState<string>('all')
@@ -196,7 +197,10 @@ export function AuditLogsScreen() {
       }
 
       if (searchQuery) params.searchQuery = searchQuery
-      if (selectedBranch !== 'all') params.branchId = parseInt(selectedBranch)
+      // Always filter by current branch in single branch mode
+      if (currentBranch) {
+        params.branchId = currentBranch.id
+      }
       if (selectedUser !== 'all') params.userId = parseInt(selectedUser)
       if (selectedAction !== 'all') params.action = selectedAction
       if (selectedEntityType !== 'all') params.entityType = selectedEntityType
@@ -214,13 +218,16 @@ export function AuditLogsScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [page, limit, searchQuery, selectedBranch, selectedUser, selectedAction, selectedEntityType, startDate, endDate])
+  }, [page, limit, searchQuery, currentBranch, selectedUser, selectedAction, selectedEntityType, startDate, endDate])
 
   // Fetch statistics
   const fetchStats = useCallback(async () => {
     try {
       const params: any = {}
-      if (selectedBranch !== 'all') params.branchId = parseInt(selectedBranch)
+      // Always filter by current branch in single branch mode
+      if (currentBranch) {
+        params.branchId = currentBranch.id
+      }
       if (startDate) params.startDate = startDate
       if (endDate) params.endDate = endDate
 
@@ -232,7 +239,7 @@ export function AuditLogsScreen() {
     } catch (error) {
       console.error('Failed to fetch audit stats:', error)
     }
-  }, [selectedBranch, startDate, endDate])
+  }, [currentBranch, startDate, endDate])
 
   // Initial load
   useEffect(() => {
@@ -255,7 +262,6 @@ export function AuditLogsScreen() {
   // Reset filters
   const handleResetFilters = () => {
     setSearchQuery('')
-    setSelectedBranch('all')
     setSelectedUser('all')
     setSelectedAction('all')
     setSelectedEntityType('all')
@@ -276,7 +282,10 @@ export function AuditLogsScreen() {
         format,
       }
 
-      if (selectedBranch !== 'all') params.branchId = parseInt(selectedBranch)
+      // Always filter by current branch in single branch mode
+      if (currentBranch) {
+        params.branchId = currentBranch.id
+      }
       if (selectedAction !== 'all') params.action = selectedAction
       if (selectedEntityType !== 'all') params.entityType = selectedEntityType
       if (searchQuery) params.searchQuery = searchQuery
@@ -361,6 +370,9 @@ export function AuditLogsScreen() {
           </h1>
           <p className="text-muted-foreground">
             Comprehensive audit trail of all system operations
+            {currentBranch && (
+              <span className="text-primary font-medium"> - {currentBranch.name}</span>
+            )}
           </p>
         </div>
         <div className="flex gap-2">
@@ -458,25 +470,7 @@ export function AuditLogsScreen() {
           </div>
 
           {/* Filter Rows */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Branch */}
-            <div className="space-y-2">
-              <Label>Branch</Label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Branches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches</SelectItem>
-                  {branches.map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id.toString()}>
-                      {branch.name} ({branch.code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* User */}
             <div className="space-y-2">
               <Label>User</Label>

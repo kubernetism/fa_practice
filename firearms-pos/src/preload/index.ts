@@ -440,6 +440,23 @@ const api = {
     generateBranchCode: (businessName: string) =>
       ipcRenderer.invoke('setup:generate-branch-code', businessName),
   },
+
+  // Backup & Restore
+  backup: {
+    create: (userId?: number) => ipcRenderer.invoke('backup:create', userId),
+    restore: (backupPath: string, userId?: number) =>
+      ipcRenderer.invoke('backup:restore', backupPath, userId),
+    list: () => ipcRenderer.invoke('backup:list'),
+    delete: (backupPath: string, userId?: number) =>
+      ipcRenderer.invoke('backup:delete', backupPath, userId),
+    getConfig: () => ipcRenderer.invoke('backup:get-config'),
+    updateConfig: (config: Record<string, unknown>, userId?: number) =>
+      ipcRenderer.invoke('backup:update-config', config, userId),
+    export: (userId?: number) => ipcRenderer.invoke('backup:export', userId),
+    import: (userId?: number) => ipcRenderer.invoke('backup:import', userId),
+    cleanOld: (retentionDays?: number) => ipcRenderer.invoke('backup:clean-old', retentionDays),
+    getDirectory: () => ipcRenderer.invoke('backup:get-directory'),
+  },
 }
 
 // Expose the API to the renderer process

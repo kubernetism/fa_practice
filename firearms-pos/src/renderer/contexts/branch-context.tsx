@@ -12,8 +12,6 @@ interface BranchContextType {
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined)
 
-const STORAGE_KEY = 'selected-branch-id'
-
 export function BranchProvider({ children }: { children: React.ReactNode }) {
   const { user, isAuthenticated } = useAuth()
   const [branches, setBranches] = useState<Branch[]>([])
@@ -24,7 +22,6 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     if (!isAuthenticated) {
       setBranches([])
       setCurrentBranchState(null)
-      localStorage.removeItem(STORAGE_KEY)
       setIsLoading(false)
       return
     }
@@ -35,34 +32,21 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
       if (result.success && result.data) {
         setBranches(result.data)
 
-        // Priority order for setting current branch:
-        // 1. Previously selected branch from localStorage
-        // 2. User's assigned branch
-        // 3. Main branch
-        // 4. First available branch
+        // Single Branch Mode: Always use main branch or first available branch
+        // Priority order:
+        // 1. Main branch (isMain = true)
+        // 2. First available branch
 
         let selectedBranch: Branch | null = null
 
-        // Check localStorage first
-        const storedBranchId = localStorage.getItem(STORAGE_KEY)
-        if (storedBranchId) {
-          selectedBranch = result.data.find((b: Branch) => b.id === parseInt(storedBranchId))
-        }
-
-        // Fall back to user's branch if no stored selection or stored branch not found
-        if (!selectedBranch && user?.branchId) {
-          selectedBranch = result.data.find((b: Branch) => b.id === user.branchId)
-        }
-
-        // Fall back to main branch or first branch
-        if (!selectedBranch && result.data.length > 0) {
+        if (result.data.length > 0) {
+          // Always select main branch or first branch
           const mainBranch = result.data.find((b: Branch) => b.isMain)
           selectedBranch = mainBranch || result.data[0]
         }
 
         if (selectedBranch) {
           setCurrentBranchState(selectedBranch)
-          localStorage.setItem(STORAGE_KEY, selectedBranch.id.toString())
         }
       }
     } catch (error) {
@@ -70,19 +54,18 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [isAuthenticated, user?.branchId])
+  }, [isAuthenticated])
 
   useEffect(() => {
     refreshBranches()
   }, [refreshBranches])
 
+  // setCurrentBranch is kept for compatibility but doesn't persist or change selection
+  // In single branch mode, this is essentially a no-op that just updates state
   const setCurrentBranch = useCallback((branch: Branch) => {
     setCurrentBranchState(branch)
-    // Persist to localStorage
-    localStorage.setItem(STORAGE_KEY, branch.id.toString())
-
-    // Dispatch custom event to notify other components of branch change
-    window.dispatchEvent(new CustomEvent('branch-changed', { detail: { branchId: branch.id } }))
+    // Note: No localStorage persistence in single branch mode
+    // Note: No custom event dispatch as branch switching is not allowed
   }, [])
 
   return (

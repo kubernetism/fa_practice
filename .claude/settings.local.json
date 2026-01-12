@@ -46,7 +46,9 @@
       "Bash(npm run typecheck:*)",
       "Skill(electron-pos-accounting)",
       "Bash(git clone:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(tree:*)"
     ]
   }
 }

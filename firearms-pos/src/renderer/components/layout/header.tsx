@@ -1,63 +1,88 @@
-import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Building2 } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
+import { Clock, ChevronRight } from 'lucide-react'
 import { TodosPanel } from '@/components/todos/todos-panel'
 import { MessagesPanel } from '@/components/messages/messages-panel'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
 import { UserDropdownMenu } from '@/components/user/user-dropdown-menu'
 
+// Map route paths to readable page names
+const getPageName = (pathname: string): string => {
+  const path = pathname.split('/')[1] || 'dashboard'
+  const pageMap: Record<string, string> = {
+    dashboard: 'Dashboard',
+    pos: 'Point of Sale',
+    products: 'Products',
+    inventory: 'Inventory',
+    sales: 'Sales History',
+    purchases: 'Purchases',
+    returns: 'Returns',
+    customers: 'Customers',
+    suppliers: 'Suppliers',
+    expenses: 'Expenses',
+    commissions: 'Commissions',
+    users: 'Users',
+    branches: 'Branches',
+    reports: 'Reports',
+    'pos-tabs': 'POS Tabs',
+    'audit-reports': 'Audit Reports',
+    'referral-persons': 'Referral Persons',
+    receivables: 'Account Receivables',
+    payables: 'Account Payables',
+    'cash-register': 'Cash Register',
+    'chart-of-accounts': 'Chart of Accounts',
+    audit: 'Audit Logs',
+    settings: 'Settings',
+    database: 'Database Viewer',
+  }
+  return pageMap[path] || 'Dashboard'
+}
+
 export function Header() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { user } = useAuth()
-  const { branches, currentBranch, setCurrentBranch } = useBranch()
+  const { currentBranch } = useBranch()
+  const [currentTime, setCurrentTime] = useState(new Date())
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  // Update time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [])
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
 
-  const handleBranchChange = (branchId: string) => {
-    const branch = branches.find((b) => b.id === Number(branchId))
-    if (branch) {
-      setCurrentBranch(branch)
-    }
+  const formatDateTime = (date: Date): string => {
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true,
+    })
   }
+
+  const pageName = getPageName(location.pathname)
 
   return (
     <header className="flex h-16 items-center justify-between border-b bg-card px-6">
-      <div className="flex items-center gap-4">
-        {branches.length > 1 && (
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-            <Select value={currentBranch?.id?.toString()} onValueChange={handleBranchChange}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="Select branch" />
-              </SelectTrigger>
-              <SelectContent>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id.toString()}>
-                    {branch.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
-        {branches.length === 1 && currentBranch && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Building2 className="h-4 w-4" />
-            <span>{currentBranch.name}</span>
-          </div>
-        )}
+      <div className="flex items-center gap-2 text-sm">
+        <Clock className="h-4 w-4 text-muted-foreground" />
+        <span className="text-muted-foreground">{formatDateTime(currentTime)}</span>
+        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        <span className="font-medium">{currentBranch?.name || 'MAIN BRANCH'}</span>
+        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+        <span className="text-primary font-medium">{pageName}</span>
       </div>
 
       <div className="flex items-center gap-4">
