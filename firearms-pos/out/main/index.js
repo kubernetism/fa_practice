@@ -1857,7 +1857,7 @@ async function seedInitialData() {
   ]);
   console.log("Initial data seeded successfully");
 }
-async function createAuditLog(params) {
+async function createAuditLog$1(params) {
   const db2 = getDatabase();
   try {
     await db2.insert(auditLogs).values({
@@ -1921,7 +1921,7 @@ function registerAuthHandlers() {
         branchId: user.branchId,
         branchName
       };
-      await createAuditLog({
+      await createAuditLog$1({
         userId: user.id,
         branchId: user.branchId,
         action: "login",
@@ -1940,7 +1940,7 @@ function registerAuthHandlers() {
   });
   electron.ipcMain.handle("auth:logout", async () => {
     if (currentSession) {
-      await createAuditLog({
+      await createAuditLog$1({
         userId: currentSession.userId,
         branchId: currentSession.branchId,
         action: "logout",
@@ -1972,7 +1972,7 @@ function registerAuthHandlers() {
         password: hashedPassword,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(users.id, userId));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: currentSession?.userId,
         branchId: currentSession?.branchId,
         action: "update",
@@ -2085,7 +2085,7 @@ function registerProductHandlers() {
       }
       const result = await db2.insert(products).values(data).returning();
       const newProduct = result[0];
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
@@ -2118,7 +2118,7 @@ function registerProductHandlers() {
         }
       }
       const result = await db2.update(products).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(products.id, id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -2144,7 +2144,7 @@ function registerProductHandlers() {
         return { success: false, message: "Product not found" };
       }
       await db2.update(products).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(products.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -2229,7 +2229,7 @@ function registerCategoryHandlers() {
       const session = getCurrentSession();
       const result = await db2.insert(categories).values(data).returning();
       const newCategory = result[0];
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
@@ -2257,7 +2257,7 @@ function registerCategoryHandlers() {
         return { success: false, message: "Category cannot be its own parent" };
       }
       const result = await db2.update(categories).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(categories.id, id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -2289,7 +2289,7 @@ function registerCategoryHandlers() {
         return { success: false, message: "Cannot delete category with subcategories" };
       }
       await db2.update(categories).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(categories.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -2432,7 +2432,7 @@ function registerInventoryHandlers() {
           reason: data.reason,
           reference: data.reference
         });
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: data.branchId,
           action: "adjustment",
@@ -2477,7 +2477,7 @@ function registerInventoryHandlers() {
           notes: data.notes,
           status: "pending"
         }).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: data.fromBranchId,
           action: "transfer",
@@ -2536,7 +2536,7 @@ function registerInventoryHandlers() {
         receivedBy: session?.userId,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(stockTransfers.id, transferId));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: transfer.toBranchId,
         action: "transfer",
@@ -2651,7 +2651,7 @@ function registerCustomerHandlers() {
       const session = getCurrentSession();
       const result = await db2.insert(customers).values(data).returning();
       const newCustomer = result[0];
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
@@ -2676,7 +2676,7 @@ function registerCustomerHandlers() {
         return { success: false, message: "Customer not found" };
       }
       const result = await db2.update(customers).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(customers.id, id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -2702,7 +2702,7 @@ function registerCustomerHandlers() {
         return { success: false, message: "Customer not found" };
       }
       await db2.update(customers).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(customers.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -2844,7 +2844,7 @@ function registerSupplierHandlers() {
       const session = getCurrentSession();
       const result = await db2.insert(suppliers).values(data).returning();
       const newSupplier = result[0];
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
@@ -2869,7 +2869,7 @@ function registerSupplierHandlers() {
         return { success: false, message: "Supplier not found" };
       }
       const result = await db2.update(suppliers).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(suppliers.id, id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -2895,7 +2895,7 @@ function registerSupplierHandlers() {
         return { success: false, message: "Supplier not found" };
       }
       await db2.update(suppliers).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(suppliers.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -3046,7 +3046,7 @@ function registerSalesHandlers() {
           createdBy: session?.userId
         });
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "create",
@@ -3184,7 +3184,7 @@ function registerSalesHandlers() {
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: sale.branchId,
         action: "void",
@@ -3423,7 +3423,7 @@ function registerSalesTabsHandlers() {
         userId: session.userId,
         notes: data.notes
       }).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: data.branchId,
         action: "create",
@@ -3470,7 +3470,7 @@ function registerSalesTabsHandlers() {
         updateData.closedBy = session?.userId;
       }
       await db2.update(salesTabs).set(updateData).where(drizzleOrm.eq(salesTabs.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: tab.branchId,
         action: "update",
@@ -3505,7 +3505,7 @@ function registerSalesTabsHandlers() {
         return { success: false, message: "Cannot delete closed tab" };
       }
       await db2.delete(salesTabs).where(drizzleOrm.eq(salesTabs.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: tab.branchId,
         action: "delete",
@@ -3889,7 +3889,7 @@ Address: ${checkoutData.codAddress}, ${checkoutData.codCity}`;
         finalAmount: totalAmount,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(salesTabs.id, tabId));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: tab.branchId,
         action: "checkout",
@@ -4007,7 +4007,7 @@ function registerPurchaseHandlers() {
           createdBy: session?.userId
         });
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "create",
@@ -4144,7 +4144,7 @@ function registerPurchaseHandlers() {
           receivedDate: allReceived ? (/* @__PURE__ */ new Date()).toISOString() : null,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }).where(drizzleOrm.eq(purchases.id, purchaseId));
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: purchase.branchId,
           action: "update",
@@ -4176,7 +4176,7 @@ function registerPurchaseHandlers() {
         status,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(purchases.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: purchase.branchId,
         action: "update",
@@ -4229,7 +4229,7 @@ function registerPurchaseHandlers() {
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(accountPayables.id, payable.id));
         }
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: purchase.branchId,
           action: "update",
@@ -4330,7 +4330,7 @@ function registerReturnHandlers() {
           }
         }
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "refund",
@@ -4443,7 +4443,7 @@ function registerReturnHandlers() {
       }
       await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
       await db2.delete(returns).where(drizzleOrm.eq(returns.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: returnRecord.branchId,
         action: "delete",
@@ -4512,7 +4512,7 @@ function registerBranchHandlers() {
       }
       const result = await db2.insert(branches).values(data).returning();
       const newBranch = result[0];
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
@@ -4545,7 +4545,7 @@ function registerBranchHandlers() {
         }
       }
       const result = await db2.update(branches).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(branches.id, id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -4574,7 +4574,7 @@ function registerBranchHandlers() {
         return { success: false, message: "Cannot deactivate main branch" };
       }
       await db2.update(branches).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(branches.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -4690,7 +4690,7 @@ function registerUserHandlers() {
         updatedAt: users.updatedAt
       });
       const newUser = result[0];
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
@@ -4746,7 +4746,7 @@ function registerUserHandlers() {
         createdAt: users.createdAt,
         updatedAt: users.updatedAt
       });
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -4775,7 +4775,7 @@ function registerUserHandlers() {
         return { success: false, message: "Cannot deactivate your own account" };
       }
       await db2.update(users).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(users.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -4800,7 +4800,7 @@ function registerUserHandlers() {
         return { success: false, message: "User not found" };
       }
       await db2.update(users).set({ permissions, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(users.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -4944,7 +4944,7 @@ function registerExpenseHandlers() {
           const newPayable = payableResult[0];
           payableId = newPayable.id;
           await db2.update(expenses).set({ payableId: newPayable.id }).where(drizzleOrm.eq(expenses.id, newExpense.id));
-          await createAuditLog({
+          await createAuditLog$1({
             userId: session?.userId,
             branchId: data.branchId,
             action: "create",
@@ -4963,7 +4963,7 @@ function registerExpenseHandlers() {
           console.error("Failed to create payable for expense:", payableError);
         }
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "create",
@@ -5065,7 +5065,7 @@ function registerExpenseHandlers() {
             createdBy: session?.userId
           }).returning();
           data.payableId = payableResult[0].id;
-          await createAuditLog({
+          await createAuditLog$1({
             userId: session?.userId,
             branchId: existing.branchId,
             action: "create",
@@ -5083,7 +5083,7 @@ function registerExpenseHandlers() {
         }
       }
       const result = await db2.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: existing.branchId,
         action: "update",
@@ -5128,7 +5128,7 @@ function registerExpenseHandlers() {
 Cancelled: Expense deleted`.trim(),
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
-          await createAuditLog({
+          await createAuditLog$1({
             userId: session?.userId,
             branchId: existing.branchId,
             action: "update",
@@ -5141,7 +5141,7 @@ Cancelled: Expense deleted`.trim(),
         }
       }
       await db2.delete(expenses).where(drizzleOrm.eq(expenses.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: existing.branchId,
         action: "delete",
@@ -5319,7 +5319,7 @@ function registerCommissionHandlers() {
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(referralPersons.id, data.referralPersonId));
         }
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "create",
@@ -5358,7 +5358,7 @@ function registerCommissionHandlers() {
           updates.commissionAmount = baseAmount * rate / 100;
         }
         const [updated] = await db2.update(commissions).set(updates).where(drizzleOrm.eq(commissions.id, id)).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "update",
@@ -5389,7 +5389,7 @@ function registerCommissionHandlers() {
         }).where(drizzleOrm.eq(referralPersons.id, existing.referralPersonId));
       }
       await db2.delete(commissions).where(drizzleOrm.eq(commissions.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -5417,7 +5417,7 @@ function registerCommissionHandlers() {
         )
       );
       for (const id of ids) {
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "update",
@@ -5459,7 +5459,7 @@ function registerCommissionHandlers() {
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(referralPersons.id, commission.referralPersonId));
         }
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "update",
@@ -5783,7 +5783,7 @@ function registerSettingsHandlers() {
             updatedBy: session?.userId,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(settings.key, key));
-          await createAuditLog({
+          await createAuditLog$1({
             userId: session?.userId,
             branchId: session?.branchId,
             action: "update",
@@ -5801,7 +5801,7 @@ function registerSettingsHandlers() {
             description,
             updatedBy: session?.userId
           }).returning();
-          await createAuditLog({
+          await createAuditLog$1({
             userId: session?.userId,
             branchId: session?.branchId,
             action: "create",
@@ -5833,7 +5833,7 @@ function registerSettingsHandlers() {
           }).where(drizzleOrm.eq(settings.key, key));
         }
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
@@ -6020,7 +6020,7 @@ function registerBusinessSettingsHandlers() {
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId ?? userId,
           branchId: session?.branchId ?? null,
           action: "create",
@@ -6055,7 +6055,7 @@ function registerBusinessSettingsHandlers() {
           ...settingsData,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }).where(drizzleOrm.eq(businessSettings.settingId, settingId)).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId ?? userId,
           branchId: session?.branchId ?? null,
           action: "update",
@@ -6086,7 +6086,7 @@ function registerBusinessSettingsHandlers() {
         throw new Error("Cannot delete global settings");
       }
       const [result] = await db2.delete(businessSettings).where(drizzleOrm.eq(businessSettings.settingId, settingId)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId ?? userId,
         branchId: session?.branchId ?? null,
         action: "delete",
@@ -6131,7 +6131,7 @@ function registerBusinessSettingsHandlers() {
           createdAt: (/* @__PURE__ */ new Date()).toISOString(),
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId ?? userId,
           branchId: session?.branchId ?? null,
           action: "create",
@@ -6192,7 +6192,7 @@ function registerBusinessSettingsHandlers() {
         }).returning();
         results.push(result);
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId ?? userId,
         branchId: session?.branchId ?? null,
         action: "create",
@@ -7219,7 +7219,7 @@ function registerReportHandlers() {
           count: drizzleOrm.sql`count(*)`,
           total: drizzleOrm.sql`sum(${sales.totalAmount})`
         }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(drizzleOrm.sql`date(${sales.saleDate})`).orderBy(drizzleOrm.sql`date(${sales.saleDate})`);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7275,7 +7275,7 @@ function registerReportHandlers() {
           conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0
         )
       ).orderBy(drizzleOrm.sql`${inventory.quantity} - ${inventory.minQuantity}`).limit(50);
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: branchId ?? session?.branchId,
         action: "view",
@@ -7329,7 +7329,7 @@ function registerReportHandlers() {
         const netProfit = grossProfit - totalExpenses;
         const grossMargin = totalRevenue > 0 ? grossProfit / totalRevenue * 100 : 0;
         const netMargin = totalRevenue > 0 ? netProfit / totalRevenue * 100 : 0;
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7378,7 +7378,7 @@ function registerReportHandlers() {
           totalCustomers: drizzleOrm.sql`count(distinct ${sales.customerId})`,
           totalRevenue: drizzleOrm.sql`sum(${sales.totalAmount})`
         }).from(sales).where(drizzleOrm.and(...conditions));
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "view",
@@ -7430,7 +7430,7 @@ function registerReportHandlers() {
           date: expenses.expenseDate,
           branchName: branches.name
         }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7485,7 +7485,7 @@ function registerReportHandlers() {
           status: purchases.status,
           createdAt: purchases.createdAt
         }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(20);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7535,7 +7535,7 @@ function registerReportHandlers() {
           returnCount: drizzleOrm.sql`sum(${returnItems.quantity})`,
           totalValue: drizzleOrm.sql`sum(${returnItems.totalPrice})`
         }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).innerJoin(products, drizzleOrm.eq(returnItems.productId, products.id)).where(drizzleOrm.and(...conditions)).groupBy(returnItems.productId, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${returnItems.quantity})`)).limit(10);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7585,7 +7585,7 @@ function registerReportHandlers() {
           amount: commissions.commissionAmount,
           date: commissions.createdAt
         }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(commissions.createdAt)).limit(20);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7632,7 +7632,7 @@ function registerReportHandlers() {
           taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
           salesCount: drizzleOrm.sql`count(*)`
         }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(sales.paymentMethod);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7702,7 +7702,7 @@ function registerReportHandlers() {
         const topBranch = branchMetrics.reduce(
           (top, current) => current.revenue > top.revenue ? current : top
         );
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "view",
@@ -7783,7 +7783,7 @@ function registerReportHandlers() {
         const cashOutCommissions = commissionsCash[0]?.total || 0;
         const cashOutRefunds = refundsCash[0]?.total || 0;
         const totalCashOut = cashOutPurchases + cashOutExpenses + cashOutCommissions + cashOutRefunds;
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7850,7 +7850,7 @@ function registerReportHandlers() {
           description: auditLogs.description,
           timestamp: auditLogs.createdAt
         }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(50);
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -7989,7 +7989,7 @@ function registerReportHandlers() {
           tableName: log.tableName,
           timestamp: log.timestamp
         }));
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
           action: "view",
@@ -8049,7 +8049,7 @@ function registerReportHandlers() {
           filters,
           businessInfo
         });
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "export",
@@ -8371,7 +8371,7 @@ function registerLicenseHandlers() {
           licenseKey: licenseKey.toUpperCase(),
           updatedAt: now
         }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session.userId,
           branchId: session.branchId,
           action: "create",
@@ -8402,7 +8402,7 @@ function registerLicenseHandlers() {
           licenseKey: null,
           updatedAt: now
         }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session.userId,
           branchId: session.branchId,
           action: "delete",
@@ -8774,7 +8774,7 @@ function registerAccountReceivablesHandlers() {
         notes: data.notes,
         createdBy: session.userId
       }).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: data.branchId,
         action: "create",
@@ -8856,7 +8856,7 @@ function registerAccountReceivablesHandlers() {
         }
       }
       const result = payment;
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: receivable.branchId,
         action: "payment",
@@ -8914,7 +8914,7 @@ function registerAccountReceivablesHandlers() {
 Cancelled: ${reason}`.trim() : receivable.notes,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(accountReceivables.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: receivable.branchId,
         action: "cancel",
@@ -9158,7 +9158,7 @@ Cancelled: ${reason}`.trim() : receivable.notes,
           syncedCount++;
         }
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: null,
         action: "sync",
@@ -9337,7 +9337,7 @@ function registerAccountPayablesHandlers() {
         notes: data.notes,
         createdBy: session.userId
       }).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: data.branchId,
         action: "create",
@@ -9412,7 +9412,7 @@ function registerAccountPayablesHandlers() {
             paymentStatus: "paid",
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
-          await createAuditLog({
+          await createAuditLog$1({
             userId: session.userId,
             branchId: linkedExpense.branchId,
             action: "update",
@@ -9424,7 +9424,7 @@ function registerAccountPayablesHandlers() {
           });
         }
       }
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: payable.branchId,
         action: "payment",
@@ -9482,7 +9482,7 @@ function registerAccountPayablesHandlers() {
 Cancelled: ${reason}`.trim() : payable.notes,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(accountPayables.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: payable.branchId,
         action: "cancel",
@@ -9747,7 +9747,7 @@ function registerReferralPersonHandlers() {
         totalCommissionEarned: data.totalCommissionEarned || 0,
         totalCommissionPaid: data.totalCommissionPaid || 0
       }).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId || data.branchId,
         action: "create",
@@ -9772,7 +9772,7 @@ function registerReferralPersonHandlers() {
           return { success: false, message: "Referral person not found" };
         }
         const [updated] = await db2.update(referralPersons).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(referralPersons.id, id)).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: session?.userId,
           branchId: session?.branchId,
           action: "update",
@@ -9797,7 +9797,7 @@ function registerReferralPersonHandlers() {
         return { success: false, message: "Referral person not found" };
       }
       await db2.delete(referralPersons).where(drizzleOrm.eq(referralPersons.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "delete",
@@ -9934,7 +9934,7 @@ function registerCashRegisterHandlers() {
         openedBy: userSession.userId,
         notes: data.notes
       }).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: userSession.userId,
         branchId: data.branchId,
         action: "create",
@@ -9991,7 +9991,7 @@ function registerCashRegisterHandlers() {
 ${data.notes}`.trim() : session.notes,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }).where(drizzleOrm.eq(cashRegisterSessions.id, data.sessionId));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: userSession.userId,
         branchId: session.branchId,
         action: "close",
@@ -10221,7 +10221,7 @@ ${data.notes}`.trim() : session.notes,
           description: `Manual adjustment: ${data.reason}`,
           recordedBy: userSession.userId
         }).returning();
-        await createAuditLog({
+        await createAuditLog$1({
           userId: userSession.userId,
           branchId: session.branchId,
           action: "adjustment",
@@ -12268,7 +12268,7 @@ function registerTodosHandlers() {
         branchId: data.branchId || session.branchId,
         status: "pending"
       }).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: session.branchId,
         action: "create",
@@ -12391,7 +12391,7 @@ function registerTodosHandlers() {
       if (data.priority !== void 0) updateData.priority = data.priority;
       if (data.dueDate !== void 0) updateData.dueDate = data.dueDate;
       const [updatedTodo] = await db2.update(todos).set(updateData).where(drizzleOrm.eq(todos.id, data.id)).returning();
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: session.branchId,
         action: "update",
@@ -12429,7 +12429,7 @@ function registerTodosHandlers() {
         return { success: false, message: "Access denied" };
       }
       await db2.delete(todos).where(drizzleOrm.eq(todos.id, id));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: session.branchId,
         action: "delete",
@@ -12641,7 +12641,7 @@ function registerMessagesHandlers() {
           }
         }
       });
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: session.branchId,
         action: "create",
@@ -12756,7 +12756,7 @@ function registerMessagesHandlers() {
         return { success: false, message: "Message not found" };
       }
       await db2.delete(messages).where(drizzleOrm.eq(messages.id, messageId));
-      await createAuditLog({
+      await createAuditLog$1({
         userId: session.userId,
         branchId: session.branchId,
         action: "delete",
@@ -13248,6 +13248,441 @@ function registerDatabaseResetHandlers() {
     }
   });
 }
+let backupConfig = {
+  autoBackupEnabled: false,
+  autoBackupOnClose: false,
+  autoBackupFrequency: "daily",
+  autoBackupTime: "23:00",
+  autoBackupDay: 0,
+  backupRetentionDays: 30,
+  lastBackupTime: null
+};
+let backupScheduleTimer = null;
+function getBackupDir() {
+  const userDataPath = electron.app.getPath("userData");
+  const backupDir = node_path.join(userDataPath, "backups");
+  if (!node_fs.existsSync(backupDir)) {
+    node_fs.mkdirSync(backupDir, { recursive: true });
+  }
+  return backupDir;
+}
+function getConfigFilePath() {
+  const userDataPath = electron.app.getPath("userData");
+  return node_path.join(userDataPath, "backup-config.json");
+}
+function loadBackupConfig() {
+  const configPath = getConfigFilePath();
+  try {
+    if (node_fs.existsSync(configPath)) {
+      const data = node_fs.readFileSync(configPath, "utf-8");
+      return { ...backupConfig, ...JSON.parse(data) };
+    }
+  } catch (err) {
+    console.error("Failed to load backup config:", err);
+  }
+  return backupConfig;
+}
+function saveBackupConfig(config) {
+  const configPath = getConfigFilePath();
+  try {
+    node_fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    backupConfig = config;
+  } catch (err) {
+    console.error("Failed to save backup config:", err);
+  }
+}
+function generateBackupFileName() {
+  const now = /* @__PURE__ */ new Date();
+  const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  return `firearms-pos-backup-${timestamp}.db`;
+}
+async function createBackup(reason = "manual") {
+  try {
+    const dbPath = getDbPath();
+    const backupDir = getBackupDir();
+    const backupFileName = generateBackupFileName();
+    const backupPath = node_path.join(backupDir, backupFileName);
+    if (!node_fs.existsSync(dbPath)) {
+      return { success: false, message: "Database file not found" };
+    }
+    try {
+      const rawDb = getRawDatabase();
+      rawDb.pragma("wal_checkpoint(TRUNCATE)");
+    } catch (err) {
+      console.warn("Could not checkpoint WAL:", err);
+    }
+    node_fs.copyFileSync(dbPath, backupPath);
+    const walPath = dbPath + "-wal";
+    const shmPath = dbPath + "-shm";
+    if (node_fs.existsSync(walPath)) {
+      node_fs.copyFileSync(walPath, backupPath + "-wal");
+    }
+    if (node_fs.existsSync(shmPath)) {
+      node_fs.copyFileSync(shmPath, backupPath + "-shm");
+    }
+    backupConfig.lastBackupTime = (/* @__PURE__ */ new Date()).toISOString();
+    saveBackupConfig(backupConfig);
+    console.log(`Backup created successfully: ${backupPath} (reason: ${reason})`);
+    return {
+      success: true,
+      message: `Backup created successfully: ${backupFileName}`,
+      filePath: backupPath
+    };
+  } catch (err) {
+    console.error("Backup creation failed:", err);
+    return {
+      success: false,
+      message: `Failed to create backup: ${err instanceof Error ? err.message : "Unknown error"}`
+    };
+  }
+}
+async function restoreBackup(backupPath) {
+  try {
+    if (!node_fs.existsSync(backupPath)) {
+      return { success: false, message: "Backup file not found" };
+    }
+    const dbPath = getDbPath();
+    closeDatabase();
+    const backupDir = getBackupDir();
+    const safetyBackupName = `pre-restore-backup-${Date.now()}.db`;
+    const safetyBackupPath = node_path.join(backupDir, safetyBackupName);
+    if (node_fs.existsSync(dbPath)) {
+      node_fs.copyFileSync(dbPath, safetyBackupPath);
+      console.log("Safety backup created before restore:", safetyBackupPath);
+    }
+    const walPath = dbPath + "-wal";
+    const shmPath = dbPath + "-shm";
+    if (node_fs.existsSync(dbPath)) node_fs.unlinkSync(dbPath);
+    if (node_fs.existsSync(walPath)) node_fs.unlinkSync(walPath);
+    if (node_fs.existsSync(shmPath)) node_fs.unlinkSync(shmPath);
+    node_fs.copyFileSync(backupPath, dbPath);
+    if (node_fs.existsSync(backupPath + "-wal")) {
+      node_fs.copyFileSync(backupPath + "-wal", walPath);
+    }
+    if (node_fs.existsSync(backupPath + "-shm")) {
+      node_fs.copyFileSync(backupPath + "-shm", shmPath);
+    }
+    initDatabase();
+    console.log("Database restored successfully from:", backupPath);
+    return {
+      success: true,
+      message: "Database restored successfully. Please restart the application."
+    };
+  } catch (err) {
+    console.error("Restore failed:", err);
+    try {
+      initDatabase();
+    } catch (_initErr) {
+    }
+    return {
+      success: false,
+      message: `Failed to restore backup: ${err instanceof Error ? err.message : "Unknown error"}`
+    };
+  }
+}
+function listBackups() {
+  const backupDir = getBackupDir();
+  const backups = [];
+  try {
+    const files = node_fs.readdirSync(backupDir);
+    for (const file of files) {
+      if (file.endsWith(".db") && !file.endsWith("-wal") && !file.endsWith("-shm")) {
+        const filePath = node_path.join(backupDir, file);
+        const stats = node_fs.statSync(filePath);
+        backups.push({
+          name: file,
+          path: filePath,
+          size: stats.size,
+          createdAt: stats.mtime.toISOString()
+        });
+      }
+    }
+    backups.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    console.error("Failed to list backups:", err);
+  }
+  return backups;
+}
+function deleteBackup(backupPath) {
+  try {
+    if (!node_fs.existsSync(backupPath)) {
+      return { success: false, message: "Backup file not found" };
+    }
+    node_fs.unlinkSync(backupPath);
+    if (node_fs.existsSync(backupPath + "-wal")) node_fs.unlinkSync(backupPath + "-wal");
+    if (node_fs.existsSync(backupPath + "-shm")) node_fs.unlinkSync(backupPath + "-shm");
+    return { success: true, message: "Backup deleted successfully" };
+  } catch (err) {
+    console.error("Failed to delete backup:", err);
+    return {
+      success: false,
+      message: `Failed to delete backup: ${err instanceof Error ? err.message : "Unknown error"}`
+    };
+  }
+}
+function cleanOldBackups(retentionDays) {
+  const backups = listBackups();
+  const cutoffDate = /* @__PURE__ */ new Date();
+  cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+  let deletedCount = 0;
+  for (const backup of backups) {
+    const backupDate = new Date(backup.createdAt);
+    if (backupDate < cutoffDate) {
+      const result = deleteBackup(backup.path);
+      if (result.success) {
+        deletedCount++;
+        console.log(`Deleted old backup: ${backup.name}`);
+      }
+    }
+  }
+  return deletedCount;
+}
+function scheduleNextBackup() {
+  if (backupScheduleTimer) {
+    clearTimeout(backupScheduleTimer);
+    backupScheduleTimer = null;
+    console.log("Cleared existing backup schedule");
+  }
+  if (!backupConfig.autoBackupEnabled) {
+    console.log("Auto backup is disabled, not scheduling");
+    return;
+  }
+  try {
+    const now = /* @__PURE__ */ new Date();
+    let nextBackupTime;
+    const timeParts = backupConfig.autoBackupTime.split(":");
+    const hours = parseInt(timeParts[0]) || 23;
+    const minutes = parseInt(timeParts[1]) || 0;
+    switch (backupConfig.autoBackupFrequency) {
+      case "daily": {
+        nextBackupTime = new Date(now);
+        nextBackupTime.setHours(hours, minutes, 0, 0);
+        if (nextBackupTime <= now) {
+          nextBackupTime.setDate(nextBackupTime.getDate() + 1);
+        }
+        break;
+      }
+      case "weekly": {
+        nextBackupTime = new Date(now);
+        nextBackupTime.setHours(hours, minutes, 0, 0);
+        const targetDay = backupConfig.autoBackupDay || 0;
+        const daysUntilTarget = (targetDay - now.getDay() + 7) % 7;
+        if (daysUntilTarget === 0 && nextBackupTime <= now) {
+          nextBackupTime.setDate(nextBackupTime.getDate() + 7);
+        } else {
+          nextBackupTime.setDate(nextBackupTime.getDate() + daysUntilTarget);
+        }
+        break;
+      }
+      case "monthly": {
+        nextBackupTime = new Date(now);
+        const targetDayOfMonth = Math.min(Math.max(backupConfig.autoBackupDay || 1, 1), 28);
+        nextBackupTime.setDate(targetDayOfMonth);
+        nextBackupTime.setHours(hours, minutes, 0, 0);
+        if (nextBackupTime <= now) {
+          nextBackupTime.setMonth(nextBackupTime.getMonth() + 1);
+        }
+        break;
+      }
+      default:
+        console.log("Unknown backup frequency:", backupConfig.autoBackupFrequency);
+        return;
+    }
+    const delay = nextBackupTime.getTime() - now.getTime();
+    const MAX_TIMEOUT = 24 * 60 * 60 * 1e3;
+    if (delay > MAX_TIMEOUT) {
+      console.log(`Next backup scheduled for: ${nextBackupTime.toISOString()}`);
+      console.log(`Delay too long (${Math.round(delay / 1e3 / 60 / 60)} hours), will recheck in 24 hours`);
+      backupScheduleTimer = setTimeout(() => {
+        scheduleNextBackup();
+      }, MAX_TIMEOUT);
+    } else {
+      console.log(`Next backup scheduled for: ${nextBackupTime.toISOString()} (in ${Math.round(delay / 1e3 / 60)} minutes)`);
+      backupScheduleTimer = setTimeout(async () => {
+        console.log("Running scheduled backup...");
+        try {
+          const result = await createBackup("scheduled");
+          if (result.success) {
+            console.log("Scheduled backup completed successfully");
+            cleanOldBackups(backupConfig.backupRetentionDays);
+          } else {
+            console.error("Scheduled backup failed:", result.message);
+          }
+        } catch (err) {
+          console.error("Error during scheduled backup:", err);
+        }
+        scheduleNextBackup();
+      }, delay);
+    }
+  } catch (err) {
+    console.error("Error scheduling backup:", err);
+  }
+}
+function registerBackupHandlers() {
+  backupConfig = loadBackupConfig();
+  scheduleNextBackup();
+  electron.ipcMain.handle("backup:create", async (_) => {
+    const result = await createBackup("manual");
+    return result;
+  });
+  electron.ipcMain.handle("backup:restore", async (_, backupPath) => {
+    const result = await restoreBackup(backupPath);
+    return result;
+  });
+  electron.ipcMain.handle("backup:list", async () => {
+    return { success: true, data: listBackups() };
+  });
+  electron.ipcMain.handle("backup:delete", async (_, backupPath) => {
+    const result = deleteBackup(backupPath);
+    return result;
+  });
+  electron.ipcMain.handle("backup:get-config", async () => {
+    return { success: true, data: backupConfig };
+  });
+  electron.ipcMain.handle("backup:update-config", async (_, newConfig) => {
+    console.log("backup:update-config called with:", newConfig);
+    try {
+      const previousConfig = { ...backupConfig };
+      backupConfig = { ...backupConfig, ...newConfig };
+      saveBackupConfig(backupConfig);
+      console.log("Backup config saved:", backupConfig);
+      if (previousConfig.autoBackupEnabled !== backupConfig.autoBackupEnabled || previousConfig.autoBackupFrequency !== backupConfig.autoBackupFrequency || previousConfig.autoBackupTime !== backupConfig.autoBackupTime || previousConfig.autoBackupDay !== backupConfig.autoBackupDay) {
+        console.log("Auto backup settings changed, rescheduling...");
+        scheduleNextBackup();
+      }
+      return { success: true, message: "Backup configuration updated", data: backupConfig };
+    } catch (err) {
+      console.error("Failed to update backup config:", err);
+      return {
+        success: false,
+        message: `Failed to update config: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  });
+  electron.ipcMain.handle("backup:export", async () => {
+    console.log("backup:export called");
+    try {
+      const focusedWindow = electron.BrowserWindow.getFocusedWindow() || electron.BrowserWindow.getAllWindows()[0];
+      if (!focusedWindow) {
+        console.error("No browser window available for dialog");
+        return { success: false, message: "No window available for dialog" };
+      }
+      const defaultFileName = generateBackupFileName();
+      console.log("Opening save dialog with default filename:", defaultFileName);
+      const result = await electron.dialog.showSaveDialog(focusedWindow, {
+        title: "Export Database Backup",
+        defaultPath: defaultFileName,
+        filters: [
+          { name: "SQLite Database", extensions: ["db"] },
+          { name: "All Files", extensions: ["*"] }
+        ]
+      });
+      console.log("Save dialog result:", result);
+      if (result.canceled || !result.filePath) {
+        return { success: false, message: "Export cancelled" };
+      }
+      const dbPath = getDbPath();
+      console.log("Database path:", dbPath);
+      if (!node_fs.existsSync(dbPath)) {
+        console.error("Database file not found at:", dbPath);
+        return { success: false, message: "Database file not found" };
+      }
+      try {
+        const rawDb = getRawDatabase();
+        rawDb.pragma("wal_checkpoint(TRUNCATE)");
+        console.log("WAL checkpoint completed");
+      } catch (walErr) {
+        console.warn("Could not checkpoint WAL:", walErr);
+      }
+      node_fs.copyFileSync(dbPath, result.filePath);
+      console.log("Database copied to:", result.filePath);
+      return { success: true, message: `Database exported successfully to: ${result.filePath}`, filePath: result.filePath };
+    } catch (err) {
+      console.error("Export backup failed:", err);
+      return {
+        success: false,
+        message: `Export failed: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  });
+  electron.ipcMain.handle("backup:import", async (_, userId) => {
+    console.log("backup:import called");
+    try {
+      const focusedWindow = electron.BrowserWindow.getFocusedWindow() || electron.BrowserWindow.getAllWindows()[0];
+      if (!focusedWindow) {
+        console.error("No browser window available for dialog");
+        return { success: false, message: "No window available for dialog" };
+      }
+      console.log("Opening open dialog for import");
+      const result = await electron.dialog.showOpenDialog(focusedWindow, {
+        title: "Import Database Backup",
+        filters: [
+          { name: "SQLite Database", extensions: ["db"] },
+          { name: "All Files", extensions: ["*"] }
+        ],
+        properties: ["openFile"]
+      });
+      console.log("Open dialog result:", result);
+      if (result.canceled || result.filePaths.length === 0) {
+        return { success: false, message: "Import cancelled" };
+      }
+      const importPath = result.filePaths[0];
+      console.log("Import path selected:", importPath);
+      if (!node_fs.existsSync(importPath)) {
+        console.error("Selected file does not exist:", importPath);
+        return { success: false, message: "Selected file does not exist" };
+      }
+      console.log("Starting restore from:", importPath);
+      const restoreResult = await restoreBackup(importPath);
+      console.log("Restore result:", restoreResult);
+      if (restoreResult.success && userId) {
+        try {
+          await createAuditLog({
+            userId,
+            action: "BACKUP_IMPORT",
+            entityType: "system",
+            entityId: 0,
+            details: { filePath: importPath }
+          });
+        } catch (auditErr) {
+          console.warn("Audit log failed after import:", auditErr);
+        }
+      }
+      return restoreResult;
+    } catch (err) {
+      console.error("Import backup failed:", err);
+      return {
+        success: false,
+        message: `Import failed: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  });
+  electron.ipcMain.handle("backup:clean-old", async (_, retentionDays) => {
+    const days = retentionDays ?? backupConfig.backupRetentionDays;
+    const deletedCount = cleanOldBackups(days);
+    return {
+      success: true,
+      message: `Cleaned ${deletedCount} old backup(s)`,
+      deletedCount
+    };
+  });
+  electron.ipcMain.handle("backup:get-directory", async () => {
+    return { success: true, data: getBackupDir() };
+  });
+  console.log("Backup IPC handlers registered");
+}
+async function performCloseBackup() {
+  if (backupConfig.autoBackupOnClose) {
+    console.log("Performing backup on application close...");
+    await createBackup("on-close");
+  }
+}
+function stopBackupScheduler() {
+  if (backupScheduleTimer) {
+    clearTimeout(backupScheduleTimer);
+    backupScheduleTimer = null;
+  }
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -13281,6 +13716,7 @@ function registerAllHandlers() {
   registerDashboardHandlers();
   registerSetupHandlers();
   registerDatabaseResetHandlers();
+  registerBackupHandlers();
   console.log("All IPC handlers registered");
 }
 let mainWindow = null;
@@ -13334,12 +13770,16 @@ electron.app.whenReady().then(async () => {
     }
   });
 });
-electron.app.on("window-all-closed", () => {
+electron.app.on("window-all-closed", async () => {
+  await performCloseBackup();
+  stopBackupScheduler();
   closeDatabase();
   if (process.platform !== "darwin") {
     electron.app.quit();
   }
 });
-electron.app.on("before-quit", () => {
+electron.app.on("before-quit", async () => {
+  await performCloseBackup();
+  stopBackupScheduler();
   closeDatabase();
 });

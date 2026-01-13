@@ -314,6 +314,19 @@ const api = {
     checkFirstRun: () => electron.ipcRenderer.invoke("setup:check-first-run"),
     complete: (data) => electron.ipcRenderer.invoke("setup:complete", data),
     generateBranchCode: (businessName) => electron.ipcRenderer.invoke("setup:generate-branch-code", businessName)
+  },
+  // Backup & Restore
+  backup: {
+    create: (userId) => electron.ipcRenderer.invoke("backup:create", userId),
+    restore: (backupPath, userId) => electron.ipcRenderer.invoke("backup:restore", backupPath, userId),
+    list: () => electron.ipcRenderer.invoke("backup:list"),
+    delete: (backupPath, userId) => electron.ipcRenderer.invoke("backup:delete", backupPath, userId),
+    getConfig: () => electron.ipcRenderer.invoke("backup:get-config"),
+    updateConfig: (config, userId) => electron.ipcRenderer.invoke("backup:update-config", config, userId),
+    export: (userId) => electron.ipcRenderer.invoke("backup:export", userId),
+    import: (userId) => electron.ipcRenderer.invoke("backup:import", userId),
+    cleanOld: (retentionDays) => electron.ipcRenderer.invoke("backup:clean-old", retentionDays),
+    getDirectory: () => electron.ipcRenderer.invoke("backup:get-directory")
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

@@ -2,7 +2,8 @@ import { ipcMain, app, dialog, BrowserWindow } from 'electron'
 import { getDbPath, closeDatabase, initDatabase, getRawDatabase } from '../db'
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
-import { logAudit } from '../utils/audit'
+// Note: Audit logging for backup operations is disabled because the audit_logs
+// table schema doesn't include backup-related action types
 
 // Backup configuration storage
 interface BackupConfig {
@@ -365,36 +366,14 @@ export function registerBackupHandlers(): void {
   scheduleNextBackup()
 
   // Create backup now
-  ipcMain.handle('backup:create', async (_, userId?: number) => {
+  ipcMain.handle('backup:create', async (_) => {
     const result = await createBackup('manual')
-    if (result.success && userId) {
-      await logAudit({
-        userId,
-        action: 'BACKUP_CREATE',
-        entityType: 'system',
-        entityId: 0,
-        details: { filePath: result.filePath }
-      })
-    }
     return result
   })
 
   // Restore from backup
-  ipcMain.handle('backup:restore', async (_, backupPath: string, userId?: number) => {
+  ipcMain.handle('backup:restore', async (_, backupPath: string) => {
     const result = await restoreBackup(backupPath)
-    if (result.success && userId) {
-      try {
-        await logAudit({
-          userId,
-          action: 'BACKUP_RESTORE',
-          entityType: 'system',
-          entityId: 0,
-          details: { backupPath }
-        })
-      } catch (_err) {
-        // Audit log may fail after restore
-      }
-    }
     return result
   })
 
@@ -404,17 +383,8 @@ export function registerBackupHandlers(): void {
   })
 
   // Delete a specific backup
-  ipcMain.handle('backup:delete', async (_, backupPath: string, userId?: number) => {
+  ipcMain.handle('backup:delete', async (_, backupPath: string) => {
     const result = deleteBackup(backupPath)
-    if (result.success && userId) {
-      await logAudit({
-        userId,
-        action: 'BACKUP_DELETE',
-        entityType: 'system',
-        entityId: 0,
-        details: { backupPath }
-      })
-    }
     return result
   })
 
@@ -424,59 +394,71 @@ export function registerBackupHandlers(): void {
   })
 
   // Update backup configuration
-  ipcMain.handle('backup:update-config', async (_, newConfig: Partial<BackupConfig>, userId?: number) => {
+  ipcMain.handle('backup:update-config', async (_, newConfig: Partial<BackupConfig>) => {
+    console.log('backup:update-config called with:', newConfig)
     try {
+      const previousConfig = { ...backupConfig }
       backupConfig = { ...backupConfig, ...newConfig }
       saveBackupConfig(backupConfig)
+      console.log('Backup config saved:', backupConfig)
 
-      // Reschedule backups if needed
-      scheduleNextBackup()
-
-      if (userId) {
-        await logAudit({
-          userId,
-          action: 'BACKUP_CONFIG_UPDATE',
-          entityType: 'system',
-          entityId: 0,
-          details: newConfig
-        })
+      // Reschedule backups if auto backup settings changed
+      if (
+        previousConfig.autoBackupEnabled !== backupConfig.autoBackupEnabled ||
+        previousConfig.autoBackupFrequency !== backupConfig.autoBackupFrequency ||
+        previousConfig.autoBackupTime !== backupConfig.autoBackupTime ||
+        previousConfig.autoBackupDay !== backupConfig.autoBackupDay
+      ) {
+        console.log('Auto backup settings changed, rescheduling...')
+        scheduleNextBackup()
       }
 
       return { success: true, message: 'Backup configuration updated', data: backupConfig }
     } catch (err) {
+      console.error('Failed to update backup config:', err)
       return {
         success: false,
-        message: `Failed to update config: ${err instanceof Error ? err.message : 'Unknown error'}`
+        message: `Failed to update config: ${err instanceof Error ? err.message : String(err)}`
       }
     }
   })
 
   // Export backup to custom location (file dialog)
-  ipcMain.handle('backup:export', async (_, userId?: number) => {
+  ipcMain.handle('backup:export', async () => {
+    console.log('backup:export called')
     try {
-      const focusedWindow = BrowserWindow.getFocusedWindow()
+      // Get all windows and use the first one if no focused window
+      const focusedWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
 
-      const dialogOptions = {
+      if (!focusedWindow) {
+        console.error('No browser window available for dialog')
+        return { success: false, message: 'No window available for dialog' }
+      }
+
+      const defaultFileName = generateBackupFileName()
+      console.log('Opening save dialog with default filename:', defaultFileName)
+
+      const result = await dialog.showSaveDialog(focusedWindow, {
         title: 'Export Database Backup',
-        defaultPath: generateBackupFileName(),
+        defaultPath: defaultFileName,
         filters: [
           { name: 'SQLite Database', extensions: ['db'] },
           { name: 'All Files', extensions: ['*'] }
         ]
-      }
+      })
 
-      const result = focusedWindow
-        ? await dialog.showSaveDialog(focusedWindow, dialogOptions)
-        : await dialog.showSaveDialog(dialogOptions)
+      console.log('Save dialog result:', result)
 
       if (result.canceled || !result.filePath) {
         return { success: false, message: 'Export cancelled' }
       }
 
       const dbPath = getDbPath()
+      console.log('Database path:', dbPath)
 
       // Check if database exists
       if (!existsSync(dbPath)) {
+        console.error('Database file not found at:', dbPath)
         return { success: false, message: 'Database file not found' }
       }
 
@@ -484,66 +466,69 @@ export function registerBackupHandlers(): void {
       try {
         const rawDb = getRawDatabase()
         rawDb.pragma('wal_checkpoint(TRUNCATE)')
+        console.log('WAL checkpoint completed')
       } catch (walErr) {
         console.warn('Could not checkpoint WAL:', walErr)
       }
 
       copyFileSync(dbPath, result.filePath)
-
-      if (userId) {
-        await logAudit({
-          userId,
-          action: 'BACKUP_EXPORT',
-          entityType: 'system',
-          entityId: 0,
-          details: { filePath: result.filePath }
-        })
-      }
+      console.log('Database copied to:', result.filePath)
 
       return { success: true, message: `Database exported successfully to: ${result.filePath}`, filePath: result.filePath }
     } catch (err) {
       console.error('Export backup failed:', err)
       return {
         success: false,
-        message: `Export failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+        message: `Export failed: ${err instanceof Error ? err.message : String(err)}`
       }
     }
   })
 
   // Import backup from file (file dialog)
   ipcMain.handle('backup:import', async (_, userId?: number) => {
+    console.log('backup:import called')
     try {
-      const focusedWindow = BrowserWindow.getFocusedWindow()
+      // Get all windows and use the first one if no focused window
+      const focusedWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
 
-      const dialogOptions = {
+      if (!focusedWindow) {
+        console.error('No browser window available for dialog')
+        return { success: false, message: 'No window available for dialog' }
+      }
+
+      console.log('Opening open dialog for import')
+
+      const result = await dialog.showOpenDialog(focusedWindow, {
         title: 'Import Database Backup',
         filters: [
           { name: 'SQLite Database', extensions: ['db'] },
           { name: 'All Files', extensions: ['*'] }
         ],
-        properties: ['openFile'] as const
-      }
+        properties: ['openFile']
+      })
 
-      const result = focusedWindow
-        ? await dialog.showOpenDialog(focusedWindow, dialogOptions)
-        : await dialog.showOpenDialog(dialogOptions)
+      console.log('Open dialog result:', result)
 
       if (result.canceled || result.filePaths.length === 0) {
         return { success: false, message: 'Import cancelled' }
       }
 
       const importPath = result.filePaths[0]
+      console.log('Import path selected:', importPath)
 
       // Verify the selected file exists and is readable
       if (!existsSync(importPath)) {
+        console.error('Selected file does not exist:', importPath)
         return { success: false, message: 'Selected file does not exist' }
       }
 
+      console.log('Starting restore from:', importPath)
       const restoreResult = await restoreBackup(importPath)
+      console.log('Restore result:', restoreResult)
 
       if (restoreResult.success && userId) {
         try {
-          await logAudit({
+          await createAuditLog({
             userId,
             action: 'BACKUP_IMPORT',
             entityType: 'system',
@@ -560,7 +545,7 @@ export function registerBackupHandlers(): void {
       console.error('Import backup failed:', err)
       return {
         success: false,
-        message: `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+        message: `Import failed: ${err instanceof Error ? err.message : String(err)}`
       }
     }
   })
