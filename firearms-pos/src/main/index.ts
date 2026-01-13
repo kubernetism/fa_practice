@@ -1,10 +1,21 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join } from 'node:path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase } from './db'
 import { runMigrations, seedInitialData } from './db/migrate'
 import { registerAllHandlers } from './ipc'
 import { performCloseBackup, stopBackupScheduler } from './ipc/backup-ipc'
+
+// Global error handler for uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+  dialog.showErrorBox('Application Error', `An unexpected error occurred:\n\n${error.message}\n\n${error.stack}`)
+  app.quit()
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason)
+})
 
 let mainWindow: BrowserWindow | null = null
 
@@ -68,6 +79,14 @@ app.whenReady().then(async () => {
     console.log('IPC handlers registered')
   } catch (error) {
     console.error('Failed to initialize app:', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    const errorStack = error instanceof Error ? error.stack : ''
+    dialog.showErrorBox(
+      'Initialization Error',
+      `Failed to initialize the application:\n\n${errorMessage}\n\n${errorStack}`
+    )
+    app.quit()
+    return
   }
 
   createWindow()
