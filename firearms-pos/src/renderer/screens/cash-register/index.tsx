@@ -49,40 +49,43 @@ import { useBranch } from '@/contexts/branch-context'
 
 interface CashSession {
   id: number
-  branch_id: number
-  session_date: string
-  opening_balance: number
-  closing_balance: number | null
-  expected_balance: number | null
-  actual_balance: number | null
+  branchId: number
+  sessionDate: string
+  openingBalance: number
+  closingBalance: number | null
+  expectedBalance: number | null
+  actualBalance: number | null
   variance: number | null
   status: 'open' | 'closed' | 'reconciled'
-  opened_by: number
-  closed_by: number | null
-  reconciled_by: number | null
-  opened_at: string
-  closed_at: string | null
-  reconciled_at: string | null
+  openedBy: number
+  closedBy: number | null
+  reconciledBy: number | null
+  openedAt: string
+  closedAt: string | null
+  reconciledAt: string | null
   notes: string | null
-  created_at: string
-  updated_at: string
-  openedByUser?: { id: number; full_name: string }
-  closedByUser?: { id: number; full_name: string }
+  createdAt: string
+  updatedAt: string
+  currentBalance?: number
+  totalIn?: number
+  totalOut?: number
+  openedByUser?: { id: number; fullName: string }
+  closedByUser?: { id: number; fullName: string }
 }
 
 interface CashTransaction {
   id: number
-  session_id: number
-  branch_id: number
-  transaction_type: 'cash_in' | 'cash_out' | 'sale' | 'refund' | 'adjustment' | 'expense' | 'deposit' | 'withdrawal'
+  sessionId: number
+  branchId: number
+  transactionType: 'cash_in' | 'cash_out' | 'sale' | 'refund' | 'adjustment' | 'expense' | 'deposit' | 'withdrawal' | 'ar_collection' | 'ap_payment' | 'petty_cash_in' | 'petty_cash_out'
   amount: number
-  reference_type: string | null
-  reference_id: number | null
+  referenceType: string | null
+  referenceId: number | null
   description: string | null
-  recorded_by: number
-  transaction_date: string
-  created_at: string
-  recordedByUser?: { id: number; full_name: string }
+  recordedBy: number
+  transactionDate: string
+  createdAt: string
+  recordedByUser?: { id: number; fullName: string }
 }
 
 interface CashFlowSummary {
@@ -355,7 +358,7 @@ export default function CashRegisterScreen() {
               <>
                 {getStatusBadge(currentSession.status)}
                 <p className="text-xs text-muted-foreground mt-2">
-                  Opened: {format(new Date(currentSession.opened_at), 'MMM d, h:mm a')}
+                  Opened: {format(new Date(currentSession.openedAt), 'MMM d, h:mm a')}
                 </p>
               </>
             ) : (
@@ -371,7 +374,7 @@ export default function CashRegisterScreen() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {currentSession ? formatCurrency(currentSession.opening_balance) : '-'}
+              {currentSession ? formatCurrency(currentSession.openingBalance) : '-'}
             </div>
           </CardContent>
         </Card>
@@ -457,25 +460,25 @@ export default function CashRegisterScreen() {
                     {transactions.map((tx) => (
                       <TableRow key={tx.id}>
                         <TableCell>
-                          {format(new Date(tx.transaction_date), 'h:mm a')}
+                          {format(new Date(tx.transactionDate), 'h:mm a')}
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-2">
-                            {getTransactionIcon(tx.transaction_type)}
-                            <span className="capitalize">{tx.transaction_type.replace('_', ' ')}</span>
+                            {getTransactionIcon(tx.transactionType)}
+                            <span className="capitalize">{tx.transactionType.replace('_', ' ')}</span>
                           </div>
                         </TableCell>
                         <TableCell>{tx.description || '-'}</TableCell>
                         <TableCell>
-                          {tx.reference_type ? `${tx.reference_type} #${tx.reference_id}` : '-'}
+                          {tx.referenceType ? `${tx.referenceType} #${tx.referenceId}` : '-'}
                         </TableCell>
                         <TableCell className={`text-right font-medium ${
-                          ['cash_in', 'sale', 'deposit'].includes(tx.transaction_type)
+                          ['cash_in', 'sale', 'deposit', 'ar_collection', 'petty_cash_in'].includes(tx.transactionType)
                             ? 'text-green-600'
                             : 'text-red-600'
                         }`}>
-                          {['cash_in', 'sale', 'deposit'].includes(tx.transaction_type) ? '+' : '-'}
-                          {formatCurrency(tx.amount)}
+                          {['cash_in', 'sale', 'deposit', 'ar_collection', 'petty_cash_in'].includes(tx.transactionType) ? '+' : '-'}
+                          {formatCurrency(Math.abs(tx.amount))}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -516,16 +519,16 @@ export default function CashRegisterScreen() {
                     {sessionHistory.map((session) => (
                       <TableRow key={session.id}>
                         <TableCell>
-                          {format(new Date(session.session_date), 'MMM d, yyyy')}
+                          {format(new Date(session.sessionDate), 'MMM d, yyyy')}
                         </TableCell>
                         <TableCell>{getStatusBadge(session.status)}</TableCell>
-                        <TableCell>{session.openedByUser?.full_name || '-'}</TableCell>
+                        <TableCell>{session.openedByUser?.fullName || '-'}</TableCell>
                         <TableCell className="text-right">
-                          {formatCurrency(session.opening_balance)}
+                          {formatCurrency(session.openingBalance)}
                         </TableCell>
                         <TableCell className="text-right">
-                          {session.closing_balance !== null
-                            ? formatCurrency(session.closing_balance)
+                          {session.closingBalance !== null
+                            ? formatCurrency(session.closingBalance)
                             : '-'}
                         </TableCell>
                         <TableCell className={`text-right font-medium ${

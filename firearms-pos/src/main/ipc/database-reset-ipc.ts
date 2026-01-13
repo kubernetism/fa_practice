@@ -49,89 +49,106 @@ export function registerDatabaseResetHandlers(): void {
         console.log('Deleting todos...')
         rawDb.prepare('DELETE FROM todos').run()
 
-        // 5. Delete account receivables and payables
+        // 5. Delete account receivables and payables (with payment records first)
         console.log('Deleting account receivables...')
         rawDb.prepare('DELETE FROM account_receivables').run()
+
+        console.log('Deleting payable payments...')
+        rawDb.prepare('DELETE FROM payable_payments').run()
 
         console.log('Deleting account payables...')
         rawDb.prepare('DELETE FROM account_payables').run()
 
-        // 6. Delete cash register entries
-        console.log('Deleting cash register entries...')
-        rawDb.prepare('DELETE FROM cash_register').run()
+        // 6. Delete cash register entries (transactions first, then sessions)
+        console.log('Deleting cash transactions...')
+        rawDb.prepare('DELETE FROM cash_transactions').run()
 
-        // 7. Delete stock adjustments and transfers
+        console.log('Deleting cash register sessions...')
+        rawDb.prepare('DELETE FROM cash_register_sessions').run()
+
+        // 7. Delete journal entries (lines first, then entries)
+        console.log('Deleting journal entry lines...')
+        rawDb.prepare('DELETE FROM journal_entry_lines').run()
+
+        console.log('Deleting journal entries...')
+        rawDb.prepare('DELETE FROM journal_entries').run()
+
+        // 8. Delete account balances
+        console.log('Deleting account balances...')
+        rawDb.prepare('DELETE FROM account_balances').run()
+
+        // 9. Delete stock adjustments and transfers
         console.log('Deleting stock adjustments...')
         rawDb.prepare('DELETE FROM stock_adjustments').run()
 
         console.log('Deleting stock transfers...')
         rawDb.prepare('DELETE FROM stock_transfers').run()
 
-        // 8. Delete returns (depends on sales)
+        // 10. Delete returns (depends on sales)
         console.log('Deleting returns...')
         rawDb.prepare('DELETE FROM returns').run()
 
-        // 9. Delete sales tabs
+        // 11. Delete sales tabs
         console.log('Deleting sales tabs...')
         rawDb.prepare('DELETE FROM sales_tabs').run()
 
-        // 10. Delete sales (has items in JSON, no separate table)
+        // 12. Delete sales (has items in JSON, no separate table)
         console.log('Deleting sales...')
         rawDb.prepare('DELETE FROM sales').run()
 
-        // 11. Delete purchases (has items in JSON, no separate table)
+        // 13. Delete purchases (has items in JSON, no separate table)
         console.log('Deleting purchases...')
         rawDb.prepare('DELETE FROM purchases').run()
 
-        // 12. Delete expenses
+        // 14. Delete expenses
         console.log('Deleting expenses...')
         rawDb.prepare('DELETE FROM expenses').run()
 
-        // 13. Delete inventory records
+        // 15. Delete inventory records
         console.log('Deleting inventory...')
         rawDb.prepare('DELETE FROM inventory').run()
 
-        // 14. Delete products
+        // 16. Delete products
         console.log('Deleting products...')
         rawDb.prepare('DELETE FROM products').run()
 
-        // 15. Delete categories
+        // 17. Delete categories
         console.log('Deleting categories...')
         rawDb.prepare('DELETE FROM categories').run()
 
-        // 16. Delete customers
+        // 18. Delete customers
         console.log('Deleting customers...')
         rawDb.prepare('DELETE FROM customers').run()
 
-        // 17. Delete suppliers
+        // 19. Delete suppliers
         console.log('Deleting suppliers...')
         rawDb.prepare('DELETE FROM suppliers').run()
 
-        // 18. Delete referral persons
+        // 20. Delete referral persons
         console.log('Deleting referral persons...')
         rawDb.prepare('DELETE FROM referral_persons').run()
 
-        // 19. Delete chart of accounts
+        // 21. Delete chart of accounts
         console.log('Deleting chart of accounts...')
         rawDb.prepare('DELETE FROM chart_of_accounts').run()
 
-        // 20. Delete all users (we'll recreate admin after)
+        // 22. Delete all users (we'll recreate admin after)
         console.log('Deleting all users...')
         rawDb.prepare('DELETE FROM users').run()
 
-        // 21. Delete business settings
+        // 23. Delete business settings
         console.log('Deleting business settings...')
         rawDb.prepare('DELETE FROM business_settings').run()
 
-        // 22. Delete general settings
+        // 24. Delete general settings
         console.log('Deleting general settings...')
         rawDb.prepare('DELETE FROM settings').run()
 
-        // 23. Delete branches
+        // 25. Delete branches
         console.log('Deleting branches...')
         rawDb.prepare('DELETE FROM branches').run()
 
-        // 24. Reset application_info to show setup wizard again
+        // 26. Reset application_info to show setup wizard again
         console.log('Resetting application info...')
         rawDb.prepare('UPDATE application_info SET setup_completed = 0').run()
 
