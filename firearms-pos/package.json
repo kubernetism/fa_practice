@@ -92,8 +92,22 @@
     },
     "files": [
       "out/**/*",
-      "!node_modules/**/*"
+      "drizzle/**/*",
+      "node_modules/**/*",
+      "!node_modules/**/*.md",
+      "!node_modules/**/*.d.ts",
+      "!node_modules/**/*.map",
+      "!node_modules/**/test/**",
+      "!node_modules/**/tests/**",
+      "!node_modules/**/__tests__/**",
+      "!node_modules/**/docs/**",
+      "!node_modules/**/example/**",
+      "!node_modules/**/examples/**"
     ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
+    ],
+    "npmRebuild": true,
     "extraResources": [
       {
         "from": "resources/",
