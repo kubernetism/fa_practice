@@ -1,26 +1,4 @@
 "use strict";
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
 const electron = require("electron");
 const node_path = require("node:path");
 const betterSqlite3 = require("drizzle-orm/better-sqlite3");
@@ -1762,46 +1740,25 @@ async function ensureApplicationInfoSetupCompleted() {
 }
 async function seedInitialData() {
   const db2 = getDatabase();
-  const existingBranches = await db2.query.branches.findMany();
-  if (existingBranches.length > 0) {
+  const { categories: categoriesTable } = await Promise.resolve().then(() => schema);
+  const existingCategories = await db2.query.categories.findMany();
+  if (existingCategories.length > 0) {
     console.log("Database already has data, skipping seed");
     return;
   }
   console.log("Seeding initial data...");
-  const { branches: branches2, users: users2, settings: settings2, categories: categories2 } = await Promise.resolve().then(() => schema);
-  const bcryptModule = await import("bcryptjs");
-  const bcrypt2 = bcryptModule.default || bcryptModule;
-  await db2.insert(branches2).values({
-    name: "Main Store",
-    code: "MAIN",
-    address: "123 Main Street",
-    phone: "555-0100",
-    email: "main@firearmstore.com",
-    isMain: true,
-    isActive: true
-  });
-  const hashedPassword = await bcrypt2.hash("admin123", 12);
-  await db2.insert(users2).values({
-    username: "admin",
-    password: hashedPassword,
-    email: "admin@firearmstore.com",
-    fullName: "System Administrator",
-    role: "admin",
-    permissions: ["*"],
-    isActive: true,
-    branchId: 1
-  });
+  const { settings: settings2, categories: categories2 } = await Promise.resolve().then(() => schema);
+  const firearmsCategory = db2.insert(categories2).values({ name: "Firearms", description: "All firearms" }).returning().get();
   await db2.insert(categories2).values([
-    { name: "Firearms", description: "All firearms" },
     { name: "Ammunition", description: "All ammunition types" },
     { name: "Accessories", description: "Firearm accessories" },
     { name: "Safety Equipment", description: "Safety and storage equipment" },
     { name: "Cleaning Supplies", description: "Cleaning and maintenance supplies" }
   ]);
   await db2.insert(categories2).values([
-    { name: "Handguns", parentId: 1, description: "All handguns" },
-    { name: "Rifles", parentId: 1, description: "All rifles" },
-    { name: "Shotguns", parentId: 1, description: "All shotguns" }
+    { name: "Handguns", parentId: firearmsCategory.id, description: "All handguns" },
+    { name: "Rifles", parentId: firearmsCategory.id, description: "All rifles" },
+    { name: "Shotguns", parentId: firearmsCategory.id, description: "All shotguns" }
   ]);
   await db2.insert(settings2).values([
     {
@@ -13345,6 +13302,23 @@ function registerSetupHandlers() {
         isMain: true
       };
       const newBranch = db2.insert(branches).values(branchData).returning().get();
+      const existingAdmin = db2.query.users.findFirst({
+        where: (u, { eq }) => eq(u.username, "admin")
+      });
+      if (!existingAdmin) {
+        const hashedPassword = await bcrypt.hash("admin123", 12);
+        db2.insert(users).values({
+          username: "admin",
+          password: hashedPassword,
+          email: data.business.businessEmail || "admin@store.com",
+          fullName: "System Administrator",
+          role: "admin",
+          permissions: ["*"],
+          isActive: true,
+          branchId: newBranch.id
+        }).run();
+        console.log("[Setup] Admin user created for branch:", newBranch.id);
+      }
       const settingsData = {
         branchId: newBranch.id,
         // Business Info

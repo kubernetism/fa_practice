@@ -323,20 +323,26 @@ export async function seedInitialData(): Promise<void> {
   // NOTE: Branch and admin user are now created by the setup wizard (setup-ipc.ts)
   // This prevents duplicate "Main Store" creation
 
-  // Create default categories
+  // Create default categories - insert Firearms first to get its ID
+  const firearmsCategory = db
+    .insert(categories)
+    .values({ name: 'Firearms', description: 'All firearms' })
+    .returning()
+    .get()
+
+  // Create other parent categories
   await db.insert(categories).values([
-    { name: 'Firearms', description: 'All firearms' },
     { name: 'Ammunition', description: 'All ammunition types' },
     { name: 'Accessories', description: 'Firearm accessories' },
     { name: 'Safety Equipment', description: 'Safety and storage equipment' },
     { name: 'Cleaning Supplies', description: 'Cleaning and maintenance supplies' },
   ])
 
-  // Create subcategories for Firearms
+  // Create subcategories for Firearms using the actual ID
   await db.insert(categories).values([
-    { name: 'Handguns', parentId: 1, description: 'All handguns' },
-    { name: 'Rifles', parentId: 1, description: 'All rifles' },
-    { name: 'Shotguns', parentId: 1, description: 'All shotguns' },
+    { name: 'Handguns', parentId: firearmsCategory.id, description: 'All handguns' },
+    { name: 'Rifles', parentId: firearmsCategory.id, description: 'All rifles' },
+    { name: 'Shotguns', parentId: firearmsCategory.id, description: 'All shotguns' },
   ])
 
   // Create default settings
