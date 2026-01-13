@@ -3,7 +3,9 @@ import { getDatabase } from '../db'
 import { applicationInfo } from '../db/schemas/application-info'
 import { branches, type NewBranch } from '../db/schemas/branches'
 import { businessSettings, type InsertBusinessSettings } from '../db/schemas/business_settings'
+import { users } from '../db/schemas/users'
 import { getMachineIdForDisplay } from '../utils/license'
+import bcrypt from 'bcryptjs'
 
 export interface SetupData {
   business: {
@@ -131,7 +133,29 @@ export function registerSetupHandlers(): void {
 
       const newBranch = db.insert(branches).values(branchData).returning().get()
 
-      // 3. Create business settings linked to the branch
+      // 3. Create admin user for the branch
+      const existingAdmin = db.query.users.findFirst({
+        where: (u, { eq }) => eq(u.username, 'admin'),
+      })
+
+      if (!existingAdmin) {
+        const hashedPassword = await bcrypt.hash('admin123', 12)
+        db.insert(users)
+          .values({
+            username: 'admin',
+            password: hashedPassword,
+            email: data.business.businessEmail || 'admin@store.com',
+            fullName: 'System Administrator',
+            role: 'admin',
+            permissions: ['*'],
+            isActive: true,
+            branchId: newBranch.id,
+          })
+          .run()
+        console.log('[Setup] Admin user created for branch:', newBranch.id)
+      }
+
+      // 4. Create business settings linked to the branch
       const settingsData: InsertBusinessSettings = {
         branchId: newBranch.id,
         // Business Info
@@ -171,7 +195,7 @@ export function registerSetupHandlers(): void {
 
       const newSettings = db.insert(businessSettings).values(settingsData).returning().get()
 
-      // 4. Also create global settings (branchId = null) with same data
+      // 5. Also create global settings (branchId = null) with same data
       const globalSettingsData: InsertBusinessSettings = {
         ...settingsData,
         branchId: null,

@@ -306,9 +306,11 @@ async function ensureApplicationInfoSetupCompleted(): Promise<void> {
 export async function seedInitialData(): Promise<void> {
   const db = getDatabase()
 
-  // Check if we need to seed data
-  const existingBranches = await db.query.branches.findMany()
-  if (existingBranches.length > 0) {
+  // Check if we need to seed data - check categories instead of branches
+  // since branches are now created by the setup wizard
+  const { categories: categoriesTable } = await import('./schema')
+  const existingCategories = await db.query.categories.findMany()
+  if (existingCategories.length > 0) {
     console.log('Database already has data, skipping seed')
     return
   }
@@ -316,33 +318,10 @@ export async function seedInitialData(): Promise<void> {
   console.log('Seeding initial data...')
 
   // Import schema
-  const { branches, users, settings, categories } = await import('./schema')
-  const bcryptModule = await import('bcryptjs')
-  const bcrypt = bcryptModule.default || bcryptModule
+  const { settings, categories } = await import('./schema')
 
-  // Create main branch
-  await db.insert(branches).values({
-    name: 'Main Store',
-    code: 'MAIN',
-    address: '123 Main Street',
-    phone: '555-0100',
-    email: 'main@firearmstore.com',
-    isMain: true,
-    isActive: true,
-  })
-
-  // Create admin user
-  const hashedPassword = await bcrypt.hash('admin123', 12)
-  await db.insert(users).values({
-    username: 'admin',
-    password: hashedPassword,
-    email: 'admin@firearmstore.com',
-    fullName: 'System Administrator',
-    role: 'admin',
-    permissions: ['*'],
-    isActive: true,
-    branchId: 1,
-  })
+  // NOTE: Branch and admin user are now created by the setup wizard (setup-ipc.ts)
+  // This prevents duplicate "Main Store" creation
 
   // Create default categories
   await db.insert(categories).values([
