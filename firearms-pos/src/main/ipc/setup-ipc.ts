@@ -134,13 +134,14 @@ export function registerSetupHandlers(): void {
       const newBranch = db.insert(branches).values(branchData).returning().get()
 
       // 3. Create admin user for the branch
-      const existingAdmin = db.query.users.findFirst({
+      const existingAdmin = await db.query.users.findFirst({
         where: (u, { eq }) => eq(u.username, 'admin'),
       })
 
       if (!existingAdmin) {
         const hashedPassword = await bcrypt.hash('admin123', 12)
-        db.insert(users)
+        const newAdmin = db
+          .insert(users)
           .values({
             username: 'admin',
             password: hashedPassword,
@@ -151,8 +152,9 @@ export function registerSetupHandlers(): void {
             isActive: true,
             branchId: newBranch.id,
           })
-          .run()
-        console.log('[Setup] Admin user created for branch:', newBranch.id)
+          .returning()
+          .get()
+        console.log('[Setup] Admin user created for branch:', newBranch.id, 'userId:', newAdmin.id)
       }
 
       // 4. Create business settings linked to the branch
