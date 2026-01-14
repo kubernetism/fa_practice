@@ -186,15 +186,5 @@ export async function migrateToBusinessSettings() {
   }
 }
 
-// Run migration if this file is executed directly
-if (require.main === module) {
-  migrateToBusinessSettings()
-    .then(() => {
-      console.log("Migration script finished");
-      process.exit(0);
-    })
-    .catch((error) => {
-      console.error("Migration script failed:", error);
-      process.exit(1);
-    });
-}
+// NOTE: This migration is called from migrate.ts via runMigrations()
+// Do NOT add self-executing code here as it breaks production builds

@@ -48,7 +48,15 @@
       "Bash(git clone:*)",
       "Bash(grep:*)",
       "Bash(npm run type-check:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(npm run dist:*)",
+      "Bash(sudo dpkg:*)",
+      "Bash(update-alternatives:*)",
+      "Bash(echo:*)",
+      "Bash(xdg-mime query:*)",
+      "Bash(gio info:*)",
+      "Bash(sudo chown:*)",
+      "Bash(sudo chmod:*)"
     ]
   }
 }

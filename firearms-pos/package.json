@@ -134,7 +134,14 @@
         "deb"
       ],
       "icon": "resources/icon.ico",
-      "category": "Office"
+      "category": "Office",
+      "executableName": "firearms-pos",
+      "executableArgs": [
+        "--no-sandbox"
+      ]
+    },
+    "deb": {
+      "packageName": "firearms-pos"
     },
     "nsis": {
       "oneClick": false,

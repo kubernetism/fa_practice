@@ -1483,15 +1483,6 @@ async function migrateToBusinessSettings() {
     throw error;
   }
 }
-if (require.main === module) {
-  migrateToBusinessSettings().then(() => {
-    console.log("Migration script finished");
-    process.exit(0);
-  }).catch((error) => {
-    console.error("Migration script failed:", error);
-    process.exit(1);
-  });
-}
 async function addPhoneToUsers() {
   console.log("Starting migration to add phone field to users table...");
   const db2 = getDatabase();
@@ -14005,6 +13996,18 @@ function registerAllHandlers() {
   registerBackupHandlers();
   console.log("All IPC handlers registered");
 }
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+  electron.dialog.showErrorBox("Application Error", `An unexpected error occurred:
+
+${error.message}
+
+${error.stack}`);
+  electron.app.quit();
+});
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
 let mainWindow = null;
 function createWindow() {
   mainWindow = new electron.BrowserWindow({
@@ -14048,6 +14051,18 @@ electron.app.whenReady().then(async () => {
     console.log("IPC handlers registered");
   } catch (error) {
     console.error("Failed to initialize app:", error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : "";
+    electron.dialog.showErrorBox(
+      "Initialization Error",
+      `Failed to initialize the application:
+
+${errorMessage}
+
+${errorStack}`
+    );
+    electron.app.quit();
+    return;
   }
   createWindow();
   electron.app.on("activate", () => {
