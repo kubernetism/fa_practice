@@ -84,11 +84,29 @@ export interface PaymentHistoryData {
   businessSettings: BusinessSettings
 }
 
-// Font size mapping
+// Font size mapping - Executive Minimal Design System
 const fontSizeMap = {
-  small: { base: 10, header: 14, title: 18 },
-  medium: { base: 12, header: 16, title: 22 },
-  large: { base: 14, header: 18, title: 26 },
+  small: { base: 11, header: 16, title: 24, caption: 9 },
+  medium: { base: 12, header: 18, title: 28, caption: 10 },
+  large: { base: 14, header: 20, title: 32, caption: 11 },
+}
+
+// Design System Colors
+const designColors = {
+  // Primary palette
+  primary900: '#0c1929',
+  primary700: '#1e3a5f',
+  primary500: '#2563eb',
+  accentGold: '#c9a962',
+  accentEmerald: '#059669',
+  accentRose: '#dc2626',
+  // Neutral palette
+  gray900: '#111827',
+  gray600: '#4b5563',
+  gray400: '#9ca3af',
+  gray100: '#f3f4f6',
+  gray50: '#f9fafb',
+  white: '#ffffff',
 }
 
 // Format currency with settings
@@ -116,240 +134,436 @@ function getPaymentMethodLabel(method: string): string {
   return labels[method] || method
 }
 
-// Generate PDF Receipt HTML (A4 format)
+// Generate PDF Receipt HTML (A4 format) - Executive Minimal Design
 function generatePDFReceiptHTML(data: ReceiptData): string {
   const { sale, items, customer, businessSettings: settings } = data
   const fontSize = fontSizeMap[settings.receiptFontSize as keyof typeof fontSizeMap] || fontSizeMap.medium
-  const primaryColor = settings.receiptPrimaryColor || '#1e40af'
-  const secondaryColor = settings.receiptSecondaryColor || '#64748b'
+  const colors = designColors
   const showTax = settings.showTaxOnReceipt !== false
   const showLogo = settings.receiptShowBusinessLogo !== false
 
   // Build custom fields HTML
   let customFieldsHTML = ''
   if (settings.receiptCustomField1Label && settings.receiptCustomField1Value) {
-    customFieldsHTML += `<p><strong>${settings.receiptCustomField1Label}:</strong> ${settings.receiptCustomField1Value}</p>`
+    customFieldsHTML += `<div class="custom-field"><span class="cf-label">${settings.receiptCustomField1Label}</span><span class="cf-value">${settings.receiptCustomField1Value}</span></div>`
   }
   if (settings.receiptCustomField2Label && settings.receiptCustomField2Value) {
-    customFieldsHTML += `<p><strong>${settings.receiptCustomField2Label}:</strong> ${settings.receiptCustomField2Value}</p>`
+    customFieldsHTML += `<div class="custom-field"><span class="cf-label">${settings.receiptCustomField2Label}</span><span class="cf-value">${settings.receiptCustomField2Value}</span></div>`
   }
   if (settings.receiptCustomField3Label && settings.receiptCustomField3Value) {
-    customFieldsHTML += `<p><strong>${settings.receiptCustomField3Label}:</strong> ${settings.receiptCustomField3Value}</p>`
+    customFieldsHTML += `<div class="custom-field"><span class="cf-label">${settings.receiptCustomField3Label}</span><span class="cf-value">${settings.receiptCustomField3Value}</span></div>`
   }
 
   // Build items rows
   const itemsHTML = items
     .map(
-      (item) => `
-      <tr>
-        <td>${item.productName}${item.serialNumber ? `<br><small style="color: ${secondaryColor};">S/N: ${item.serialNumber}</small>` : ''}</td>
-        <td class="text-center">${item.quantity}</td>
+      (item, index) => `
+      <tr class="${index % 2 === 0 ? 'row-even' : 'row-odd'}">
+        <td class="item-cell">
+          <span class="item-name">${item.productName}</span>
+          ${item.serialNumber ? `<span class="item-serial">S/N: ${item.serialNumber}</span>` : ''}
+        </td>
+        <td class="text-center qty-cell">${item.quantity}</td>
         <td class="text-right">${formatCurrency(item.unitPrice, settings)}</td>
         ${showTax ? `<td class="text-right">${formatCurrency(item.taxAmount, settings)}</td>` : ''}
-        <td class="text-right">${formatCurrency(item.totalPrice, settings)}</td>
+        <td class="text-right amount-cell">${formatCurrency(item.totalPrice, settings)}</td>
       </tr>
     `
     )
     .join('')
+
+  // Format date elegantly
+  const saleDate = new Date(sale.saleDate)
+  const formattedDate = saleDate.toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  })
+  const formattedTime = saleDate.toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  })
 
   return `
     <!DOCTYPE html>
     <html>
     <head>
       <meta charset="UTF-8">
+      <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-          font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-          font-size: ${fontSize.base}px;
-          line-height: 1.5;
-          color: #333;
-          padding: 30px;
+
+        :root {
+          --primary-900: ${colors.primary900};
+          --primary-700: ${colors.primary700};
+          --primary-500: ${colors.primary500};
+          --accent-gold: ${colors.accentGold};
+          --accent-emerald: ${colors.accentEmerald};
+          --accent-rose: ${colors.accentRose};
+          --gray-900: ${colors.gray900};
+          --gray-600: ${colors.gray600};
+          --gray-400: ${colors.gray400};
+          --gray-100: ${colors.gray100};
+          --gray-50: ${colors.gray50};
         }
+
+        body {
+          font-family: 'DM Sans', 'Segoe UI', sans-serif;
+          font-size: ${fontSize.base}px;
+          line-height: 1.6;
+          color: var(--gray-900);
+          padding: 40px;
+          background: white;
+        }
+
         .receipt-container {
           max-width: 800px;
           margin: 0 auto;
         }
+
+        /* Header Section */
         .header {
           text-align: center;
-          border-bottom: 3px solid ${primaryColor};
-          padding-bottom: 20px;
-          margin-bottom: 25px;
+          padding-bottom: 25px;
+          margin-bottom: 30px;
+          position: relative;
         }
+
+        .header::after {
+          content: '';
+          position: absolute;
+          bottom: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 120px;
+          height: 3px;
+          background: linear-gradient(90deg, transparent, var(--accent-gold), transparent);
+        }
+
         .business-logo {
-          max-width: 120px;
-          max-height: 80px;
-          margin-bottom: 10px;
+          max-width: 100px;
+          max-height: 70px;
+          margin-bottom: 15px;
+          filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
         }
+
         .business-name {
+          font-family: 'Playfair Display', Georgia, serif;
           font-size: ${fontSize.title}px;
-          font-weight: bold;
-          color: ${primaryColor};
-          margin-bottom: 5px;
-        }
-        .business-info {
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
+          font-weight: 700;
+          color: var(--primary-900);
           margin-bottom: 8px;
+          letter-spacing: 0.5px;
         }
+
+        .business-info {
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-600);
+          text-transform: uppercase;
+          letter-spacing: 1.5px;
+          margin-bottom: 4px;
+        }
+
         .receipt-header-text {
           font-size: ${fontSize.base}px;
-          color: #333;
-          margin-top: 10px;
+          color: var(--gray-600);
+          margin-top: 12px;
           font-style: italic;
         }
+
+        /* Invoice Details */
         .invoice-details {
           display: flex;
           justify-content: space-between;
           margin-bottom: 25px;
-          padding: 15px;
-          background: #f8fafc;
-          border-radius: 8px;
+          padding: 20px 25px;
+          background: var(--gray-50);
+          border-radius: 12px;
+          border: 1px solid var(--gray-100);
         }
+
         .invoice-left, .invoice-right {
           flex: 1;
         }
+
         .invoice-right {
           text-align: right;
         }
+
         .invoice-label {
-          font-size: ${fontSize.base - 2}px;
-          color: ${secondaryColor};
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-400);
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 1px;
+          margin-bottom: 4px;
         }
-        .invoice-value {
+
+        .invoice-number {
+          display: inline-block;
+          font-family: 'DM Sans', sans-serif;
           font-size: ${fontSize.header}px;
-          font-weight: bold;
-          color: #1e293b;
+          font-weight: 700;
+          color: var(--primary-900);
+          background: linear-gradient(135deg, var(--primary-900) 0%, var(--primary-700) 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
         }
+
+        .invoice-date {
+          font-size: ${fontSize.base + 1}px;
+          font-weight: 600;
+          color: var(--gray-900);
+        }
+
+        .invoice-time {
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-600);
+          margin-top: 2px;
+        }
+
+        /* Customer Card */
         .customer-info {
-          margin-bottom: 20px;
-          padding: 15px;
-          background: #f1f5f9;
-          border-left: 4px solid ${primaryColor};
-          border-radius: 4px;
+          margin-bottom: 25px;
+          padding: 18px 20px;
+          background: white;
+          border-left: 4px solid var(--accent-gold);
+          border-radius: 0 12px 12px 0;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.04);
         }
+
         .customer-label {
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
-          margin-bottom: 5px;
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-400);
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 6px;
         }
+
         .customer-name {
+          font-family: 'Playfair Display', Georgia, serif;
           font-size: ${fontSize.header}px;
-          font-weight: bold;
-          color: #1e293b;
+          font-weight: 600;
+          color: var(--primary-900);
+          margin-bottom: 4px;
         }
+
         .customer-contact {
           font-size: ${fontSize.base}px;
-          color: #475569;
+          color: var(--gray-600);
+          margin-top: 2px;
         }
+
+        /* Items Table */
         table {
           width: 100%;
           border-collapse: collapse;
-          margin: 20px 0;
+          margin: 25px 0;
         }
+
         thead {
-          background: ${primaryColor};
-          color: white;
+          background: var(--primary-900);
         }
+
         th {
-          padding: 12px 10px;
+          padding: 14px 12px;
           text-align: left;
           font-weight: 600;
           font-size: ${fontSize.base}px;
+          color: white;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
+
+        th:first-child {
+          border-radius: 8px 0 0 0;
+        }
+
+        th:last-child {
+          border-radius: 0 8px 0 0;
+        }
+
         td {
-          padding: 12px 10px;
-          border-bottom: 1px solid #e2e8f0;
+          padding: 14px 12px;
           font-size: ${fontSize.base}px;
+          border-bottom: 1px solid var(--gray-100);
         }
-        tr:nth-child(even) {
-          background: #f8fafc;
+
+        .row-even {
+          background: var(--gray-50);
         }
+
+        .row-odd {
+          background: white;
+        }
+
+        .item-cell {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .item-name {
+          font-weight: 500;
+          color: var(--gray-900);
+        }
+
+        .item-serial {
+          font-family: 'JetBrains Mono', 'Consolas', monospace;
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-400);
+          margin-top: 2px;
+        }
+
+        .qty-cell {
+          font-weight: 600;
+        }
+
+        .amount-cell {
+          font-weight: 600;
+          color: var(--gray-900);
+        }
+
         .text-center { text-align: center; }
         .text-right { text-align: right; }
+
+        /* Totals Section */
         .totals-section {
-          margin-top: 25px;
-          border-top: 2px solid #e2e8f0;
-          padding-top: 15px;
+          margin-top: 30px;
+          padding: 20px;
+          background: var(--gray-50);
+          border-radius: 12px;
         }
+
         .totals-row {
           display: flex;
           justify-content: space-between;
-          padding: 8px 0;
+          padding: 10px 0;
           font-size: ${fontSize.base}px;
+          border-bottom: 1px solid var(--gray-100);
         }
+
+        .totals-row:last-of-type {
+          border-bottom: none;
+        }
+
         .totals-row.grand-total {
           font-size: ${fontSize.header}px;
-          font-weight: bold;
-          color: ${primaryColor};
-          border-top: 2px solid ${primaryColor};
-          margin-top: 10px;
-          padding-top: 15px;
+          font-weight: 700;
+          color: var(--primary-900);
+          border-top: 3px solid var(--accent-gold);
+          border-bottom: none;
+          margin-top: 15px;
+          padding-top: 20px;
         }
+
+        .discount-value {
+          color: var(--accent-rose);
+          font-weight: 500;
+        }
+
+        /* Payment Info */
         .payment-info {
-          margin-top: 20px;
-          padding: 15px;
-          background: #ecfdf5;
-          border-radius: 8px;
-          border: 1px solid #10b981;
+          margin-top: 25px;
+          padding: 20px;
+          background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+          border-radius: 12px;
+          border: 1px solid var(--accent-emerald);
         }
+
         .payment-row {
           display: flex;
           justify-content: space-between;
-          padding: 5px 0;
+          align-items: center;
+          padding: 8px 0;
         }
-        .payment-method {
+
+        .payment-method-badge {
           display: inline-block;
-          padding: 4px 12px;
-          background: ${primaryColor};
+          padding: 6px 16px;
+          background: var(--primary-900);
           color: white;
-          border-radius: 4px;
-          font-size: ${fontSize.base - 1}px;
+          border-radius: 20px;
+          font-size: ${fontSize.caption}px;
           font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
+
+        .payment-amount {
+          font-weight: 700;
+          font-size: ${fontSize.base + 1}px;
+        }
+
+        .remaining-amount {
+          color: var(--accent-rose);
+        }
+
+        /* Custom Fields */
         .custom-fields {
           margin-top: 25px;
-          padding: 15px;
-          background: #fefce8;
-          border-radius: 8px;
+          padding: 18px 20px;
+          background: #fffbeb;
+          border-radius: 12px;
+          border: 1px solid #fcd34d;
+        }
+
+        .custom-field {
+          display: flex;
+          justify-content: space-between;
+          padding: 6px 0;
           font-size: ${fontSize.base}px;
         }
-        .custom-fields p {
-          margin-bottom: 5px;
+
+        .cf-label {
+          font-weight: 600;
+          color: var(--gray-700);
         }
+
+        .cf-value {
+          color: var(--gray-600);
+        }
+
+        /* Footer */
         .footer {
-          margin-top: 30px;
-          padding-top: 20px;
-          border-top: 2px solid #e2e8f0;
+          margin-top: 40px;
+          padding-top: 25px;
+          border-top: 1px solid var(--gray-100);
           text-align: center;
         }
+
         .footer-text {
           font-size: ${fontSize.base}px;
-          color: #333;
+          color: var(--gray-600);
           margin-bottom: 15px;
         }
+
         .terms {
           margin-top: 20px;
-          padding: 15px;
-          background: #f8fafc;
+          padding: 18px;
+          background: var(--gray-50);
           border-radius: 8px;
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-600);
           text-align: left;
           white-space: pre-wrap;
         }
+
         .terms-title {
-          font-weight: bold;
-          color: #333;
-          margin-bottom: 8px;
+          font-weight: 700;
+          color: var(--gray-900);
+          margin-bottom: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
+
         .thank-you {
-          font-size: ${fontSize.header}px;
-          color: ${primaryColor};
-          font-weight: bold;
-          margin-top: 20px;
+          font-family: 'Playfair Display', Georgia, serif;
+          font-size: ${fontSize.header + 2}px;
+          color: var(--primary-900);
+          font-weight: 600;
+          margin-top: 25px;
+          letter-spacing: 0.5px;
         }
       </style>
     </head>
@@ -359,13 +573,13 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
           ${showLogo && settings.businessLogo ? `<img src="${settings.businessLogo}" class="business-logo" alt="Logo" />` : ''}
           <div class="business-name">${settings.businessName || 'Business Name'}</div>
           <div class="business-info">
-            ${settings.businessAddress ? settings.businessAddress + ', ' : ''}
-            ${settings.businessCity || ''}
-            ${settings.businessState ? ', ' + settings.businessState : ''}
+            ${settings.businessAddress ? settings.businessAddress : ''}
+            ${settings.businessCity ? ` • ${settings.businessCity}` : ''}
+            ${settings.businessState ? `, ${settings.businessState}` : ''}
           </div>
           <div class="business-info">
-            ${settings.businessPhone ? 'Tel: ' + settings.businessPhone : ''}
-            ${settings.businessPhone && settings.businessEmail ? ' | ' : ''}
+            ${settings.businessPhone ? settings.businessPhone : ''}
+            ${settings.businessPhone && settings.businessEmail ? ' • ' : ''}
             ${settings.businessEmail ? settings.businessEmail : ''}
           </div>
           ${settings.receiptHeader ? `<div class="receipt-header-text">${settings.receiptHeader}</div>` : ''}
@@ -374,30 +588,31 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
         <div class="invoice-details">
           <div class="invoice-left">
             <div class="invoice-label">Invoice Number</div>
-            <div class="invoice-value">${sale.invoiceNumber}</div>
+            <div class="invoice-number">${sale.invoiceNumber}</div>
           </div>
           <div class="invoice-right">
-            <div class="invoice-label">Date & Time</div>
-            <div class="invoice-value">${formatDateTime(new Date(sale.saleDate))}</div>
+            <div class="invoice-label">Date</div>
+            <div class="invoice-date">${formattedDate}</div>
+            <div class="invoice-time">${formattedTime}</div>
           </div>
         </div>
 
         <div class="customer-info">
-          <div class="customer-label">Customer</div>
+          <div class="customer-label">Bill To</div>
           <div class="customer-name">${customer?.name || 'Walk-in Customer'}</div>
-          ${customer?.phone ? `<div class="customer-contact">Phone: ${customer.phone}</div>` : ''}
-          ${customer?.email ? `<div class="customer-contact">Email: ${customer.email}</div>` : ''}
-          ${customer?.address ? `<div class="customer-contact">Address: ${customer.address}</div>` : ''}
+          ${customer?.phone ? `<div class="customer-contact">${customer.phone}</div>` : ''}
+          ${customer?.email ? `<div class="customer-contact">${customer.email}</div>` : ''}
+          ${customer?.address ? `<div class="customer-contact">${customer.address}</div>` : ''}
         </div>
 
         <table>
           <thead>
             <tr>
-              <th>Item</th>
+              <th>Description</th>
               <th class="text-center">Qty</th>
-              <th class="text-right">Price</th>
+              <th class="text-right">Unit Price</th>
               ${showTax ? '<th class="text-right">Tax</th>' : ''}
-              <th class="text-right">Total</th>
+              <th class="text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -425,7 +640,7 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
               ? `
           <div class="totals-row">
             <span>Discount</span>
-            <span style="color: #dc2626;">-${formatCurrency(sale.discountAmount, settings)}</span>
+            <span class="discount-value">-${formatCurrency(sale.discountAmount, settings)}</span>
           </div>
           `
               : ''
@@ -439,18 +654,18 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
         <div class="payment-info">
           <div class="payment-row">
             <span>Payment Method</span>
-            <span class="payment-method">${getPaymentMethodLabel(sale.paymentMethod)}</span>
+            <span class="payment-method-badge">${getPaymentMethodLabel(sale.paymentMethod)}</span>
           </div>
           <div class="payment-row">
             <span>Amount Paid</span>
-            <span><strong>${formatCurrency(sale.amountPaid, settings)}</strong></span>
+            <span class="payment-amount">${formatCurrency(sale.amountPaid, settings)}</span>
           </div>
           ${
             sale.amountPaid < sale.totalAmount
               ? `
-          <div class="payment-row" style="color: #dc2626;">
-            <span>Remaining Amount</span>
-            <span><strong>${formatCurrency(sale.totalAmount - sale.amountPaid, settings)}</strong></span>
+          <div class="payment-row remaining-amount">
+            <span>Balance Due</span>
+            <span class="payment-amount">${formatCurrency(sale.totalAmount - sale.amountPaid, settings)}</span>
           </div>
           `
               : ''
@@ -459,8 +674,8 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
             sale.changeGiven > 0
               ? `
           <div class="payment-row">
-            <span>Change</span>
-            <span><strong>${formatCurrency(sale.changeGiven, settings)}</strong></span>
+            <span>Change Given</span>
+            <span class="payment-amount">${formatCurrency(sale.changeGiven, settings)}</span>
           </div>
           `
               : ''
@@ -481,7 +696,7 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
           `
               : ''
           }
-          <div class="thank-you">Thank You for Your Business!</div>
+          <div class="thank-you">Thank You for Your Business</div>
         </div>
       </div>
     </body>
@@ -489,38 +704,51 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
   `
 }
 
-// Generate Thermal Receipt HTML (80mm format)
+// Generate Thermal Receipt HTML (80mm format) - Optimized for thermal printers
 function generateThermalReceiptHTML(data: ReceiptData): string {
   const { sale, items, customer, businessSettings: settings } = data
   const showTax = settings.showTaxOnReceipt !== false
-  const primaryColor = settings.receiptPrimaryColor || '#1e40af'
 
-  // Build items rows for thermal
+  // Helper to pad string for alignment (thermal receipt formatting)
+  const padEnd = (str: string, len: number) => str.padEnd(len, ' ')
+  const padStart = (str: string, len: number) => str.padStart(len, ' ')
+  const dotFill = (label: string, value: string, totalWidth: number = 32) => {
+    const dotsNeeded = totalWidth - label.length - value.length
+    return `${label}${'·'.repeat(Math.max(1, dotsNeeded))}${value}`
+  }
+
+  // Format short date for thermal
+  const saleDate = new Date(sale.saleDate)
+  const shortDate = `${saleDate.getDate().toString().padStart(2, '0')}/${(saleDate.getMonth() + 1).toString().padStart(2, '0')}/${saleDate.getFullYear().toString().slice(-2)}`
+  const shortTime = saleDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+
+  // Build items rows for thermal with dot leaders
   const itemsHTML = items
     .map(
-      (item) => `
+      (item) => {
+        const priceStr = formatCurrency(item.totalPrice, settings)
+        return `
       <div class="item-row">
-        <div class="item-name">${item.productName}</div>
-        ${item.serialNumber ? `<div class="item-serial">S/N: ${item.serialNumber}</div>` : ''}
-        <div class="item-details">
-          <span>${item.quantity} x ${formatCurrency(item.unitPrice, settings)}</span>
-          <span class="item-total">${formatCurrency(item.totalPrice, settings)}</span>
-        </div>
+        <div class="item-name">${item.productName.length > 28 ? item.productName.substring(0, 25) + '...' : item.productName}</div>
+        ${item.serialNumber ? `<div class="item-serial">SN: ${item.serialNumber}</div>` : ''}
+        <div class="item-qty-price">${item.quantity} × ${formatCurrency(item.unitPrice, settings)}</div>
+        <div class="item-total">${priceStr}</div>
       </div>
     `
+      }
     )
     .join('')
 
   // Build custom fields
   let customFieldsHTML = ''
   if (settings.receiptCustomField1Label && settings.receiptCustomField1Value) {
-    customFieldsHTML += `<div class="custom-field">${settings.receiptCustomField1Label}: ${settings.receiptCustomField1Value}</div>`
+    customFieldsHTML += `<div class="cf-row">${settings.receiptCustomField1Label}: ${settings.receiptCustomField1Value}</div>`
   }
   if (settings.receiptCustomField2Label && settings.receiptCustomField2Value) {
-    customFieldsHTML += `<div class="custom-field">${settings.receiptCustomField2Label}: ${settings.receiptCustomField2Value}</div>`
+    customFieldsHTML += `<div class="cf-row">${settings.receiptCustomField2Label}: ${settings.receiptCustomField2Value}</div>`
   }
   if (settings.receiptCustomField3Label && settings.receiptCustomField3Value) {
-    customFieldsHTML += `<div class="custom-field">${settings.receiptCustomField3Label}: ${settings.receiptCustomField3Value}</div>`
+    customFieldsHTML += `<div class="cf-row">${settings.receiptCustomField3Label}: ${settings.receiptCustomField3Value}</div>`
   }
 
   return `
@@ -528,220 +756,320 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
     <html>
     <head>
       <meta charset="UTF-8">
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-          font-family: 'Courier New', monospace;
-          font-size: 12px;
-          line-height: 1.4;
+          font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+          font-size: 10px;
+          line-height: 1.3;
           color: #000;
           width: 302px;
-          padding: 10px;
+          padding: 8px 10px;
           background: white;
         }
-        .header {
+
+        /* Header Box */
+        .header-box {
+          border: 2px solid #000;
+          padding: 8px;
+          margin-bottom: 8px;
           text-align: center;
-          border-bottom: 1px dashed #000;
-          padding-bottom: 10px;
-          margin-bottom: 10px;
         }
+
         .business-name {
-          font-size: 16px;
-          font-weight: bold;
-          margin-bottom: 5px;
+          font-size: 14px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          text-transform: uppercase;
         }
+
         .business-info {
-          font-size: 10px;
+          font-size: 9px;
+          margin-top: 4px;
           color: #333;
         }
-        .receipt-header-text {
-          font-size: 10px;
+
+        .header-msg {
+          font-size: 9px;
           font-style: italic;
-          margin-top: 5px;
+          margin-top: 4px;
+          color: #666;
         }
+
+        /* Dividers */
+        .div-double {
+          border-top: 3px double #000;
+          margin: 8px 0;
+        }
+
+        .div-single {
+          border-top: 1px solid #000;
+          margin: 6px 0;
+        }
+
+        .div-dashed {
+          border-top: 1px dashed #000;
+          margin: 6px 0;
+        }
+
+        /* Invoice Section */
         .invoice-section {
-          margin: 10px 0;
-          border-bottom: 1px dashed #000;
-          padding-bottom: 10px;
+          margin: 8px 0;
         }
-        .invoice-row {
+
+        .inv-row {
           display: flex;
           justify-content: space-between;
+          font-size: 10px;
+          padding: 2px 0;
+        }
+
+        .inv-number {
+          font-weight: 700;
           font-size: 11px;
         }
-        .invoice-row strong {
-          font-size: 12px;
-        }
+
+        /* Customer Section */
         .customer-section {
-          margin: 10px 0;
-          padding: 8px;
-          background: #f5f5f5;
-          border-radius: 4px;
+          background: #f0f0f0;
+          padding: 6px 8px;
+          margin: 8px 0;
         }
+
         .customer-name {
-          font-weight: bold;
-          font-size: 12px;
+          font-weight: 700;
+          font-size: 11px;
         }
+
         .customer-contact {
-          font-size: 10px;
-          color: #333;
+          font-size: 9px;
+          color: #444;
         }
-        .items-section {
-          margin: 10px 0;
-          border-bottom: 1px dashed #000;
-          padding-bottom: 10px;
-        }
+
+        /* Items Section */
         .items-header {
           display: flex;
           justify-content: space-between;
-          font-weight: bold;
+          font-weight: 700;
+          font-size: 10px;
+          padding: 4px 0;
           border-bottom: 1px solid #000;
-          padding-bottom: 5px;
-          margin-bottom: 8px;
-          font-size: 11px;
+          margin-bottom: 6px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
+
         .item-row {
           margin-bottom: 8px;
+          padding-bottom: 6px;
+          border-bottom: 1px dotted #ccc;
         }
+
+        .item-row:last-child {
+          border-bottom: none;
+        }
+
         .item-name {
-          font-weight: bold;
-          font-size: 11px;
+          font-weight: 600;
+          font-size: 10px;
         }
+
         .item-serial {
-          font-size: 9px;
+          font-size: 8px;
           color: #666;
+          font-style: italic;
         }
-        .item-details {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
+
+        .item-qty-price {
+          font-size: 9px;
+          color: #444;
+          margin-top: 2px;
         }
+
         .item-total {
-          font-weight: bold;
+          font-weight: 700;
+          font-size: 10px;
+          text-align: right;
         }
+
+        /* Totals Section */
         .totals-section {
           margin: 10px 0;
         }
+
         .total-row {
           display: flex;
           justify-content: space-between;
-          font-size: 11px;
+          font-size: 10px;
           padding: 3px 0;
         }
-        .total-row.grand-total {
-          font-size: 14px;
-          font-weight: bold;
-          border-top: 2px solid #000;
-          border-bottom: 2px solid #000;
-          padding: 8px 0;
-          margin-top: 5px;
+
+        .total-row span:first-child::after {
+          content: '';
         }
-        .payment-section {
-          margin: 10px 0;
+
+        .total-label {
+          flex: 1;
+        }
+
+        .total-dots {
+          flex: 2;
+          border-bottom: 1px dotted #999;
+          margin: 0 4px 3px 4px;
+        }
+
+        .total-value {
+          text-align: right;
+          min-width: 70px;
+        }
+
+        .grand-total-box {
+          border: 2px solid #000;
           padding: 8px;
-          background: #f0f0f0;
-          border-radius: 4px;
+          margin: 8px 0;
+          display: flex;
+          justify-content: space-between;
+          font-weight: 700;
+          font-size: 14px;
+          letter-spacing: 0.5px;
         }
+
+        /* Payment Section */
+        .payment-section {
+          background: #e8e8e8;
+          padding: 8px;
+          margin: 8px 0;
+        }
+
         .payment-row {
           display: flex;
           justify-content: space-between;
-          font-size: 11px;
-          padding: 2px 0;
-        }
-        .payment-method-badge {
-          font-weight: bold;
-          padding: 2px 6px;
-          background: ${primaryColor};
-          color: white;
-          border-radius: 3px;
           font-size: 10px;
+          padding: 3px 0;
         }
-        .custom-fields {
-          margin: 10px 0;
-          padding: 8px;
-          background: #fff8e1;
-          border-radius: 4px;
-          font-size: 10px;
-        }
-        .custom-field {
-          padding: 2px 0;
-        }
-        .footer {
-          margin-top: 10px;
-          text-align: center;
-          border-top: 1px dashed #000;
-          padding-top: 10px;
-        }
-        .footer-text {
-          font-size: 10px;
-          margin-bottom: 5px;
-        }
-        .terms {
-          margin-top: 8px;
-          padding: 8px;
-          background: #f5f5f5;
-          border-radius: 4px;
+
+        .payment-method {
+          font-weight: 700;
+          padding: 2px 8px;
+          background: #000;
+          color: #fff;
           font-size: 9px;
-          text-align: left;
-          white-space: pre-wrap;
+          letter-spacing: 0.5px;
         }
-        .thank-you {
-          font-size: 12px;
-          font-weight: bold;
-          margin-top: 10px;
+
+        .payment-value {
+          font-weight: 700;
         }
-        .separator {
-          border-bottom: 1px dashed #000;
+
+        .remaining-row {
+          color: #000;
+          font-weight: 700;
+        }
+
+        /* Custom Fields */
+        .custom-section {
+          background: #fffde7;
+          padding: 6px 8px;
           margin: 8px 0;
+          border: 1px solid #ffd600;
+        }
+
+        .cf-row {
+          font-size: 9px;
+          padding: 2px 0;
+        }
+
+        /* Footer */
+        .footer {
+          text-align: center;
+          margin-top: 10px;
+          padding-top: 8px;
+        }
+
+        .footer-msg {
+          font-size: 9px;
+          color: #666;
+          margin-bottom: 6px;
+        }
+
+        .terms-section {
+          background: #f5f5f5;
+          padding: 6px;
+          font-size: 8px;
+          text-align: left;
+          margin: 8px 0;
+          white-space: pre-wrap;
+          color: #555;
+        }
+
+        .thank-you-box {
+          border-top: 2px solid #000;
+          border-bottom: 2px solid #000;
+          padding: 8px;
+          margin-top: 10px;
+          font-weight: 700;
+          font-size: 12px;
+          letter-spacing: 2px;
+          text-transform: uppercase;
         }
       </style>
     </head>
     <body>
-      <div class="header">
-        <div class="business-name">${settings.businessName || 'Business'}</div>
+      <div class="header-box">
+        <div class="business-name">${settings.businessName || 'BUSINESS'}</div>
         <div class="business-info">
-          ${settings.businessAddress || ''}
-          ${settings.businessCity ? ', ' + settings.businessCity : ''}
+          ${settings.businessAddress || ''}${settings.businessCity ? `, ${settings.businessCity}` : ''}
         </div>
-        ${settings.businessPhone ? `<div class="business-info">Tel: ${settings.businessPhone}</div>` : ''}
-        ${settings.receiptHeader ? `<div class="receipt-header-text">${settings.receiptHeader}</div>` : ''}
+        ${settings.businessPhone ? `<div class="business-info">TEL: ${settings.businessPhone}</div>` : ''}
+        ${settings.receiptHeader ? `<div class="header-msg">${settings.receiptHeader}</div>` : ''}
       </div>
 
       <div class="invoice-section">
-        <div class="invoice-row">
-          <span>Invoice:</span>
-          <strong>${sale.invoiceNumber}</strong>
+        <div class="inv-row">
+          <span>INV#</span>
+          <span class="inv-number">${sale.invoiceNumber}</span>
         </div>
-        <div class="invoice-row">
-          <span>Date:</span>
-          <span>${formatDateTime(new Date(sale.saleDate))}</span>
+        <div class="inv-row">
+          <span>DATE</span>
+          <span>${shortDate} ${shortTime}</span>
         </div>
       </div>
 
+      <div class="div-single"></div>
+
       <div class="customer-section">
-        <div class="customer-name">${customer?.name || 'Walk-in Customer'}</div>
-        ${customer?.phone ? `<div class="customer-contact">Tel: ${customer.phone}</div>` : ''}
+        <div class="customer-name">${customer?.name || 'WALK-IN CUSTOMER'}</div>
+        ${customer?.phone ? `<div class="customer-contact">TEL: ${customer.phone}</div>` : ''}
+      </div>
+
+      <div class="div-double"></div>
+
+      <div class="items-header">
+        <span>ITEMS</span>
+        <span>AMOUNT</span>
       </div>
 
       <div class="items-section">
-        <div class="items-header">
-          <span>ITEM</span>
-          <span>TOTAL</span>
-        </div>
         ${itemsHTML}
       </div>
 
+      <div class="div-single"></div>
+
       <div class="totals-section">
         <div class="total-row">
-          <span>Subtotal:</span>
-          <span>${formatCurrency(sale.subtotal, settings)}</span>
+          <span class="total-label">SUBTOTAL</span>
+          <span class="total-dots"></span>
+          <span class="total-value">${formatCurrency(sale.subtotal, settings)}</span>
         </div>
         ${
           showTax
             ? `
         <div class="total-row">
-          <span>Tax:</span>
-          <span>${formatCurrency(sale.taxAmount, settings)}</span>
+          <span class="total-label">TAX</span>
+          <span class="total-dots"></span>
+          <span class="total-value">${formatCurrency(sale.taxAmount, settings)}</span>
         </div>
         `
             : ''
@@ -750,33 +1078,35 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
           sale.discountAmount > 0
             ? `
         <div class="total-row">
-          <span>Discount:</span>
-          <span>-${formatCurrency(sale.discountAmount, settings)}</span>
+          <span class="total-label">DISCOUNT</span>
+          <span class="total-dots"></span>
+          <span class="total-value">-${formatCurrency(sale.discountAmount, settings)}</span>
         </div>
         `
             : ''
         }
-        <div class="total-row grand-total">
-          <span>TOTAL:</span>
-          <span>${formatCurrency(sale.totalAmount, settings)}</span>
-        </div>
+      </div>
+
+      <div class="grand-total-box">
+        <span>TOTAL</span>
+        <span>${formatCurrency(sale.totalAmount, settings)}</span>
       </div>
 
       <div class="payment-section">
         <div class="payment-row">
-          <span>Payment:</span>
-          <span class="payment-method-badge">${getPaymentMethodLabel(sale.paymentMethod)}</span>
+          <span>METHOD</span>
+          <span class="payment-method">${getPaymentMethodLabel(sale.paymentMethod).toUpperCase()}</span>
         </div>
         <div class="payment-row">
-          <span>Paid:</span>
-          <strong>${formatCurrency(sale.amountPaid, settings)}</strong>
+          <span>PAID</span>
+          <span class="payment-value">${formatCurrency(sale.amountPaid, settings)}</span>
         </div>
         ${
           sale.amountPaid < sale.totalAmount
             ? `
-        <div class="payment-row" style="color: #dc2626;">
-          <span>Remaining:</span>
-          <strong>${formatCurrency(sale.totalAmount - sale.amountPaid, settings)}</strong>
+        <div class="payment-row remaining-row">
+          <span>★ BALANCE DUE</span>
+          <span>${formatCurrency(sale.totalAmount - sale.amountPaid, settings)}</span>
         </div>
         `
             : ''
@@ -785,61 +1115,61 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
           sale.changeGiven > 0
             ? `
         <div class="payment-row">
-          <span>Change:</span>
-          <strong>${formatCurrency(sale.changeGiven, settings)}</strong>
+          <span>CHANGE</span>
+          <span class="payment-value">${formatCurrency(sale.changeGiven, settings)}</span>
         </div>
         `
             : ''
         }
       </div>
 
-      ${customFieldsHTML ? `<div class="custom-fields">${customFieldsHTML}</div>` : ''}
+      ${customFieldsHTML ? `<div class="custom-section">${customFieldsHTML}</div>` : ''}
 
       <div class="footer">
-        ${settings.receiptFooter ? `<div class="footer-text">${settings.receiptFooter}</div>` : ''}
-        ${
-          settings.receiptTermsAndConditions
-            ? `
-        <div class="terms">${settings.receiptTermsAndConditions}</div>
-        `
-            : ''
-        }
-        <div class="thank-you">Thank You!</div>
+        ${settings.receiptFooter ? `<div class="footer-msg">${settings.receiptFooter}</div>` : ''}
+        ${settings.receiptTermsAndConditions ? `<div class="terms-section">${settings.receiptTermsAndConditions}</div>` : ''}
+        <div class="thank-you-box">THANK YOU</div>
       </div>
     </body>
     </html>
   `
 }
 
-// Generate PDF Payment History Receipt HTML (A4 format)
+// Generate PDF Payment History Receipt HTML (A4 format) - Executive Minimal Design
 function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string {
   const { receivable, payments, sale, items, customer, businessSettings: settings } = data
   const fontSize = fontSizeMap[settings.receiptFontSize as keyof typeof fontSizeMap] || fontSizeMap.medium
-  const primaryColor = settings.receiptPrimaryColor || '#1e40af'
-  const secondaryColor = settings.receiptSecondaryColor || '#64748b'
+  const colors = designColors
   const showTax = settings.showTaxOnReceipt !== false
   const showLogo = settings.receiptShowBusinessLogo !== false
 
-  // Status badge color
-  const statusColor =
-    receivable.status === 'paid'
-      ? '#10b981'
-      : receivable.status === 'partial'
-        ? '#f59e0b'
-        : receivable.status === 'overdue'
-          ? '#dc2626'
-          : '#64748b'
+  // Status configuration
+  const statusConfig = {
+    paid: { color: colors.accentEmerald, label: 'PAID', bg: '#dcfce7' },
+    partial: { color: '#f59e0b', label: 'PARTIAL', bg: '#fef3c7' },
+    overdue: { color: colors.accentRose, label: 'OVERDUE', bg: '#fee2e2' },
+    pending: { color: colors.gray600, label: 'PENDING', bg: colors.gray100 },
+  }
+  const status = statusConfig[receivable.status as keyof typeof statusConfig] || statusConfig.pending
+
+  // Format dates elegantly
+  const saleDate = new Date(sale.saleDate)
+  const formattedSaleDate = saleDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+  const formattedReceiptDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
   // Build items rows
   const itemsHTML = items
     .map(
-      (item) => `
-      <tr>
-        <td>${item.productName}${item.serialNumber ? `<br><small style="color: ${secondaryColor};">S/N: ${item.serialNumber}</small>` : ''}</td>
+      (item, index) => `
+      <tr class="${index % 2 === 0 ? 'row-even' : 'row-odd'}">
+        <td class="item-cell">
+          <span class="item-name">${item.productName}</span>
+          ${item.serialNumber ? `<span class="item-serial">S/N: ${item.serialNumber}</span>` : ''}
+        </td>
         <td class="text-center">${item.quantity}</td>
         <td class="text-right">${formatCurrency(item.unitPrice, settings)}</td>
         ${showTax ? `<td class="text-right">${formatCurrency(item.taxAmount, settings)}</td>` : ''}
-        <td class="text-right">${formatCurrency(item.totalPrice, settings)}</td>
+        <td class="text-right amount-cell">${formatCurrency(item.totalPrice, settings)}</td>
       </tr>
     `
     )
@@ -848,18 +1178,19 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
   // Build payment history with running balance
   let runningBalance = 0
   const paymentsWithBalanceHTML = payments
-    .map((payment) => {
+    .map((payment, index) => {
       runningBalance += payment.amount
       const remaining = Math.max(0, receivable.totalAmount - runningBalance)
+      const paymentDate = new Date(payment.paymentDate)
+      const formattedPaymentDate = paymentDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
       return `
-        <tr>
-          <td>${formatDateTime(new Date(payment.paymentDate))}</td>
-          <td class="text-center">${getPaymentMethodLabel(payment.paymentMethod)}</td>
-          <td class="text-right">${formatCurrency(payment.amount, settings)}</td>
+        <tr class="${index % 2 === 0 ? 'row-even' : 'row-odd'}">
+          <td>${formattedPaymentDate}</td>
+          <td class="text-center"><span class="method-badge">${getPaymentMethodLabel(payment.paymentMethod)}</span></td>
+          <td class="text-right amount-cell">${formatCurrency(payment.amount, settings)}</td>
           <td class="text-right">${formatCurrency(runningBalance, settings)}</td>
-          <td class="text-right" style="color: ${remaining > 0 ? '#dc2626' : '#10b981'}; font-weight: bold;">${formatCurrency(remaining, settings)}</td>
-          <td class="text-center">${payment.referenceNumber || '-'}</td>
-          <td class="text-left">${payment.notes || '-'}</td>
+          <td class="text-right ${remaining > 0 ? 'balance-due' : 'balance-clear'}">${formatCurrency(remaining, settings)}</td>
+          <td class="text-center ref-cell">${payment.referenceNumber || '—'}</td>
         </tr>
       `
     })
@@ -870,213 +1201,374 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
     <html>
     <head>
       <meta charset="UTF-8">
+      <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+          --primary-900: ${colors.primary900};
+          --primary-700: ${colors.primary700};
+          --accent-gold: ${colors.accentGold};
+          --accent-emerald: ${colors.accentEmerald};
+          --accent-rose: ${colors.accentRose};
+          --gray-900: ${colors.gray900};
+          --gray-600: ${colors.gray600};
+          --gray-400: ${colors.gray400};
+          --gray-100: ${colors.gray100};
+          --gray-50: ${colors.gray50};
+        }
+
         body {
-          font-family: 'Segoe UI', Arial, sans-serif;
+          font-family: 'DM Sans', 'Segoe UI', sans-serif;
           font-size: ${fontSize.base}px;
-          line-height: 1.5;
-          color: #1e293b;
+          line-height: 1.6;
+          color: var(--gray-900);
           padding: 40px;
           background: white;
         }
+
         .receipt-container {
           max-width: 800px;
           margin: 0 auto;
         }
+
+        /* Header */
         .header {
           text-align: center;
-          padding-bottom: 20px;
-          border-bottom: 2px solid ${primaryColor};
-          margin-bottom: 20px;
+          padding-bottom: 25px;
+          margin-bottom: 25px;
+          position: relative;
         }
+
+        .header::after {
+          content: '';
+          position: absolute;
+          bottom: 0;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 150px;
+          height: 3px;
+          background: linear-gradient(90deg, transparent, var(--accent-gold), transparent);
+        }
+
         .business-logo {
-          max-width: 120px;
-          max-height: 80px;
-          margin-bottom: 10px;
+          max-width: 100px;
+          max-height: 70px;
+          margin-bottom: 15px;
+          filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));
         }
+
         .business-name {
+          font-family: 'Playfair Display', Georgia, serif;
           font-size: ${fontSize.title}px;
-          font-weight: bold;
-          color: ${primaryColor};
-          margin-bottom: 5px;
+          font-weight: 700;
+          color: var(--primary-900);
+          margin-bottom: 8px;
         }
+
         .business-info {
-          font-size: ${fontSize.base}px;
-          color: ${secondaryColor};
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-600);
+          text-transform: uppercase;
+          letter-spacing: 1.5px;
         }
+
         .receipt-title {
+          font-family: 'Playfair Display', Georgia, serif;
           font-size: ${fontSize.header + 2}px;
-          font-weight: bold;
-          color: ${primaryColor};
-          margin-top: 15px;
-          padding: 10px 20px;
-          background: linear-gradient(135deg, #dbeafe 0%, #e0f2fe 100%);
+          font-weight: 600;
+          color: var(--primary-900);
+          margin-top: 20px;
+          padding: 12px 30px;
+          background: linear-gradient(135deg, var(--gray-50) 0%, var(--gray-100) 100%);
+          border: 1px solid var(--gray-100);
           border-radius: 8px;
           display: inline-block;
+          letter-spacing: 1px;
         }
+
+        /* Invoice Details */
         .invoice-details {
           display: flex;
           justify-content: space-between;
-          margin: 20px 0;
-          padding: 15px;
-          background: #f8fafc;
-          border-radius: 8px;
+          margin: 25px 0;
+          padding: 20px 25px;
+          background: var(--gray-50);
+          border-radius: 12px;
+          border: 1px solid var(--gray-100);
         }
+
+        .invoice-left, .invoice-right { flex: 1; }
+        .invoice-right { text-align: right; }
+
         .invoice-label {
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
-          margin-bottom: 3px;
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-400);
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 4px;
         }
+
         .invoice-value {
           font-size: ${fontSize.base + 1}px;
           font-weight: 600;
+          color: var(--gray-900);
         }
+
         .status-badge {
           display: inline-block;
-          padding: 6px 16px;
+          padding: 6px 18px;
           border-radius: 20px;
-          font-weight: bold;
+          font-weight: 700;
           text-transform: uppercase;
           letter-spacing: 1px;
-          font-size: ${fontSize.base - 1}px;
+          font-size: ${fontSize.caption}px;
+          background: ${status.bg};
+          color: ${status.color};
+          border: 1px solid ${status.color};
         }
+
+        /* Customer Card */
         .customer-info {
-          padding: 15px;
-          background: #f0f9ff;
-          border-radius: 8px;
-          margin-bottom: 20px;
+          padding: 18px 20px;
+          background: white;
+          border-left: 4px solid var(--accent-gold);
+          border-radius: 0 12px 12px 0;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+          margin-bottom: 25px;
         }
+
         .customer-label {
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
-          margin-bottom: 5px;
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-400);
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 6px;
         }
+
         .customer-name {
+          font-family: 'Playfair Display', Georgia, serif;
           font-size: ${fontSize.header}px;
-          font-weight: bold;
-          color: #0369a1;
+          font-weight: 600;
+          color: var(--primary-900);
         }
+
         .customer-contact {
           font-size: ${fontSize.base}px;
-          color: #475569;
-          margin-top: 3px;
+          color: var(--gray-600);
+          margin-top: 2px;
         }
+
+        /* Balance Summary */
         .balance-summary {
           display: flex;
-          justify-content: space-between;
-          margin-bottom: 20px;
-          gap: 15px;
+          gap: 20px;
+          margin-bottom: 30px;
         }
+
         .balance-card {
           flex: 1;
-          padding: 15px;
-          border-radius: 8px;
+          padding: 20px;
+          border-radius: 12px;
           text-align: center;
         }
-        .balance-card.total { background: #e0f2fe; border: 1px solid #0ea5e9; }
-        .balance-card.paid { background: #dcfce7; border: 1px solid #22c55e; }
-        .balance-card.remaining { background: ${receivable.remainingAmount > 0 ? '#fee2e2' : '#dcfce7'}; border: 1px solid ${receivable.remainingAmount > 0 ? '#dc2626' : '#22c55e'}; }
+
+        .balance-card.total {
+          background: linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%);
+          border: 1px solid #0ea5e9;
+        }
+
+        .balance-card.paid {
+          background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%);
+          border: 1px solid var(--accent-emerald);
+        }
+
+        .balance-card.remaining {
+          background: ${receivable.remainingAmount > 0 ? 'linear-gradient(135deg, #fee2e2 0%, #fecaca 100%)' : 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)'};
+          border: 1px solid ${receivable.remainingAmount > 0 ? 'var(--accent-rose)' : 'var(--accent-emerald)'};
+        }
+
         .balance-label {
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
-          margin-bottom: 5px;
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-600);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 8px;
         }
+
         .balance-value {
-          font-size: ${fontSize.header + 2}px;
-          font-weight: bold;
+          font-family: 'DM Sans', sans-serif;
+          font-size: ${fontSize.header + 4}px;
+          font-weight: 700;
         }
+
+        .balance-card.total .balance-value { color: #0369a1; }
+        .balance-card.paid .balance-value { color: var(--accent-emerald); }
+        .balance-card.remaining .balance-value { color: ${receivable.remainingAmount > 0 ? 'var(--accent-rose)' : 'var(--accent-emerald)'}; }
+
+        /* Section Title */
         .section-title {
+          font-family: 'Playfair Display', Georgia, serif;
           font-size: ${fontSize.header}px;
-          font-weight: bold;
-          color: ${primaryColor};
-          margin: 20px 0 10px 0;
-          padding-bottom: 5px;
-          border-bottom: 2px solid #e2e8f0;
+          font-weight: 600;
+          color: var(--primary-900);
+          margin: 25px 0 15px 0;
+          padding-bottom: 8px;
+          border-bottom: 2px solid var(--accent-gold);
+          display: inline-block;
         }
+
+        /* Tables */
         table {
           width: 100%;
           border-collapse: collapse;
           margin-bottom: 15px;
         }
-        th, td {
-          padding: 12px;
-          border-bottom: 1px solid #e2e8f0;
-          text-align: left;
-        }
+
+        thead { background: var(--primary-900); }
+
         th {
-          background: #f1f5f9;
+          padding: 14px 12px;
+          text-align: left;
           font-weight: 600;
-          color: #475569;
+          font-size: ${fontSize.base}px;
+          color: white;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        th:first-child { border-radius: 8px 0 0 0; }
+        th:last-child { border-radius: 0 8px 0 0; }
+
+        td {
+          padding: 12px;
+          border-bottom: 1px solid var(--gray-100);
           font-size: ${fontSize.base}px;
         }
-        tr:nth-child(even) { background: #f8fafc; }
+
+        .row-even { background: var(--gray-50); }
+        .row-odd { background: white; }
+
         .text-center { text-align: center; }
         .text-right { text-align: right; }
-        .text-left { text-align: left; }
-        .totals-section {
-          margin-top: 15px;
-          border-top: 2px solid #e2e8f0;
-          padding-top: 15px;
+
+        .item-cell { display: flex; flex-direction: column; }
+        .item-name { font-weight: 500; color: var(--gray-900); }
+        .item-serial {
+          font-family: 'JetBrains Mono', monospace;
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-400);
+          margin-top: 2px;
         }
+
+        .amount-cell { font-weight: 600; color: var(--gray-900); }
+        .method-badge {
+          display: inline-block;
+          padding: 4px 10px;
+          background: var(--gray-100);
+          border-radius: 12px;
+          font-size: ${fontSize.caption}px;
+          font-weight: 500;
+        }
+
+        .balance-due { color: var(--accent-rose); font-weight: 700; }
+        .balance-clear { color: var(--accent-emerald); font-weight: 700; }
+        .ref-cell { font-family: 'JetBrains Mono', monospace; font-size: ${fontSize.caption}px; color: var(--gray-400); }
+
+        /* Totals */
+        .totals-section {
+          margin-top: 20px;
+          padding: 20px;
+          background: var(--gray-50);
+          border-radius: 12px;
+        }
+
         .totals-row {
           display: flex;
           justify-content: space-between;
-          padding: 8px 0;
+          padding: 10px 0;
           font-size: ${fontSize.base}px;
+          border-bottom: 1px solid var(--gray-100);
         }
+
+        .totals-row:last-of-type { border-bottom: none; }
+
         .totals-row.grand-total {
           font-size: ${fontSize.header}px;
-          font-weight: bold;
-          color: ${primaryColor};
-          border-top: 2px solid ${primaryColor};
-          margin-top: 10px;
-          padding-top: 15px;
-        }
-        .payment-history-section {
-          background: #fefce8;
-          border: 1px solid #eab308;
-          border-radius: 8px;
-          padding: 15px;
-          margin: 20px 0;
-        }
-        .footer {
-          margin-top: 30px;
+          font-weight: 700;
+          color: var(--primary-900);
+          border-top: 3px solid var(--accent-gold);
+          border-bottom: none;
+          margin-top: 15px;
           padding-top: 20px;
-          border-top: 2px solid #e2e8f0;
+        }
+
+        /* Payment History Section */
+        .payment-history-section {
+          background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+          border: 1px solid var(--accent-gold);
+          border-radius: 12px;
+          padding: 20px;
+          margin: 25px 0;
+        }
+
+        .payment-history-section .section-title {
+          margin-top: 0;
+          border-bottom-color: var(--primary-900);
+        }
+
+        .empty-payments {
+          text-align: center;
+          padding: 40px;
+          color: var(--gray-400);
+          font-style: italic;
+        }
+
+        /* Footer */
+        .footer {
+          margin-top: 40px;
+          padding-top: 25px;
+          border-top: 1px solid var(--gray-100);
           text-align: center;
         }
-        .footer-text {
+
+        .footer-note {
           font-size: ${fontSize.base}px;
-          color: #333;
+          color: var(--gray-600);
           margin-bottom: 15px;
         }
+
+        .footer-text {
+          font-size: ${fontSize.base}px;
+          color: var(--gray-600);
+          margin-bottom: 15px;
+        }
+
         .terms {
           margin-top: 20px;
-          padding: 15px;
-          background: #f8fafc;
+          padding: 18px;
+          background: var(--gray-50);
           border-radius: 8px;
-          font-size: ${fontSize.base - 1}px;
-          color: ${secondaryColor};
+          font-size: ${fontSize.caption}px;
+          color: var(--gray-600);
           text-align: left;
           white-space: pre-wrap;
         }
+
         .terms-title {
-          font-weight: bold;
-          color: #333;
-          margin-bottom: 8px;
+          font-weight: 700;
+          color: var(--gray-900);
+          margin-bottom: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
+
         .thank-you {
-          font-size: ${fontSize.header}px;
-          color: ${primaryColor};
-          font-weight: bold;
-          margin-top: 20px;
-        }
-        .empty-payments {
-          text-align: center;
-          padding: 30px;
-          color: ${secondaryColor};
-          font-style: italic;
+          font-family: 'Playfair Display', Georgia, serif;
+          font-size: ${fontSize.header + 2}px;
+          color: var(--primary-900);
+          font-weight: 600;
+          margin-top: 25px;
         }
       </style>
     </head>
@@ -1086,45 +1578,45 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
           ${showLogo && settings.businessLogo ? `<img src="${settings.businessLogo}" class="business-logo" alt="Logo" />` : ''}
           <div class="business-name">${settings.businessName || 'Business Name'}</div>
           <div class="business-info">
-            ${settings.businessAddress || ''}
-            ${settings.businessCity || settings.businessState ? ', ' : ''}
-            ${settings.businessCity || ''} ${settings.businessState || ''}
+            ${settings.businessAddress ? settings.businessAddress : ''}
+            ${settings.businessCity ? ` • ${settings.businessCity}` : ''}
+            ${settings.businessState ? `, ${settings.businessState}` : ''}
           </div>
           <div class="business-info">
-            ${settings.businessPhone ? 'Tel: ' + settings.businessPhone : ''}
-            ${settings.businessPhone && settings.businessEmail ? ' | ' : ''}
+            ${settings.businessPhone ? settings.businessPhone : ''}
+            ${settings.businessPhone && settings.businessEmail ? ' • ' : ''}
             ${settings.businessEmail ? settings.businessEmail : ''}
           </div>
-          <div class="receipt-title">PAYMENT HISTORY RECEIPT</div>
+          <div class="receipt-title">Payment History Receipt</div>
         </div>
 
         <div class="invoice-details">
           <div class="invoice-left">
             <div class="invoice-label">Invoice Number</div>
             <div class="invoice-value">${receivable.invoiceNumber}</div>
-            <div class="invoice-label" style="margin-top: 10px;">Original Sale Date</div>
-            <div class="invoice-value">${formatDateTime(new Date(sale.saleDate))}</div>
+            <div class="invoice-label" style="margin-top: 12px;">Original Sale Date</div>
+            <div class="invoice-value">${formattedSaleDate}</div>
             ${receivable.dueDate ? `
-            <div class="invoice-label" style="margin-top: 10px;">Due Date</div>
+            <div class="invoice-label" style="margin-top: 12px;">Due Date</div>
             <div class="invoice-value">${formatDate(new Date(receivable.dueDate))}</div>
             ` : ''}
           </div>
           <div class="invoice-right">
             <div class="invoice-label">Receipt Date</div>
-            <div class="invoice-value">${formatDateTime(new Date())}</div>
-            <div class="invoice-label" style="margin-top: 10px;">Status</div>
-            <div style="margin-top: 5px;">
-              <span class="status-badge" style="background-color: ${statusColor}; color: white;">${receivable.status.toUpperCase()}</span>
+            <div class="invoice-value">${formattedReceiptDate}</div>
+            <div class="invoice-label" style="margin-top: 12px;">Status</div>
+            <div style="margin-top: 6px;">
+              <span class="status-badge">${status.label}</span>
             </div>
           </div>
         </div>
 
         <div class="customer-info">
-          <div class="customer-label">Customer</div>
+          <div class="customer-label">Bill To</div>
           <div class="customer-name">${customer?.name || 'Walk-in Customer'}</div>
-          ${customer?.phone ? `<div class="customer-contact">Phone: ${customer.phone}</div>` : ''}
-          ${customer?.email ? `<div class="customer-contact">Email: ${customer.email}</div>` : ''}
-          ${customer?.address ? `<div class="customer-contact">Address: ${customer.address}</div>` : ''}
+          ${customer?.phone ? `<div class="customer-contact">${customer.phone}</div>` : ''}
+          ${customer?.email ? `<div class="customer-contact">${customer.email}</div>` : ''}
+          ${customer?.address ? `<div class="customer-contact">${customer.address}</div>` : ''}
         </div>
 
         <div class="balance-summary">
@@ -1134,11 +1626,11 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
           </div>
           <div class="balance-card paid">
             <div class="balance-label">Amount Paid</div>
-            <div class="balance-value" style="color: #22c55e;">${formatCurrency(receivable.paidAmount, settings)}</div>
+            <div class="balance-value">${formatCurrency(receivable.paidAmount, settings)}</div>
           </div>
           <div class="balance-card remaining">
-            <div class="balance-label">Remaining</div>
-            <div class="balance-value" style="color: ${receivable.remainingAmount > 0 ? '#dc2626' : '#22c55e'};">${formatCurrency(receivable.remainingAmount, settings)}</div>
+            <div class="balance-label">${receivable.remainingAmount > 0 ? 'Balance Due' : 'Fully Paid'}</div>
+            <div class="balance-value">${formatCurrency(receivable.remainingAmount, settings)}</div>
           </div>
         </div>
 
@@ -1147,11 +1639,11 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
         <table>
           <thead>
             <tr>
-              <th>Product</th>
+              <th>Description</th>
               <th class="text-center">Qty</th>
               <th class="text-right">Unit Price</th>
               ${showTax ? '<th class="text-right">Tax</th>' : ''}
-              <th class="text-right">Total</th>
+              <th class="text-right">Amount</th>
             </tr>
           </thead>
           <tbody>
@@ -1173,7 +1665,7 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
           ${sale.discountAmount > 0 ? `
           <div class="totals-row">
             <span>Discount</span>
-            <span>-${formatCurrency(sale.discountAmount, settings)}</span>
+            <span style="color: var(--accent-rose);">-${formatCurrency(sale.discountAmount, settings)}</span>
           </div>
           ` : ''}
           <div class="totals-row grand-total">
@@ -1184,7 +1676,7 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
         ` : ''}
 
         <div class="payment-history-section">
-          <div class="section-title" style="margin-top: 0;">Complete Payment History</div>
+          <div class="section-title">Payment History</div>
           ${payments.length > 0 ? `
           <table>
             <thead>
@@ -1195,7 +1687,6 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
                 <th class="text-right">Total Paid</th>
                 <th class="text-right">Balance</th>
                 <th class="text-center">Reference</th>
-                <th class="text-left">Notes</th>
               </tr>
             </thead>
             <tbody>
@@ -1203,14 +1694,12 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
             </tbody>
           </table>
           ` : `
-          <div class="empty-payments">No payments have been recorded yet for this receivable.</div>
+          <div class="empty-payments">No payments have been recorded yet.</div>
           `}
         </div>
 
         <div class="footer">
-          <div style="font-size: ${fontSize.base}px; color: ${secondaryColor}; margin-bottom: 15px;">
-            This receipt serves as proof of payment history for the referenced invoice.
-          </div>
+          <div class="footer-note">This receipt serves as proof of payment history for the referenced invoice.</div>
           ${settings.receiptFooter ? `<div class="footer-text">${settings.receiptFooter}</div>` : ''}
           ${settings.receiptTermsAndConditions ? `
           <div class="terms">
@@ -1218,7 +1707,7 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
             ${settings.receiptTermsAndConditions}
           </div>
           ` : ''}
-          <div class="thank-you">Thank You for Your Business!</div>
+          <div class="thank-you">Thank You for Your Business</div>
         </div>
       </div>
     </body>
@@ -1226,20 +1715,25 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
   `
 }
 
-// Generate Thermal Payment History Receipt HTML (80mm format)
+// Generate Thermal Payment History Receipt HTML (80mm format) - Optimized for thermal printers
 function generateThermalPaymentHistoryReceiptHTML(data: PaymentHistoryData): string {
   const { receivable, payments, sale, customer, businessSettings: settings } = data
   const showTax = settings.showTaxOnReceipt !== false
 
-  // Status indicator
-  const statusIndicator =
-    receivable.status === 'paid'
-      ? '[PAID]'
-      : receivable.status === 'partial'
-        ? '[PARTIAL]'
-        : receivable.status === 'overdue'
-          ? '[OVERDUE]'
-          : '[PENDING]'
+  // Status indicator with visual emphasis
+  const statusConfig = {
+    paid: { symbol: '✓', label: 'PAID' },
+    partial: { symbol: '◐', label: 'PARTIAL' },
+    overdue: { symbol: '!', label: 'OVERDUE' },
+    pending: { symbol: '○', label: 'PENDING' },
+  }
+  const status = statusConfig[receivable.status as keyof typeof statusConfig] || statusConfig.pending
+
+  // Format short dates for thermal
+  const saleDate = new Date(sale.saleDate)
+  const shortSaleDate = `${saleDate.getDate().toString().padStart(2, '0')}/${(saleDate.getMonth() + 1).toString().padStart(2, '0')}/${saleDate.getFullYear().toString().slice(-2)}`
+  const now = new Date()
+  const shortNowDate = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getFullYear().toString().slice(-2)}`
 
   // Build payment history rows with running balance
   let runningBalance = 0
@@ -1247,20 +1741,20 @@ function generateThermalPaymentHistoryReceiptHTML(data: PaymentHistoryData): str
     .map((payment) => {
       runningBalance += payment.amount
       const remaining = Math.max(0, receivable.totalAmount - runningBalance)
+      const pDate = new Date(payment.paymentDate)
+      const shortPDate = `${pDate.getDate().toString().padStart(2, '0')}/${(pDate.getMonth() + 1).toString().padStart(2, '0')}`
       return `
       <div class="payment-entry">
-        <div class="payment-date">${formatDateTime(new Date(payment.paymentDate))}</div>
-        <div class="payment-details">
-          <span>${getPaymentMethodLabel(payment.paymentMethod)}</span>
-          <span class="payment-amount">${formatCurrency(payment.amount, settings)}</span>
+        <div class="payment-header">
+          <span class="payment-date">${shortPDate}</span>
+          <span class="payment-method">${getPaymentMethodLabel(payment.paymentMethod).toUpperCase()}</span>
         </div>
-        <div class="payment-balance">
-          <span>Paid: ${formatCurrency(runningBalance, settings)}</span>
+        <div class="payment-amounts">
+          <span>Amount: ${formatCurrency(payment.amount, settings)}</span>
           <span>Due: ${formatCurrency(remaining, settings)}</span>
         </div>
-        ${payment.referenceNumber ? `<div class="payment-ref">Ref: ${payment.referenceNumber}</div>` : ''}
+        ${payment.referenceNumber ? `<div class="payment-ref">REF: ${payment.referenceNumber}</div>` : ''}
       </div>
-      <div class="separator"></div>
     `
     })
     .join('')
@@ -1270,249 +1764,316 @@ function generateThermalPaymentHistoryReceiptHTML(data: PaymentHistoryData): str
     <html>
     <head>
       <meta charset="UTF-8">
+      <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-          font-family: 'Courier New', monospace;
-          font-size: 12px;
-          line-height: 1.4;
+          font-family: 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+          font-size: 10px;
+          line-height: 1.3;
           color: #000;
           width: 302px;
-          padding: 10px;
+          padding: 8px 10px;
           background: white;
         }
-        .header {
+
+        /* Header */
+        .header-box {
+          border: 2px solid #000;
+          padding: 8px;
+          margin-bottom: 8px;
           text-align: center;
-          border-bottom: 1px dashed #000;
-          padding-bottom: 10px;
-          margin-bottom: 10px;
         }
+
         .business-name {
-          font-size: 16px;
-          font-weight: bold;
-          margin-bottom: 5px;
+          font-size: 14px;
+          font-weight: 700;
+          letter-spacing: 1px;
+          text-transform: uppercase;
         }
+
         .business-info {
-          font-size: 10px;
+          font-size: 9px;
+          margin-top: 4px;
           color: #333;
         }
+
         .receipt-title {
-          font-size: 12px;
-          font-weight: bold;
-          margin-top: 8px;
-          text-decoration: underline;
+          font-size: 11px;
+          font-weight: 700;
+          margin-top: 6px;
+          padding: 4px 10px;
+          background: #000;
+          color: #fff;
+          display: inline-block;
+          letter-spacing: 1px;
         }
-        .invoice-section {
-          margin: 10px 0;
-          border-bottom: 1px dashed #000;
-          padding-bottom: 10px;
-        }
-        .invoice-row {
+
+        /* Dividers */
+        .div-double { border-top: 3px double #000; margin: 8px 0; }
+        .div-single { border-top: 1px solid #000; margin: 6px 0; }
+
+        /* Invoice Section */
+        .invoice-section { margin: 8px 0; }
+
+        .inv-row {
           display: flex;
           justify-content: space-between;
-          font-size: 11px;
+          font-size: 10px;
+          padding: 2px 0;
         }
-        .invoice-row strong {
-          font-size: 12px;
-        }
-        .status-row {
-          text-align: center;
-          font-size: 12px;
-          font-weight: bold;
-          padding: 5px;
+
+        .inv-number { font-weight: 700; font-size: 11px; }
+
+        /* Customer Section */
+        .customer-section {
           background: #f0f0f0;
-          margin: 10px 0;
-          border-radius: 4px;
+          padding: 6px 8px;
+          margin: 8px 0;
         }
+
+        .customer-name {
+          font-weight: 700;
+          font-size: 11px;
+          text-transform: uppercase;
+        }
+
+        .customer-contact { font-size: 9px; color: #444; }
+
+        /* Status Box */
+        .status-box {
+          border: 2px solid #000;
+          padding: 6px;
+          margin: 8px 0;
+          text-align: center;
+        }
+
+        .status-indicator {
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 1px;
+        }
+
+        /* Balance Section */
         .balance-section {
-          background: #f5f5f5;
+          background: #e8e8e8;
           padding: 8px;
-          border-radius: 4px;
-          margin: 10px 0;
+          margin: 8px 0;
         }
+
         .balance-row {
           display: flex;
           justify-content: space-between;
-          font-size: 11px;
+          font-size: 10px;
           padding: 3px 0;
         }
-        .balance-row.total {
-          font-weight: bold;
+
+        .balance-row.highlight {
+          font-weight: 700;
+          font-size: 12px;
           border-top: 1px solid #000;
-          padding-top: 5px;
+          padding-top: 6px;
+          margin-top: 4px;
         }
-        .payment-history-section {
-          background: #fff8e1;
+
+        .balance-value { font-weight: 700; }
+
+        /* Payment History */
+        .history-section {
+          border: 1px solid #000;
           padding: 8px;
-          border-radius: 4px;
-          margin: 10px 0;
-        }
-        .payment-history-title {
-          font-size: 11px;
-          font-weight: bold;
-          margin-bottom: 8px;
-          text-align: center;
-          text-decoration: underline;
-        }
-        .payment-entry {
-          margin-bottom: 8px;
-        }
-        .payment-date {
-          font-size: 10px;
-          color: #666;
-        }
-        .payment-details {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-        }
-        .payment-amount {
-          font-weight: bold;
-        }
-        .payment-balance {
-          display: flex;
-          justify-content: space-between;
-          font-size: 10px;
-          color: #666;
-        }
-        .payment-ref {
-          font-size: 9px;
-          color: #666;
-          font-style: italic;
-        }
-        .customer-section {
-          margin: 10px 0;
-          padding: 8px;
-          background: #f5f5f5;
-          border-radius: 4px;
-        }
-        .customer-name {
-          font-weight: bold;
-          font-size: 12px;
-        }
-        .totals-section {
-          margin: 10px 0;
-        }
-        .total-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 3px 0;
-        }
-        .total-row.grand-total {
-          font-size: 14px;
-          font-weight: bold;
-          border-top: 2px solid #000;
-          border-bottom: 2px solid #000;
-          padding: 8px 0;
-          margin-top: 5px;
-        }
-        .footer {
-          margin-top: 10px;
-          text-align: center;
-          border-top: 1px dashed #000;
-          padding-top: 10px;
-        }
-        .footer-text {
-          font-size: 10px;
-          margin-bottom: 5px;
-        }
-        .thank-you {
-          font-size: 12px;
-          font-weight: bold;
-          margin-top: 10px;
-        }
-        .separator {
-          border-bottom: 1px dashed #ccc;
           margin: 8px 0;
         }
-        .empty-payments {
+
+        .history-title {
+          font-size: 10px;
+          font-weight: 700;
+          text-align: center;
+          margin-bottom: 8px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid #000;
+          letter-spacing: 1px;
+        }
+
+        .payment-entry {
+          margin-bottom: 8px;
+          padding-bottom: 6px;
+          border-bottom: 1px dotted #999;
+        }
+
+        .payment-entry:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+
+        .payment-header {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 2px;
+        }
+
+        .payment-date { font-size: 9px; color: #666; }
+
+        .payment-method {
+          font-weight: 700;
+          font-size: 9px;
+          padding: 1px 4px;
+          background: #000;
+          color: #fff;
+        }
+
+        .payment-amounts {
+          display: flex;
+          justify-content: space-between;
+          font-size: 9px;
+        }
+
+        .payment-ref {
+          font-size: 8px;
+          color: #666;
+          margin-top: 2px;
+        }
+
+        .empty-history {
           text-align: center;
           padding: 10px;
           font-style: italic;
+          font-size: 9px;
+          color: #666;
+        }
+
+        /* Totals */
+        .totals-section { margin: 10px 0; }
+
+        .total-row {
+          display: flex;
+          justify-content: space-between;
           font-size: 10px;
+          padding: 3px 0;
+        }
+
+        .total-label { flex: 1; }
+        .total-dots { flex: 2; border-bottom: 1px dotted #999; margin: 0 4px 3px 4px; }
+        .total-value { text-align: right; min-width: 70px; }
+
+        .grand-total-box {
+          border: 2px solid #000;
+          padding: 8px;
+          margin: 8px 0;
+          display: flex;
+          justify-content: space-between;
+          font-weight: 700;
+          font-size: 14px;
+        }
+
+        /* Footer */
+        .footer {
+          text-align: center;
+          margin-top: 10px;
+          padding-top: 8px;
+        }
+
+        .footer-msg {
+          font-size: 9px;
+          color: #666;
+          margin-bottom: 6px;
+        }
+
+        .thank-you-box {
+          border-top: 2px solid #000;
+          border-bottom: 2px solid #000;
+          padding: 8px;
+          margin-top: 10px;
+          font-weight: 700;
+          font-size: 12px;
+          letter-spacing: 2px;
         }
       </style>
     </head>
     <body>
-      <div class="header">
-        <div class="business-name">${settings.businessName || 'Business'}</div>
-        <div class="business-info">${settings.businessAddress || ''} ${settings.businessCity || ''}</div>
-        ${settings.businessPhone ? `<div class="business-info">Tel: ${settings.businessPhone}</div>` : ''}
+      <div class="header-box">
+        <div class="business-name">${settings.businessName || 'BUSINESS'}</div>
+        <div class="business-info">
+          ${settings.businessAddress || ''}${settings.businessCity ? `, ${settings.businessCity}` : ''}
+        </div>
+        ${settings.businessPhone ? `<div class="business-info">TEL: ${settings.businessPhone}</div>` : ''}
         <div class="receipt-title">PAYMENT HISTORY</div>
       </div>
 
       <div class="invoice-section">
-        <div class="invoice-row">
-          <span>Invoice:</span>
-          <strong>${receivable.invoiceNumber}</strong>
+        <div class="inv-row">
+          <span>INV#</span>
+          <span class="inv-number">${receivable.invoiceNumber}</span>
         </div>
-        <div class="invoice-row">
-          <span>Date:</span>
-          <span>${formatDateTime(new Date(sale.saleDate))}</span>
+        <div class="inv-row">
+          <span>SALE DATE</span>
+          <span>${shortSaleDate}</span>
         </div>
-        <div class="invoice-row">
-          <span>Receipt:</span>
-          <span>${formatDateTime(new Date())}</span>
+        <div class="inv-row">
+          <span>RECEIPT</span>
+          <span>${shortNowDate}</span>
         </div>
       </div>
+
+      <div class="div-single"></div>
 
       <div class="customer-section">
-        <div class="customer-name">${customer?.name || 'Walk-in Customer'}</div>
-        ${customer?.phone ? `<div>Tel: ${customer.phone}</div>` : ''}
+        <div class="customer-name">${customer?.name || 'WALK-IN CUSTOMER'}</div>
+        ${customer?.phone ? `<div class="customer-contact">TEL: ${customer.phone}</div>` : ''}
       </div>
 
-      <div class="status-row">
-        ${statusIndicator} - Status: ${receivable.status.toUpperCase()}
+      <div class="status-box">
+        <div class="status-indicator">${status.symbol} ${status.label}</div>
       </div>
 
       <div class="balance-section">
         <div class="balance-row">
-          <span>Total Amount:</span>
-          <span>${formatCurrency(receivable.totalAmount, settings)}</span>
+          <span>TOTAL AMOUNT</span>
+          <span class="balance-value">${formatCurrency(receivable.totalAmount, settings)}</span>
         </div>
         <div class="balance-row">
-          <span>Total Paid:</span>
-          <span>${formatCurrency(receivable.paidAmount, settings)}</span>
+          <span>TOTAL PAID</span>
+          <span class="balance-value">${formatCurrency(receivable.paidAmount, settings)}</span>
         </div>
-        <div class="balance-row total">
-          <span>Remaining:</span>
-          <span style="color: ${receivable.remainingAmount > 0 ? '#dc2626' : '#10b981'};">${formatCurrency(receivable.remainingAmount, settings)}</span>
+        <div class="balance-row highlight">
+          <span>${receivable.remainingAmount > 0 ? '★ BALANCE DUE' : '✓ FULLY PAID'}</span>
+          <span class="balance-value">${formatCurrency(receivable.remainingAmount, settings)}</span>
         </div>
       </div>
 
-      <div class="payment-history-section">
-        <div class="payment-history-title">PAYMENT HISTORY</div>
-        ${payments.length > 0 ? paymentsHTML : '<div class="empty-payments">No payments recorded</div>'}
+      <div class="history-section">
+        <div class="history-title">PAYMENT RECORDS</div>
+        ${payments.length > 0 ? paymentsHTML : '<div class="empty-history">No payments recorded</div>'}
       </div>
 
       <div class="totals-section">
         <div class="total-row">
-          <span>Subtotal:</span>
-          <span>${formatCurrency(sale.subtotal, settings)}</span>
+          <span class="total-label">SUBTOTAL</span>
+          <span class="total-dots"></span>
+          <span class="total-value">${formatCurrency(sale.subtotal, settings)}</span>
         </div>
         ${showTax ? `
         <div class="total-row">
-          <span>Tax:</span>
-          <span>${formatCurrency(sale.taxAmount, settings)}</span>
+          <span class="total-label">TAX</span>
+          <span class="total-dots"></span>
+          <span class="total-value">${formatCurrency(sale.taxAmount, settings)}</span>
         </div>
         ` : ''}
         ${sale.discountAmount > 0 ? `
         <div class="total-row">
-          <span>Discount:</span>
-          <span>-${formatCurrency(sale.discountAmount, settings)}</span>
+          <span class="total-label">DISCOUNT</span>
+          <span class="total-dots"></span>
+          <span class="total-value">-${formatCurrency(sale.discountAmount, settings)}</span>
         </div>
         ` : ''}
-        <div class="total-row grand-total">
-          <span>TOTAL:</span>
-          <span>${formatCurrency(sale.totalAmount, settings)}</span>
-        </div>
+      </div>
+
+      <div class="grand-total-box">
+        <span>INVOICE TOTAL</span>
+        <span>${formatCurrency(sale.totalAmount, settings)}</span>
       </div>
 
       <div class="footer">
-        ${settings.receiptFooter ? `<div class="footer-text">${settings.receiptFooter}</div>` : ''}
-        <div class="footer-text">Payment history receipt</div>
-        <div class="thank-you">Thank You!</div>
+        ${settings.receiptFooter ? `<div class="footer-msg">${settings.receiptFooter}</div>` : ''}
+        <div class="thank-you-box">THANK YOU</div>
       </div>
     </body>
     </html>

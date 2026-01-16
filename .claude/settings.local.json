@@ -56,7 +56,8 @@
       "Bash(xdg-mime query:*)",
       "Bash(gio info:*)",
       "Bash(sudo chown:*)",
-      "Bash(sudo chmod:*)"
+      "Bash(sudo chmod:*)",
+      "Skill(frontend-design)"
     ]
   }
 }
