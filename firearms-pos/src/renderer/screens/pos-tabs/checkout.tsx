@@ -74,6 +74,7 @@ export function TabCheckoutScreen() {
   const [codPhone, setCodPhone] = useState('')
   const [codAddress, setCodAddress] = useState('')
   const [codCity, setCodCity] = useState('')
+  const [codCharges, setCodCharges] = useState<string>('0')
 
   const tab = activeTab
   const tabItems = tab?.items ?? []
@@ -88,7 +89,15 @@ export function TabCheckoutScreen() {
   // Calculate totals
   const subtotal = useMemo(() => tab?.subtotal ?? 0, [tab])
   const tax = useMemo(() => tab?.tax ?? 0, [tab])
-  const totalAmount = useMemo(() => Math.max(0, subtotal + tax - discount), [subtotal, tax, discount])
+  const codChargesNum = codCharges === '' ? 0 : parseFloat(codCharges)
+  const totalAmount = useMemo(() => {
+    const base = subtotal + tax - discount
+    // Add COD charges only for COD payment method
+    if (paymentMethod === 'cod') {
+      return Math.max(0, base + codChargesNum)
+    }
+    return Math.max(0, base)
+  }, [subtotal, tax, discount, paymentMethod, codChargesNum])
   const amountPaidNum = amountPaid === '' ? 0 : parseFloat(amountPaid)
   const changeReturned = Math.max(0, amountPaidNum - totalAmount)
 
@@ -146,6 +155,7 @@ export function TabCheckoutScreen() {
       checkoutData.codPhone = codPhone.trim()
       checkoutData.codAddress = codAddress.trim()
       checkoutData.codCity = codCity.trim()
+      checkoutData.codCharges = codChargesNum
     }
 
     // Add notes if provided
@@ -310,6 +320,12 @@ export function TabCheckoutScreen() {
                   min={0}
                 />
               </div>
+              {paymentMethod === 'cod' && codChargesNum > 0 && (
+                <div className="flex justify-between text-sm text-blue-600">
+                  <span>COD Charges</span>
+                  <span>+{formatCurrency(codChargesNum)}</span>
+                </div>
+              )}
               <Separator />
               <div className="flex justify-between text-xl font-bold">
                 <span>TOTAL</span>
@@ -351,6 +367,23 @@ export function TabCheckoutScreen() {
           {paymentMethod === 'cod' && (
             <div className="space-y-3 rounded-lg border p-4">
               <Label className="block">COD Details</Label>
+              <div>
+                <Label htmlFor="cod-charges">COD Charges (Delivery Fee)</Label>
+                <Input
+                  id="cod-charges"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={codCharges}
+                  onChange={(e) => setCodCharges(e.target.value)}
+                  placeholder="0.00"
+                  className="text-lg font-medium"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  This amount will be added to the customer's total and recorded as expense
+                </p>
+              </div>
+              <Separator />
               <div>
                 <Label htmlFor="cod-name">Name *</Label>
                 <Input

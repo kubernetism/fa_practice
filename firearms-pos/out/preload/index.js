@@ -326,7 +326,12 @@ const api = {
     export: (userId) => electron.ipcRenderer.invoke("backup:export", userId),
     import: (userId) => electron.ipcRenderer.invoke("backup:import", userId),
     cleanOld: (retentionDays) => electron.ipcRenderer.invoke("backup:clean-old", retentionDays),
-    getDirectory: () => electron.ipcRenderer.invoke("backup:get-directory")
+    getDirectory: () => electron.ipcRenderer.invoke("backup:get-directory"),
+    // New selective import APIs
+    getImportCategories: () => electron.ipcRenderer.invoke("backup:get-import-categories"),
+    preview: (backupPath) => electron.ipcRenderer.invoke("backup:preview", backupPath),
+    importSelective: (params) => electron.ipcRenderer.invoke("backup:import-selective", params),
+    importFull: (backupPath) => electron.ipcRenderer.invoke("backup:import-full", backupPath)
   },
   // Tax Collections
   taxCollections: {

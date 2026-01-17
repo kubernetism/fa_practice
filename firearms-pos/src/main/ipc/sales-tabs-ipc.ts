@@ -13,6 +13,7 @@ import {
   saleItems,
   commissions,
   accountReceivables,
+  expenses,
   type NewSalesTab,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
@@ -51,6 +52,7 @@ interface CheckoutData {
   codPhone?: string
   codAddress?: string
   codCity?: string
+  codCharges?: number
   notes?: string
 }
 
@@ -740,7 +742,9 @@ export function registerSalesTabsHandlers(): void {
       const subtotal = tab.subtotal
       const taxAmount = tab.tax
       const discountAmount = checkoutData.discount ?? 0
-      const totalAmount = subtotal + taxAmount - discountAmount
+      const codCharges = checkoutData.codCharges ?? 0
+      // Add COD charges to total for COD payment method
+      const totalAmount = subtotal + taxAmount - discountAmount + (checkoutData.paymentMethod === 'cod' ? codCharges : 0)
       const amountPaid = checkoutData.amountPaid ?? 0
       const changeGiven = amountPaid > totalAmount ? amountPaid - totalAmount : 0
 
@@ -765,6 +769,9 @@ export function registerSalesTabsHandlers(): void {
 
       if (checkoutData.paymentMethod === 'cod') {
         saleNotes = `${saleNotes}\n\nCOD Details:\nName: ${checkoutData.codName}\nPhone: ${checkoutData.codPhone}\nAddress: ${checkoutData.codAddress}, ${checkoutData.codCity}`
+        if (codCharges > 0) {
+          saleNotes = `${saleNotes}\nCOD Charges: ${codCharges}`
+        }
       }
 
       const [sale] = await db
@@ -840,6 +847,20 @@ export function registerSalesTabsHandlers(): void {
           remainingAmount: totalAmount,
           status: 'pending',
           createdBy: session.userId,
+        })
+      }
+
+      // Create expense entry for COD charges (to be paid to courier)
+      if (checkoutData.paymentMethod === 'cod' && codCharges > 0) {
+        await db.insert(expenses).values({
+          branchId: tab.branchId,
+          userId: session.userId,
+          category: 'other',
+          amount: codCharges,
+          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${checkoutData.codName}, Phone: ${checkoutData.codPhone}`,
+          paymentMethod: 'cash',
+          reference: invoiceNumber,
+          paymentStatus: 'unpaid', // Mark as unpaid - to be paid to courier later
         })
       }
 

@@ -9,6 +9,7 @@ import {
   customers,
   commissions,
   accountReceivables,
+  expenses,
   type NewSale,
   type NewSaleItem,
 } from '../db/schema'
@@ -34,6 +35,11 @@ interface CreateSaleData {
   paymentStatus?: 'paid' | 'partial' | 'pending'
   amountPaid: number
   discountAmount?: number
+  codCharges?: number
+  codName?: string
+  codPhone?: string
+  codAddress?: string
+  codCity?: string
   notes?: string
 }
 
@@ -134,7 +140,9 @@ export function registerSalesHandlers(): void {
       }
 
       const discountAmount = data.discountAmount || 0
-      const totalAmount = subtotal + taxAmount - discountAmount
+      const codCharges = data.codCharges || 0
+      // Add COD charges to total for COD payment method
+      const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === 'cod' ? codCharges : 0)
       const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0
       // Use provided paymentStatus for receivable/cod, otherwise calculate based on amount
       const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending')
@@ -211,6 +219,20 @@ export function registerSalesHandlers(): void {
           remainingAmount: outstandingAmount,
           status: 'pending',
           createdBy: session?.userId,
+        })
+      }
+
+      // 6. Create expense entry for COD charges (to be paid to courier)
+      if (data.paymentMethod === 'cod' && codCharges > 0) {
+        await db.insert(expenses).values({
+          branchId: data.branchId,
+          userId: session?.userId ?? 0,
+          category: 'other',
+          amount: codCharges,
+          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${data.codName || 'N/A'}, Phone: ${data.codPhone || 'N/A'}`,
+          paymentMethod: 'cash',
+          reference: invoiceNumber,
+          paymentStatus: 'unpaid', // Mark as unpaid - to be paid to courier later
         })
       }
 

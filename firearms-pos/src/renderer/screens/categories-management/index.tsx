@@ -6,9 +6,6 @@ import {
   Trash2,
   FolderTree,
   Package,
-  ShoppingCart,
-  Receipt,
-  Truck,
   ChevronRight,
   ChevronDown,
   RefreshCw,
@@ -45,8 +42,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 
 interface Category {
@@ -74,13 +71,6 @@ const initialFormData: CategoryFormData = {
   isActive: true,
 }
 
-// Category type icons
-const categoryTypeConfig = {
-  products: { icon: Package, label: 'Products', description: 'Product categories for inventory' },
-  purchases: { icon: Truck, label: 'Purchases', description: 'Purchase order categories' },
-  receipts: { icon: Receipt, label: 'Receipts', description: 'Receipt/Invoice categories' },
-  cart: { icon: ShoppingCart, label: 'Cart', description: 'Shopping cart categories' },
-}
 
 // Tree node component
 function CategoryTreeNode({
@@ -161,8 +151,9 @@ export function CategoriesManagementScreen() {
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null)
   const [formData, setFormData] = useState<CategoryFormData>(initialFormData)
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
-  const [activeTab, setActiveTab] = useState('all')
   const [isSaving, setIsSaving] = useState(false)
+  const [quickAddName, setQuickAddName] = useState('')
+  const [isQuickAdding, setIsQuickAdding] = useState(false)
 
   // Fetch categories
   const fetchCategories = useCallback(async () => {
@@ -290,6 +281,33 @@ export function CategoriesManagementScreen() {
     } catch (error) {
       console.error('Failed to delete category:', error)
       alert('Failed to delete category')
+    }
+  }
+
+  // Quick add category
+  const handleQuickAdd = async () => {
+    if (!quickAddName.trim()) return
+
+    try {
+      setIsQuickAdding(true)
+      const response = await window.api.categories.create({
+        name: quickAddName.trim(),
+        description: null,
+        parentId: null,
+        isActive: true,
+      })
+
+      if (response?.success) {
+        setQuickAddName('')
+        await fetchCategories()
+      } else {
+        alert(response?.message || 'Failed to add category')
+      }
+    } catch (error) {
+      console.error('Quick add failed:', error)
+      alert('Failed to add category')
+    } finally {
+      setIsQuickAdding(false)
     }
   }
 
@@ -496,32 +514,60 @@ export function CategoriesManagementScreen() {
           </CardContent>
         </Card>
 
-        {/* Quick Reference */}
+        {/* Quick Add Section */}
         <Card>
           <CardHeader>
-            <CardTitle>Category Types</CardTitle>
-            <CardDescription>Categories are used across the system</CardDescription>
+            <CardTitle>Quick Add Category</CardTitle>
+            <CardDescription>Quickly add a new root category</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {Object.entries(categoryTypeConfig).map(([key, config]) => {
-              const Icon = config.icon
-              return (
-                <div key={key} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                  <div className="p-2 rounded-lg bg-background">
-                    <Icon className="h-5 w-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-medium">{config.label}</p>
-                    <p className="text-sm text-muted-foreground">{config.description}</p>
-                  </div>
-                </div>
-              )
-            })}
-            <div className="border-t pt-4 mt-4">
-              <p className="text-sm text-muted-foreground">
-                Categories help organize your products, purchases, and transactions. Create a
-                hierarchical structure with parent-child relationships.
+            <div className="space-y-3">
+              <Input
+                placeholder="Enter category name..."
+                value={quickAddName}
+                onChange={(e) => setQuickAddName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && quickAddName.trim()) {
+                    handleQuickAdd()
+                  }
+                }}
+              />
+              <Button
+                className="w-full"
+                onClick={handleQuickAdd}
+                disabled={!quickAddName.trim() || isQuickAdding}
+              >
+                {isQuickAdding ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Adding...
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Category
+                  </>
+                )}
+              </Button>
+            </div>
+            <div className="border-t pt-4">
+              <p className="text-sm text-muted-foreground mb-3">
+                Need more options? Use the "Add Category" button for:
               </p>
+              <ul className="text-sm text-muted-foreground space-y-1">
+                <li className="flex items-center gap-2">
+                  <ChevronRight className="h-3 w-3" />
+                  Adding subcategories
+                </li>
+                <li className="flex items-center gap-2">
+                  <ChevronRight className="h-3 w-3" />
+                  Adding descriptions
+                </li>
+                <li className="flex items-center gap-2">
+                  <ChevronRight className="h-3 w-3" />
+                  Setting active status
+                </li>
+              </ul>
             </div>
           </CardContent>
         </Card>
@@ -563,14 +609,14 @@ export function CategoriesManagementScreen() {
               <div className="space-y-2">
                 <Label htmlFor="parentId">Parent Category</Label>
                 <Select
-                  value={formData.parentId}
-                  onValueChange={(value) => setFormData((prev) => ({ ...prev, parentId: value }))}
+                  value={formData.parentId || 'none'}
+                  onValueChange={(value) => setFormData((prev) => ({ ...prev, parentId: value === 'none' ? '' : value }))}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select parent (optional)" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">None (Root Category)</SelectItem>
+                    <SelectItem value="none">None (Root Category)</SelectItem>
                     {getParentOptions().map((cat) => (
                       <SelectItem key={cat.id} value={cat.id.toString()}>
                         {cat.name}
@@ -581,12 +627,10 @@ export function CategoriesManagementScreen() {
               </div>
               <div className="flex items-center justify-between">
                 <Label htmlFor="isActive">Active Status</Label>
-                <input
+                <Switch
                   id="isActive"
-                  type="checkbox"
                   checked={formData.isActive}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, isActive: e.target.checked }))}
-                  className="h-4 w-4"
+                  onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, isActive: checked }))}
                 />
               </div>
             </div>

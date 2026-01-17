@@ -77,6 +77,7 @@ export function POSScreen() {
   const [codPhone, setCodPhone] = useState('')
   const [codAddress, setCodAddress] = useState('')
   const [codCity, setCodCity] = useState('')
+  const [codCharges, setCodCharges] = useState('')
 
   // Discount field
   const [discountAmount, setDiscountAmount] = useState('')
@@ -87,9 +88,11 @@ export function POSScreen() {
   // Calculate totals
   const subtotal = cart.reduce((sum, item) => sum + item.product.sellingPrice * item.quantity, 0)
   const discount = parseFloat(discountAmount) || 0
+  const codChargesNum = parseFloat(codCharges) || 0
   const taxableAmount = subtotal - discount
   const taxAmount = taxableAmount > 0 ? taxableAmount * (taxRate / 100) : 0
-  const total = taxableAmount + taxAmount
+  // Add COD charges only for COD payment method
+  const total = taxableAmount + taxAmount + (paymentMethod === 'cod' ? codChargesNum : 0)
 
   // Load all available products on mount and when branch changes
   const loadAvailableProducts = useCallback(async () => {
@@ -264,14 +267,14 @@ export function POSScreen() {
       return
     }
 
-    // Receivable requires customer
+    // Receivable requires customer (but COD can auto-create from details)
     if (paymentMethod === 'receivable' && !selectedCustomer) {
       setError('Customer selection is required for Pay Later / Receivable')
       return
     }
 
-    // Add to receivable requires customer
-    if (addToReceivable && !selectedCustomer) {
+    // Add to receivable requires customer - but for COD we can auto-create from details
+    if (addToReceivable && !selectedCustomer && paymentMethod !== 'cod') {
       setError('Customer selection is required when adding to Account Receivables')
       return
     }
@@ -296,10 +299,42 @@ export function POSScreen() {
     setError('')
 
     try {
+      // Auto-create customer from COD details if needed for receivable
+      let customerIdToUse = selectedCustomer?.id
+      let newCustomerCreated = false
+      if (paymentMethod === 'cod' && addToReceivable && !selectedCustomer) {
+        // Create a new customer from COD details
+        const nameParts = codName.trim().split(' ')
+        const firstName = nameParts[0] || codName.trim()
+        const lastName = nameParts.slice(1).join(' ') || ''
+
+        const customerResult = await window.api.customers.create({
+          firstName,
+          lastName,
+          phone: codPhone.trim(),
+          address: `${codAddress.trim()}, ${codCity.trim()}`,
+          isActive: true,
+        })
+
+        if (customerResult.success && customerResult.data) {
+          customerIdToUse = customerResult.data.id
+          newCustomerCreated = true
+          // Refresh customers list
+          loadAllCustomers()
+        } else {
+          setError(customerResult.message || 'Failed to create customer from COD details')
+          setIsProcessing(false)
+          return
+        }
+      }
+
       // Build notes for COD
       let notes = ''
       if (paymentMethod === 'cod') {
         notes = `COD Details:\nName: ${codName}\nPhone: ${codPhone}\nAddress: ${codAddress}, ${codCity}`
+        if (codChargesNum > 0) {
+          notes += `\nCOD Charges: ${codChargesNum}`
+        }
       }
 
       // Calculate payment status based on amount paid and receivable option
@@ -323,7 +358,7 @@ export function POSScreen() {
       const remainingAmount = total - actualAmountPaid
 
       const saleData = {
-        customerId: selectedCustomer?.id,
+        customerId: customerIdToUse,
         branchId: currentBranch.id,
         items: cart.map((item) => ({
           productId: item.product.id,
@@ -337,6 +372,11 @@ export function POSScreen() {
         paymentStatus,
         amountPaid: actualAmountPaid,
         discountAmount: discount,
+        codCharges: paymentMethod === 'cod' ? codChargesNum : 0,
+        codName: paymentMethod === 'cod' ? codName : undefined,
+        codPhone: paymentMethod === 'cod' ? codPhone : undefined,
+        codAddress: paymentMethod === 'cod' ? codAddress : undefined,
+        codCity: paymentMethod === 'cod' ? codCity : undefined,
         notes: notes || undefined,
       }
 
@@ -369,12 +409,16 @@ export function POSScreen() {
         setCodPhone('')
         setCodAddress('')
         setCodCity('')
+        setCodCharges('')
         setAddToReceivable(false)
 
         // Reload products to update stock quantities
         loadAvailableProducts()
 
         let message = `Sale completed! Invoice: ${result.data.invoiceNumber}`
+        if (newCustomerCreated) {
+          message += `\n\nNew customer "${codName}" created from COD details.`
+        }
         if (paymentMethod === 'receivable' || addToReceivable) {
           message += `\n\nFull amount (${formatCurrency(total)}) added to customer's receivables.`
         } else if (paymentStatus === 'partial') {
@@ -877,6 +921,28 @@ export function POSScreen() {
             )}
             {paymentMethod === 'cod' && !addToReceivable && (
               <div className="space-y-3">
+                <div className="rounded-lg border p-3 bg-blue-50">
+                  <Label htmlFor="cod-charges" className="font-medium text-blue-800">COD Charges (Delivery Fee)</Label>
+                  <Input
+                    id="cod-charges"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={codCharges}
+                    onChange={(e) => setCodCharges(e.target.value)}
+                    placeholder="0.00"
+                    className="mt-2 bg-white text-lg font-medium"
+                  />
+                  <p className="text-xs text-blue-600 mt-1">
+                    Added to customer's total. Recorded as expense for courier.
+                  </p>
+                  {codChargesNum > 0 && (
+                    <p className="text-sm text-blue-700 mt-2 font-medium">
+                      New Total: {formatCurrency(total)}
+                    </p>
+                  )}
+                </div>
+                <Separator />
                 <p className="text-sm text-muted-foreground">Enter delivery details for COD</p>
                 <div>
                   <Label htmlFor="cod-name">Name *</Label>
@@ -925,7 +991,11 @@ export function POSScreen() {
                     <p className="text-muted-foreground">
                       The full amount ({formatCurrency(total)}) will be added to the customer's balance. Payment is expected later.
                     </p>
-                    {!selectedCustomer && (
+                    {!selectedCustomer && paymentMethod === 'cod' && codName.trim() && codPhone.trim() ? (
+                      <p className="mt-2 text-blue-600 font-medium">
+                        A new customer will be created from COD details.
+                      </p>
+                    ) : !selectedCustomer && (
                       <p className="mt-2 text-destructive font-medium">
                         Please select a customer first!
                       </p>
@@ -966,7 +1036,9 @@ export function POSScreen() {
               disabled={
                 isProcessing ||
                 (paymentMethod === 'cash' && !addToReceivable && (parseFloat(amountPaid) <= 0 || (parseFloat(amountPaid) < total && !selectedCustomer))) ||
-                ((paymentMethod === 'receivable' || addToReceivable) && !selectedCustomer) ||
+                (paymentMethod === 'receivable' && !selectedCustomer) ||
+                (addToReceivable && !selectedCustomer && paymentMethod !== 'cod') ||
+                (addToReceivable && !selectedCustomer && paymentMethod === 'cod' && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim())) ||
                 (paymentMethod === 'cod' && !addToReceivable && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim()))
               }
             >

@@ -480,6 +480,7 @@ export interface TabCheckoutData {
   codPhone?: string
   codAddress?: string
   codCity?: string
+  codCharges?: number
   notes?: string
 }
 
