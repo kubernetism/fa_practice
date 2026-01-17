@@ -327,6 +327,19 @@ const api = {
     import: (userId) => electron.ipcRenderer.invoke("backup:import", userId),
     cleanOld: (retentionDays) => electron.ipcRenderer.invoke("backup:clean-old", retentionDays),
     getDirectory: () => electron.ipcRenderer.invoke("backup:get-directory")
+  },
+  // Tax Collections
+  taxCollections: {
+    getSummary: (params) => electron.ipcRenderer.invoke("tax-collections:get-summary", params),
+    getSaleDetails: (saleId) => electron.ipcRenderer.invoke("tax-collections:get-sale-details", saleId),
+    getPeriodicReport: (params) => electron.ipcRenderer.invoke("tax-collections:get-periodic-report", params)
+  },
+  // Discount Management
+  discountManagement: {
+    getSummary: (params) => electron.ipcRenderer.invoke("discount-management:get-summary", params),
+    getDetails: (saleId) => electron.ipcRenderer.invoke("discount-management:get-details", saleId),
+    getByUser: (params) => electron.ipcRenderer.invoke("discount-management:get-by-user", params),
+    getAlerts: (params) => electron.ipcRenderer.invoke("discount-management:get-alerts", params)
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

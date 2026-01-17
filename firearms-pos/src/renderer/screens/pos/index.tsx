@@ -13,6 +13,7 @@ import {
   Package,
   Clock,
   Smartphone,
+  Percent,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -77,13 +78,18 @@ export function POSScreen() {
   const [codAddress, setCodAddress] = useState('')
   const [codCity, setCodCity] = useState('')
 
+  // Discount field
+  const [discountAmount, setDiscountAmount] = useState('')
+
   // Get tax rate from settings (default to 0 if not set)
   const taxRate = settings?.taxRate ?? 0
 
   // Calculate totals
   const subtotal = cart.reduce((sum, item) => sum + item.product.sellingPrice * item.quantity, 0)
-  const taxAmount = subtotal * (taxRate / 100)
-  const total = subtotal + taxAmount
+  const discount = parseFloat(discountAmount) || 0
+  const taxableAmount = subtotal - discount
+  const taxAmount = taxableAmount > 0 ? taxableAmount * (taxRate / 100) : 0
+  const total = taxableAmount + taxAmount
 
   // Load all available products on mount and when branch changes
   const loadAvailableProducts = useCallback(async () => {
@@ -123,7 +129,8 @@ export function POSScreen() {
   const loadAllCustomers = useCallback(async () => {
     setIsLoadingCustomers(true)
     try {
-      const result = await window.api.customers.getAll()
+      // Pass high limit to fetch all customers (default is 20)
+      const result = await window.api.customers.getAll({ limit: 1000, isActive: true })
       if (result.success && result.data) {
         setAllCustomers(result.data)
         setCustomers(result.data)
@@ -204,15 +211,27 @@ export function POSScreen() {
     setSearchQuery('')
   }
 
-  // Update quantity
+  // Update quantity with inventory cap
   const updateQuantity = (productId: number, delta: number) => {
+    // Get available stock for this product
+    const productStock = allProducts.find((p) => p.product.id === productId)
+    const availableStock = productStock?.quantity ?? 0
+
     setCart((prevCart) =>
       prevCart
-        .map((item) =>
-          item.product.id === productId
-            ? { ...item, quantity: Math.max(0, item.quantity + delta) }
-            : item
-        )
+        .map((item) => {
+          if (item.product.id === productId) {
+            const newQty = item.quantity + delta
+            // Cap at 0 minimum, and at available stock maximum
+            const clampedQty = Math.min(Math.max(0, newQty), availableStock)
+            if (delta > 0 && clampedQty === item.quantity) {
+              // Tried to increment but hit stock limit
+              setError(`Only ${availableStock} units available in stock`)
+            }
+            return { ...item, quantity: clampedQty }
+          }
+          return item
+        })
         .filter((item) => item.quantity > 0)
     )
   }
@@ -317,6 +336,7 @@ export function POSScreen() {
         paymentMethod: addToReceivable ? 'receivable' : paymentMethod,
         paymentStatus,
         amountPaid: actualAmountPaid,
+        discountAmount: discount,
         notes: notes || undefined,
       }
 
@@ -344,6 +364,7 @@ export function POSScreen() {
         clearCart()
         setShowPaymentDialog(false)
         setAmountPaid('')
+        setDiscountAmount('')
         setCodName('')
         setCodPhone('')
         setCodAddress('')
@@ -575,6 +596,12 @@ export function POSScreen() {
               <span>Subtotal</span>
               <span>{formatCurrency(subtotal)}</span>
             </div>
+            {discount > 0 && (
+              <div className="flex justify-between text-sm text-green-600">
+                <span>Discount</span>
+                <span>-{formatCurrency(discount)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span>{settings?.taxName || 'Tax'} ({taxRate}%)</span>
               <span>{formatCurrency(taxAmount)}</span>
@@ -773,6 +800,35 @@ export function POSScreen() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Discount Input - shown for all payment methods */}
+            <div className="rounded-lg border p-3 bg-green-50">
+              <div className="flex items-center gap-2 mb-2">
+                <Percent className="h-4 w-4 text-green-600" />
+                <Label htmlFor="discount" className="font-medium text-green-800">Apply Discount</Label>
+              </div>
+              <Input
+                id="discount"
+                type="number"
+                step="0.01"
+                min="0"
+                max={subtotal}
+                value={discountAmount}
+                onChange={(e) => {
+                  const value = parseFloat(e.target.value) || 0
+                  if (value <= subtotal) {
+                    setDiscountAmount(e.target.value)
+                  }
+                }}
+                placeholder="Enter discount amount"
+                className="bg-white"
+              />
+              {discount > 0 && (
+                <p className="text-sm text-green-700 mt-2">
+                  Discount: {formatCurrency(discount)} | New Total: {formatCurrency(total)}
+                </p>
+              )}
+            </div>
+
             {paymentMethod === 'cash' && !addToReceivable && (
               <div>
                 <Label htmlFor="amount">Amount Received</Label>

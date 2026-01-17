@@ -456,6 +456,34 @@ const api = {
     import: (userId?: number) => ipcRenderer.invoke('backup:import', userId),
     cleanOld: (retentionDays?: number) => ipcRenderer.invoke('backup:clean-old', retentionDays),
     getDirectory: () => ipcRenderer.invoke('backup:get-directory'),
+    // New selective import APIs
+    getImportCategories: () => ipcRenderer.invoke('backup:get-import-categories'),
+    preview: (backupPath?: string) => ipcRenderer.invoke('backup:preview', backupPath),
+    importSelective: (params: { filePath: string; categories: string[]; mergeMode?: 'replace' | 'merge' }) =>
+      ipcRenderer.invoke('backup:import-selective', params),
+    importFull: (backupPath: string) => ipcRenderer.invoke('backup:import-full', backupPath),
+  },
+
+  // Tax Collections
+  taxCollections: {
+    getSummary: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('tax-collections:get-summary', params),
+    getSaleDetails: (saleId: number) =>
+      ipcRenderer.invoke('tax-collections:get-sale-details', saleId),
+    getPeriodicReport: (params: { branchId: number; period: string; year: number }) =>
+      ipcRenderer.invoke('tax-collections:get-periodic-report', params),
+  },
+
+  // Discount Management
+  discountManagement: {
+    getSummary: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('discount-management:get-summary', params),
+    getDetails: (saleId: number) =>
+      ipcRenderer.invoke('discount-management:get-details', saleId),
+    getByUser: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('discount-management:get-by-user', params),
+    getAlerts: (params: { branchId: number; thresholdPercent: number; limit?: number }) =>
+      ipcRenderer.invoke('discount-management:get-alerts', params),
   },
 }
 

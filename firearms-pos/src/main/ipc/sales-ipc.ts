@@ -222,10 +222,16 @@ export function registerSalesHandlers(): void {
         entityId: sale.id,
         newValues: {
           invoiceNumber,
+          subtotal,
+          discountAmount,
+          taxAmount,
           totalAmount,
+          paymentMethod: data.paymentMethod,
+          paymentStatus,
+          amountPaid: data.amountPaid,
           itemCount: data.items.length,
         },
-        description: `Created sale: ${invoiceNumber}`,
+        description: `Created sale: ${invoiceNumber}${discountAmount > 0 ? ` (Discount: ${discountAmount})` : ''}`,
       })
 
       return { success: true, data: sale }

@@ -699,6 +699,8 @@ export function SalesHistoryScreen() {
                   <TableHead>Customer</TableHead>
                   <TableHead>Branch</TableHead>
                   <TableHead>Payment</TableHead>
+                  <TableHead className="text-right">Tax</TableHead>
+                  <TableHead className="text-right">Discount</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead className="text-right">Paid</TableHead>
                   <TableHead className="text-right">Outstanding</TableHead>
@@ -733,6 +735,20 @@ export function SalesHistoryScreen() {
                         {getPaymentMethodIcon(sale.paymentMethod)}
                         <span>{getPaymentMethodLabel(sale.paymentMethod)}</span>
                       </div>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className={cn('text-sm', sale.isVoided && 'line-through')}>
+                        {formatCurrency(sale.taxAmount)}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {sale.discountAmount > 0 ? (
+                        <span className={cn('text-sm text-green-600', sale.isVoided && 'line-through')}>
+                          -{formatCurrency(sale.discountAmount)}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-right">
                       <span className={cn('font-medium', sale.isVoided && 'line-through')}>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '../contexts/auth-context'
 import { Button } from '../components/ui/button'
+import { ImportPreviewDialog } from '../components/import-preview-dialog'
 import { Input } from '../components/ui/input'
 import { Label } from '../components/ui/label'
 import { Textarea } from '../components/ui/textarea'
@@ -153,6 +154,7 @@ export function BusinessSettingsScreen() {
   const [isLoadingBackups, setIsLoadingBackups] = useState(false)
   const [backupDirectory, setBackupDirectory] = useState('')
   const [isRestoreDialogOpen, setIsRestoreDialogOpen] = useState(false)
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [selectedBackupForRestore, setSelectedBackupForRestore] = useState<BackupFile | null>(null)
 
   // Admin access check
@@ -365,28 +367,13 @@ export function BusinessSettingsScreen() {
     }
   }
 
-  const handleImportBackup = async () => {
-    if (!user) return
-    if (!confirm('Warning: Importing a backup will replace all current data. Are you sure you want to continue?')) {
-      return
-    }
-    setIsRestoring(true)
-    try {
-      const result = await window.api.backup.import(user.userId)
-      if (result.success) {
-        alert(result.message + '\n\nThe application will now restart.')
-        window.location.reload()
-      } else {
-        if (result.message !== 'Import cancelled') {
-          alert(result.message || 'Failed to import backup')
-        }
-      }
-    } catch (err) {
-      console.error('Import failed:', err)
-      alert('Failed to import backup')
-    } finally {
-      setIsRestoring(false)
-    }
+  const handleImportBackup = () => {
+    setIsImportDialogOpen(true)
+  }
+
+  const handleImportComplete = () => {
+    // Refresh backup list after import
+    fetchBackups()
   }
 
   const handleRestoreBackup = async (backup: BackupFile) => {
@@ -1674,10 +1661,9 @@ export function BusinessSettingsScreen() {
                     type="button"
                     variant="outline"
                     onClick={handleImportBackup}
-                    disabled={isRestoring}
                   >
                     <Upload className="w-4 h-4 mr-2" />
-                    Import from File
+                    Import Data
                   </Button>
                 </div>
                 {backupConfig.lastBackupTime && (
@@ -2242,6 +2228,13 @@ export function BusinessSettingsScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Import Preview Dialog */}
+      <ImportPreviewDialog
+        open={isImportDialogOpen}
+        onOpenChange={setIsImportDialogOpen}
+        onImportComplete={handleImportComplete}
+      />
 
       {/* Hard Reset Database Dialog */}
       <Dialog open={isResetDialogOpen} onOpenChange={setIsResetDialogOpen}>

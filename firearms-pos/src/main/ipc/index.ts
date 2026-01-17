@@ -31,6 +31,8 @@ import { registerDashboardHandlers } from './dashboard-ipc'
 import { registerSetupHandlers } from './setup-ipc'
 import { registerDatabaseResetHandlers } from './database-reset-ipc'
 import { registerBackupHandlers } from './backup-ipc'
+import { registerTaxCollectionsHandlers } from './tax-collections-ipc'
+import { registerDiscountManagementHandlers } from './discount-management-ipc'
 
 export function registerAllHandlers(): void {
   registerAuthHandlers()
@@ -66,6 +68,8 @@ export function registerAllHandlers(): void {
   registerSetupHandlers()
   registerDatabaseResetHandlers()
   registerBackupHandlers()
+  registerTaxCollectionsHandlers()
+  registerDiscountManagementHandlers()
 
   console.log('All IPC handlers registered')
 }

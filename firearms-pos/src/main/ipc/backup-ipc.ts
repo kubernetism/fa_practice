@@ -1,9 +1,64 @@
 import { ipcMain, app, dialog, BrowserWindow } from 'electron'
-import { getDbPath, closeDatabase, initDatabase, getRawDatabase } from '../db'
+import { getDbPath, closeDatabase, initDatabase, getRawDatabase, getDatabase } from '../db'
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
+import Database from 'better-sqlite3'
 // Note: Audit logging for backup operations is disabled because the audit_logs
 // table schema doesn't include backup-related action types
+
+// Import categories configuration
+export interface ImportCategory {
+  id: string
+  name: string
+  description: string
+  tables: string[]
+}
+
+export const IMPORT_CATEGORIES: ImportCategory[] = [
+  {
+    id: 'inventory',
+    name: 'Inventory',
+    description: 'Products, Categories, Inventory, Purchases, Returns, Stock Adjustments',
+    tables: ['products', 'categories', 'inventory', 'purchases', 'purchase_items', 'returns', 'return_items', 'stock_adjustments', 'stock_transfers']
+  },
+  {
+    id: 'management',
+    name: 'Management',
+    description: 'Customers, Suppliers, Expenses, Commissions, Referral Persons, Receivables, Payables',
+    tables: ['customers', 'suppliers', 'expenses', 'commissions', 'referral_persons', 'account_receivables', 'account_payables']
+  },
+  {
+    id: 'finance',
+    name: 'Finance',
+    description: 'Cash Register, Chart of Accounts',
+    tables: ['cash_register_sessions', 'cash_register_transactions', 'chart_of_accounts', 'journal_entries', 'journal_entry_lines']
+  },
+  {
+    id: 'sales',
+    name: 'Sales',
+    description: 'Sales History, Sale Items, POS Tabs',
+    tables: ['sales', 'sale_items', 'sales_tabs', 'sales_tab_items']
+  },
+  {
+    id: 'system',
+    name: 'System',
+    description: 'Users, Branches, Settings (Warning: may affect login)',
+    tables: ['users', 'branches', 'settings', 'business_settings']
+  }
+]
+
+export interface BackupPreview {
+  isValid: boolean
+  categories: {
+    id: string
+    name: string
+    description: string
+    tables: { name: string; count: number }[]
+    totalRecords: number
+  }[]
+  backupDate: string | null
+  backupSize: number
+}
 
 // Backup configuration storage
 interface BackupConfig {
@@ -259,6 +314,242 @@ function cleanOldBackups(retentionDays: number): number {
   }
 
   return deletedCount
+}
+
+// Preview backup file contents
+async function previewBackup(backupPath: string): Promise<{ success: boolean; message?: string; data?: BackupPreview }> {
+  try {
+    if (!existsSync(backupPath)) {
+      return { success: false, message: 'Backup file not found' }
+    }
+
+    const stats = statSync(backupPath)
+    const backupDb = new Database(backupPath, { readonly: true })
+
+    try {
+      // Get list of tables in the backup
+      const tablesResult = backupDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]
+      const backupTables = tablesResult.map(t => t.name)
+
+      const categories: BackupPreview['categories'] = []
+
+      for (const category of IMPORT_CATEGORIES) {
+        const tables: { name: string; count: number }[] = []
+        let totalRecords = 0
+
+        for (const tableName of category.tables) {
+          if (backupTables.includes(tableName)) {
+            try {
+              const countResult = backupDb.prepare(`SELECT COUNT(*) as count FROM "${tableName}"`).get() as { count: number }
+              const count = countResult?.count || 0
+              tables.push({ name: tableName, count })
+              totalRecords += count
+            } catch (err) {
+              // Table might not exist or be corrupted
+              tables.push({ name: tableName, count: 0 })
+            }
+          }
+        }
+
+        if (tables.length > 0) {
+          categories.push({
+            id: category.id,
+            name: category.name,
+            description: category.description,
+            tables,
+            totalRecords
+          })
+        }
+      }
+
+      // Try to get backup date from a known table
+      let backupDate: string | null = null
+      try {
+        const dateResult = backupDb.prepare("SELECT MAX(created_at) as latest FROM sales UNION SELECT MAX(created_at) FROM purchases ORDER BY latest DESC LIMIT 1").get() as { latest: string } | undefined
+        backupDate = dateResult?.latest || null
+      } catch {
+        // Ignore - backup date is optional
+      }
+
+      backupDb.close()
+
+      return {
+        success: true,
+        data: {
+          isValid: categories.length > 0,
+          categories,
+          backupDate,
+          backupSize: stats.size
+        }
+      }
+    } catch (err) {
+      backupDb.close()
+      throw err
+    }
+  } catch (err) {
+    console.error('Preview backup failed:', err)
+    return {
+      success: false,
+      message: `Failed to preview backup: ${err instanceof Error ? err.message : 'Unknown error'}`
+    }
+  }
+}
+
+// Selective import from backup
+async function importSelective(
+  backupPath: string,
+  selectedCategories: string[],
+  mergeMode: 'replace' | 'merge' = 'replace'
+): Promise<{ success: boolean; message: string; imported?: { category: string; tables: string[]; records: number }[] }> {
+  try {
+    if (!existsSync(backupPath)) {
+      return { success: false, message: 'Backup file not found' }
+    }
+
+    if (selectedCategories.length === 0) {
+      return { success: false, message: 'No categories selected for import' }
+    }
+
+    // Get tables to import based on selected categories
+    const tablesToImport: string[] = []
+    for (const categoryId of selectedCategories) {
+      const category = IMPORT_CATEGORIES.find(c => c.id === categoryId)
+      if (category) {
+        tablesToImport.push(...category.tables)
+      }
+    }
+
+    if (tablesToImport.length === 0) {
+      return { success: false, message: 'No valid tables found for selected categories' }
+    }
+
+    // Open backup database in read-only mode
+    const backupDb = new Database(backupPath, { readonly: true })
+
+    // Get current database
+    const currentDb = getRawDatabase()
+
+    // Create safety backup before import
+    const backupDir = getBackupDir()
+    const safetyBackupName = `pre-import-backup-${Date.now()}.db`
+    const safetyBackupPath = join(backupDir, safetyBackupName)
+    const dbPath = getDbPath()
+
+    try {
+      currentDb.pragma('wal_checkpoint(TRUNCATE)')
+      copyFileSync(dbPath, safetyBackupPath)
+      console.log('Safety backup created before selective import:', safetyBackupPath)
+    } catch (err) {
+      console.warn('Could not create safety backup:', err)
+    }
+
+    const imported: { category: string; tables: string[]; records: number }[] = []
+
+    // Get list of tables in the backup
+    const tablesResult = backupDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as { name: string }[]
+    const backupTables = tablesResult.map(t => t.name)
+
+    // Process each selected category
+    for (const categoryId of selectedCategories) {
+      const category = IMPORT_CATEGORIES.find(c => c.id === categoryId)
+      if (!category) continue
+
+      const importedTables: string[] = []
+      let totalRecords = 0
+
+      for (const tableName of category.tables) {
+        if (!backupTables.includes(tableName)) continue
+
+        try {
+          // Check if table exists in current database
+          const tableExistsResult = currentDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName) as { name: string } | undefined
+
+          if (!tableExistsResult) {
+            console.log(`Table ${tableName} does not exist in current database, skipping`)
+            continue
+          }
+
+          // Get column info from current database to ensure compatibility
+          const columnsResult = currentDb.prepare(`PRAGMA table_info("${tableName}")`).all() as { name: string }[]
+          const currentColumns = columnsResult.map(c => c.name)
+
+          // Get data from backup
+          const rows = backupDb.prepare(`SELECT * FROM "${tableName}"`).all() as Record<string, unknown>[]
+
+          if (rows.length === 0) continue
+
+          // Filter columns to only those that exist in current schema
+          const backupColumns = Object.keys(rows[0])
+          const validColumns = backupColumns.filter(c => currentColumns.includes(c))
+
+          if (validColumns.length === 0) continue
+
+          // Begin transaction for this table
+          const transaction = currentDb.transaction(() => {
+            if (mergeMode === 'replace') {
+              // Clear existing data (disable foreign key checks temporarily)
+              currentDb.pragma('foreign_keys = OFF')
+              currentDb.prepare(`DELETE FROM "${tableName}"`).run()
+            }
+
+            // Insert data
+            const placeholders = validColumns.map(() => '?').join(', ')
+            const columnNames = validColumns.map(c => `"${c}"`).join(', ')
+            const insertStmt = currentDb.prepare(`INSERT OR REPLACE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`)
+
+            for (const row of rows) {
+              const values = validColumns.map(col => row[col])
+              try {
+                insertStmt.run(...values)
+              } catch (insertErr) {
+                console.warn(`Failed to insert row into ${tableName}:`, insertErr)
+              }
+            }
+
+            if (mergeMode === 'replace') {
+              currentDb.pragma('foreign_keys = ON')
+            }
+          })
+
+          transaction()
+
+          importedTables.push(tableName)
+          totalRecords += rows.length
+          console.log(`Imported ${rows.length} records into ${tableName}`)
+        } catch (tableErr) {
+          console.error(`Failed to import table ${tableName}:`, tableErr)
+        }
+      }
+
+      if (importedTables.length > 0) {
+        imported.push({
+          category: category.name,
+          tables: importedTables,
+          records: totalRecords
+        })
+      }
+    }
+
+    backupDb.close()
+
+    if (imported.length === 0) {
+      return { success: false, message: 'No data was imported. The selected categories may be empty or incompatible.' }
+    }
+
+    const totalImported = imported.reduce((sum, cat) => sum + cat.records, 0)
+
+    return {
+      success: true,
+      message: `Successfully imported ${totalImported} records from ${imported.length} category(ies)`,
+      imported
+    }
+  } catch (err) {
+    console.error('Selective import failed:', err)
+    return {
+      success: false,
+      message: `Import failed: ${err instanceof Error ? err.message : 'Unknown error'}`
+    }
+  }
 }
 
 function scheduleNextBackup(): void {
@@ -564,6 +855,108 @@ export function registerBackupHandlers(): void {
   // Get backup directory path
   ipcMain.handle('backup:get-directory', async () => {
     return { success: true, data: getBackupDir() }
+  })
+
+  // Get available import categories
+  ipcMain.handle('backup:get-import-categories', async () => {
+    return {
+      success: true,
+      data: IMPORT_CATEGORIES.map(c => ({
+        id: c.id,
+        name: c.name,
+        description: c.description
+      }))
+    }
+  })
+
+  // Preview backup file (select file and show contents)
+  ipcMain.handle('backup:preview', async (_, backupPath?: string) => {
+    try {
+      let filePath = backupPath
+
+      // If no path provided, open file dialog
+      if (!filePath) {
+        const focusedWindow = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+        if (!focusedWindow) {
+          return { success: false, message: 'No window available for dialog' }
+        }
+
+        const result = await dialog.showOpenDialog(focusedWindow, {
+          title: 'Select Backup File to Import',
+          filters: [
+            { name: 'SQLite Database', extensions: ['db'] },
+            { name: 'All Files', extensions: ['*'] }
+          ],
+          properties: ['openFile']
+        })
+
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: false, message: 'File selection cancelled' }
+        }
+
+        filePath = result.filePaths[0]
+      }
+
+      const previewResult = await previewBackup(filePath)
+
+      if (previewResult.success && previewResult.data) {
+        return {
+          success: true,
+          data: {
+            ...previewResult.data,
+            filePath
+          }
+        }
+      }
+
+      return previewResult
+    } catch (err) {
+      console.error('Preview failed:', err)
+      return {
+        success: false,
+        message: `Preview failed: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+  })
+
+  // Selective import from backup
+  ipcMain.handle('backup:import-selective', async (_, params: {
+    filePath: string
+    categories: string[]
+    mergeMode?: 'replace' | 'merge'
+  }) => {
+    try {
+      const { filePath, categories, mergeMode = 'replace' } = params
+
+      if (!filePath) {
+        return { success: false, message: 'No backup file specified' }
+      }
+
+      if (!categories || categories.length === 0) {
+        return { success: false, message: 'No categories selected' }
+      }
+
+      console.log(`Starting selective import from ${filePath}`)
+      console.log(`Categories: ${categories.join(', ')}`)
+      console.log(`Mode: ${mergeMode}`)
+
+      const result = await importSelective(filePath, categories, mergeMode)
+
+      return result
+    } catch (err) {
+      console.error('Selective import failed:', err)
+      return {
+        success: false,
+        message: `Import failed: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+  })
+
+  // Full database import (legacy - now shows warning to use selective import)
+  ipcMain.handle('backup:import-full', async (_, backupPath: string) => {
+    console.log('Full import requested for:', backupPath)
+    const result = await restoreBackup(backupPath)
+    return result
   })
 
   console.log('Backup IPC handlers registered')

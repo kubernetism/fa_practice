@@ -3304,10 +3304,16 @@ function registerSalesHandlers() {
         entityId: sale.id,
         newValues: {
           invoiceNumber,
+          subtotal,
+          discountAmount,
+          taxAmount,
           totalAmount,
+          paymentMethod: data.paymentMethod,
+          paymentStatus,
+          amountPaid: data.amountPaid,
           itemCount: data.items.length
         },
-        description: `Created sale: ${invoiceNumber}`
+        description: `Created sale: ${invoiceNumber}${discountAmount > 0 ? ` (Discount: ${discountAmount})` : ""}`
       });
       return { success: true, data: sale };
     } catch (error) {
@@ -14524,6 +14530,38 @@ function registerDatabaseResetHandlers() {
     }
   });
 }
+const IMPORT_CATEGORIES = [
+  {
+    id: "inventory",
+    name: "Inventory",
+    description: "Products, Categories, Inventory, Purchases, Returns, Stock Adjustments",
+    tables: ["products", "categories", "inventory", "purchases", "purchase_items", "returns", "return_items", "stock_adjustments", "stock_transfers"]
+  },
+  {
+    id: "management",
+    name: "Management",
+    description: "Customers, Suppliers, Expenses, Commissions, Referral Persons, Receivables, Payables",
+    tables: ["customers", "suppliers", "expenses", "commissions", "referral_persons", "account_receivables", "account_payables"]
+  },
+  {
+    id: "finance",
+    name: "Finance",
+    description: "Cash Register, Chart of Accounts",
+    tables: ["cash_register_sessions", "cash_register_transactions", "chart_of_accounts", "journal_entries", "journal_entry_lines"]
+  },
+  {
+    id: "sales",
+    name: "Sales",
+    description: "Sales History, Sale Items, POS Tabs",
+    tables: ["sales", "sale_items", "sales_tabs", "sales_tab_items"]
+  },
+  {
+    id: "system",
+    name: "System",
+    description: "Users, Branches, Settings (Warning: may affect login)",
+    tables: ["users", "branches", "settings", "business_settings"]
+  }
+];
 let backupConfig = {
   autoBackupEnabled: false,
   autoBackupOnClose: false,
@@ -14712,6 +14750,178 @@ function cleanOldBackups(retentionDays) {
     }
   }
   return deletedCount;
+}
+async function previewBackup(backupPath) {
+  try {
+    if (!node_fs.existsSync(backupPath)) {
+      return { success: false, message: "Backup file not found" };
+    }
+    const stats = node_fs.statSync(backupPath);
+    const backupDb = new Database(backupPath, { readonly: true });
+    try {
+      const tablesResult = backupDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+      const backupTables = tablesResult.map((t) => t.name);
+      const categories2 = [];
+      for (const category of IMPORT_CATEGORIES) {
+        const tables = [];
+        let totalRecords = 0;
+        for (const tableName of category.tables) {
+          if (backupTables.includes(tableName)) {
+            try {
+              const countResult = backupDb.prepare(`SELECT COUNT(*) as count FROM "${tableName}"`).get();
+              const count = countResult?.count || 0;
+              tables.push({ name: tableName, count });
+              totalRecords += count;
+            } catch (err) {
+              tables.push({ name: tableName, count: 0 });
+            }
+          }
+        }
+        if (tables.length > 0) {
+          categories2.push({
+            id: category.id,
+            name: category.name,
+            description: category.description,
+            tables,
+            totalRecords
+          });
+        }
+      }
+      let backupDate = null;
+      try {
+        const dateResult = backupDb.prepare("SELECT MAX(created_at) as latest FROM sales UNION SELECT MAX(created_at) FROM purchases ORDER BY latest DESC LIMIT 1").get();
+        backupDate = dateResult?.latest || null;
+      } catch {
+      }
+      backupDb.close();
+      return {
+        success: true,
+        data: {
+          isValid: categories2.length > 0,
+          categories: categories2,
+          backupDate,
+          backupSize: stats.size
+        }
+      };
+    } catch (err) {
+      backupDb.close();
+      throw err;
+    }
+  } catch (err) {
+    console.error("Preview backup failed:", err);
+    return {
+      success: false,
+      message: `Failed to preview backup: ${err instanceof Error ? err.message : "Unknown error"}`
+    };
+  }
+}
+async function importSelective(backupPath, selectedCategories, mergeMode = "replace") {
+  try {
+    if (!node_fs.existsSync(backupPath)) {
+      return { success: false, message: "Backup file not found" };
+    }
+    if (selectedCategories.length === 0) {
+      return { success: false, message: "No categories selected for import" };
+    }
+    const tablesToImport = [];
+    for (const categoryId of selectedCategories) {
+      const category = IMPORT_CATEGORIES.find((c) => c.id === categoryId);
+      if (category) {
+        tablesToImport.push(...category.tables);
+      }
+    }
+    if (tablesToImport.length === 0) {
+      return { success: false, message: "No valid tables found for selected categories" };
+    }
+    const backupDb = new Database(backupPath, { readonly: true });
+    const currentDb = getRawDatabase();
+    const backupDir = getBackupDir();
+    const safetyBackupName = `pre-import-backup-${Date.now()}.db`;
+    const safetyBackupPath = node_path.join(backupDir, safetyBackupName);
+    const dbPath = getDbPath();
+    try {
+      currentDb.pragma("wal_checkpoint(TRUNCATE)");
+      node_fs.copyFileSync(dbPath, safetyBackupPath);
+      console.log("Safety backup created before selective import:", safetyBackupPath);
+    } catch (err) {
+      console.warn("Could not create safety backup:", err);
+    }
+    const imported = [];
+    const tablesResult = backupDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
+    const backupTables = tablesResult.map((t) => t.name);
+    for (const categoryId of selectedCategories) {
+      const category = IMPORT_CATEGORIES.find((c) => c.id === categoryId);
+      if (!category) continue;
+      const importedTables = [];
+      let totalRecords = 0;
+      for (const tableName of category.tables) {
+        if (!backupTables.includes(tableName)) continue;
+        try {
+          const tableExistsResult = currentDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(tableName);
+          if (!tableExistsResult) {
+            console.log(`Table ${tableName} does not exist in current database, skipping`);
+            continue;
+          }
+          const columnsResult = currentDb.prepare(`PRAGMA table_info("${tableName}")`).all();
+          const currentColumns = columnsResult.map((c) => c.name);
+          const rows = backupDb.prepare(`SELECT * FROM "${tableName}"`).all();
+          if (rows.length === 0) continue;
+          const backupColumns = Object.keys(rows[0]);
+          const validColumns = backupColumns.filter((c) => currentColumns.includes(c));
+          if (validColumns.length === 0) continue;
+          const transaction = currentDb.transaction(() => {
+            if (mergeMode === "replace") {
+              currentDb.pragma("foreign_keys = OFF");
+              currentDb.prepare(`DELETE FROM "${tableName}"`).run();
+            }
+            const placeholders = validColumns.map(() => "?").join(", ");
+            const columnNames = validColumns.map((c) => `"${c}"`).join(", ");
+            const insertStmt = currentDb.prepare(`INSERT OR REPLACE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`);
+            for (const row of rows) {
+              const values = validColumns.map((col) => row[col]);
+              try {
+                insertStmt.run(...values);
+              } catch (insertErr) {
+                console.warn(`Failed to insert row into ${tableName}:`, insertErr);
+              }
+            }
+            if (mergeMode === "replace") {
+              currentDb.pragma("foreign_keys = ON");
+            }
+          });
+          transaction();
+          importedTables.push(tableName);
+          totalRecords += rows.length;
+          console.log(`Imported ${rows.length} records into ${tableName}`);
+        } catch (tableErr) {
+          console.error(`Failed to import table ${tableName}:`, tableErr);
+        }
+      }
+      if (importedTables.length > 0) {
+        imported.push({
+          category: category.name,
+          tables: importedTables,
+          records: totalRecords
+        });
+      }
+    }
+    backupDb.close();
+    if (imported.length === 0) {
+      return { success: false, message: "No data was imported. The selected categories may be empty or incompatible." };
+    }
+    const totalImported = imported.reduce((sum, cat) => sum + cat.records, 0);
+    return {
+      success: true,
+      message: `Successfully imported ${totalImported} records from ${imported.length} category(ies)`,
+      imported
+    };
+  } catch (err) {
+    console.error("Selective import failed:", err);
+    return {
+      success: false,
+      message: `Import failed: ${err instanceof Error ? err.message : "Unknown error"}`
+    };
+  }
 }
 function scheduleNextBackup() {
   if (backupScheduleTimer) {
@@ -14945,6 +15155,83 @@ function registerBackupHandlers() {
   electron.ipcMain.handle("backup:get-directory", async () => {
     return { success: true, data: getBackupDir() };
   });
+  electron.ipcMain.handle("backup:get-import-categories", async () => {
+    return {
+      success: true,
+      data: IMPORT_CATEGORIES.map((c) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description
+      }))
+    };
+  });
+  electron.ipcMain.handle("backup:preview", async (_, backupPath) => {
+    try {
+      let filePath = backupPath;
+      if (!filePath) {
+        const focusedWindow = electron.BrowserWindow.getFocusedWindow() || electron.BrowserWindow.getAllWindows()[0];
+        if (!focusedWindow) {
+          return { success: false, message: "No window available for dialog" };
+        }
+        const result = await electron.dialog.showOpenDialog(focusedWindow, {
+          title: "Select Backup File to Import",
+          filters: [
+            { name: "SQLite Database", extensions: ["db"] },
+            { name: "All Files", extensions: ["*"] }
+          ],
+          properties: ["openFile"]
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: false, message: "File selection cancelled" };
+        }
+        filePath = result.filePaths[0];
+      }
+      const previewResult = await previewBackup(filePath);
+      if (previewResult.success && previewResult.data) {
+        return {
+          success: true,
+          data: {
+            ...previewResult.data,
+            filePath
+          }
+        };
+      }
+      return previewResult;
+    } catch (err) {
+      console.error("Preview failed:", err);
+      return {
+        success: false,
+        message: `Preview failed: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  });
+  electron.ipcMain.handle("backup:import-selective", async (_, params) => {
+    try {
+      const { filePath, categories: categories2, mergeMode = "replace" } = params;
+      if (!filePath) {
+        return { success: false, message: "No backup file specified" };
+      }
+      if (!categories2 || categories2.length === 0) {
+        return { success: false, message: "No categories selected" };
+      }
+      console.log(`Starting selective import from ${filePath}`);
+      console.log(`Categories: ${categories2.join(", ")}`);
+      console.log(`Mode: ${mergeMode}`);
+      const result = await importSelective(filePath, categories2, mergeMode);
+      return result;
+    } catch (err) {
+      console.error("Selective import failed:", err);
+      return {
+        success: false,
+        message: `Import failed: ${err instanceof Error ? err.message : String(err)}`
+      };
+    }
+  });
+  electron.ipcMain.handle("backup:import-full", async (_, backupPath) => {
+    console.log("Full import requested for:", backupPath);
+    const result = await restoreBackup(backupPath);
+    return result;
+  });
   console.log("Backup IPC handlers registered");
 }
 async function performCloseBackup() {
@@ -14958,6 +15245,385 @@ function stopBackupScheduler() {
     clearTimeout(backupScheduleTimer);
     backupScheduleTimer = null;
   }
+}
+function registerTaxCollectionsHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("tax-collections:get-summary", async (_, params) => {
+    try {
+      const { branchId, startDate, endDate } = params;
+      const conditions = [drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.eq(sales.isVoided, false)];
+      if (startDate && endDate) {
+        conditions.push(drizzleOrm.between(sales.saleDate, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`));
+      } else if (startDate) {
+        conditions.push(drizzleOrm.gte(sales.saleDate, `${startDate}T00:00:00.000Z`));
+      } else if (endDate) {
+        conditions.push(drizzleOrm.lte(sales.saleDate, `${endDate}T23:59:59.999Z`));
+      }
+      const whereClause = drizzleOrm.and(...conditions);
+      const summaryResult = await db2.select({
+        totalCollected: drizzleOrm.sql`sum(case when ${sales.paymentStatus} = 'paid' then ${sales.taxAmount} else 0 end)`,
+        totalPending: drizzleOrm.sql`sum(case when ${sales.paymentStatus} != 'paid' then ${sales.taxAmount} else 0 end)`,
+        paidSales: drizzleOrm.sql`sum(case when ${sales.paymentStatus} = 'paid' then 1 else 0 end)`,
+        pendingSales: drizzleOrm.sql`sum(case when ${sales.paymentStatus} != 'paid' then 1 else 0 end)`,
+        totalTax: drizzleOrm.sql`sum(${sales.taxAmount})`,
+        totalSales: drizzleOrm.sql`count(*)`
+      }).from(sales).where(whereClause);
+      const summary = {
+        totalCollected: summaryResult[0]?.totalCollected || 0,
+        totalPending: summaryResult[0]?.totalPending || 0,
+        paidSales: summaryResult[0]?.paidSales || 0,
+        pendingSales: summaryResult[0]?.pendingSales || 0,
+        averageTaxPerSale: summaryResult[0]?.totalSales > 0 ? (summaryResult[0]?.totalTax || 0) / summaryResult[0].totalSales : 0
+      };
+      const recordsData = await db2.select({
+        id: sales.id,
+        invoiceNumber: sales.invoiceNumber,
+        saleDate: sales.saleDate,
+        subtotal: sales.subtotal,
+        taxAmount: sales.taxAmount,
+        totalAmount: sales.totalAmount,
+        paymentStatus: sales.paymentStatus,
+        customerId: sales.customerId
+      }).from(sales).where(drizzleOrm.and(whereClause, drizzleOrm.sql`${sales.taxAmount} > 0`)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(500);
+      const records = await Promise.all(
+        recordsData.map(async (record) => {
+          let customerName = null;
+          if (record.customerId) {
+            const customer = await db2.query.customers.findFirst({
+              where: drizzleOrm.eq(customers.id, record.customerId)
+            });
+            customerName = customer ? `${customer.firstName} ${customer.lastName || ""}`.trim() : null;
+          }
+          return {
+            id: record.id,
+            invoiceNumber: record.invoiceNumber,
+            saleDate: record.saleDate,
+            subtotal: record.subtotal,
+            taxAmount: record.taxAmount,
+            totalAmount: record.totalAmount,
+            paymentStatus: record.paymentStatus,
+            customerName
+          };
+        })
+      );
+      return {
+        success: true,
+        data: {
+          summary,
+          records
+        }
+      };
+    } catch (error) {
+      console.error("Get tax collections error:", error);
+      return { success: false, message: "Failed to fetch tax collections" };
+    }
+  });
+  electron.ipcMain.handle("tax-collections:get-sale-details", async (_, saleId) => {
+    try {
+      const sale = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, saleId)
+      });
+      if (!sale) {
+        return { success: false, message: "Sale not found" };
+      }
+      const items = await db2.select({
+        saleItem: saleItems,
+        product: products
+      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      const itemsWithTax = items.map((i) => ({
+        productName: i.product.name,
+        quantity: i.saleItem.quantity,
+        unitPrice: i.saleItem.unitPrice,
+        taxAmount: i.saleItem.taxAmount,
+        totalPrice: i.saleItem.totalPrice
+      }));
+      return {
+        success: true,
+        data: {
+          sale,
+          items: itemsWithTax
+        }
+      };
+    } catch (error) {
+      console.error("Get tax sale details error:", error);
+      return { success: false, message: "Failed to fetch sale details" };
+    }
+  });
+  electron.ipcMain.handle(
+    "tax-collections:get-periodic-report",
+    async (_, params) => {
+      try {
+        const { branchId, period, year } = params;
+        const startOfYear = `${year}-01-01T00:00:00.000Z`;
+        const endOfYear = `${year}-12-31T23:59:59.999Z`;
+        const conditions = [
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.between(sales.saleDate, startOfYear, endOfYear)
+        ];
+        let groupBy;
+        if (period === "monthly") {
+          groupBy = `strftime('%Y-%m', ${sales.saleDate.name})`;
+        } else if (period === "quarterly") {
+          groupBy = `strftime('%Y', ${sales.saleDate.name}) || '-Q' || ((cast(strftime('%m', ${sales.saleDate.name}) as integer) - 1) / 3 + 1)`;
+        } else {
+          groupBy = `strftime('%Y', ${sales.saleDate.name})`;
+        }
+        const report = await db2.select({
+          period: drizzleOrm.sql`${groupBy}`,
+          totalTax: drizzleOrm.sql`sum(${sales.taxAmount})`,
+          totalSales: drizzleOrm.sql`count(*)`,
+          paidTax: drizzleOrm.sql`sum(case when ${sales.paymentStatus} = 'paid' then ${sales.taxAmount} else 0 end)`,
+          pendingTax: drizzleOrm.sql`sum(case when ${sales.paymentStatus} != 'paid' then ${sales.taxAmount} else 0 end)`
+        }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(drizzleOrm.sql`${groupBy}`).orderBy(drizzleOrm.sql`${groupBy}`);
+        return {
+          success: true,
+          data: report
+        };
+      } catch (error) {
+        console.error("Get periodic tax report error:", error);
+        return { success: false, message: "Failed to fetch periodic report" };
+      }
+    }
+  );
+}
+function registerDiscountManagementHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("discount-management:get-summary", async (_, params) => {
+    try {
+      const { branchId, startDate, endDate } = params;
+      const conditions = [drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.eq(sales.isVoided, false)];
+      if (startDate && endDate) {
+        conditions.push(drizzleOrm.between(sales.saleDate, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`));
+      } else if (startDate) {
+        conditions.push(drizzleOrm.gte(sales.saleDate, `${startDate}T00:00:00.000Z`));
+      } else if (endDate) {
+        conditions.push(drizzleOrm.lte(sales.saleDate, `${endDate}T23:59:59.999Z`));
+      }
+      const whereClause = drizzleOrm.and(...conditions);
+      const summaryResult = await db2.select({
+        totalDiscountAmount: drizzleOrm.sql`sum(${sales.discountAmount})`,
+        salesWithDiscount: drizzleOrm.sql`sum(case when ${sales.discountAmount} > 0 then 1 else 0 end)`,
+        totalSales: drizzleOrm.sql`count(*)`,
+        totalSubtotal: drizzleOrm.sql`sum(${sales.subtotal})`
+      }).from(sales).where(whereClause);
+      const salesWithDiscount = summaryResult[0]?.salesWithDiscount || 0;
+      const totalSales = summaryResult[0]?.totalSales || 0;
+      const totalDiscountAmount = summaryResult[0]?.totalDiscountAmount || 0;
+      const totalSubtotal = summaryResult[0]?.totalSubtotal || 0;
+      const averageDiscountPercent = salesWithDiscount > 0 && totalSubtotal > 0 ? totalDiscountAmount / totalSubtotal * 100 : 0;
+      const topProducts = await db2.select({
+        productName: products.name,
+        discountAmount: drizzleOrm.sql`sum(${saleItems.discountAmount})`,
+        count: drizzleOrm.sql`count(*)`
+      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(whereClause, drizzleOrm.gt(saleItems.discountAmount, 0))).groupBy(products.id, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${saleItems.discountAmount})`)).limit(10);
+      const summary = {
+        totalDiscounts: salesWithDiscount,
+        totalDiscountAmount,
+        averageDiscountPercent,
+        salesWithDiscount,
+        totalSales,
+        discountRate: totalSales > 0 ? salesWithDiscount / totalSales * 100 : 0,
+        topDiscountedProducts: topProducts.map((p) => ({
+          productName: p.productName,
+          discountAmount: p.discountAmount || 0,
+          count: p.count || 0
+        }))
+      };
+      const recordsData = await db2.select({
+        id: sales.id,
+        invoiceNumber: sales.invoiceNumber,
+        saleDate: sales.saleDate,
+        subtotal: sales.subtotal,
+        discountAmount: sales.discountAmount,
+        totalAmount: sales.totalAmount,
+        paymentStatus: sales.paymentStatus,
+        customerId: sales.customerId,
+        userId: sales.userId
+      }).from(sales).where(drizzleOrm.and(whereClause, drizzleOrm.gt(sales.discountAmount, 0))).orderBy(drizzleOrm.desc(sales.saleDate)).limit(500);
+      const records = await Promise.all(
+        recordsData.map(async (record) => {
+          let customerName = null;
+          if (record.customerId) {
+            const customer = await db2.query.customers.findFirst({
+              where: drizzleOrm.eq(customers.id, record.customerId)
+            });
+            customerName = customer ? `${customer.firstName} ${customer.lastName || ""}`.trim() : null;
+          }
+          let userName;
+          if (record.userId) {
+            const user = await db2.query.users.findFirst({
+              where: drizzleOrm.eq(users.id, record.userId)
+            });
+            userName = user?.username;
+          }
+          const discountPercent = record.subtotal > 0 ? record.discountAmount / record.subtotal * 100 : 0;
+          return {
+            id: record.id,
+            invoiceNumber: record.invoiceNumber,
+            saleDate: record.saleDate,
+            customerName,
+            subtotal: record.subtotal,
+            discountAmount: record.discountAmount,
+            discountPercent,
+            totalAmount: record.totalAmount,
+            paymentStatus: record.paymentStatus,
+            userId: record.userId,
+            userName
+          };
+        })
+      );
+      return {
+        success: true,
+        data: {
+          summary,
+          records
+        }
+      };
+    } catch (error) {
+      console.error("Get discount summary error:", error);
+      return { success: false, message: "Failed to fetch discount data" };
+    }
+  });
+  electron.ipcMain.handle("discount-management:get-details", async (_, saleId) => {
+    try {
+      const sale = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, saleId)
+      });
+      if (!sale) {
+        return { success: false, message: "Sale not found" };
+      }
+      let customerName = null;
+      if (sale.customerId) {
+        const customer = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, sale.customerId)
+        });
+        customerName = customer ? `${customer.firstName} ${customer.lastName || ""}`.trim() : null;
+      }
+      let userName;
+      if (sale.userId) {
+        const user = await db2.query.users.findFirst({
+          where: drizzleOrm.eq(users.id, sale.userId)
+        });
+        userName = user?.username;
+      }
+      const itemsData = await db2.select({
+        saleItem: saleItems,
+        product: products
+      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      const items = itemsData.map((i) => ({
+        productName: i.product.name,
+        quantity: i.saleItem.quantity,
+        unitPrice: i.saleItem.unitPrice,
+        discountPercent: i.saleItem.discountPercent,
+        discountAmount: i.saleItem.discountAmount,
+        totalPrice: i.saleItem.totalPrice
+      }));
+      const discountPercent = sale.subtotal > 0 ? sale.discountAmount / sale.subtotal * 100 : 0;
+      return {
+        success: true,
+        data: {
+          id: sale.id,
+          invoiceNumber: sale.invoiceNumber,
+          saleDate: sale.saleDate,
+          customerName,
+          subtotal: sale.subtotal,
+          discountAmount: sale.discountAmount,
+          discountPercent,
+          totalAmount: sale.totalAmount,
+          paymentStatus: sale.paymentStatus,
+          userId: sale.userId,
+          userName,
+          items
+        }
+      };
+    } catch (error) {
+      console.error("Get discount details error:", error);
+      return { success: false, message: "Failed to fetch discount details" };
+    }
+  });
+  electron.ipcMain.handle(
+    "discount-management:get-by-user",
+    async (_, params) => {
+      try {
+        const { branchId, startDate, endDate } = params;
+        const conditions = [drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.eq(sales.isVoided, false), drizzleOrm.gt(sales.discountAmount, 0)];
+        if (startDate && endDate) {
+          conditions.push(drizzleOrm.between(sales.saleDate, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`));
+        }
+        const result = await db2.select({
+          userId: sales.userId,
+          userName: users.username,
+          totalDiscountAmount: drizzleOrm.sql`sum(${sales.discountAmount})`,
+          discountCount: drizzleOrm.sql`count(*)`,
+          averageDiscount: drizzleOrm.sql`avg(${sales.discountAmount})`
+        }).from(sales).innerJoin(users, drizzleOrm.eq(sales.userId, users.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.userId, users.username).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${sales.discountAmount})`));
+        return {
+          success: true,
+          data: result
+        };
+      } catch (error) {
+        console.error("Get discounts by user error:", error);
+        return { success: false, message: "Failed to fetch user discount data" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "discount-management:get-alerts",
+    async (_, params) => {
+      try {
+        const { branchId, thresholdPercent, limit = 50 } = params;
+        const alertsData = await db2.select({
+          id: sales.id,
+          invoiceNumber: sales.invoiceNumber,
+          saleDate: sales.saleDate,
+          subtotal: sales.subtotal,
+          discountAmount: sales.discountAmount,
+          totalAmount: sales.totalAmount,
+          userId: sales.userId,
+          customerId: sales.customerId
+        }).from(sales).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(sales.branchId, branchId),
+            drizzleOrm.eq(sales.isVoided, false),
+            drizzleOrm.sql`(${sales.discountAmount} / ${sales.subtotal}) * 100 > ${thresholdPercent}`
+          )
+        ).orderBy(drizzleOrm.desc(sales.saleDate)).limit(limit);
+        const alerts = await Promise.all(
+          alertsData.map(async (record) => {
+            let customerName = null;
+            if (record.customerId) {
+              const customer = await db2.query.customers.findFirst({
+                where: drizzleOrm.eq(customers.id, record.customerId)
+              });
+              customerName = customer ? `${customer.firstName} ${customer.lastName || ""}`.trim() : null;
+            }
+            let userName;
+            if (record.userId) {
+              const user = await db2.query.users.findFirst({
+                where: drizzleOrm.eq(users.id, record.userId)
+              });
+              userName = user?.username;
+            }
+            const discountPercent = record.discountAmount / record.subtotal * 100;
+            return {
+              ...record,
+              customerName,
+              userName,
+              discountPercent
+            };
+          })
+        );
+        return {
+          success: true,
+          data: alerts
+        };
+      } catch (error) {
+        console.error("Get discount alerts error:", error);
+        return { success: false, message: "Failed to fetch discount alerts" };
+      }
+    }
+  );
 }
 function registerAllHandlers() {
   registerAuthHandlers();
@@ -14993,6 +15659,8 @@ function registerAllHandlers() {
   registerSetupHandlers();
   registerDatabaseResetHandlers();
   registerBackupHandlers();
+  registerTaxCollectionsHandlers();
+  registerDiscountManagementHandlers();
   console.log("All IPC handlers registered");
 }
 process.on("uncaughtException", (error) => {

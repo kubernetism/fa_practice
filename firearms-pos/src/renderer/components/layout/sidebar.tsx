@@ -27,6 +27,9 @@ import {
   CreditCard,
   Landmark,
   Banknote,
+  Percent,
+  FolderTree,
+  Tags,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -55,6 +58,7 @@ const mainNavItems: NavItem[] = [
 
 const inventoryNavItems: NavItem[] = [
   { title: 'Products', href: '/products', icon: Package, allowedRoles: ['admin', 'manager'] },
+  { title: 'Categories', href: '/categories-management', icon: FolderTree, allowedRoles: ['admin', 'manager'] },
   { title: 'Inventory', href: '/inventory', icon: Warehouse, allowedRoles: ['admin', 'manager'] },
   { title: 'Purchases', href: '/purchases', icon: Truck, allowedRoles: ['admin', 'manager'] },
   { title: 'Returns', href: '/returns', icon: ArrowLeftRight, allowedRoles: ['admin', 'manager'] },
@@ -73,6 +77,8 @@ const managementNavItems: NavItem[] = [
 const financeNavItems: NavItem[] = [
   { title: 'Cash Register', href: '/cash-register', icon: Banknote, allowedRoles: ['admin'] },
   { title: 'Chart of Accounts', href: '/chart-of-accounts', icon: Landmark, allowedRoles: ['admin'] },
+  { title: 'Tax Collections', href: '/tax-collections', icon: Percent, allowedRoles: ['admin'] },
+  { title: 'Discounts', href: '/discount-management', icon: Tags, allowedRoles: ['admin', 'manager'] },
 ]
 
 const adminNavItems: NavItem[] = [

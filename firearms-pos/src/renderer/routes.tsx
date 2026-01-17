@@ -33,6 +33,9 @@ const AuditLogsScreen = lazy(() => import('@/screens/audit-logs').then(m => ({ d
 const DatabaseViewerScreen = lazy(() => import('@/screens/database-viewer').then(m => ({ default: m.DatabaseViewerScreen })))
 const LicenseSettingsScreen = lazy(() => import('@/screens/license-settings').then(m => ({ default: m.LicenseSettingsScreen })))
 const SetupWizardScreen = lazy(() => import('@/screens/setup-wizard').then(m => ({ default: m.SetupWizardScreen })))
+const TaxCollectionsScreen = lazy(() => import('@/screens/tax-collections').then(m => ({ default: m.TaxCollectionsScreen })))
+const CategoriesManagementScreen = lazy(() => import('@/screens/categories-management').then(m => ({ default: m.CategoriesManagementScreen })))
+const DiscountManagementScreen = lazy(() => import('@/screens/discount-management').then(m => ({ default: m.DiscountManagementScreen })))
 
 // Wrapper component for lazy loaded routes
 function LazyRoute({ children }: { children: React.ReactNode }) {
@@ -273,6 +276,30 @@ export function AppRoutes() {
           element={
             <LazyRoute>
               <LicenseSettingsScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="tax-collections"
+          element={
+            <LazyRoute>
+              <TaxCollectionsScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="categories-management"
+          element={
+            <LazyRoute>
+              <CategoriesManagementScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="discount-management"
+          element={
+            <LazyRoute>
+              <DiscountManagementScreen />
             </LazyRoute>
           }
         />
