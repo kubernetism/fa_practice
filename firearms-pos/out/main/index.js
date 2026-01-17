@@ -6605,21 +6605,24 @@ async function generateReportPDF(options) {
   }
   const pdfWindow = new electron.BrowserWindow({
     show: false,
+    width: 800,
+    height: 1200,
     webPreferences: {
-      nodeIntegration: false
+      nodeIntegration: false,
+      offscreen: true
     }
   });
   await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`);
-  await new Promise((resolve) => setTimeout(resolve, 1e3));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   const pdfData = await pdfWindow.webContents.printToPDF({
     pageSize: "A4",
     printBackground: true,
     landscape: false,
     margins: {
-      top: 0.5,
-      bottom: 0.5,
-      left: 0.5,
-      right: 0.5
+      top: 0.4,
+      bottom: 0.4,
+      left: 0.4,
+      right: 0.4
     }
   });
   const downloadsPath = electron.app.getPath("downloads");
@@ -6640,188 +6643,249 @@ function getReportTemplate(title, content, filters, businessInfo) {
 
         @page {
           size: A4;
-          margin: 8mm;
+          margin: 15mm;
         }
 
         body {
-          font-family: 'Courier New', Courier, monospace;
-          font-size: 9px;
-          line-height: 1.3;
-          color: #000;
-          padding: 10px;
+          font-family: 'Segoe UI', 'Arial', sans-serif;
+          font-size: 12px;
+          line-height: 1.6;
+          color: #333;
           background: white;
+          padding: 30px 40px;
+          max-width: 800px;
+          margin: 0 auto;
         }
 
-        /* Header - Compact */
+        /* Header */
         .header {
           text-align: center;
-          margin-bottom: 8px;
-          padding-bottom: 6px;
-          border-bottom: 2px double #000;
+          margin-bottom: 25px;
+          padding-bottom: 15px;
         }
 
         .business-name {
-          font-size: 14px;
+          font-size: 28px;
           font-weight: bold;
+          color: #1a1a1a;
           text-transform: uppercase;
-          letter-spacing: 1px;
-        }
-
-        .business-info {
-          font-size: 8px;
-          margin-top: 2px;
+          letter-spacing: 4px;
+          margin-bottom: 12px;
         }
 
         .report-title {
-          font-size: 11px;
+          font-size: 14px;
+          color: #555;
+          margin: 8px 0;
+        }
+
+        .report-date {
+          font-size: 13px;
+          color: #666;
+          margin-top: 5px;
+        }
+
+        /* Separator Lines */
+        .line {
+          border-top: 1px solid #ddd;
+          margin: 15px 0;
+        }
+
+        .dashed-line {
+          border-top: 1px dashed #ccc;
+          margin: 15px 0;
+        }
+
+        .double-line {
+          border-top: 2px solid #333;
+          margin: 20px 0;
+        }
+
+        /* Info Row */
+        .info-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 12px;
+          padding: 6px 0;
+        }
+
+        .info-row span:first-child {
+          color: #e67e22;
+          font-weight: 500;
+        }
+
+        .info-row span:last-child {
+          color: #2980b9;
+          font-weight: 600;
+        }
+
+        /* Table Header */
+        .table-header {
+          display: flex;
+          justify-content: space-between;
+          font-size: 12px;
           font-weight: bold;
           text-transform: uppercase;
-          margin-top: 6px;
-          border: 1px solid #000;
-          display: inline-block;
-          padding: 2px 10px;
+          padding: 10px 0;
+          border-bottom: 2px solid #333;
+          margin-bottom: 8px;
+          color: #1a1a1a;
         }
 
-        .report-meta {
-          font-size: 8px;
-          margin-top: 4px;
+        .col-qty { width: 60px; }
+        .col-item { flex: 1; padding: 0 15px; }
+        .col-total { width: 120px; text-align: right; }
+
+        /* Table Row */
+        .table-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 12px;
+          padding: 8px 0;
+          border-bottom: 1px solid #eee;
         }
 
-        /* Summary Row - Inline */
+        .table-row:last-child {
+          border-bottom: none;
+        }
+
+        .table-row .col-qty { color: #e74c3c; font-weight: 500; }
+        .table-row .col-item { color: #2980b9; }
+        .table-row .col-total { font-weight: 600; color: #27ae60; }
+
+        /* Summary Section */
         .summary-row {
           display: flex;
-          flex-wrap: wrap;
-          gap: 4px;
-          margin: 8px 0;
-          padding: 4px;
-          border: 1px solid #000;
-          background: #f5f5f5;
+          justify-content: space-between;
+          font-size: 12px;
+          padding: 6px 0;
         }
 
-        .summary-item {
-          flex: 1;
-          min-width: 100px;
-          text-align: center;
-          padding: 3px;
-          border-right: 1px dashed #999;
+        .summary-row.subtotal {
+          padding-top: 10px;
+          border-top: 1px dashed #ccc;
         }
 
-        .summary-item:last-child {
-          border-right: none;
-        }
-
-        .summary-label {
-          font-size: 7px;
-          text-transform: uppercase;
-        }
-
-        .summary-value {
-          font-size: 11px;
+        .summary-row.total {
+          font-size: 14px;
           font-weight: bold;
+          padding: 10px 0;
+          border-top: 1px solid #333;
         }
 
-        /* Tables - Tight */
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 6px 0;
-          font-size: 8px;
-        }
-
-        th {
-          background: #000;
-          color: #fff;
-          padding: 3px 4px;
-          text-align: left;
-          font-size: 7px;
-          text-transform: uppercase;
+        .summary-row.grand-total {
+          font-size: 18px;
           font-weight: bold;
-        }
-
-        td {
-          padding: 2px 4px;
-          border-bottom: 1px dotted #ccc;
-        }
-
-        tr:nth-child(even) {
-          background: #f9f9f9;
-        }
-
-        /* Section Title - Minimal */
-        .section-title {
-          font-size: 9px;
-          font-weight: bold;
-          text-transform: uppercase;
-          margin: 10px 0 4px;
-          padding: 2px 0;
-          border-bottom: 1px solid #000;
-        }
-
-        /* Footer - Tiny */
-        .footer {
+          padding: 15px 0;
           margin-top: 10px;
-          padding-top: 4px;
-          border-top: 1px solid #000;
-          text-align: center;
-          font-size: 7px;
+          border-top: 2px solid #333;
+          background: #f8f9fa;
+          padding-left: 10px;
+          padding-right: 10px;
         }
 
-        /* Utility Classes */
-        .text-right { text-align: right; }
-        .text-center { text-align: center; }
-        .font-bold { font-weight: bold; }
-        .text-green { color: #000; }
-        .text-red { color: #000; }
-        .text-blue { color: #000; }
-        .text-gold { color: #000; }
+        /* Section */
+        .section {
+          margin: 20px 0;
+        }
 
-        /* Rank - Simple number */
-        .rank-badge {
+        .section-title {
+          font-size: 13px;
           font-weight: bold;
-        }
-
-        .rank-badge.gold::before { content: '★ '; }
-        .rank-badge.silver::before { content: '☆ '; }
-        .rank-badge.bronze::before { content: '• '; }
-
-        /* Status - Text based */
-        .status-badge {
-          font-size: 7px;
-          padding: 1px 3px;
-          border: 1px solid #000;
           text-transform: uppercase;
+          text-align: center;
+          padding: 10px 15px;
+          margin-bottom: 12px;
+          background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+          border-left: 4px solid #3498db;
+          color: #2c3e50;
         }
 
-        .status-badge.success { background: #ddd; }
-        .status-badge.warning { background: #eee; }
-        .status-badge.danger { background: #ccc; }
+        /* Footer */
+        .footer {
+          margin-top: 30px;
+          text-align: center;
+          padding-top: 20px;
+          border-top: 2px solid #333;
+        }
 
-        /* Amount */
-        .amount-cell {
+        .thank-you {
+          font-size: 12px;
+          font-style: italic;
+          color: #7f8c8d;
+          margin: 12px 0;
+        }
+
+        .footer-message {
+          font-size: 14px;
           font-weight: bold;
-          font-family: 'Courier New', monospace;
+          letter-spacing: 3px;
+          margin: 12px 0;
+          color: #2c3e50;
         }
 
-        /* Hide cards, use summary-row instead */
-        .summary-cards { display: none; }
-        .card { display: none; }
+        .footer-date {
+          font-size: 11px;
+          color: #95a5a6;
+          margin-top: 12px;
+        }
+
+        /* Utility */
+        .text-center { text-align: center; }
+        .text-right { text-align: right; }
+        .bold { font-weight: bold; }
+        .small { font-size: 11px; }
+        .muted { color: #95a5a6; }
+
+        /* Data List */
+        .data-list {
+          margin: 12px 0;
+        }
+
+        .data-item {
+          display: flex;
+          justify-content: space-between;
+          padding: 8px 0;
+          border-bottom: 1px solid #eee;
+          font-size: 12px;
+        }
+
+        .data-item:last-child {
+          border-bottom: none;
+        }
+
+        .data-item .label { color: #e67e22; font-weight: 500; }
+        .data-item .value { font-weight: 600; color: #2980b9; }
       </style>
     </head>
     <body>
       <div class="header">
-        <div class="business-name">${businessInfo?.name || "Firearms Retail POS"}</div>
-        ${businessInfo ? `<div class="business-info">${businessInfo.address || ""}${businessInfo.phone ? " | " + businessInfo.phone : ""}${businessInfo.email ? " | " + businessInfo.email : ""}</div>` : ""}
+        <div class="business-name">${businessInfo?.name || "STORE"}</div>
         <div class="report-title">${title}</div>
-        <div class="report-meta">
-          ${getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)}
-          | ${filters.branchName || "All Branches"} | ${formatDateTime(/* @__PURE__ */ new Date())}
-        </div>
+        <div class="report-date">${getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)}</div>
       </div>
+
+      <div class="line"></div>
+
+      <div class="info-row">
+        <span>Branch:</span>
+        <span>${filters.branchName || "All Branches"}</span>
+      </div>
+      <div class="info-row">
+        <span>Generated:</span>
+        <span>${formatDateTime(/* @__PURE__ */ new Date())}</span>
+      </div>
+
+      <div class="line"></div>
 
       ${content}
 
+      <div class="double-line"></div>
+
       <div class="footer">
-        Firearms Retail POS - Confidential
+        <div class="thank-you">Thank you for your business!</div>
+        <div class="footer-message">THANK YOU - COME AGAIN!</div>
+        <div class="footer-date">${formatDateTime(/* @__PURE__ */ new Date())}</div>
       </div>
     </body>
     </html>
@@ -6829,1171 +6893,958 @@ function getReportTemplate(title, content, filters, businessInfo) {
 }
 function generateSalesReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Total Sales</div>
-        <div class="summary-value">${data.summary?.totalSales || 0}</div>
+    <div class="section">
+      <div class="section-title">Sales Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Transactions:</span>
+          <span class="value">${data.summary?.totalSales || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Average Order:</span>
+          <span class="value">Rs. ${(data.summary?.avgOrderValue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Tax Collected:</span>
+          <span class="value">Rs. ${(data.summary?.totalTax || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Revenue</div>
-        <div class="summary-value">Rs.${(data.summary?.totalRevenue || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Avg Order</div>
-        <div class="summary-value">Rs.${(data.summary?.avgOrderValue || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Tax</div>
-        <div class="summary-value">Rs.${(data.summary?.totalTax || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TOTAL REVENUE:</span>
+        <span>Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Sales by Payment Method</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Payment Method</th>
-          <th class="text-right">Count</th>
-          <th class="text-right">Total Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.byPaymentMethod?.map(
-    (item) => `
-          <tr>
-            <td class="font-bold">${item.paymentMethod}</td>
-            <td class="text-right">${item.count}</td>
-            <td class="text-right">Rs. ${item.total.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
 
-    <div class="section-title">Top Selling Products</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 50px;">Rank</th>
-          <th>Product Code</th>
-          <th>Product Name</th>
-          <th class="text-right">Quantity Sold</th>
-          <th class="text-right">Revenue</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.topProducts?.map(
-    (item, index2) => `
-          <tr>
-            <td><span class="rank-badge ${index2 === 0 ? "gold" : index2 === 1 ? "silver" : index2 === 2 ? "bronze" : ""}">${index2 + 1}</span></td>
-            <td>${item.productCode}</td>
-            <td class="font-bold">${item.productName}</td>
-            <td class="text-right font-bold">${item.quantitySold}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.revenue.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="5" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+    <div class="section">
+      <div class="section-title">By Payment Method</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Method</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.byPaymentMethod?.map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.count}</span>
+          <span class="col-item">${item.paymentMethod}</span>
+          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
+
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Top Selling Products</div>
+      <div class="table-header">
+        <span class="col-qty">QTY</span>
+        <span class="col-item">Product</span>
+        <span class="col-total">Revenue</span>
+      </div>
+      ${data.topProducts?.slice(0, 10).map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.quantitySold}</span>
+          <span class="col-item">${item.productName}</span>
+          <span class="col-total">Rs. ${item.revenue.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
   `;
   return getReportTemplate("Sales Report", content, filters, businessInfo);
 }
 function generateInventoryReportHTML(data, filters, businessInfo) {
   const totalValue = data.stockValue?.reduce((sum, item) => sum + item.costValue, 0) || 0;
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Stock Value</div>
-        <div class="summary-value">Rs.${totalValue.toFixed(0)}</div>
+    <div class="section">
+      <div class="section-title">Inventory Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Low Stock Items:</span>
+          <span class="value">${data.stockSummary?.[0]?.lowStockItems || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Out of Stock:</span>
+          <span class="value">${data.stockSummary?.[0]?.outOfStockItems || 0}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Low Stock</div>
-        <div class="summary-value">${data.stockSummary?.[0]?.lowStockItems || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Out of Stock</div>
-        <div class="summary-value">${data.stockSummary?.[0]?.outOfStockItems || 0}</div>
+      <div class="summary-row grand-total">
+        <span>STOCK VALUE:</span>
+        <span>Rs. ${totalValue.toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Stock Summary by Branch</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Branch</th>
-          <th class="text-right">Total Products</th>
-          <th class="text-right">Total Units</th>
-          <th class="text-right">Low Stock</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.stockSummary?.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Stock by Branch</div>
+      <div class="table-header">
+        <span class="col-qty">Units</span>
+        <span class="col-item">Branch</span>
+        <span class="col-total">Low Stock</span>
+      </div>
+      ${data.stockSummary?.map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.branchName}</td>
-            <td class="text-right">${item.totalProducts}</td>
-            <td class="text-right">${item.totalUnits}</td>
-            <td class="text-right text-red">${item.lowStockItems}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="4" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+        <div class="table-row">
+          <span class="col-qty">${item.totalUnits}</span>
+          <span class="col-item">${item.branchName}</span>
+          <span class="col-total">${item.lowStockItems}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
 
     ${data.lowStock && data.lowStock.length > 0 ? `
-    <div class="section-title">Low Stock Alert</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Product</th>
-          <th>Branch</th>
-          <th class="text-right">Current Qty</th>
-          <th class="text-right">Min Qty</th>
-          <th class="text-center">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.lowStock.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">** LOW STOCK ALERT **</div>
+      <div class="table-header">
+        <span class="col-qty">Qty</span>
+        <span class="col-item">Product</span>
+        <span class="col-total">Status</span>
+      </div>
+      ${data.lowStock.slice(0, 15).map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.productName}</td>
-            <td>${item.branchName}</td>
-            <td class="text-right font-bold">${item.quantity}</td>
-            <td class="text-right">${item.minQuantity}</td>
-            <td class="text-center">
-              <span class="status-badge ${item.quantity === 0 ? "danger" : "warning"}">
-                ${item.quantity === 0 ? "Out of Stock" : "Low Stock"}
-              </span>
-            </td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-qty">${item.quantity}/${item.minQuantity}</span>
+          <span class="col-item">${item.productName}</span>
+          <span class="col-total">${item.quantity === 0 ? "OUT!" : "LOW"}</span>
+        </div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
   return getReportTemplate("Inventory Report", content, filters, businessInfo);
 }
 function generateProfitLossReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Revenue</div>
-        <div class="summary-value">Rs.${(data.revenue || 0).toFixed(0)}</div>
+    <div class="section">
+      <div class="section-title">Financial Statement</div>
+
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Revenue:</span>
+          <span class="value">Rs. ${(data.revenue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Cost of Goods Sold:</span>
+          <span class="value">- Rs. ${(data.costOfGoodsSold || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Gross Profit (${(data.grossMargin || 0).toFixed(1)}%)</div>
-        <div class="summary-value">Rs.${(data.grossProfit || 0).toFixed(0)}</div>
+
+      <div class="dashed-line"></div>
+
+      <div class="summary-row subtotal">
+        <span>Gross Profit:</span>
+        <span>Rs. ${(data.grossProfit || 0).toFixed(2)}</span>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Net Profit (${(data.netMargin || 0).toFixed(1)}%)</div>
-        <div class="summary-value">Rs.${(data.netProfit || 0).toFixed(0)}</div>
+      <div class="data-item">
+        <span class="label small">Gross Margin:</span>
+        <span class="value">${(data.grossMargin || 0).toFixed(1)}%</span>
+      </div>
+
+      <div class="dashed-line"></div>
+
+      <div class="data-item">
+        <span class="label">Operating Expenses:</span>
+        <span class="value">- Rs. ${(data.expenses || 0).toFixed(2)}</span>
+      </div>
+
+      <div class="line"></div>
+
+      <div class="summary-row grand-total">
+        <span>NET PROFIT:</span>
+        <span>Rs. ${(data.netProfit || 0).toFixed(2)}</span>
+      </div>
+      <div class="data-item">
+        <span class="label small">Net Margin:</span>
+        <span class="value">${(data.netMargin || 0).toFixed(1)}%</span>
       </div>
     </div>
 
-    <div class="section-title">Financial Breakdown</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Item</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="font-bold">Total Revenue</td>
-          <td class="text-right text-green">Rs. ${(data.revenue || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Cost of Goods Sold</td>
-          <td class="text-right text-red">- Rs. ${(data.costOfGoodsSold || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #f1f5f9;">
-          <td class="font-bold">Gross Profit</td>
-          <td class="text-right font-bold text-blue">Rs. ${(data.grossProfit || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Operating Expenses</td>
-          <td class="text-right text-red">- Rs. ${(data.expenses || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #f1f5f9;">
-          <td class="font-bold">Net Profit</td>
-          <td class="text-right font-bold ${data.netProfit >= 0 ? "text-green" : "text-red"}">
-            Rs. ${(data.netProfit || 0).toFixed(2)}
-          </td>
-        </tr>
-      </tbody>
-    </table>
-
     ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
-    <div class="section-title">Expenses by Category</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.expensesByCategory.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Expenses by Category</div>
+      <div class="table-header">
+        <span class="col-item">Category</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.expensesByCategory.map(
     (item) => `
-          <tr>
-            <td>${item.category}</td>
-            <td class="text-right">Rs. ${item.total.toFixed(2)}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-item">${item.category}</span>
+          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+        </div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
-  return getReportTemplate("Profit & Loss Report", content, filters, businessInfo);
+  return getReportTemplate("Profit & Loss", content, filters, businessInfo);
 }
 function generateExpenseReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Total Expenses</div>
-        <div class="summary-value">Rs.${(data.summary?.totalExpenses || 0).toFixed(0)}</div>
+    <div class="section">
+      <div class="section-title">Expense Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Count:</span>
+          <span class="value">${data.summary?.expenseCount || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Average Expense:</span>
+          <span class="value">Rs. ${(data.summary?.avgExpense || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Count</div>
-        <div class="summary-value">${data.summary?.expenseCount || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Average</div>
-        <div class="summary-value">Rs.${(data.summary?.avgExpense || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TOTAL EXPENSES:</span>
+        <span>Rs. ${(data.summary?.totalExpenses || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Expenses by Category</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th class="text-right">Count</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.expensesByCategory?.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">By Category</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Category</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.expensesByCategory?.map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.category}</td>
-            <td class="text-right">${item.count}</td>
-            <td class="text-right text-red">Rs. ${item.amount.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+        <div class="table-row">
+          <span class="col-qty">${item.count}</span>
+          <span class="col-item">${item.category}</span>
+          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
 
     ${data.topExpenses && data.topExpenses.length > 0 ? `
-    <div class="section-title">Top Expenses</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Category</th>
-          <th>Description</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.topExpenses.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Recent Expenses</div>
+      <div class="table-header">
+        <span class="col-item">Description</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.topExpenses.slice(0, 10).map(
     (item) => `
-          <tr>
-            <td>${formatDate(item.date)}</td>
-            <td>${item.category}</td>
-            <td>${item.description || "-"}</td>
-            <td class="text-right text-red">Rs. ${item.amount.toFixed(2)}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-item">${item.category}${item.description ? " - " + item.description.substring(0, 15) : ""}</span>
+          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+        </div>
+        <div class="small muted" style="padding-left:35px;">${formatDate(item.date)}</div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
   return getReportTemplate("Expense Report", content, filters, businessInfo);
 }
 function generatePurchaseReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Purchases</div>
-        <div class="summary-value">${data.summary?.totalPurchases || 0}</div>
+    <div class="section">
+      <div class="section-title">Purchase Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Orders:</span>
+          <span class="value">${data.summary?.totalPurchases || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Average Order:</span>
+          <span class="value">Rs. ${(data.summary?.avgPurchaseValue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Pending Payment:</span>
+          <span class="value">Rs. ${(data.summary?.pendingPayments || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Total Cost</div>
-        <div class="summary-value">Rs.${(data.summary?.totalCost || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Avg Value</div>
-        <div class="summary-value">Rs.${(data.summary?.avgPurchaseValue || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Pending</div>
-        <div class="summary-value">Rs.${(data.summary?.pendingPayments || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TOTAL COST:</span>
+        <span>Rs. ${(data.summary?.totalCost || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Purchases by Supplier</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Supplier</th>
-          <th class="text-right">Total Orders</th>
-          <th class="text-right">Total Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.purchasesBySupplier?.map(
-    (item) => `
-          <tr>
-            <td class="font-bold">${item.supplierName}</td>
-            <td class="text-right">${item.totalPurchases}</td>
-            <td class="text-right amount-cell">Rs. ${item.totalAmount.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
 
-    <div class="section-title">Purchases by Status</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Status</th>
-          <th class="text-right">Count</th>
-          <th class="text-right">Total Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.purchasesByStatus?.map(
+    <div class="section">
+      <div class="section-title">By Supplier</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Supplier</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.purchasesBySupplier?.map(
     (item) => `
-          <tr>
-            <td>
-              <span class="status-badge ${item.status === "Completed" || item.status === "Received" ? "success" : item.status === "Pending" ? "warning" : "danger"}">
-                ${item.status}
-              </span>
-            </td>
-            <td class="text-right font-bold">${item.count}</td>
-            <td class="text-right amount-cell">Rs. ${item.totalAmount.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+        <div class="table-row">
+          <span class="col-qty">${item.totalPurchases}</span>
+          <span class="col-item">${item.supplierName}</span>
+          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
+
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">By Status</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Status</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.purchasesByStatus?.map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.count}</span>
+          <span class="col-item">${item.status}</span>
+          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
 
     ${data.recentPurchases && data.recentPurchases.length > 0 ? `
-    <div class="section-title">Recent Purchases</div>
-    <table>
-      <thead>
-        <tr>
-          <th>PO Number</th>
-          <th>Supplier</th>
-          <th>Date</th>
-          <th class="text-right">Amount</th>
-          <th class="text-center">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.recentPurchases.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Recent Orders</div>
+      <div class="table-header">
+        <span class="col-item">PO Number</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.recentPurchases.slice(0, 8).map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.purchaseOrderNumber}</td>
-            <td>${item.supplierName}</td>
-            <td>${formatDate(item.createdAt)}</td>
-            <td class="text-right amount-cell">Rs. ${item.totalAmount.toFixed(2)}</td>
-            <td class="text-center">
-              <span class="status-badge ${item.status === "Completed" || item.status === "Received" ? "success" : item.status === "Pending" ? "warning" : "danger"}">
-                ${item.status}
-              </span>
-            </td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-item">${item.purchaseOrderNumber}</span>
+          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
+        </div>
+        <div class="small muted" style="padding-left:35px;">${item.supplierName} | ${formatDate(item.createdAt)}</div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
   return getReportTemplate("Purchase Report", content, filters, businessInfo);
 }
 function generateReturnReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Returns</div>
-        <div class="summary-value">${data.summary?.totalReturns || 0}</div>
+    <div class="section">
+      <div class="section-title">Returns Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Returns:</span>
+          <span class="value">${data.summary?.totalReturns || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Return Rate:</span>
+          <span class="value">${(data.summary?.returnRate || 0).toFixed(1)}%</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Total Value</div>
-        <div class="summary-value">Rs.${(data.summary?.totalValue || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Return Rate</div>
-        <div class="summary-value">${(data.summary?.returnRate || 0).toFixed(1)}%</div>
+      <div class="summary-row grand-total">
+        <span>REFUND VALUE:</span>
+        <span>Rs. ${(data.summary?.totalValue || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Returns by Reason</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Reason</th>
-          <th class="text-right">Count</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.returnsByReason?.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">By Reason</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Reason</span>
+        <span class="col-total">Value</span>
+      </div>
+      ${data.returnsByReason?.map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.reason}</td>
-            <td class="text-right">${item.count}</td>
-            <td class="text-right amount-cell text-red">Rs. ${item.value.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+        <div class="table-row">
+          <span class="col-qty">${item.count}</span>
+          <span class="col-item">${item.reason}</span>
+          <span class="col-total">Rs. ${item.value.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
 
     ${data.returnsByProduct && data.returnsByProduct.length > 0 ? `
-    <div class="section-title">Most Returned Products</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 50px;">Rank</th>
-          <th>Product</th>
-          <th class="text-right">Return Count</th>
-          <th class="text-right">Total Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.returnsByProduct.map(
-    (item, index2) => `
-          <tr>
-            <td><span class="rank-badge ${index2 === 0 ? "gold" : index2 === 1 ? "silver" : index2 === 2 ? "bronze" : ""}">${index2 + 1}</span></td>
-            <td class="font-bold">${item.productName}</td>
-            <td class="text-right font-bold">${item.returnCount}</td>
-            <td class="text-right amount-cell text-red">Rs. ${item.totalValue.toFixed(2)}</td>
-          </tr>
-        `
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Most Returned Products</div>
+      <div class="table-header">
+        <span class="col-qty">QTY</span>
+        <span class="col-item">Product</span>
+        <span class="col-total">Value</span>
+      </div>
+      ${data.returnsByProduct.slice(0, 10).map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.returnCount}</span>
+          <span class="col-item">${item.productName}</span>
+          <span class="col-total">Rs. ${item.totalValue.toFixed(2)}</span>
+        </div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
   return getReportTemplate("Returns Report", content, filters, businessInfo);
 }
 function generateCommissionReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Total Commissions</div>
-        <div class="summary-value">Rs.${(data.summary?.totalCommissions || 0).toFixed(0)}</div>
+    <div class="section">
+      <div class="section-title">Commission Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Count:</span>
+          <span class="value">${data.summary?.commissionCount || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Average:</span>
+          <span class="value">Rs. ${(data.summary?.avgCommission || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Count</div>
-        <div class="summary-value">${data.summary?.commissionCount || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Average</div>
-        <div class="summary-value">Rs.${(data.summary?.avgCommission || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TOTAL PAID:</span>
+        <span>Rs. ${(data.summary?.totalCommissions || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Commissions by Salesperson</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 50px;">Rank</th>
-          <th>Salesperson</th>
-          <th class="text-right">Sales Count</th>
-          <th class="text-right">Total Commission</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.commissionsBySalesperson?.map(
-    (item, index2) => `
-          <tr>
-            <td><span class="rank-badge ${index2 === 0 ? "gold" : index2 === 1 ? "silver" : index2 === 2 ? "bronze" : ""}">${index2 + 1}</span></td>
-            <td class="font-bold">${item.userName}</td>
-            <td class="text-right">${item.salesCount}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.totalCommission.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="4" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">By Salesperson</div>
+      <div class="table-header">
+        <span class="col-qty">Sales</span>
+        <span class="col-item">Name</span>
+        <span class="col-total">Commission</span>
+      </div>
+      ${data.commissionsBySalesperson?.map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.salesCount}</span>
+          <span class="col-item">${item.userName}</span>
+          <span class="col-total">Rs. ${item.totalCommission.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
 
     ${data.recentCommissions && data.recentCommissions.length > 0 ? `
-    <div class="section-title">Recent Commissions</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Date</th>
-          <th>Salesperson</th>
-          <th>Invoice</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.recentCommissions.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Recent Commissions</div>
+      <div class="table-header">
+        <span class="col-item">Salesperson</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.recentCommissions.slice(0, 10).map(
     (item) => `
-          <tr>
-            <td>${formatDate(item.date)}</td>
-            <td class="font-bold">${item.userName}</td>
-            <td>${item.saleInvoice}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.amount.toFixed(2)}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-item">${item.userName}</span>
+          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+        </div>
+        <div class="small muted" style="padding-left:35px;">${formatDate(item.date)} | ${item.saleInvoice}</div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
   return getReportTemplate("Commission Report", content, filters, businessInfo);
 }
 function generateTaxReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Tax Collected</div>
-        <div class="summary-value">Rs.${(data.summary?.totalTaxCollected || 0).toFixed(0)}</div>
+    <div class="section">
+      <div class="section-title">Tax Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Taxable Sales:</span>
+          <span class="value">Rs. ${(data.summary?.taxableSales || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Avg Tax per Sale:</span>
+          <span class="value">Rs. ${(data.summary?.avgTaxPerSale || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Taxable Sales</div>
-        <div class="summary-value">Rs.${(data.summary?.taxableSales || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Avg per Sale</div>
-        <div class="summary-value">Rs.${(data.summary?.avgTaxPerSale || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TAX COLLECTED:</span>
+        <span>Rs. ${(data.summary?.totalTaxCollected || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Tax Collected by Branch</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 50px;">Rank</th>
-          <th>Branch</th>
-          <th class="text-right">Tax Collected</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.taxByBranch?.map(
-    (item, index2) => `
-          <tr>
-            <td><span class="rank-badge ${index2 === 0 ? "gold" : index2 === 1 ? "silver" : index2 === 2 ? "bronze" : ""}">${index2 + 1}</span></td>
-            <td class="font-bold">${item.branchName}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.taxCollected.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
 
-    <div class="section-title">Tax Collected by Payment Method</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Payment Method</th>
-          <th class="text-right">Sales Count</th>
-          <th class="text-right">Tax Collected</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.taxByPaymentMethod?.map(
+    <div class="section">
+      <div class="section-title">By Branch</div>
+      <div class="table-header">
+        <span class="col-item">Branch</span>
+        <span class="col-total">Tax</span>
+      </div>
+      ${data.taxByBranch?.map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.paymentMethod}</td>
-            <td class="text-right">${item.salesCount}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.taxCollected.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="3" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+        <div class="table-row">
+          <span class="col-item">${item.branchName}</span>
+          <span class="col-total">Rs. ${item.taxCollected.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
+
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">By Payment Method</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Method</span>
+        <span class="col-total">Tax</span>
+      </div>
+      ${data.taxByPaymentMethod?.map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.salesCount}</span>
+          <span class="col-item">${item.paymentMethod}</span>
+          <span class="col-total">Rs. ${item.taxCollected.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
   `;
   return getReportTemplate("Tax Report", content, filters, businessInfo);
 }
 function generateCustomerReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Total</div>
-        <div class="summary-value">${data.summary?.totalCustomers || 0}</div>
+    <div class="section">
+      <div class="section-title">Customer Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Customers:</span>
+          <span class="value">${data.summary?.totalCustomers || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Active:</span>
+          <span class="value">${data.summary?.activeCustomers || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">New This Period:</span>
+          <span class="value">${data.summary?.newCustomers || 0}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Active</div>
-        <div class="summary-value">${data.summary?.activeCustomers || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">New</div>
-        <div class="summary-value">${data.summary?.newCustomers || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Revenue</div>
-        <div class="summary-value">Rs.${(data.summary?.totalRevenue || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TOTAL REVENUE:</span>
+        <span>Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
       </div>
     </div>
 
     ${data.customerRetention ? `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Repeat</div>
-        <div class="summary-value">${data.customerRetention.repeatCustomers || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">One-time</div>
-        <div class="summary-value">${data.customerRetention.oneTimeCustomers || 0}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Repeat Rate</div>
-        <div class="summary-value">${(data.customerRetention.repeatRate || 0).toFixed(1)}%</div>
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Retention Stats</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Repeat Customers:</span>
+          <span class="value">${data.customerRetention.repeatCustomers || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">One-time Buyers:</span>
+          <span class="value">${data.customerRetention.oneTimeCustomers || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Retention Rate:</span>
+          <span class="value">${(data.customerRetention.repeatRate || 0).toFixed(1)}%</span>
+        </div>
       </div>
     </div>
     ` : ""}
 
-    <div class="section-title">Top Customers</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 50px;">Rank</th>
-          <th>Customer</th>
-          <th>Contact</th>
-          <th class="text-right">Orders</th>
-          <th class="text-right">Avg Order</th>
-          <th class="text-right">Total Spent</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.topCustomers?.map(
-    (item, index2) => `
-          <tr>
-            <td><span class="rank-badge ${index2 === 0 ? "gold" : index2 === 1 ? "silver" : index2 === 2 ? "bronze" : ""}">${index2 + 1}</span></td>
-            <td class="font-bold">${item.customerName}</td>
-            <td style="font-size: 10px;">${item.phone || item.email || "-"}</td>
-            <td class="text-right">${item.totalOrders}</td>
-            <td class="text-right">Rs. ${item.avgOrderValue.toFixed(2)}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.totalSpent.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="6" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Top Customers</div>
+      <div class="table-header">
+        <span class="col-qty">Orders</span>
+        <span class="col-item">Customer</span>
+        <span class="col-total">Spent</span>
+      </div>
+      ${data.topCustomers?.slice(0, 10).map(
+    (item) => `
+        <div class="table-row">
+          <span class="col-qty">${item.totalOrders}</span>
+          <span class="col-item">${item.customerName}</span>
+          <span class="col-total">Rs. ${item.totalSpent.toFixed(2)}</span>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
   `;
   return getReportTemplate("Customer Report", content, filters, businessInfo);
 }
 function generateBranchPerformanceHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Branches</div>
-        <div class="summary-value">${data.summary?.totalBranches || 0}</div>
+    <div class="section">
+      <div class="section-title">Performance Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Branches:</span>
+          <span class="value">${data.summary?.totalBranches || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Total Revenue:</span>
+          <span class="value">Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
+        </div>
+        ${data.topPerformingBranch ? `
+        <div class="data-item">
+          <span class="label">Top Branch:</span>
+          <span class="value">${data.topPerformingBranch.branchName}</span>
+        </div>
+        ` : ""}
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Revenue</div>
-        <div class="summary-value">Rs.${(data.summary?.totalRevenue || 0).toFixed(0)}</div>
+      <div class="summary-row grand-total">
+        <span>TOTAL PROFIT:</span>
+        <span>Rs. ${(data.summary?.totalProfit || 0).toFixed(2)}</span>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Profit</div>
-        <div class="summary-value">Rs.${(data.summary?.totalProfit || 0).toFixed(0)}</div>
-      </div>
-      ${data.topPerformingBranch ? `
-      <div class="summary-item">
-        <div class="summary-label">Top Branch</div>
-        <div class="summary-value">${data.topPerformingBranch.branchName}</div>
-      </div>
-      ` : ""}
     </div>
 
-    <div class="section-title">Branch Performance Metrics</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width: 50px;">Rank</th>
-          <th>Branch</th>
-          <th class="text-right">Sales</th>
-          <th class="text-right">Revenue</th>
-          <th class="text-right">Expenses</th>
-          <th class="text-right">Profit</th>
-          <th class="text-right">Inventory Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.branchMetrics?.sort((a, b) => b.revenue - a.revenue).map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Branch Rankings</div>
+      ${data.branchMetrics?.sort((a, b) => b.revenue - a.revenue).map(
     (item, index2) => `
-          <tr>
-            <td><span class="rank-badge ${index2 === 0 ? "gold" : index2 === 1 ? "silver" : index2 === 2 ? "bronze" : ""}">${index2 + 1}</span></td>
-            <td class="font-bold">${item.branchName}</td>
-            <td class="text-right">${item.salesCount}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.revenue.toFixed(2)}</td>
-            <td class="text-right text-red">Rs. ${item.expenses.toFixed(2)}</td>
-            <td class="text-right amount-cell ${item.profit >= 0 ? "text-green" : "text-red"}">Rs. ${item.profit.toFixed(2)}</td>
-            <td class="text-right text-blue">Rs. ${item.inventoryValue.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("") || '<tr><td colspan="7" class="text-center">No data available</td></tr>'}
-      </tbody>
-    </table>
+        <div style="margin-bottom:3mm;padding-bottom:2mm;border-bottom:1px dotted #ddd;">
+          <div class="table-row" style="padding:0;">
+            <span class="col-qty bold">#${index2 + 1}</span>
+            <span class="col-item bold">${item.branchName}</span>
+          </div>
+          <div class="data-list" style="padding-left:35px;margin-top:1mm;">
+            <div class="data-item">
+              <span class="label">Sales:</span>
+              <span class="value">${item.salesCount}</span>
+            </div>
+            <div class="data-item">
+              <span class="label">Revenue:</span>
+              <span class="value">Rs. ${item.revenue.toFixed(2)}</span>
+            </div>
+            <div class="data-item">
+              <span class="label">Expenses:</span>
+              <span class="value">Rs. ${item.expenses.toFixed(2)}</span>
+            </div>
+            <div class="data-item">
+              <span class="label">Profit:</span>
+              <span class="value bold">Rs. ${item.profit.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      `
+  ).join("") || '<div class="text-center muted">No data available</div>'}
+    </div>
   `;
-  return getReportTemplate("Branch Performance Report", content, filters, businessInfo);
+  return getReportTemplate("Branch Performance", content, filters, businessInfo);
 }
 function generateCashFlowHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Opening</div>
-        <div class="summary-value">Rs.${(data.summary?.openingBalance || 0).toFixed(0)}</div>
+    <div class="section">
+      <div class="section-title">Cash Flow Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Opening Balance:</span>
+          <span class="value">Rs. ${(data.summary?.openingBalance || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">(+) Cash In:</span>
+          <span class="value">Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">(-) Cash Out:</span>
+          <span class="value">Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</span>
+        </div>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Cash In</div>
-        <div class="summary-value">+Rs.${(data.summary?.cashIn || 0).toFixed(0)}</div>
+      <div class="line"></div>
+      <div class="summary-row grand-total">
+        <span>CLOSING BALANCE:</span>
+        <span>Rs. ${(data.summary?.closingBalance || 0).toFixed(2)}</span>
       </div>
-      <div class="summary-item">
-        <div class="summary-label">Cash Out</div>
-        <div class="summary-value">-Rs.${(data.summary?.cashOut || 0).toFixed(0)}</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-label">Closing</div>
-        <div class="summary-value">Rs.${(data.summary?.closingBalance || 0).toFixed(0)}</div>
-      </div>
-    </div>
-
-    <div class="summary-row">
-      <div class="summary-item">
-        <div class="summary-label">Net Flow</div>
-        <div class="summary-value">${(data.summary?.netCashFlow || 0) >= 0 ? "+" : ""}Rs.${(data.summary?.netCashFlow || 0).toFixed(0)}</div>
+      <div class="data-item">
+        <span class="label">Net Cash Flow:</span>
+        <span class="value">${(data.summary?.netCashFlow || 0) >= 0 ? "+" : ""}Rs. ${(data.summary?.netCashFlow || 0).toFixed(2)}</span>
       </div>
     </div>
 
     ${data.cashInBreakdown ? `
-    <div class="section-title">Cash Inflow Breakdown</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Source</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="font-bold">Sales Revenue</td>
-          <td class="text-right amount-cell text-green">Rs. ${(data.cashInBreakdown.sales || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td class="font-bold">Receivables Collected</td>
-          <td class="text-right amount-cell text-green">Rs. ${(data.cashInBreakdown.receivables || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td class="font-bold">Other Income</td>
-          <td class="text-right amount-cell text-green">Rs. ${(data.cashInBreakdown.other || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #dcfce7;">
-          <td class="font-bold">Total Cash In</td>
-          <td class="text-right amount-cell font-bold text-green">Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Cash Inflow</div>
+      <div class="table-header">
+        <span class="col-item">Source</span>
+        <span class="col-total">Amount</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Sales Revenue</span>
+        <span class="col-total">+ Rs. ${(data.cashInBreakdown.sales || 0).toFixed(2)}</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Receivables</span>
+        <span class="col-total">+ Rs. ${(data.cashInBreakdown.receivables || 0).toFixed(2)}</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Other Income</span>
+        <span class="col-total">+ Rs. ${(data.cashInBreakdown.other || 0).toFixed(2)}</span>
+      </div>
+      <div class="summary-row total">
+        <span>Total Cash In:</span>
+        <span>Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</span>
+      </div>
+    </div>
     ` : ""}
 
     ${data.cashOutBreakdown ? `
-    <div class="section-title">Cash Outflow Breakdown</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="font-bold">Purchases</td>
-          <td class="text-right amount-cell text-red">Rs. ${(data.cashOutBreakdown.purchases || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td class="font-bold">Expenses</td>
-          <td class="text-right amount-cell text-red">Rs. ${(data.cashOutBreakdown.expenses || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td class="font-bold">Commissions</td>
-          <td class="text-right amount-cell text-red">Rs. ${(data.cashOutBreakdown.commissions || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td class="font-bold">Refunds</td>
-          <td class="text-right amount-cell text-red">Rs. ${(data.cashOutBreakdown.refunds || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #fee2e2;">
-          <td class="font-bold">Total Cash Out</td>
-          <td class="text-right amount-cell font-bold text-red">Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Cash Outflow</div>
+      <div class="table-header">
+        <span class="col-item">Category</span>
+        <span class="col-total">Amount</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Purchases</span>
+        <span class="col-total">- Rs. ${(data.cashOutBreakdown.purchases || 0).toFixed(2)}</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Expenses</span>
+        <span class="col-total">- Rs. ${(data.cashOutBreakdown.expenses || 0).toFixed(2)}</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Commissions</span>
+        <span class="col-total">- Rs. ${(data.cashOutBreakdown.commissions || 0).toFixed(2)}</span>
+      </div>
+      <div class="table-row">
+        <span class="col-item">Refunds</span>
+        <span class="col-total">- Rs. ${(data.cashOutBreakdown.refunds || 0).toFixed(2)}</span>
+      </div>
+      <div class="summary-row total">
+        <span>Total Cash Out:</span>
+        <span>Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</span>
+      </div>
+    </div>
     ` : ""}
 
     ${data.cashByBranch && data.cashByBranch.length > 0 ? `
-    <div class="section-title">Cash on Hand by Branch</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Branch</th>
-          <th class="text-right">Cash in Hand</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.cashByBranch.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Cash by Branch</div>
+      <div class="table-header">
+        <span class="col-item">Branch</span>
+        <span class="col-total">Cash in Hand</span>
+      </div>
+      ${data.cashByBranch.map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.branchName}</td>
-            <td class="text-right amount-cell text-green">Rs. ${item.cashInHand.toFixed(2)}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-item">${item.branchName}</span>
+          <span class="col-total">Rs. ${item.cashInHand.toFixed(2)}</span>
+        </div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
   return getReportTemplate("Cash Flow Report", content, filters, businessInfo);
 }
 function generateAuditTrailHTML(data, filters, businessInfo) {
   const content = `
-    <div class="summary-cards">
-      <div class="card">
-        <div class="card-title">Total Sales</div>
-        <div class="card-value">${data.salesSummary?.totalSales || 0}</div>
-        <div class="card-subtitle">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Total Expenses</div>
-        <div class="card-value text-red">Rs. ${(data.expensesSummary?.totalExpenses || 0).toFixed(2)}</div>
-      </div>
-      <div class="card">
-        <div class="card-title">Net Profit</div>
-        <div class="card-value ${(data.financialSummary?.netProfit || 0) >= 0 ? "text-green" : "text-red"}">
-          Rs. ${(data.financialSummary?.netProfit || 0).toFixed(2)}
+    <div class="section">
+      <div class="section-title">Business Summary</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Sales:</span>
+          <span class="value">${data.salesSummary?.totalSales || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Revenue:</span>
+          <span class="value">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Expenses:</span>
+          <span class="value">Rs. ${(data.expensesSummary?.totalExpenses || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Inventory Value:</span>
+          <span class="value">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</span>
         </div>
       </div>
-      <div class="card">
-        <div class="card-title">Total Inventory Value</div>
-        <div class="card-value text-blue">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</div>
+      <div class="summary-row grand-total">
+        <span>NET PROFIT:</span>
+        <span>Rs. ${(data.financialSummary?.netProfit || 0).toFixed(2)}</span>
       </div>
     </div>
 
-    <div class="section-title">Sales Analysis</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Total Sales Count</td>
-          <td class="text-right font-bold">${data.salesSummary?.totalSales || 0}</td>
-        </tr>
-        <tr>
-          <td>Total Revenue</td>
-          <td class="text-right text-green">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Average Transaction Value</td>
-          <td class="text-right">Rs. ${(data.salesSummary?.avgOrderValue || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Total Tax Collected</td>
-          <td class="text-right">Rs. ${(data.salesSummary?.totalTax || 0).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Sales Details</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Transactions:</span>
+          <span class="value">${data.salesSummary?.totalSales || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Avg Order Value:</span>
+          <span class="value">Rs. ${(data.salesSummary?.avgOrderValue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Tax Collected:</span>
+          <span class="value">Rs. ${(data.salesSummary?.totalTax || 0).toFixed(2)}</span>
+        </div>
+      </div>
+    </div>
 
     ${data.salesByPaymentMethod && data.salesByPaymentMethod.length > 0 ? `
-    <div class="section-title">Sales by Payment Method</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Payment Method</th>
-          <th class="text-right">Count</th>
-          <th class="text-right">Total Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.salesByPaymentMethod.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Sales by Payment</div>
+      <div class="table-header">
+        <span class="col-qty">#</span>
+        <span class="col-item">Method</span>
+        <span class="col-total">Amount</span>
+      </div>
+      ${data.salesByPaymentMethod.map(
     (item) => `
-          <tr>
-            <td class="font-bold">${item.paymentMethod}</td>
-            <td class="text-right">${item.count}</td>
-            <td class="text-right">Rs. ${item.total.toFixed(2)}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-qty">${item.count}</span>
+          <span class="col-item">${item.paymentMethod}</span>
+          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+        </div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
 
     ${data.topProducts && data.topProducts.length > 0 ? `
-    <div class="section-title">Top 10 Selling Products</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Product Code</th>
-          <th>Product Name</th>
-          <th class="text-right">Quantity Sold</th>
-          <th class="text-right">Revenue</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.topProducts.map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Top Products</div>
+      <div class="table-header">
+        <span class="col-qty">QTY</span>
+        <span class="col-item">Product</span>
+        <span class="col-total">Revenue</span>
+      </div>
+      ${data.topProducts.slice(0, 5).map(
     (item) => `
-          <tr>
-            <td>${item.productCode}</td>
-            <td>${item.productName}</td>
-            <td class="text-right font-bold">${item.quantitySold}</td>
-            <td class="text-right text-green">Rs. ${item.revenue.toFixed(2)}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-qty">${item.quantitySold}</span>
+          <span class="col-item">${item.productName}</span>
+          <span class="col-total">Rs. ${item.revenue.toFixed(2)}</span>
+        </div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
 
-    <div class="section-title">Inventory Status</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Total Products</td>
-          <td class="text-right font-bold">${data.inventorySummary?.totalProducts || 0}</td>
-        </tr>
-        <tr>
-          <td>Total Inventory Value</td>
-          <td class="text-right text-green">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Low Stock Items</td>
-          <td class="text-right text-red">${data.inventorySummary?.lowStockItems || 0}</td>
-        </tr>
-        <tr>
-          <td>Out of Stock Items</td>
-          <td class="text-right text-red">${data.inventorySummary?.outOfStockItems || 0}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="dashed-line"></div>
 
-    ${data.purchasesSummary ? `
-    <div class="section-title">Purchase Records</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Total Purchase Orders</td>
-          <td class="text-right font-bold">${data.purchasesSummary.totalPurchases || 0}</td>
-        </tr>
-        <tr>
-          <td>Total Purchase Cost</td>
-          <td class="text-right text-red">Rs. ${(data.purchasesSummary.totalCost || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Average Purchase Value</td>
-          <td class="text-right">Rs. ${(data.purchasesSummary.avgPurchaseValue || 0).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
-    ` : ""}
-
-    ${data.expensesSummary ? `
-    <div class="section-title">Expense Tracking</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Total Expenses</td>
-          <td class="text-right text-red">Rs. ${(data.expensesSummary.totalExpenses || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Expense Count</td>
-          <td class="text-right">${data.expensesSummary.expenseCount || 0}</td>
-        </tr>
-        <tr>
-          <td>Average Expense</td>
-          <td class="text-right">Rs. ${(data.expensesSummary.avgExpense || 0).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
-    ` : ""}
-
-    ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
-    <div class="section-title">Expenses by Category</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th class="text-right">Count</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.expensesByCategory.map(
-    (item) => `
-          <tr>
-            <td class="font-bold">${item.category}</td>
-            <td class="text-right">${item.count}</td>
-            <td class="text-right text-red">Rs. ${item.amount.toFixed(2)}</td>
-          </tr>
-        `
-  ).join("")}
-      </tbody>
-    </table>
-    ` : ""}
-
-    ${data.returnsSummary ? `
-    <div class="section-title">Returns & Refunds</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Total Returns</td>
-          <td class="text-right font-bold">${data.returnsSummary.totalReturns || 0}</td>
-        </tr>
-        <tr>
-          <td>Total Refund Amount</td>
-          <td class="text-right text-red">Rs. ${(data.returnsSummary.totalRefundAmount || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Return Rate</td>
-          <td class="text-right">${(data.returnsSummary.returnRate || 0).toFixed(2)}%</td>
-        </tr>
-      </tbody>
-    </table>
-    ` : ""}
+    <div class="section">
+      <div class="section-title">Inventory Status</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Total Products:</span>
+          <span class="value">${data.inventorySummary?.totalProducts || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Low Stock Items:</span>
+          <span class="value">${data.inventorySummary?.lowStockItems || 0}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Out of Stock:</span>
+          <span class="value">${data.inventorySummary?.outOfStockItems || 0}</span>
+        </div>
+      </div>
+    </div>
 
     ${data.financialSummary ? `
-    <div class="section-title">Financial Summary</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Item</th>
-          <th class="text-right">Amount</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="font-bold">Gross Revenue</td>
-          <td class="text-right text-green">Rs. ${(data.financialSummary.grossRevenue || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Returns/Refunds</td>
-          <td class="text-right text-red">- Rs. ${(data.financialSummary.refunds || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #f1f5f9;">
-          <td class="font-bold">Net Revenue</td>
-          <td class="text-right font-bold text-blue">Rs. ${(data.financialSummary.netRevenue || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Cost of Goods Sold</td>
-          <td class="text-right text-red">- Rs. ${(data.financialSummary.cogs || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #f1f5f9;">
-          <td class="font-bold">Gross Profit</td>
-          <td class="text-right font-bold text-blue">Rs. ${(data.financialSummary.grossProfit || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Operating Expenses</td>
-          <td class="text-right text-red">- Rs. ${(data.financialSummary.expenses || 0).toFixed(2)}</td>
-        </tr>
-        <tr style="background: #f1f5f9;">
-          <td class="font-bold">Net Profit</td>
-          <td class="text-right font-bold ${data.financialSummary.netProfit >= 0 ? "text-green" : "text-red"}">
-            Rs. ${(data.financialSummary.netProfit || 0).toFixed(2)}
-          </td>
-        </tr>
-        <tr>
-          <td>Profit Margin</td>
-          <td class="text-right font-bold">${(data.financialSummary.profitMargin || 0).toFixed(2)}%</td>
-        </tr>
-      </tbody>
-    </table>
-    ` : ""}
+    <div class="dashed-line"></div>
 
-    ${data.commissionsSummary ? `
-    <div class="section-title">Commissions</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Metric</th>
-          <th class="text-right">Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Total Commission Paid</td>
-          <td class="text-right text-red">Rs. ${(data.commissionsSummary.totalCommission || 0).toFixed(2)}</td>
-        </tr>
-        <tr>
-          <td>Commission Count</td>
-          <td class="text-right">${data.commissionsSummary.commissionCount || 0}</td>
-        </tr>
-        <tr>
-          <td>Average Commission</td>
-          <td class="text-right">Rs. ${(data.commissionsSummary.avgCommission || 0).toFixed(2)}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="section">
+      <div class="section-title">P&L Statement</div>
+      <div class="data-list">
+        <div class="data-item">
+          <span class="label">Gross Revenue:</span>
+          <span class="value">Rs. ${(data.financialSummary.grossRevenue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">(-) Refunds:</span>
+          <span class="value">Rs. ${(data.financialSummary.refunds || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Net Revenue:</span>
+          <span class="value">Rs. ${(data.financialSummary.netRevenue || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">(-) COGS:</span>
+          <span class="value">Rs. ${(data.financialSummary.cogs || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">Gross Profit:</span>
+          <span class="value">Rs. ${(data.financialSummary.grossProfit || 0).toFixed(2)}</span>
+        </div>
+        <div class="data-item">
+          <span class="label">(-) Expenses:</span>
+          <span class="value">Rs. ${(data.financialSummary.expenses || 0).toFixed(2)}</span>
+        </div>
+      </div>
+      <div class="line"></div>
+      <div class="summary-row grand-total">
+        <span>NET PROFIT:</span>
+        <span>Rs. ${(data.financialSummary.netProfit || 0).toFixed(2)}</span>
+      </div>
+      <div class="data-item">
+        <span class="label">Profit Margin:</span>
+        <span class="value">${(data.financialSummary.profitMargin || 0).toFixed(1)}%</span>
+      </div>
+    </div>
     ` : ""}
 
     ${data.auditLogs && data.auditLogs.length > 0 ? `
-    <div class="section-title">Recent System Audit Logs</div>
-    <table>
-      <thead>
-        <tr>
-          <th>Date/Time</th>
-          <th>User</th>
-          <th class="text-center">Action</th>
-          <th>Table</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.auditLogs.slice(0, 50).map(
+    <div class="dashed-line"></div>
+
+    <div class="section">
+      <div class="section-title">Recent Activity</div>
+      <div class="table-header">
+        <span class="col-item">Action</span>
+        <span class="col-total">User</span>
+      </div>
+      ${data.auditLogs.slice(0, 10).map(
     (item) => `
-          <tr>
-            <td>${formatDateTime(item.timestamp)}</td>
-            <td class="font-bold">${item.userName}</td>
-            <td class="text-center">
-              <span class="status-badge ${item.action === "INSERT" || item.action === "CREATE" ? "success" : item.action === "UPDATE" ? "warning" : item.action === "DELETE" ? "danger" : ""}">
-                ${item.action}
-              </span>
-            </td>
-            <td>${item.tableName}</td>
-          </tr>
-        `
+        <div class="table-row">
+          <span class="col-item">${item.action} ${item.tableName}</span>
+          <span class="col-total">${item.userName}</span>
+        </div>
+        <div class="small muted" style="padding-left:35px;">${formatDateTime(item.timestamp)}</div>
+      `
   ).join("")}
-      </tbody>
-    </table>
+    </div>
     ` : ""}
   `;
-  return getReportTemplate("Comprehensive Business Audit Report", content, filters, businessInfo);
+  return getReportTemplate("Audit Report", content, filters, businessInfo);
 }
 function registerReportHandlers() {
   const db2 = getDatabase();
@@ -14231,9 +14082,18 @@ function registerDashboardHandlers() {
       );
       const revenue = profitResult[0]?.revenue || 0;
       const cost = profitResult[0]?.cost || 0;
-      const tax = profitResult[0]?.tax || 0;
+      const taxCollected = profitResult[0]?.tax || 0;
       const commissionTotal = commissionResult[0]?.total || 0;
-      const totalProfit = revenue - cost - commissionTotal - tax;
+      const totalProfit = revenue - cost - commissionTotal - taxCollected;
+      const salesCountResult = await db2.select({
+        count: drizzleOrm.sql`COUNT(*)`
+      }).from(sales).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
       const productsResult = await db2.select({ count: drizzleOrm.sql`COUNT(*)` }).from(products).where(drizzleOrm.eq(products.isActive, true));
       const soldResult = await db2.select({
         total: drizzleOrm.sql`COALESCE(SUM(${saleItems.quantity}), 0)`
@@ -14346,6 +14206,10 @@ function registerDashboardHandlers() {
       );
       const stats = {
         totalProfit,
+        totalRevenue: revenue,
+        totalCost: cost,
+        totalTaxCollected: taxCollected,
+        totalCommission: commissionTotal,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: soldResult[0]?.total || 0,
         totalPurchases: purchasesResult[0]?.total || 0,
@@ -14356,7 +14220,8 @@ function registerDashboardHandlers() {
         payablesPending: payablesPendingResult[0]?.total || 0,
         payablesPaid: payablesPaidResult[0]?.total || 0,
         cashInHand,
-        lowStockCount: lowStockResult[0]?.count || 0
+        lowStockCount: lowStockResult[0]?.count || 0,
+        totalSalesCount: salesCountResult[0]?.count || 0
       };
       return {
         success: true,

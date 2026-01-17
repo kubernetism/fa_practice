@@ -12,6 +12,7 @@ import {
   AlertCircle,
   Package,
   Clock,
+  Smartphone,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -29,7 +31,9 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { useBranch } from '@/contexts/branch-context'
-import { formatCurrency, debounce } from '@/lib/utils'
+import { useCurrency } from '@/contexts/settings-context'
+import { useCurrentBranchSettings } from '@/contexts/settings-context'
+import { debounce } from '@/lib/utils'
 import type { Product, Customer } from '@shared/types'
 
 interface CartItem {
@@ -45,6 +49,8 @@ interface AvailableProduct {
 
 export function POSScreen() {
   const { currentBranch } = useBranch()
+  const { formatCurrency } = useCurrency()
+  const { settings } = useCurrentBranchSettings()
   const [searchQuery, setSearchQuery] = useState('')
   const [allProducts, setAllProducts] = useState<AvailableProduct[]>([])
   const [isLoadingProducts, setIsLoadingProducts] = useState(true)
@@ -52,15 +58,18 @@ export function POSScreen() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [customerSearch, setCustomerSearch] = useState('')
   const [customers, setCustomers] = useState<Customer[]>([])
+  const [allCustomers, setAllCustomers] = useState<Customer[]>([])
+  const [isLoadingCustomers, setIsLoadingCustomers] = useState(false)
   const [showCustomerDialog, setShowCustomerDialog] = useState(false)
   const [showPaymentDialog, setShowPaymentDialog] = useState(false)
   const [showSerialDialog, setShowSerialDialog] = useState(false)
   const [pendingSerialProduct, setPendingSerialProduct] = useState<Product | null>(null)
   const [serialNumber, setSerialNumber] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'cod' | 'receivable'>('cash')
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'cod' | 'mobile' | 'receivable'>('cash')
   const [amountPaid, setAmountPaid] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState('')
+  const [addToReceivable, setAddToReceivable] = useState(false)
 
   // COD fields
   const [codName, setCodName] = useState('')
@@ -68,9 +77,11 @@ export function POSScreen() {
   const [codAddress, setCodAddress] = useState('')
   const [codCity, setCodCity] = useState('')
 
+  // Get tax rate from settings (default to 0 if not set)
+  const taxRate = settings?.taxRate ?? 0
+
   // Calculate totals
   const subtotal = cart.reduce((sum, item) => sum + item.product.sellingPrice * item.quantity, 0)
-  const taxRate = 8.5 // Default tax rate
   const taxAmount = subtotal * (taxRate / 100)
   const total = subtotal + taxAmount
 
@@ -108,29 +119,47 @@ export function POSScreen() {
       )
     : allProducts
 
-  // Search customers
-  const searchCustomers = useCallback(
-    debounce(async (query: string) => {
-      if (!query.trim()) {
-        setCustomers([])
-        return
+  // Load all customers when dialog opens
+  const loadAllCustomers = useCallback(async () => {
+    setIsLoadingCustomers(true)
+    try {
+      const result = await window.api.customers.getAll()
+      if (result.success && result.data) {
+        setAllCustomers(result.data)
+        setCustomers(result.data)
       }
+    } catch (error) {
+      console.error('Failed to load customers:', error)
+    } finally {
+      setIsLoadingCustomers(false)
+    }
+  }, [])
 
-      try {
-        const result = await window.api.customers.search(query)
-        if (result.success && result.data) {
-          setCustomers(result.data)
-        }
-      } catch (error) {
-        console.error('Customer search failed:', error)
-      }
-    }, 300),
-    []
-  )
-
+  // Filter customers based on search
   useEffect(() => {
-    searchCustomers(customerSearch)
-  }, [customerSearch, searchCustomers])
+    if (!customerSearch.trim()) {
+      setCustomers(allCustomers)
+      return
+    }
+
+    const query = customerSearch.toLowerCase()
+    const filtered = allCustomers.filter(
+      (customer) =>
+        customer.firstName?.toLowerCase().includes(query) ||
+        customer.lastName?.toLowerCase().includes(query) ||
+        customer.phone?.toLowerCase().includes(query) ||
+        customer.email?.toLowerCase().includes(query) ||
+        customer.firearmLicenseNumber?.toLowerCase().includes(query)
+    )
+    setCustomers(filtered)
+  }, [customerSearch, allCustomers])
+
+  // Load customers when dialog opens
+  useEffect(() => {
+    if (showCustomerDialog && allCustomers.length === 0) {
+      loadAllCustomers()
+    }
+  }, [showCustomerDialog, allCustomers.length, loadAllCustomers])
 
   // Add to cart
   const addToCart = (product: Product, availableQty: number) => {
@@ -173,7 +202,6 @@ export function POSScreen() {
     setPendingSerialProduct(null)
     setSerialNumber('')
     setSearchQuery('')
-    setProducts([])
   }
 
   // Update quantity
@@ -223,6 +251,12 @@ export function POSScreen() {
       return
     }
 
+    // Add to receivable requires customer
+    if (addToReceivable && !selectedCustomer) {
+      setError('Customer selection is required when adding to Account Receivables')
+      return
+    }
+
     // Partial payment requires customer (for creating receivable)
     const paidAmount = paymentMethod === 'cash' ? parseFloat(amountPaid) || 0 : total
     const isPartialPayment = paymentMethod === 'cash' && paidAmount > 0 && paidAmount < total
@@ -249,16 +283,25 @@ export function POSScreen() {
         notes = `COD Details:\nName: ${codName}\nPhone: ${codPhone}\nAddress: ${codAddress}, ${codCity}`
       }
 
-      // Calculate payment status based on amount paid
-      const actualAmountPaid = paymentMethod === 'receivable' ? 0 : paymentMethod === 'cash' ? parseFloat(amountPaid) || 0 : total
-      const remainingAmount = total - actualAmountPaid
-
+      // Calculate payment status based on amount paid and receivable option
+      let actualAmountPaid: number
       let paymentStatus: 'paid' | 'partial' | 'pending' = 'paid'
-      if (paymentMethod === 'receivable') {
+
+      if (paymentMethod === 'receivable' || addToReceivable) {
+        // Full amount goes to receivable
+        actualAmountPaid = 0
         paymentStatus = 'pending'
-      } else if (actualAmountPaid < total) {
-        paymentStatus = actualAmountPaid > 0 ? 'partial' : 'pending'
+      } else if (paymentMethod === 'cash') {
+        actualAmountPaid = parseFloat(amountPaid) || 0
+        if (actualAmountPaid < total) {
+          paymentStatus = actualAmountPaid > 0 ? 'partial' : 'pending'
+        }
+      } else {
+        // Card, COD, Mobile - full payment
+        actualAmountPaid = total
       }
+
+      const remainingAmount = total - actualAmountPaid
 
       const saleData = {
         customerId: selectedCustomer?.id,
@@ -271,7 +314,7 @@ export function POSScreen() {
           serialNumber: item.serialNumber,
           taxRate: item.product.isTaxable ? taxRate : 0,
         })),
-        paymentMethod,
+        paymentMethod: addToReceivable ? 'receivable' : paymentMethod,
         paymentStatus,
         amountPaid: actualAmountPaid,
         notes: notes || undefined,
@@ -305,12 +348,13 @@ export function POSScreen() {
         setCodPhone('')
         setCodAddress('')
         setCodCity('')
+        setAddToReceivable(false)
 
         // Reload products to update stock quantities
         loadAvailableProducts()
 
         let message = `Sale completed! Invoice: ${result.data.invoiceNumber}`
-        if (paymentMethod === 'receivable') {
+        if (paymentMethod === 'receivable' || addToReceivable) {
           message += `\n\nFull amount (${formatCurrency(total)}) added to customer's receivables.`
         } else if (paymentStatus === 'partial') {
           message += `\n\nPaid: ${formatCurrency(actualAmountPaid)}\nRemaining: ${formatCurrency(remainingAmount)} added to customer's receivables.`
@@ -420,10 +464,10 @@ export function POSScreen() {
       </div>
 
       {/* Cart */}
-      <Card className="w-96 flex flex-col">
-        <CardHeader className="pb-2">
+      <Card className="w-96 flex flex-col overflow-hidden">
+        <CardHeader className="pb-2 flex-shrink-0">
           <div className="flex items-center justify-between">
-            <CardTitle>Cart</CardTitle>
+            <CardTitle>Cart ({cart.length})</CardTitle>
             {cart.length > 0 && (
               <Button variant="ghost" size="sm" onClick={clearCart}>
                 Clear
@@ -434,13 +478,13 @@ export function POSScreen() {
           <div className="mt-2">
             {selectedCustomer ? (
               <div className="flex items-center justify-between rounded-lg bg-muted p-2">
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4" />
-                  <span className="text-sm">
+                <div className="flex items-center gap-2 min-w-0">
+                  <User className="h-4 w-4 flex-shrink-0" />
+                  <span className="text-sm truncate">
                     {selectedCustomer.firstName} {selectedCustomer.lastName}
                   </span>
                 </div>
-                <Button variant="ghost" size="icon" onClick={() => setSelectedCustomer(null)}>
+                <Button variant="ghost" size="icon" className="flex-shrink-0" onClick={() => setSelectedCustomer(null)}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -458,79 +502,81 @@ export function POSScreen() {
           </div>
         </CardHeader>
 
-        <CardContent className="flex flex-1 flex-col overflow-hidden p-4 pt-0">
+        <CardContent className="flex flex-1 flex-col p-4 pt-0 min-h-0">
           {error && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 p-2 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4" />
-              {error}
+            <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 p-2 text-sm text-destructive flex-shrink-0">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              <span className="break-words">{error}</span>
             </div>
           )}
 
-          <ScrollArea className="flex-1 -mx-4 px-4">
-            {cart.length === 0 ? (
-              <div className="flex h-40 items-center justify-center text-muted-foreground">
-                Cart is empty
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {cart.map((item, index) => (
-                  <div
-                    key={`${item.product.id}-${item.serialNumber || index}`}
-                    className="flex items-center gap-2 rounded-lg border p-2"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{item.product.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {formatCurrency(item.product.sellingPrice)}
-                        {item.serialNumber && (
-                          <span className="ml-2 text-xs">SN: {item.serialNumber}</span>
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <ScrollArea className="h-full">
+              {cart.length === 0 ? (
+                <div className="flex h-40 items-center justify-center text-muted-foreground">
+                  Cart is empty
+                </div>
+              ) : (
+                <div className="space-y-2 pr-2">
+                  {cart.map((item, index) => (
+                    <div
+                      key={`${item.product.id}-${item.serialNumber || index}`}
+                      className="flex items-center gap-2 rounded-lg border p-2"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm leading-tight break-words">{item.product.name}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatCurrency(item.product.sellingPrice)}
+                          {item.serialNumber && (
+                            <span className="ml-2">SN: {item.serialNumber}</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {!item.serialNumber && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => updateQuantity(item.product.id, -1)}
+                            >
+                              <Minus className="h-3 w-3" />
+                            </Button>
+                            <span className="w-6 text-center text-xs font-medium">{item.quantity}</span>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => updateQuantity(item.product.id, 1)}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </>
                         )}
-                      </p>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-destructive"
+                          onClick={() => removeFromCart(item.product.id, item.serialNumber)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      {!item.serialNumber && (
-                        <>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => updateQuantity(item.product.id, -1)}
-                          >
-                            <Minus className="h-3 w-3" />
-                          </Button>
-                          <span className="w-8 text-center text-sm">{item.quantity}</span>
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-7 w-7"
-                            onClick={() => updateQuantity(item.product.id, 1)}
-                          >
-                            <Plus className="h-3 w-3" />
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 text-destructive"
-                        onClick={() => removeFromCart(item.product.id, item.serialNumber)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
 
-          <div className="mt-4 space-y-2 border-t pt-4">
+          <div className="mt-4 space-y-2 border-t pt-4 flex-shrink-0">
             <div className="flex justify-between text-sm">
               <span>Subtotal</span>
               <span>{formatCurrency(subtotal)}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span>Tax ({taxRate}%)</span>
+              <span>{settings?.taxName || 'Tax'} ({taxRate}%)</span>
               <span>{formatCurrency(taxAmount)}</span>
             </div>
             <Separator />
@@ -539,13 +585,14 @@ export function POSScreen() {
               <span>{formatCurrency(total)}</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 pt-2">
+            <div className="grid grid-cols-3 gap-2 pt-2">
               <Button
                 size="lg"
                 variant="outline"
                 disabled={cart.length === 0}
                 onClick={() => {
                   setPaymentMethod('cash')
+                  setAddToReceivable(false)
                   setShowPaymentDialog(true)
                 }}
               >
@@ -559,6 +606,7 @@ export function POSScreen() {
                 onClick={() => {
                   setPaymentMethod('card')
                   setAmountPaid(total.toString())
+                  setAddToReceivable(false)
                   setShowPaymentDialog(true)
                 }}
               >
@@ -570,8 +618,23 @@ export function POSScreen() {
                 variant="outline"
                 disabled={cart.length === 0}
                 onClick={() => {
+                  setPaymentMethod('mobile')
+                  setAmountPaid(total.toString())
+                  setAddToReceivable(false)
+                  setShowPaymentDialog(true)
+                }}
+              >
+                <Smartphone className="mr-2 h-4 w-4" />
+                Mobile
+              </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                disabled={cart.length === 0}
+                onClick={() => {
                   setPaymentMethod('cod')
                   setAmountPaid(total.toString())
+                  setAddToReceivable(false)
                   setShowPaymentDialog(true)
                 }}
               >
@@ -585,11 +648,13 @@ export function POSScreen() {
                 onClick={() => {
                   setPaymentMethod('receivable')
                   setAmountPaid('0')
+                  setAddToReceivable(false)
                   setShowPaymentDialog(true)
                 }}
+                className="col-span-2"
               >
                 <Clock className="mr-2 h-4 w-4" />
-                Pay Later
+                Pay Later (Full Receivable)
               </Button>
             </div>
           </div>
@@ -598,20 +663,30 @@ export function POSScreen() {
 
       {/* Customer Selection Dialog */}
       <Dialog open={showCustomerDialog} onOpenChange={setShowCustomerDialog}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Select Customer</DialogTitle>
-            <DialogDescription>Search for an existing customer or continue without one</DialogDescription>
+            <DialogDescription>
+              Search from {allCustomers.length} customers or continue without one
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <Input
-              placeholder="Search by name, phone, or email..."
-              value={customerSearch}
-              onChange={(e) => setCustomerSearch(e.target.value)}
-            />
-            <ScrollArea className="h-60">
-              {customers.length > 0 ? (
-                <div className="space-y-2">
+            <div className="relative">
+              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search by name, phone, email, or license..."
+                value={customerSearch}
+                onChange={(e) => setCustomerSearch(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+            <ScrollArea className="h-72 border rounded-lg">
+              {isLoadingCustomers ? (
+                <div className="flex h-full items-center justify-center p-8">
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                </div>
+              ) : customers.length > 0 ? (
+                <div className="p-2 space-y-1">
                   {customers.map((customer) => (
                     <button
                       key={customer.id}
@@ -619,30 +694,40 @@ export function POSScreen() {
                         setSelectedCustomer(customer)
                         setShowCustomerDialog(false)
                         setCustomerSearch('')
-                        setCustomers([])
                       }}
-                      className="w-full rounded-lg border p-3 text-left hover:bg-accent"
+                      className="w-full rounded-lg border p-3 text-left hover:bg-accent transition-colors"
                     >
-                      <p className="font-medium">
-                        {customer.firstName} {customer.lastName}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {customer.phone} {customer.email && `| ${customer.email}`}
-                      </p>
-                      {customer.firearmLicenseNumber && (
-                        <Badge variant="outline" className="mt-1 text-xs">
-                          License: {customer.firearmLicenseNumber}
-                        </Badge>
-                      )}
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <p className="font-medium">
+                            {customer.firstName} {customer.lastName}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {customer.phone} {customer.email && `| ${customer.email}`}
+                          </p>
+                        </div>
+                        {customer.firearmLicenseNumber && (
+                          <Badge variant="outline" className="text-xs flex-shrink-0">
+                            License: {customer.firearmLicenseNumber}
+                          </Badge>
+                        )}
+                      </div>
                     </button>
                   ))}
                 </div>
               ) : customerSearch ? (
-                <p className="text-center text-muted-foreground">No customers found</p>
+                <div className="flex h-full items-center justify-center p-8">
+                  <p className="text-center text-muted-foreground">No customers found for "{customerSearch}"</p>
+                </div>
               ) : (
-                <p className="text-center text-muted-foreground">Start typing to search</p>
+                <div className="flex h-full items-center justify-center p-8">
+                  <p className="text-center text-muted-foreground">No customers available</p>
+                </div>
               )}
             </ScrollArea>
+            <p className="text-xs text-muted-foreground text-center">
+              Showing {customers.length} of {allCustomers.length} customers
+            </p>
           </div>
         </DialogContent>
       </Dialog>
@@ -688,7 +773,7 @@ export function POSScreen() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            {paymentMethod === 'cash' && (
+            {paymentMethod === 'cash' && !addToReceivable && (
               <div>
                 <Label htmlFor="amount">Amount Received</Label>
                 <Input
@@ -724,12 +809,17 @@ export function POSScreen() {
                 )}
               </div>
             )}
-            {paymentMethod === 'card' && (
+            {paymentMethod === 'card' && !addToReceivable && (
               <p className="text-center text-muted-foreground">
                 Process card payment on terminal
               </p>
             )}
-            {paymentMethod === 'cod' && (
+            {paymentMethod === 'mobile' && !addToReceivable && (
+              <p className="text-center text-muted-foreground">
+                Process mobile payment (JazzCash, Easypaisa, etc.)
+              </p>
+            )}
+            {paymentMethod === 'cod' && !addToReceivable && (
               <div className="space-y-3">
                 <p className="text-sm text-muted-foreground">Enter delivery details for COD</p>
                 <div>
@@ -770,20 +860,42 @@ export function POSScreen() {
                 </div>
               </div>
             )}
-            {paymentMethod === 'receivable' && (
+            {(paymentMethod === 'receivable' || addToReceivable) && (
               <div className="rounded-lg bg-muted p-4">
                 <div className="flex items-start gap-2 text-sm">
                   <AlertCircle className="h-4 w-4 mt-0.5 text-yellow-600" />
                   <div>
                     <p className="font-medium">Payment will be recorded as receivable</p>
                     <p className="text-muted-foreground">
-                      The amount will be added to the customer's balance. Full payment is expected later.
+                      The full amount ({formatCurrency(total)}) will be added to the customer's balance. Payment is expected later.
                     </p>
                     {!selectedCustomer && (
                       <p className="mt-2 text-destructive font-medium">
                         Please select a customer first!
                       </p>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Add to Receivable Option - shown for all methods except 'receivable' */}
+            {paymentMethod !== 'receivable' && (
+              <div className="rounded-lg border p-4 mt-4">
+                <div className="flex items-start space-x-3">
+                  <Checkbox
+                    id="add-to-receivable"
+                    checked={addToReceivable}
+                    onCheckedChange={(checked) => setAddToReceivable(checked === true)}
+                  />
+                  <div className="flex-1">
+                    <Label htmlFor="add-to-receivable" className="font-medium cursor-pointer">
+                      Add to Account Receivables
+                    </Label>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Check this to record the full amount as a receivable instead of processing payment now.
+                      Useful for credit sales or delayed payments.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -797,9 +909,9 @@ export function POSScreen() {
               onClick={processPayment}
               disabled={
                 isProcessing ||
-                (paymentMethod === 'cash' && (parseFloat(amountPaid) <= 0 || (parseFloat(amountPaid) < total && !selectedCustomer))) ||
-                (paymentMethod === 'receivable' && !selectedCustomer) ||
-                (paymentMethod === 'cod' && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim()))
+                (paymentMethod === 'cash' && !addToReceivable && (parseFloat(amountPaid) <= 0 || (parseFloat(amountPaid) < total && !selectedCustomer))) ||
+                ((paymentMethod === 'receivable' || addToReceivable) && !selectedCustomer) ||
+                (paymentMethod === 'cod' && !addToReceivable && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim()))
               }
             >
               {isProcessing ? (
@@ -810,7 +922,7 @@ export function POSScreen() {
               ) : (
                 <>
                   <Receipt className="mr-2 h-4 w-4" />
-                  Complete Sale
+                  {addToReceivable ? 'Add to Receivables' : 'Complete Sale'}
                 </>
               )}
             </Button>

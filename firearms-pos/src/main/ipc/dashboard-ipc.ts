@@ -26,6 +26,10 @@ interface DashboardParams {
 
 interface DashboardStats {
   totalProfit: number
+  totalRevenue: number
+  totalCost: number
+  totalTaxCollected: number
+  totalCommission: number
   totalProducts: number
   totalProductsSold: number
   totalPurchases: number
@@ -37,6 +41,7 @@ interface DashboardStats {
   payablesPaid: number
   cashInHand: number
   lowStockCount: number
+  totalSalesCount: number
 }
 
 export function registerDashboardHandlers(): void {
@@ -84,9 +89,23 @@ export function registerDashboardHandlers(): void {
 
       const revenue = profitResult[0]?.revenue || 0
       const cost = profitResult[0]?.cost || 0
-      const tax = profitResult[0]?.tax || 0
+      const taxCollected = profitResult[0]?.tax || 0
       const commissionTotal = commissionResult[0]?.total || 0
-      const totalProfit = revenue - cost - commissionTotal - tax
+      const totalProfit = revenue - cost - commissionTotal - taxCollected
+
+      // Get total sales count
+      const salesCountResult = await db
+        .select({
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(sales)
+        .where(
+          and(
+            eq(sales.branchId, branchId),
+            between(sales.saleDate, dateRange.start, dateRange.end),
+            eq(sales.isVoided, false)
+          )
+        )
 
       // 2. Total Products (active)
       const productsResult = await db
@@ -264,6 +283,10 @@ export function registerDashboardHandlers(): void {
 
       const stats: DashboardStats = {
         totalProfit,
+        totalRevenue: revenue,
+        totalCost: cost,
+        totalTaxCollected: taxCollected,
+        totalCommission: commissionTotal,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: soldResult[0]?.total || 0,
         totalPurchases: purchasesResult[0]?.total || 0,
@@ -275,6 +298,7 @@ export function registerDashboardHandlers(): void {
         payablesPaid: payablesPaidResult[0]?.total || 0,
         cashInHand,
         lowStockCount: lowStockResult[0]?.count || 0,
+        totalSalesCount: salesCountResult[0]?.count || 0,
       }
 
       return {

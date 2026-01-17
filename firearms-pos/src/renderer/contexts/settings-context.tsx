@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import type { BusinessSettings as BusinessSettingsType } from '@shared/types'
 import { useAuth } from './auth-context'
+import { formatCurrency as formatCurrencyUtil, type CurrencyFormatOptions } from '@/lib/utils'
 
 interface SettingsContextType {
   globalSettings: BusinessSettingsType | null
@@ -135,4 +136,31 @@ export function useCurrentBranchSettings() {
   const { currentBranchSettings, globalSettings, isLoading } = useSettings()
   const settings = currentBranchSettings || globalSettings
   return { settings, isLoading }
+}
+
+// Hook for currency formatting based on settings
+export function useCurrency() {
+  const { currentBranchSettings, globalSettings } = useSettings()
+  const settings = currentBranchSettings || globalSettings
+
+  const currencyOptions: CurrencyFormatOptions = useMemo(() => ({
+    symbol: settings?.currencySymbol || 'Rs.',
+    code: settings?.currencyCode || 'PKR',
+    position: (settings?.currencyPosition as 'prefix' | 'suffix') || 'prefix',
+    decimalPlaces: settings?.decimalPlaces || 2,
+    thousandSeparator: settings?.thousandSeparator || ',',
+    decimalSeparator: settings?.decimalSeparator || '.',
+  }), [settings])
+
+  const formatCurrency = useCallback((amount: number) => {
+    return formatCurrencyUtil(amount, currencyOptions)
+  }, [currencyOptions])
+
+  return {
+    formatCurrency,
+    currencySymbol: currencyOptions.symbol,
+    currencyCode: currencyOptions.code,
+    currencyPosition: currencyOptions.position,
+    decimalPlaces: currencyOptions.decimalPlaces,
+  }
 }

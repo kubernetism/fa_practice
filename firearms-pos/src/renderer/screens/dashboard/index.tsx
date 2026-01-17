@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   DollarSign,
   ShoppingCart,
@@ -12,17 +13,25 @@ import {
   Users,
   ArrowDownCircle,
   ArrowUpCircle,
+  Copy,
+  Check,
+  Percent,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBranch } from '@/contexts/branch-context'
-import { formatCurrency, formatNumber } from '@/lib/utils'
+import { useCurrency } from '@/contexts/settings-context'
+import { formatNumber } from '@/lib/utils'
 
 type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 interface DashboardStats {
   totalProfit: number
+  totalRevenue: number
+  totalCost: number
+  totalTaxCollected: number
+  totalCommission: number
   totalProducts: number
   totalProductsSold: number
   totalPurchases: number
@@ -34,6 +43,7 @@ interface DashboardStats {
   payablesPaid: number
   cashInHand: number
   lowStockCount: number
+  totalSalesCount: number
 }
 
 interface LowStockItem {
@@ -53,10 +63,75 @@ const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
 
 export function DashboardScreen() {
   const { currentBranch } = useBranch()
+  const { formatCurrency } = useCurrency()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('daily')
   const [isLoading, setIsLoading] = useState(true)
+  const [isCopied, setIsCopied] = useState(false)
+
+  // Copy dashboard data to clipboard as organized text
+  const handleCopyDashboard = async () => {
+    if (!stats || !currentBranch) return
+
+    const text = `
+═══════════════════════════════════════════════════════
+                    DASHBOARD REPORT
+═══════════════════════════════════════════════════════
+Branch: ${currentBranch.name}
+Period: ${TIME_PERIOD_LABELS[timePeriod]}
+Generated: ${new Date().toLocaleString()}
+═══════════════════════════════════════════════════════
+
+📊 FINANCIAL OVERVIEW
+───────────────────────────────────────────────────────
+Total Revenue:        ${formatCurrency(stats.totalRevenue)}
+Total Cost:           ${formatCurrency(stats.totalCost)}
+Total Profit:         ${formatCurrency(stats.totalProfit)}
+Total Purchases:      ${formatCurrency(stats.totalPurchases)}
+Total Expenses:       ${formatCurrency(stats.totalExpense)}
+
+💰 TAX & COMMISSION
+───────────────────────────────────────────────────────
+Tax Collected:        ${formatCurrency(stats.totalTaxCollected)}
+Commission Paid:      ${formatCurrency(stats.totalCommission)}
+
+📦 SALES & INVENTORY
+───────────────────────────────────────────────────────
+Total Sales:          ${formatNumber(stats.totalSalesCount)} transactions
+Products Sold:        ${formatNumber(stats.totalProductsSold)} units
+Total Products:       ${formatNumber(stats.totalProducts)} items
+Total Returns:        ${formatCurrency(stats.totalReturns)}
+Low Stock Items:      ${formatNumber(stats.lowStockCount)} items
+
+💳 RECEIVABLES & PAYABLES
+───────────────────────────────────────────────────────
+AR Pending:           ${formatCurrency(stats.receivablesPending)}
+AR Received:          ${formatCurrency(stats.receivablesReceived)}
+AP Pending:           ${formatCurrency(stats.payablesPending)}
+AP Paid:              ${formatCurrency(stats.payablesPaid)}
+
+💵 CASH POSITION
+───────────────────────────────────────────────────────
+Cash In Hand:         ${formatCurrency(stats.cashInHand)}
+
+${lowStockItems.length > 0 ? `
+⚠️ LOW STOCK ALERTS (${lowStockItems.length} items)
+───────────────────────────────────────────────────────
+${lowStockItems.slice(0, 10).map(item => `• ${item.productName} (${item.productCode}): ${item.quantity}/${item.minQuantity}`).join('\n')}
+${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` : ''}
+` : ''}
+═══════════════════════════════════════════════════════
+`.trim()
+
+    try {
+      await navigator.clipboard.writeText(text)
+      setIsCopied(true)
+      setTimeout(() => setIsCopied(false), 2000)
+    } catch (error) {
+      console.error('Failed to copy:', error)
+    }
+  }
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -114,15 +189,36 @@ export function DashboardScreen() {
             Welcome back! Here's what's happening at {currentBranch?.name || 'your store'}.
           </p>
         </div>
-        <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
-          <TabsList>
-            {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
-              <TabsTrigger key={period} value={period}>
-                {TIME_PERIOD_LABELS[period]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCopyDashboard}
+            disabled={!stats}
+            className="gap-2"
+          >
+            {isCopied ? (
+              <>
+                <Check className="h-4 w-4 text-green-500" />
+                Copied!
+              </>
+            ) : (
+              <>
+                <Copy className="h-4 w-4" />
+                Copy Report
+              </>
+            )}
+          </Button>
+          <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
+            <TabsList>
+              {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
+                <TabsTrigger key={period} value={period}>
+                  {TIME_PERIOD_LABELS[period]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
       </div>
 
       {/* Financial Metrics */}
@@ -255,6 +351,34 @@ export function DashboardScreen() {
         </div>
       </div>
 
+      {/* Tax & Commission Overview */}
+      <div>
+        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Tax & Commission</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Tax Collected</CardTitle>
+              <Percent className="h-4 w-4 text-blue-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-600">{formatCurrency(stats?.totalTaxCollected || 0)}</div>
+              <p className="text-xs text-muted-foreground">Total tax collected from sales</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Commission Paid</CardTitle>
+              <DollarSign className="h-4 w-4 text-amber-500" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-amber-600">{formatCurrency(stats?.totalCommission || 0)}</div>
+              <p className="text-xs text-muted-foreground">Sales commissions paid out</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
       {/* Cash & Alerts */}
       <div>
         <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Cash & Alerts</h2>
@@ -329,28 +453,28 @@ export function DashboardScreen() {
           </CardHeader>
           <CardContent className="grid gap-2">
             <Button variant="outline" className="justify-start" asChild>
-              <a href="/pos">
+              <Link to="/pos">
                 <ShoppingCart className="mr-2 h-4 w-4" />
                 New Sale
-              </a>
+              </Link>
             </Button>
             <Button variant="outline" className="justify-start" asChild>
-              <a href="/products">
+              <Link to="/products">
                 <Package className="mr-2 h-4 w-4" />
                 Add Product
-              </a>
+              </Link>
             </Button>
             <Button variant="outline" className="justify-start" asChild>
-              <a href="/customers">
+              <Link to="/customers">
                 <Users className="mr-2 h-4 w-4" />
                 Add Customer
-              </a>
+              </Link>
             </Button>
             <Button variant="outline" className="justify-start" asChild>
-              <a href="/inventory">
+              <Link to="/inventory">
                 <Package className="mr-2 h-4 w-4" />
                 Stock Adjustment
-              </a>
+              </Link>
             </Button>
           </CardContent>
         </Card>

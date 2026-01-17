@@ -5,11 +5,44 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatCurrency(amount: number, currency = 'USD'): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency,
-  }).format(amount)
+export interface CurrencyFormatOptions {
+  symbol?: string
+  code?: string
+  position?: 'prefix' | 'suffix'
+  decimalPlaces?: number
+  thousandSeparator?: string
+  decimalSeparator?: string
+}
+
+export function formatCurrency(amount: number, options?: CurrencyFormatOptions): string {
+  const {
+    symbol = 'Rs.',
+    position = 'prefix',
+    decimalPlaces = 2,
+    thousandSeparator = ',',
+    decimalSeparator = '.',
+  } = options || {}
+
+  // Format the number with proper separators
+  const fixedAmount = Math.abs(amount).toFixed(decimalPlaces)
+  const [integerPart, fractionalPart] = fixedAmount.split('.')
+
+  // Add thousand separators
+  const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, thousandSeparator)
+
+  // Combine integer and fractional parts
+  const formattedNumber = fractionalPart
+    ? `${formattedInteger}${decimalSeparator}${fractionalPart}`
+    : formattedInteger
+
+  // Handle negative numbers
+  const sign = amount < 0 ? '-' : ''
+
+  // Apply currency symbol position
+  if (position === 'suffix') {
+    return `${sign}${formattedNumber} ${symbol}`
+  }
+  return `${sign}${symbol} ${formattedNumber}`
 }
 
 export function formatDate(date: string | Date, options?: Intl.DateTimeFormatOptions): string {

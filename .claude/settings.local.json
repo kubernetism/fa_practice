@@ -57,7 +57,8 @@
       "Bash(gio info:*)",
       "Bash(sudo chown:*)",
       "Bash(sudo chmod:*)",
-      "Skill(frontend-design)"
+      "Skill(frontend-design)",
+      "Bash(npm i:*)"
     ]
   }
 }
