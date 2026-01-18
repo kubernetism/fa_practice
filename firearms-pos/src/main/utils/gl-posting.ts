@@ -383,6 +383,7 @@ export async function postExpenseToGL(
     referenceId: expense.id,
     branchId: expense.branchId,
     userId,
+    lines,
   })
 }
 
@@ -471,6 +472,7 @@ export async function postReturnToGL(
     referenceId: returnData.id,
     branchId: returnData.branchId,
     userId,
+    lines,
   })
 }
 
@@ -520,6 +522,7 @@ export async function postARPaymentToGL(
     referenceId: payment.id,
     branchId: payment.branchId,
     userId,
+    lines,
   })
 }
 
@@ -569,6 +572,7 @@ export async function postAPPaymentToGL(
     referenceId: payment.id,
     branchId: payment.branchId,
     userId,
+    lines,
   })
 }
 
@@ -660,5 +664,6 @@ export async function postVoidSaleToGL(
     referenceId: sale.id,
     branchId: sale.branchId,
     userId,
+    lines,
   })
 }

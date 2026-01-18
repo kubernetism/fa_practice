@@ -395,6 +395,17 @@ async function previewBackup(backupPath: string): Promise<{ success: boolean; me
   }
 }
 
+// Tables that should ALWAYS be replaced (singleton tables or those with unique constraints)
+const SINGLETON_TABLES = ['business_settings', 'settings']
+
+// Tables with unique constraints that need special handling in merge mode
+const UNIQUE_CONSTRAINT_TABLES: Record<string, string[]> = {
+  'users': ['username'],
+  'branches': ['name'],
+  'categories': ['name'],
+  'products': ['sku', 'serialNumber']
+}
+
 // Selective import from backup
 async function importSelective(
   backupPath: string,
@@ -484,30 +495,95 @@ async function importSelective(
 
           if (validColumns.length === 0) continue
 
+          // Determine if this is a singleton table (should always be replaced)
+          const isSingleton = SINGLETON_TABLES.includes(tableName)
+
+          // Determine the appropriate import mode for this table
+          const effectiveMode = isSingleton ? 'replace' : mergeMode
+
+          // Get unique constraint columns for this table (if any)
+          const uniqueColumns = UNIQUE_CONSTRAINT_TABLES[tableName] || []
+
           // Begin transaction for this table
           const transaction = currentDb.transaction(() => {
-            if (mergeMode === 'replace') {
-              // Clear existing data (disable foreign key checks temporarily)
-              currentDb.pragma('foreign_keys = OFF')
+            currentDb.pragma('foreign_keys = OFF')
+
+            if (effectiveMode === 'replace') {
+              // Clear existing data for replace mode or singleton tables
               currentDb.prepare(`DELETE FROM "${tableName}"`).run()
+              console.log(`Cleared existing data from ${tableName} (${isSingleton ? 'singleton table' : 'replace mode'})`)
             }
 
-            // Insert data
+            // Prepare insert statement based on mode
             const placeholders = validColumns.map(() => '?').join(', ')
             const columnNames = validColumns.map(c => `"${c}"`).join(', ')
-            const insertStmt = currentDb.prepare(`INSERT OR REPLACE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`)
 
-            for (const row of rows) {
-              const values = validColumns.map(col => row[col])
-              try {
-                insertStmt.run(...values)
-              } catch (insertErr) {
-                console.warn(`Failed to insert row into ${tableName}:`, insertErr)
+            let insertedCount = 0
+            let skippedCount = 0
+
+            if (effectiveMode === 'merge' && uniqueColumns.length > 0) {
+              // For merge mode with unique constraints, check for duplicates first
+              for (const row of rows) {
+                const values = validColumns.map(col => row[col])
+
+                // Check if record with same unique values already exists
+                let isDuplicate = false
+                for (const uniqueCol of uniqueColumns) {
+                  if (validColumns.includes(uniqueCol) && row[uniqueCol]) {
+                    const existingCheck = currentDb.prepare(
+                      `SELECT COUNT(*) as count FROM "${tableName}" WHERE "${uniqueCol}" = ?`
+                    ).get(row[uniqueCol]) as { count: number }
+
+                    if (existingCheck.count > 0) {
+                      isDuplicate = true
+                      break
+                    }
+                  }
+                }
+
+                if (isDuplicate) {
+                  skippedCount++
+                  continue
+                }
+
+                try {
+                  // Use INSERT OR IGNORE to safely handle any other potential conflicts
+                  const insertStmt = currentDb.prepare(
+                    `INSERT OR IGNORE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`
+                  )
+                  const result = insertStmt.run(...values)
+                  if (result.changes > 0) {
+                    insertedCount++
+                  } else {
+                    skippedCount++
+                  }
+                } catch (insertErr) {
+                  console.warn(`Failed to insert row into ${tableName}:`, insertErr)
+                  skippedCount++
+                }
+              }
+            } else {
+              // For replace mode or tables without unique constraints
+              const insertStmt = currentDb.prepare(
+                `INSERT OR REPLACE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`
+              )
+
+              for (const row of rows) {
+                const values = validColumns.map(col => row[col])
+                try {
+                  insertStmt.run(...values)
+                  insertedCount++
+                } catch (insertErr) {
+                  console.warn(`Failed to insert row into ${tableName}:`, insertErr)
+                  skippedCount++
+                }
               }
             }
 
-            if (mergeMode === 'replace') {
-              currentDb.pragma('foreign_keys = ON')
+            currentDb.pragma('foreign_keys = ON')
+
+            if (skippedCount > 0) {
+              console.log(`${tableName}: Inserted ${insertedCount}, Skipped ${skippedCount} duplicates`)
             }
           })
 
@@ -515,7 +591,7 @@ async function importSelective(
 
           importedTables.push(tableName)
           totalRecords += rows.length
-          console.log(`Imported ${rows.length} records into ${tableName}`)
+          console.log(`Processed ${rows.length} records for ${tableName}`)
         } catch (tableErr) {
           console.error(`Failed to import table ${tableName}:`, tableErr)
         }

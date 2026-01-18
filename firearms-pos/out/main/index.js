@@ -3279,7 +3279,11 @@ const ACCOUNT_CODES = {
   ACCOUNTS_PAYABLE: "2000",
   SALES_TAX_PAYABLE: "2100",
   SALES_REVENUE: "4000",
-  COGS: "5000"
+  COGS: "5000",
+  SALARIES_WAGES: "5100",
+  RENT_EXPENSE: "5200",
+  UTILITIES_EXPENSE: "5300",
+  OTHER_EXPENSE: "5900"
 };
 function generateJournalEntryNumber() {
   const year = (/* @__PURE__ */ new Date()).getFullYear();
@@ -3457,40 +3461,144 @@ async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
   });
 }
 async function postExpenseToGL(expense, userId) {
+  const lines = [];
+  const categoryToAccount = {
+    salaries: ACCOUNT_CODES.SALARIES_WAGES,
+    rent: ACCOUNT_CODES.RENT_EXPENSE,
+    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
+    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
+    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
+    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
+    other: ACCOUNT_CODES.OTHER_EXPENSE
+  };
+  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE;
+  lines.push({
+    accountCode: expenseAccount,
+    debitAmount: expense.amount,
+    creditAmount: 0,
+    description: expense.description || `Expense: ${expense.category}`
+  });
+  if (expense.paymentStatus === "unpaid") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payable for expense ${expense.category}`
+    });
+  } else {
+    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payment for expense ${expense.category}`
+    });
+  }
   return createJournalEntry({
     description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ""}`,
     referenceType: "expense",
     referenceId: expense.id,
     branchId: expense.branchId,
-    userId
+    userId,
+    lines
   });
 }
 async function postReturnToGL(returnData, returnItems2, userId) {
-  returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
+  const lines = [];
+  const netRevenue = returnData.subtotal;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Revenue reversal for return ${returnData.returnNumber}`
+    });
+  }
+  if (returnData.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: returnData.taxAmount,
+      creditAmount: 0,
+      description: `Tax reversal for return ${returnData.returnNumber}`
+    });
+  }
+  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: returnData.totalAmount,
+    description: `Refund for return ${returnData.returnNumber}`
+  });
+  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
+  if (restockableCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: restockableCOGS,
+      creditAmount: 0,
+      description: `Inventory restored for return ${returnData.returnNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: restockableCOGS,
+      description: `COGS reversal for return ${returnData.returnNumber}`
+    });
+  }
   return createJournalEntry({
     description: `Return: ${returnData.returnNumber}`,
     referenceType: "return",
     referenceId: returnData.id,
     branchId: returnData.branchId,
-    userId
+    userId,
+    lines
   });
 }
 async function postARPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `Payment received for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `AR reduction for ${payment.invoiceNumber}`
+  });
   return createJournalEntry({
     description: `AR Payment: ${payment.invoiceNumber}`,
     referenceType: "receivable_payment",
     referenceId: payment.id,
     branchId: payment.branchId,
-    userId
+    userId,
+    lines
   });
 }
 async function postAPPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `AP payment for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `Payment for ${payment.invoiceNumber}`
+  });
   return createJournalEntry({
     description: `AP Payment: ${payment.invoiceNumber}`,
     referenceType: "payable_payment",
     referenceId: payment.id,
     branchId: payment.branchId,
-    userId
+    userId,
+    lines
   });
 }
 async function postVoidSaleToGL(sale, saleItems2, userId) {
@@ -3553,7 +3661,8 @@ async function postVoidSaleToGL(sale, saleItems2, userId) {
     referenceType: "sale_void",
     referenceId: sale.id,
     branchId: sale.branchId,
-    userId
+    userId,
+    lines
   });
 }
 async function consumeCostLayersFIFO(productId, branchId, quantity) {
@@ -15455,6 +15564,13 @@ async function previewBackup(backupPath) {
     };
   }
 }
+const SINGLETON_TABLES = ["business_settings", "settings"];
+const UNIQUE_CONSTRAINT_TABLES = {
+  "users": ["username"],
+  "branches": ["name"],
+  "categories": ["name"],
+  "products": ["sku", "serialNumber"]
+};
 async function importSelective(backupPath, selectedCategories, mergeMode = "replace") {
   try {
     if (!node_fs.existsSync(backupPath)) {
@@ -15509,30 +15625,77 @@ async function importSelective(backupPath, selectedCategories, mergeMode = "repl
           const backupColumns = Object.keys(rows[0]);
           const validColumns = backupColumns.filter((c) => currentColumns.includes(c));
           if (validColumns.length === 0) continue;
+          const isSingleton = SINGLETON_TABLES.includes(tableName);
+          const effectiveMode = isSingleton ? "replace" : mergeMode;
+          const uniqueColumns = UNIQUE_CONSTRAINT_TABLES[tableName] || [];
           const transaction = currentDb.transaction(() => {
-            if (mergeMode === "replace") {
-              currentDb.pragma("foreign_keys = OFF");
+            currentDb.pragma("foreign_keys = OFF");
+            if (effectiveMode === "replace") {
               currentDb.prepare(`DELETE FROM "${tableName}"`).run();
+              console.log(`Cleared existing data from ${tableName} (${isSingleton ? "singleton table" : "replace mode"})`);
             }
             const placeholders = validColumns.map(() => "?").join(", ");
             const columnNames = validColumns.map((c) => `"${c}"`).join(", ");
-            const insertStmt = currentDb.prepare(`INSERT OR REPLACE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`);
-            for (const row of rows) {
-              const values = validColumns.map((col) => row[col]);
-              try {
-                insertStmt.run(...values);
-              } catch (insertErr) {
-                console.warn(`Failed to insert row into ${tableName}:`, insertErr);
+            let insertedCount = 0;
+            let skippedCount = 0;
+            if (effectiveMode === "merge" && uniqueColumns.length > 0) {
+              for (const row of rows) {
+                const values = validColumns.map((col) => row[col]);
+                let isDuplicate = false;
+                for (const uniqueCol of uniqueColumns) {
+                  if (validColumns.includes(uniqueCol) && row[uniqueCol]) {
+                    const existingCheck = currentDb.prepare(
+                      `SELECT COUNT(*) as count FROM "${tableName}" WHERE "${uniqueCol}" = ?`
+                    ).get(row[uniqueCol]);
+                    if (existingCheck.count > 0) {
+                      isDuplicate = true;
+                      break;
+                    }
+                  }
+                }
+                if (isDuplicate) {
+                  skippedCount++;
+                  continue;
+                }
+                try {
+                  const insertStmt = currentDb.prepare(
+                    `INSERT OR IGNORE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`
+                  );
+                  const result = insertStmt.run(...values);
+                  if (result.changes > 0) {
+                    insertedCount++;
+                  } else {
+                    skippedCount++;
+                  }
+                } catch (insertErr) {
+                  console.warn(`Failed to insert row into ${tableName}:`, insertErr);
+                  skippedCount++;
+                }
+              }
+            } else {
+              const insertStmt = currentDb.prepare(
+                `INSERT OR REPLACE INTO "${tableName}" (${columnNames}) VALUES (${placeholders})`
+              );
+              for (const row of rows) {
+                const values = validColumns.map((col) => row[col]);
+                try {
+                  insertStmt.run(...values);
+                  insertedCount++;
+                } catch (insertErr) {
+                  console.warn(`Failed to insert row into ${tableName}:`, insertErr);
+                  skippedCount++;
+                }
               }
             }
-            if (mergeMode === "replace") {
-              currentDb.pragma("foreign_keys = ON");
+            currentDb.pragma("foreign_keys = ON");
+            if (skippedCount > 0) {
+              console.log(`${tableName}: Inserted ${insertedCount}, Skipped ${skippedCount} duplicates`);
             }
           });
           transaction();
           importedTables.push(tableName);
           totalRecords += rows.length;
-          console.log(`Imported ${rows.length} records into ${tableName}`);
+          console.log(`Processed ${rows.length} records for ${tableName}`);
         } catch (tableErr) {
           console.error(`Failed to import table ${tableName}:`, tableErr);
         }
