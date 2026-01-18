@@ -15,6 +15,9 @@ import {
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generateReturnNumber, type PaginationParams, type PaginatedResult } from '../utils/helpers'
+import { withTransaction } from '../utils/db-transaction'
+import { postReturnToGL } from '../utils/gl-posting'
+import { restoreCostLayers } from '../utils/inventory-valuation'
 
 interface ReturnItemData {
   saleItemId: number
@@ -61,108 +64,151 @@ export function registerReturnHandlers(): void {
         return { success: false, message: 'Cannot return items from a voided sale' }
       }
 
-      // Calculate totals
-      let subtotal = 0
-      let taxAmount = 0
-      const returnItemsData: Omit<NewReturnItem, 'returnId'>[] = []
+      // Execute all operations in a transaction
+      const result = await withTransaction(async ({ db: txDb }) => {
+        // Calculate totals
+        let subtotal = 0
+        let taxAmount = 0
+        const returnItemsData: Array<Omit<NewReturnItem, 'returnId'> & { costPrice: number }> = []
 
-      for (const item of data.items) {
-        const totalPrice = item.unitPrice * item.quantity
-        subtotal += totalPrice
+        for (const item of data.items) {
+          const totalPrice = item.unitPrice * item.quantity
+          subtotal += totalPrice
 
-        // Get original sale item for tax calculation
-        const originalItem = await db.query.saleItems.findFirst({
-          where: eq(saleItems.id, item.saleItemId),
-        })
-
-        if (originalItem) {
-          const itemTax = (originalItem.taxAmount / originalItem.quantity) * item.quantity
-          taxAmount += itemTax
-        }
-
-        returnItemsData.push({
-          saleItemId: item.saleItemId,
-          productId: item.productId,
-          serialNumber: item.serialNumber,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice,
-          condition: item.condition,
-          restockable: item.restockable,
-        })
-      }
-
-      const totalAmount = subtotal + taxAmount
-      const returnNumber = generateReturnNumber()
-
-      const [returnRecord] = await db
-        .insert(returns)
-        .values({
-          returnNumber,
-          originalSaleId: data.originalSaleId,
-          customerId: data.customerId,
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          returnType: data.returnType,
-          subtotal,
-          taxAmount,
-          totalAmount,
-          refundMethod: data.refundMethod,
-          refundAmount: data.returnType === 'refund' ? totalAmount : 0,
-          reason: data.reason,
-          notes: data.notes,
-        })
-        .returning()
-
-      // Create return items
-      for (const item of returnItemsData) {
-        await db.insert(returnItems).values({
-          ...item,
-          returnId: returnRecord.id,
-        })
-      }
-
-      // Restock items if applicable
-      for (const item of data.items) {
-        if (item.restockable) {
-          const existingInventory = await db.query.inventory.findFirst({
-            where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)),
+          // Get original sale item for tax calculation and cost price
+          const originalItem = await txDb.query.saleItems.findFirst({
+            where: eq(saleItems.id, item.saleItemId),
           })
 
-          if (existingInventory) {
-            await db
-              .update(inventory)
-              .set({
-                quantity: sql`${inventory.quantity} + ${item.quantity}`,
-                updatedAt: new Date().toISOString(),
-              })
-              .where(eq(inventory.id, existingInventory.id))
-          } else {
-            await db.insert(inventory).values({
-              productId: item.productId,
-              branchId: data.branchId,
-              quantity: item.quantity,
+          let itemCostPrice = 0
+          if (originalItem) {
+            const itemTax = (originalItem.taxAmount / originalItem.quantity) * item.quantity
+            taxAmount += itemTax
+            itemCostPrice = originalItem.costPrice
+          }
+
+          returnItemsData.push({
+            saleItemId: item.saleItemId,
+            productId: item.productId,
+            serialNumber: item.serialNumber,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice,
+            condition: item.condition,
+            restockable: item.restockable,
+            costPrice: itemCostPrice,
+          })
+        }
+
+        const totalAmount = subtotal + taxAmount
+        const returnNumber = generateReturnNumber()
+
+        const [returnRecord] = await txDb
+          .insert(returns)
+          .values({
+            returnNumber,
+            originalSaleId: data.originalSaleId,
+            customerId: data.customerId,
+            branchId: data.branchId,
+            userId: session?.userId ?? 0,
+            returnType: data.returnType,
+            subtotal,
+            taxAmount,
+            totalAmount,
+            refundMethod: data.refundMethod,
+            refundAmount: data.returnType === 'refund' ? totalAmount : 0,
+            reason: data.reason,
+            notes: data.notes,
+          })
+          .returning()
+
+        // Create return items (without costPrice field)
+        for (const item of returnItemsData) {
+          const { costPrice, ...itemData } = item
+          await txDb.insert(returnItems).values({
+            ...itemData,
+            returnId: returnRecord.id,
+          })
+        }
+
+        // Restock items and restore cost layers if applicable
+        for (const item of data.items) {
+          if (item.restockable) {
+            const existingInventory = await txDb.query.inventory.findFirst({
+              where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)),
             })
+
+            if (existingInventory) {
+              await txDb
+                .update(inventory)
+                .set({
+                  quantity: sql`${inventory.quantity} + ${item.quantity}`,
+                  updatedAt: new Date().toISOString(),
+                })
+                .where(eq(inventory.id, existingInventory.id))
+            } else {
+              await txDb.insert(inventory).values({
+                productId: item.productId,
+                branchId: data.branchId,
+                quantity: item.quantity,
+              })
+            }
+
+            // Restore cost layers for FIFO tracking
+            const returnItemData = returnItemsData.find((ri) => ri.productId === item.productId)
+            if (returnItemData && returnItemData.costPrice > 0) {
+              await restoreCostLayers({
+                productId: item.productId,
+                branchId: data.branchId,
+                quantity: item.quantity,
+                unitCost: returnItemData.costPrice,
+                referenceType: 'return',
+                referenceId: returnRecord.id,
+              })
+            }
           }
         }
-      }
+
+        // Post to General Ledger
+        const returnItemsForGL = returnItemsData.map((item) => ({
+          costPrice: item.costPrice,
+          quantity: item.quantity,
+          restockable: item.restockable,
+        }))
+
+        await postReturnToGL(
+          {
+            id: returnRecord.id,
+            returnNumber,
+            branchId: data.branchId,
+            subtotal,
+            taxAmount,
+            totalAmount,
+            refundMethod: data.refundMethod,
+          },
+          returnItemsForGL,
+          session?.userId ?? 0
+        )
+
+        return { returnRecord, returnNumber, totalAmount }
+      })
 
       await createAuditLog({
         userId: session?.userId,
         branchId: data.branchId,
         action: 'refund',
         entityType: 'return',
-        entityId: returnRecord.id,
+        entityId: result.returnRecord.id,
         newValues: {
-          returnNumber,
+          returnNumber: result.returnNumber,
           originalSaleId: data.originalSaleId,
-          totalAmount,
+          totalAmount: result.totalAmount,
           itemCount: data.items.length,
         },
-        description: `Created return: ${returnNumber}`,
+        description: `Created return: ${result.returnNumber}`,
       })
 
-      return { success: true, data: returnRecord }
+      return { success: true, data: result.returnRecord }
     } catch (error) {
       console.error('Create return error:', error)
       return { success: false, message: 'Failed to create return' }

@@ -14,6 +14,7 @@ import {
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generateTransferNumber } from '../utils/helpers'
+import { withTransaction } from '../utils/db-transaction'
 
 export function registerInventoryHandlers(): void {
   const db = getDatabase()
@@ -267,46 +268,49 @@ export function registerInventoryHandlers(): void {
         return { success: false, message: 'Transfer cannot be completed' }
       }
 
-      // Deduct from source
-      await db
-        .update(inventory)
-        .set({
-          quantity: sql`${inventory.quantity} - ${transfer.quantity}`,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(and(eq(inventory.productId, transfer.productId), eq(inventory.branchId, transfer.fromBranchId)))
-
-      // Add to destination
-      const destInventory = await db.query.inventory.findFirst({
-        where: and(eq(inventory.productId, transfer.productId), eq(inventory.branchId, transfer.toBranchId)),
-      })
-
-      if (destInventory) {
-        await db
+      // Execute all transfer operations in a transaction
+      await withTransaction(async ({ db: txDb }) => {
+        // Deduct from source
+        await txDb
           .update(inventory)
           .set({
-            quantity: sql`${inventory.quantity} + ${transfer.quantity}`,
+            quantity: sql`${inventory.quantity} - ${transfer.quantity}`,
             updatedAt: new Date().toISOString(),
           })
-          .where(eq(inventory.id, destInventory.id))
-      } else {
-        await db.insert(inventory).values({
-          productId: transfer.productId,
-          branchId: transfer.toBranchId,
-          quantity: transfer.quantity,
-        })
-      }
+          .where(and(eq(inventory.productId, transfer.productId), eq(inventory.branchId, transfer.fromBranchId)))
 
-      // Update transfer status
-      await db
-        .update(stockTransfers)
-        .set({
-          status: 'completed',
-          receivedDate: new Date().toISOString(),
-          receivedBy: session?.userId,
-          updatedAt: new Date().toISOString(),
+        // Add to destination
+        const destInventory = await txDb.query.inventory.findFirst({
+          where: and(eq(inventory.productId, transfer.productId), eq(inventory.branchId, transfer.toBranchId)),
         })
-        .where(eq(stockTransfers.id, transferId))
+
+        if (destInventory) {
+          await txDb
+            .update(inventory)
+            .set({
+              quantity: sql`${inventory.quantity} + ${transfer.quantity}`,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(inventory.id, destInventory.id))
+        } else {
+          await txDb.insert(inventory).values({
+            productId: transfer.productId,
+            branchId: transfer.toBranchId,
+            quantity: transfer.quantity,
+          })
+        }
+
+        // Update transfer status
+        await txDb
+          .update(stockTransfers)
+          .set({
+            status: 'completed',
+            receivedDate: new Date().toISOString(),
+            receivedBy: session?.userId,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(stockTransfers.id, transferId))
+      })
 
       await createAuditLog({
         userId: session?.userId,

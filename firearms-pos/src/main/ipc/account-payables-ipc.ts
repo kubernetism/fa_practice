@@ -13,6 +13,8 @@ import {
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
+import { withTransaction } from '../utils/db-transaction'
+import { postAPPaymentToGL } from '../utils/gl-posting'
 
 interface PaginationParams {
   page?: number
@@ -307,51 +309,77 @@ export function registerAccountPayablesHandlers(): void {
         }
       }
 
-      // Record the payment
-      const [payment] = await db
-        .insert(payablePayments)
-        .values({
-          payableId: data.payableId,
-          amount: data.amount,
-          paymentMethod: data.paymentMethod,
-          referenceNumber: data.referenceNumber,
-          notes: data.notes,
-          paidBy: session.userId,
-        })
-        .returning()
-
-      // Update payable amounts
+      // Calculate new values
       const newPaidAmount = payable.paidAmount + data.amount
       const newRemainingAmount = payable.totalAmount - newPaidAmount
       const newStatus = newRemainingAmount <= 0 ? 'paid' : 'partial'
 
-      await db
-        .update(accountPayables)
-        .set({
-          paidAmount: newPaidAmount,
-          remainingAmount: Math.max(0, newRemainingAmount),
-          status: newStatus,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(accountPayables.id, data.payableId))
+      // Execute all operations in a transaction
+      const result = await withTransaction(async ({ db: txDb }) => {
+        // Record the payment
+        const [payment] = await txDb
+          .insert(payablePayments)
+          .values({
+            payableId: data.payableId,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            referenceNumber: data.referenceNumber,
+            notes: data.notes,
+            paidBy: session.userId,
+          })
+          .returning()
 
-      // Bidirectional sync: Update expense status when payable is fully paid
+        // Update payable amounts
+        await txDb
+          .update(accountPayables)
+          .set({
+            paidAmount: newPaidAmount,
+            remainingAmount: Math.max(0, newRemainingAmount),
+            status: newStatus,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(accountPayables.id, data.payableId))
+
+        // Bidirectional sync: Update expense status when payable is fully paid
+        if (newStatus === 'paid') {
+          const linkedExpense = await txDb.query.expenses.findFirst({
+            where: eq(expenses.payableId, payable.id),
+          })
+
+          if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
+            await txDb
+              .update(expenses)
+              .set({
+                paymentStatus: 'paid',
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(expenses.id, linkedExpense.id))
+          }
+        }
+
+        // Post to General Ledger
+        await postAPPaymentToGL(
+          {
+            id: payment.id,
+            payableId: data.payableId,
+            branchId: payable.branchId,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            invoiceNumber: payable.invoiceNumber,
+          },
+          session.userId
+        )
+
+        return payment
+      })
+
+      // Audit log for expense sync (if applicable)
       if (newStatus === 'paid') {
-        // Check if this payable is linked to an expense
         const linkedExpense = await db.query.expenses.findFirst({
           where: eq(expenses.payableId, payable.id),
         })
 
-        if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
-          // Auto-update expense to paid
-          await db
-            .update(expenses)
-            .set({
-              paymentStatus: 'paid',
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(expenses.id, linkedExpense.id))
-
+        if (linkedExpense && linkedExpense.paymentStatus === 'paid') {
           await createAuditLog({
             userId: session.userId,
             branchId: linkedExpense.branchId,
@@ -388,7 +416,7 @@ export function registerAccountPayablesHandlers(): void {
 
       return {
         success: true,
-        data: payment,
+        data: result,
         payable: {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),

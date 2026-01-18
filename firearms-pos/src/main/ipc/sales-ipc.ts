@@ -16,6 +16,9 @@ import {
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generateInvoiceNumber, isLicenseExpired, type PaginationParams, type PaginatedResult } from '../utils/helpers'
+import { withTransaction } from '../utils/db-transaction'
+import { postSaleToGL, postVoidSaleToGL } from '../utils/gl-posting'
+import { consumeCostLayersFIFO, restoreCostLayers } from '../utils/inventory-valuation'
 
 interface CartItem {
   productId: number
@@ -55,7 +58,7 @@ export function registerSalesHandlers(): void {
         return { success: false, message: 'No items in cart' }
       }
 
-      // Check for firearms and validate customer license
+      // Pre-validation (outside transaction for faster feedback)
       for (const item of data.items) {
         const product = await db.query.products.findFirst({
           where: eq(products.id, item.productId),
@@ -87,14 +90,12 @@ export function registerSalesHandlers(): void {
           where: eq(customers.id, data.customerId),
         })
 
-        // Check if any item is a firearm
         for (const item of data.items) {
           const product = await db.query.products.findFirst({
             where: eq(products.id, item.productId),
           })
 
           if (product?.isSerialTracked) {
-            // This is likely a firearm
             if (!customer?.firearmLicenseNumber) {
               return {
                 success: false,
@@ -111,152 +112,173 @@ export function registerSalesHandlers(): void {
         }
       }
 
-      // Calculate totals
-      let subtotal = 0
-      let taxAmount = 0
-      const saleItemsData: Omit<NewSaleItem, 'saleId'>[] = []
+      // Execute all database operations in a transaction
+      const result = await withTransaction(async ({ db: txDb }) => {
+        // Calculate totals with FIFO cost pricing
+        let subtotal = 0
+        let taxAmount = 0
+        const saleItemsData: Array<Omit<NewSaleItem, 'saleId'> & { fifoCost: number }> = []
 
-      for (const item of data.items) {
-        const itemSubtotal = item.unitPrice * item.quantity
-        const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100)
-        const itemTaxable = itemSubtotal - itemDiscount
-        const itemTax = itemTaxable * ((item.taxRate || 0) / 100)
-        const itemTotal = itemTaxable + itemTax
+        for (const item of data.items) {
+          // Get actual FIFO cost for this item
+          const fifoResult = await consumeCostLayersFIFO(
+            item.productId,
+            data.branchId,
+            item.quantity
+          )
 
-        subtotal += itemSubtotal
-        taxAmount += itemTax
+          // Calculate cost per unit from FIFO
+          const actualCostPerUnit = item.quantity > 0
+            ? fifoResult.totalCost / item.quantity
+            : item.costPrice
 
-        saleItemsData.push({
-          productId: item.productId,
-          serialNumber: item.serialNumber,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          costPrice: item.costPrice,
-          discountPercent: item.discountPercent || 0,
-          discountAmount: itemDiscount,
-          taxAmount: itemTax,
-          totalPrice: itemTotal,
-        })
-      }
+          const itemSubtotal = item.unitPrice * item.quantity
+          const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100)
+          const itemTaxable = itemSubtotal - itemDiscount
+          const itemTax = itemTaxable * ((item.taxRate || 0) / 100)
+          const itemTotal = itemTaxable + itemTax
 
-      const discountAmount = data.discountAmount || 0
-      const codCharges = data.codCharges || 0
-      // Add COD charges to total for COD payment method
-      const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === 'cod' ? codCharges : 0)
-      const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0
-      // Use provided paymentStatus for receivable/cod, otherwise calculate based on amount
-      const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending')
+          subtotal += itemSubtotal
+          taxAmount += itemTax
 
-      // Generate invoice number
-      const invoiceNumber = generateInvoiceNumber()
-      const outstandingAmount = totalAmount - data.amountPaid
-
-      // 1. Create sale
-      const [sale] = await db
-        .insert(sales)
-        .values({
-          invoiceNumber,
-          customerId: data.customerId,
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          subtotal,
-          taxAmount,
-          discountAmount,
-          totalAmount,
-          paymentMethod: data.paymentMethod,
-          paymentStatus,
-          amountPaid: data.amountPaid,
-          changeGiven,
-          notes: data.notes,
-        })
-        .returning()
-
-      // 2. Create sale items
-      for (const item of saleItemsData) {
-        await db.insert(saleItems).values({
-          ...item,
-          saleId: sale.id,
-        })
-      }
-
-      // 3. Deduct inventory
-      for (const item of data.items) {
-        await db
-          .update(inventory)
-          .set({
-            quantity: sql`${inventory.quantity} - ${item.quantity}`,
-            updatedAt: new Date().toISOString(),
+          saleItemsData.push({
+            productId: item.productId,
+            serialNumber: item.serialNumber,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            costPrice: actualCostPerUnit, // Use FIFO cost instead of frontend cost
+            discountPercent: item.discountPercent || 0,
+            discountAmount: itemDiscount,
+            taxAmount: itemTax,
+            totalPrice: itemTotal,
+            fifoCost: fifoResult.totalCost, // Track total FIFO cost for GL posting
           })
-          .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)))
-      }
+        }
 
-      // 4. Create commission if applicable (example: 2% of subtotal)
-      if (session?.userId) {
-        const commissionRate = 2 // 2%
-        const commissionAmount = subtotal * (commissionRate / 100)
+        const discountAmount = data.discountAmount || 0
+        const codCharges = data.codCharges || 0
+        const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === 'cod' ? codCharges : 0)
+        const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0
+        const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending')
 
-        await db.insert(commissions).values({
-          saleId: sale.id,
-          userId: session.userId,
-          branchId: data.branchId,
-          commissionType: 'sale',
-          baseAmount: subtotal,
-          rate: commissionRate,
-          commissionAmount,
-          status: 'pending',
-        })
-      }
+        const invoiceNumber = generateInvoiceNumber()
+        const outstandingAmount = totalAmount - data.amountPaid
 
-      // 5. Create account receivable if there's an outstanding balance and customer exists
-      if (outstandingAmount > 0 && data.customerId) {
-        await db.insert(accountReceivables).values({
-          customerId: data.customerId,
-          saleId: sale.id,
-          branchId: data.branchId,
-          invoiceNumber,
-          totalAmount: outstandingAmount,
-          paidAmount: 0,
-          remainingAmount: outstandingAmount,
-          status: 'pending',
-          createdBy: session?.userId,
-        })
-      }
+        // 1. Create sale
+        const [sale] = await txDb
+          .insert(sales)
+          .values({
+            invoiceNumber,
+            customerId: data.customerId,
+            branchId: data.branchId,
+            userId: session?.userId ?? 0,
+            subtotal,
+            taxAmount,
+            discountAmount,
+            totalAmount,
+            paymentMethod: data.paymentMethod,
+            paymentStatus,
+            amountPaid: data.amountPaid,
+            changeGiven,
+            notes: data.notes,
+          })
+          .returning()
 
-      // 6. Create expense entry for COD charges (to be paid to courier)
-      if (data.paymentMethod === 'cod' && codCharges > 0) {
-        await db.insert(expenses).values({
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          category: 'other',
-          amount: codCharges,
-          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${data.codName || 'N/A'}, Phone: ${data.codPhone || 'N/A'}`,
-          paymentMethod: 'cash',
-          reference: invoiceNumber,
-          paymentStatus: 'unpaid', // Mark as unpaid - to be paid to courier later
-        })
-      }
+        // 2. Create sale items (without fifoCost field, which is just for our tracking)
+        const createdSaleItems: Array<{ costPrice: number; quantity: number }> = []
+        for (const item of saleItemsData) {
+          const { fifoCost, ...itemData } = item
+          await txDb.insert(saleItems).values({
+            ...itemData,
+            saleId: sale.id,
+          })
+          createdSaleItems.push({ costPrice: item.costPrice, quantity: item.quantity })
+        }
+
+        // 3. Deduct inventory
+        for (const item of data.items) {
+          await txDb
+            .update(inventory)
+            .set({
+              quantity: sql`${inventory.quantity} - ${item.quantity}`,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)))
+        }
+
+        // 4. Create commission if applicable (2% of subtotal)
+        if (session?.userId) {
+          const commissionRate = 2
+          const commissionAmount = subtotal * (commissionRate / 100)
+
+          await txDb.insert(commissions).values({
+            saleId: sale.id,
+            userId: session.userId,
+            branchId: data.branchId,
+            commissionType: 'sale',
+            baseAmount: subtotal,
+            rate: commissionRate,
+            commissionAmount,
+            status: 'pending',
+          })
+        }
+
+        // 5. Create account receivable if there's an outstanding balance
+        if (outstandingAmount > 0 && data.customerId) {
+          await txDb.insert(accountReceivables).values({
+            customerId: data.customerId,
+            saleId: sale.id,
+            branchId: data.branchId,
+            invoiceNumber,
+            totalAmount: outstandingAmount,
+            paidAmount: 0,
+            remainingAmount: outstandingAmount,
+            status: 'pending',
+            createdBy: session?.userId,
+          })
+        }
+
+        // 6. Create expense entry for COD charges
+        if (data.paymentMethod === 'cod' && codCharges > 0) {
+          await txDb.insert(expenses).values({
+            branchId: data.branchId,
+            userId: session?.userId ?? 0,
+            category: 'other',
+            amount: codCharges,
+            description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${data.codName || 'N/A'}, Phone: ${data.codPhone || 'N/A'}`,
+            paymentMethod: 'cash',
+            reference: invoiceNumber,
+            paymentStatus: 'unpaid',
+          })
+        }
+
+        // 7. Post to General Ledger (automated GL posting)
+        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0)
+
+        return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
+      })
 
       await createAuditLog({
         userId: session?.userId,
         branchId: data.branchId,
         action: 'create',
         entityType: 'sale',
-        entityId: sale.id,
+        entityId: result.sale.id,
         newValues: {
-          invoiceNumber,
-          subtotal,
-          discountAmount,
-          taxAmount,
-          totalAmount,
+          invoiceNumber: result.invoiceNumber,
+          subtotal: result.subtotal,
+          discountAmount: result.discountAmount,
+          taxAmount: result.taxAmount,
+          totalAmount: result.totalAmount,
           paymentMethod: data.paymentMethod,
-          paymentStatus,
+          paymentStatus: result.paymentStatus,
           amountPaid: data.amountPaid,
           itemCount: data.items.length,
         },
-        description: `Created sale: ${invoiceNumber}${discountAmount > 0 ? ` (Discount: ${discountAmount})` : ''}`,
+        description: `Created sale: ${result.invoiceNumber}${result.discountAmount > 0 ? ` (Discount: ${result.discountAmount})` : ''}`,
       })
 
-      return { success: true, data: sale }
+      return { success: true, data: result.sale }
     } catch (error) {
       console.error('Create sale error:', error)
       return { success: false, message: 'Failed to create sale' }
@@ -387,54 +409,75 @@ export function registerSalesHandlers(): void {
         return { success: false, message: 'Sale is already voided' }
       }
 
-      // Get sale items to restore inventory
+      // Get sale items to restore inventory and cost layers
       const items = await db.query.saleItems.findMany({
         where: eq(saleItems.saleId, id),
       })
 
-      // 1. Restore inventory
-      for (const item of items) {
-        await db
-          .update(inventory)
+      // Execute all void operations in a transaction
+      await withTransaction(async ({ db: txDb }) => {
+        // 1. Restore inventory and cost layers
+        for (const item of items) {
+          // Restore inventory quantity
+          await txDb
+            .update(inventory)
+            .set({
+              quantity: sql`${inventory.quantity} + ${item.quantity}`,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, sale.branchId)))
+
+          // Restore cost layers for FIFO tracking
+          await restoreCostLayers({
+            productId: item.productId,
+            branchId: sale.branchId,
+            quantity: item.quantity,
+            unitCost: item.costPrice,
+            referenceType: 'void',
+            referenceId: sale.id,
+          })
+        }
+
+        // 2. Void sale
+        await txDb
+          .update(sales)
           .set({
-            quantity: sql`${inventory.quantity} + ${item.quantity}`,
+            isVoided: true,
+            voidReason: reason,
             updatedAt: new Date().toISOString(),
           })
-          .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, sale.branchId)))
-      }
+          .where(eq(sales.id, id))
 
-      // 2. Void sale
-      await db
-        .update(sales)
-        .set({
-          isVoided: true,
-          voidReason: reason,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(sales.id, id))
-
-      // 3. Cancel commission
-      await db
-        .update(commissions)
-        .set({
-          status: 'cancelled',
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(commissions.saleId, id))
-
-      // 4. Cancel any linked receivable
-      const linkedReceivable = await db.query.accountReceivables.findFirst({
-        where: eq(accountReceivables.saleId, id),
-      })
-      if (linkedReceivable) {
-        await db
-          .update(accountReceivables)
+        // 3. Cancel commission
+        await txDb
+          .update(commissions)
           .set({
             status: 'cancelled',
             updatedAt: new Date().toISOString(),
           })
-          .where(eq(accountReceivables.id, linkedReceivable.id))
-      }
+          .where(eq(commissions.saleId, id))
+
+        // 4. Cancel any linked receivable
+        const linkedReceivable = await txDb.query.accountReceivables.findFirst({
+          where: eq(accountReceivables.saleId, id),
+        })
+        if (linkedReceivable) {
+          await txDb
+            .update(accountReceivables)
+            .set({
+              status: 'cancelled',
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(accountReceivables.id, linkedReceivable.id))
+        }
+
+        // 5. Create reversing journal entry in GL
+        await postVoidSaleToGL(
+          sale,
+          items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
+          session?.userId ?? 0
+        )
+      })
 
       await createAuditLog({
         userId: session?.userId,

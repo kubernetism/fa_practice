@@ -109,6 +109,14 @@ export async function runMigrations(): Promise<void> {
     console.error('Financial system tables migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Ensure inventory cost layers table exists
+  try {
+    await ensureInventoryCostLayersTable()
+  } catch (error) {
+    console.error('Inventory cost layers table migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -609,6 +617,7 @@ async function ensureFinancialSystemTables(): Promise<void> {
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1100', 'Accounts Receivable', 'asset', 'accounts_receivable', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1200', 'Inventory', 'asset', 'inventory', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('2000', 'Accounts Payable', 'liability', 'accounts_payable', 'credit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('2100', 'Sales Tax Payable', 'liability', 'other_liability', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('3000', 'Owner Capital', 'equity', 'owner_capital', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('3100', 'Retained Earnings', 'equity', 'retained_earnings', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4000', 'Sales Revenue', 'revenue', 'sales_revenue', 'credit', 1, datetime('now'), datetime('now'));
@@ -727,5 +736,45 @@ async function ensureFinancialSystemTables(): Promise<void> {
     console.log('account_balances table created successfully!')
   } else {
     console.log('account_balances table exists: true')
+  }
+}
+
+async function ensureInventoryCostLayersTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if inventory_cost_layers table exists
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_cost_layers'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('Creating inventory_cost_layers table...')
+    const costLayersMigration = `
+      CREATE TABLE IF NOT EXISTS "inventory_cost_layers" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "product_id" integer NOT NULL,
+        "branch_id" integer NOT NULL,
+        "purchase_item_id" integer,
+        "quantity" integer NOT NULL,
+        "original_quantity" integer NOT NULL,
+        "unit_cost" real NOT NULL,
+        "received_date" text NOT NULL,
+        "is_fully_consumed" integer DEFAULT 0 NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("product_id") REFERENCES "products"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("purchase_item_id") REFERENCES "purchase_items"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "icl_product_branch_date_idx" ON "inventory_cost_layers" ("product_id", "branch_id", "received_date");
+      CREATE INDEX IF NOT EXISTS "icl_active_layers_idx" ON "inventory_cost_layers" ("product_id", "branch_id", "is_fully_consumed");
+      CREATE INDEX IF NOT EXISTS "icl_purchase_item_idx" ON "inventory_cost_layers" ("purchase_item_id");
+    `
+    db.exec(costLayersMigration)
+    console.log('inventory_cost_layers table created successfully!')
+  } else {
+    console.log('inventory_cost_layers table exists: true')
   }
 }

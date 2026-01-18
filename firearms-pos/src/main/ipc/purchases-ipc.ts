@@ -15,6 +15,9 @@ import {
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generatePurchaseOrderNumber, type PaginationParams, type PaginatedResult } from '../utils/helpers'
+import { withTransaction } from '../utils/db-transaction'
+import { postPurchaseReceiveToGL } from '../utils/gl-posting'
+import { addCostLayer } from '../utils/inventory-valuation'
 
 interface PurchaseItemData {
   productId: number
@@ -231,73 +234,95 @@ export function registerPurchaseHandlers(): void {
           return { success: false, message: 'Cannot receive items for this purchase order' }
         }
 
-        // Update received quantities and add to inventory
-        for (const item of receivedItems) {
-          const purchaseItem = await db.query.purchaseItems.findFirst({
-            where: eq(purchaseItems.id, item.itemId),
-          })
+        // Execute all receive operations in a transaction
+        const result = await withTransaction(async ({ db: txDb }) => {
+          const receivedItemDetails: Array<{ unitCost: number; receivedQuantity: number; purchaseItemId: number }> = []
 
-          if (!purchaseItem) continue
-
-          // Update purchase item
-          await db
-            .update(purchaseItems)
-            .set({
-              receivedQuantity: sql`${purchaseItems.receivedQuantity} + ${item.receivedQuantity}`,
+          // Update received quantities and add to inventory
+          for (const item of receivedItems) {
+            const purchaseItem = await txDb.query.purchaseItems.findFirst({
+              where: eq(purchaseItems.id, item.itemId),
             })
-            .where(eq(purchaseItems.id, item.itemId))
 
-          // Add to inventory
-          const existingInventory = await db.query.inventory.findFirst({
-            where: and(eq(inventory.productId, purchaseItem.productId), eq(inventory.branchId, purchase.branchId)),
-          })
+            if (!purchaseItem) continue
 
-          if (existingInventory) {
-            await db
-              .update(inventory)
+            // Update purchase item
+            await txDb
+              .update(purchaseItems)
               .set({
-                quantity: sql`${inventory.quantity} + ${item.receivedQuantity}`,
-                lastRestockDate: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
+                receivedQuantity: sql`${purchaseItems.receivedQuantity} + ${item.receivedQuantity}`,
               })
-              .where(eq(inventory.id, existingInventory.id))
-          } else {
-            await db.insert(inventory).values({
+              .where(eq(purchaseItems.id, item.itemId))
+
+            // Add to inventory
+            const existingInventory = await txDb.query.inventory.findFirst({
+              where: and(eq(inventory.productId, purchaseItem.productId), eq(inventory.branchId, purchase.branchId)),
+            })
+
+            if (existingInventory) {
+              await txDb
+                .update(inventory)
+                .set({
+                  quantity: sql`${inventory.quantity} + ${item.receivedQuantity}`,
+                  lastRestockDate: new Date().toISOString(),
+                  updatedAt: new Date().toISOString(),
+                })
+                .where(eq(inventory.id, existingInventory.id))
+            } else {
+              await txDb.insert(inventory).values({
+                productId: purchaseItem.productId,
+                branchId: purchase.branchId,
+                quantity: item.receivedQuantity,
+                lastRestockDate: new Date().toISOString(),
+              })
+            }
+
+            // Create cost layer for FIFO tracking (instead of overwriting product.costPrice)
+            await addCostLayer({
               productId: purchaseItem.productId,
               branchId: purchase.branchId,
+              purchaseItemId: purchaseItem.id,
               quantity: item.receivedQuantity,
-              lastRestockDate: new Date().toISOString(),
+              unitCost: purchaseItem.unitCost,
+              receivedDate: new Date().toISOString(),
             })
+
+            receivedItemDetails.push({
+              unitCost: purchaseItem.unitCost,
+              receivedQuantity: item.receivedQuantity,
+              purchaseItemId: purchaseItem.id,
+            })
+
+            // NOTE: We intentionally DO NOT update products.costPrice here anymore
+            // The FIFO cost layers handle cost tracking properly
           }
 
-          // Update product cost price if needed
-          await db
-            .update(products)
+          // Check if all items are received
+          const allItems = await txDb.query.purchaseItems.findMany({
+            where: eq(purchaseItems.purchaseId, purchaseId),
+          })
+
+          const allReceived = allItems.every((item) => item.receivedQuantity >= item.quantity)
+          const partiallyReceived = allItems.some((item) => item.receivedQuantity > 0)
+
+          const newStatus = allReceived ? 'received' : partiallyReceived ? 'partial' : purchase.status
+
+          await txDb
+            .update(purchases)
             .set({
-              costPrice: purchaseItem.unitCost,
+              status: newStatus,
+              receivedDate: allReceived ? new Date().toISOString() : null,
               updatedAt: new Date().toISOString(),
             })
-            .where(eq(products.id, purchaseItem.productId))
-        }
+            .where(eq(purchases.id, purchaseId))
 
-        // Check if all items are received
-        const allItems = await db.query.purchaseItems.findMany({
-          where: eq(purchaseItems.purchaseId, purchaseId),
+          // Post to General Ledger
+          if (receivedItemDetails.length > 0) {
+            await postPurchaseReceiveToGL(purchase, receivedItemDetails, session?.userId ?? 0)
+          }
+
+          return { newStatus, receivedItemDetails }
         })
-
-        const allReceived = allItems.every((item) => item.receivedQuantity >= item.quantity)
-        const partiallyReceived = allItems.some((item) => item.receivedQuantity > 0)
-
-        const newStatus = allReceived ? 'received' : partiallyReceived ? 'partial' : purchase.status
-
-        await db
-          .update(purchases)
-          .set({
-            status: newStatus,
-            receivedDate: allReceived ? new Date().toISOString() : null,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(purchases.id, purchaseId))
 
         await createAuditLog({
           userId: session?.userId,
@@ -306,7 +331,7 @@ export function registerPurchaseHandlers(): void {
           entityType: 'purchase',
           entityId: purchaseId,
           newValues: {
-            status: newStatus,
+            status: result.newStatus,
             receivedItems: receivedItems.length,
           },
           description: `Received items for purchase: ${purchase.purchaseOrderNumber}`,

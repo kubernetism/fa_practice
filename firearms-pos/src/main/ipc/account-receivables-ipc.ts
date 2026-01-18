@@ -13,6 +13,8 @@ import {
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
+import { withTransaction } from '../utils/db-transaction'
+import { postARPaymentToGL } from '../utils/gl-posting'
 
 interface PaginationParams {
   page?: number
@@ -311,53 +313,69 @@ export function registerAccountReceivablesHandlers(): void {
       const newRemainingAmount = receivable.totalAmount - newPaidAmount
       const newStatus = newRemainingAmount <= 0 ? 'paid' : 'partial'
 
-      // 1. Record the payment
-      const [payment] = await db
-        .insert(receivablePayments)
-        .values({
-          receivableId: data.receivableId,
-          amount: data.amount,
-          paymentMethod: data.paymentMethod,
-          referenceNumber: data.referenceNumber,
-          notes: data.notes,
-          receivedBy: session.userId,
-        })
-        .returning()
+      // Execute all operations in a transaction
+      const result = await withTransaction(async ({ db: txDb }) => {
+        // 1. Record the payment
+        const [payment] = await txDb
+          .insert(receivablePayments)
+          .values({
+            receivableId: data.receivableId,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            referenceNumber: data.referenceNumber,
+            notes: data.notes,
+            receivedBy: session.userId,
+          })
+          .returning()
 
-      // 2. Update receivable amounts
-      await db
-        .update(accountReceivables)
-        .set({
-          paidAmount: newPaidAmount,
-          remainingAmount: Math.max(0, newRemainingAmount),
-          status: newStatus,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(accountReceivables.id, data.receivableId))
+        // 2. Update receivable amounts
+        await txDb
+          .update(accountReceivables)
+          .set({
+            paidAmount: newPaidAmount,
+            remainingAmount: Math.max(0, newRemainingAmount),
+            status: newStatus,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(accountReceivables.id, data.receivableId))
 
-      // 3. Sync with sales table if this receivable is linked to a sale
-      if (receivable.saleId) {
-        const sale = await db.query.sales.findFirst({
-          where: eq(sales.id, receivable.saleId),
-        })
+        // 3. Sync with sales table if this receivable is linked to a sale
+        if (receivable.saleId) {
+          const sale = await txDb.query.sales.findFirst({
+            where: eq(sales.id, receivable.saleId),
+          })
 
-        if (sale) {
-          const newSaleAmountPaid = sale.amountPaid + data.amount
-          const saleOutstanding = sale.totalAmount - newSaleAmountPaid
-          const newSalePaymentStatus = saleOutstanding <= 0 ? 'paid' : 'partial'
+          if (sale) {
+            const newSaleAmountPaid = sale.amountPaid + data.amount
+            const saleOutstanding = sale.totalAmount - newSaleAmountPaid
+            const newSalePaymentStatus = saleOutstanding <= 0 ? 'paid' : 'partial'
 
-          await db
-            .update(sales)
-            .set({
-              amountPaid: newSaleAmountPaid,
-              paymentStatus: newSalePaymentStatus,
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(sales.id, receivable.saleId))
+            await txDb
+              .update(sales)
+              .set({
+                amountPaid: newSaleAmountPaid,
+                paymentStatus: newSalePaymentStatus,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(sales.id, receivable.saleId))
+          }
         }
-      }
 
-      const result = payment
+        // 4. Post to General Ledger
+        await postARPaymentToGL(
+          {
+            id: payment.id,
+            receivableId: data.receivableId,
+            branchId: receivable.branchId,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            invoiceNumber: receivable.invoiceNumber,
+          },
+          session.userId
+        )
+
+        return payment
+      })
 
       await createAuditLog({
         userId: session.userId,

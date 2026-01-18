@@ -5,6 +5,8 @@ import { expenses, type NewExpense, accountPayables } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
+import { withTransaction } from '../utils/db-transaction'
+import { postExpenseToGL } from '../utils/gl-posting'
 
 export function registerExpenseHandlers(): void {
   const db = getDatabase()
@@ -131,27 +133,28 @@ export function registerExpenseHandlers(): void {
         }
       }
 
-      let payableId: number | undefined = undefined
+      // Execute all operations in a transaction
+      const result = await withTransaction(async ({ db: txDb }) => {
+        let payableId: number | undefined = undefined
 
-      // Create expense first
-      const result = await db
-        .insert(expenses)
-        .values({
-          ...data,
-          userId: session?.userId ?? 0,
-          payableId: undefined, // Will be updated after payable creation
-        })
-        .returning()
+        // Create expense first
+        const expenseResult = await txDb
+          .insert(expenses)
+          .values({
+            ...data,
+            userId: session?.userId ?? 0,
+            payableId: undefined, // Will be updated after payable creation
+          })
+          .returning()
 
-      const newExpense = result[0]
+        const newExpense = expenseResult[0]
 
-      // Auto-create payable for unpaid expenses
-      if (data.paymentStatus === 'unpaid' && data.supplierId) {
-        try {
+        // Auto-create payable for unpaid expenses
+        if (data.paymentStatus === 'unpaid' && data.supplierId) {
           // Generate invoice number for the payable
           const invoiceNumber = `EXP-${newExpense.id}-${Date.now()}`
 
-          const payableResult = await db
+          const payableResult = await txDb
             .insert(accountPayables)
             .values({
               supplierId: data.supplierId,
@@ -173,32 +176,47 @@ export function registerExpenseHandlers(): void {
           payableId = newPayable.id
 
           // Update expense with payableId
-          await db
+          await txDb
             .update(expenses)
             .set({ payableId: newPayable.id })
             .where(eq(expenses.id, newExpense.id))
-
-          // Audit log for payable creation
-          await createAuditLog({
-            userId: session?.userId,
-            branchId: data.branchId,
-            action: 'create',
-            entityType: 'account_payable',
-            entityId: newPayable.id,
-            newValues: {
-              supplierId: data.supplierId,
-              invoiceNumber: invoiceNumber,
-              totalAmount: data.amount,
-              source: 'expense',
-              expenseId: newExpense.id,
-            },
-            description: `Auto-created payable from expense #${newExpense.id}`,
-          })
-        } catch (payableError) {
-          console.error('Failed to create payable for expense:', payableError)
-          // Don't fail the entire expense creation, but log the error
-          // The expense is still created, payable can be created manually
         }
+
+        // Post to General Ledger
+        await postExpenseToGL(
+          {
+            id: newExpense.id,
+            branchId: data.branchId,
+            category: data.category,
+            amount: data.amount,
+            paymentStatus: data.paymentStatus || 'paid',
+            paymentMethod: data.paymentMethod,
+            description: data.description,
+          },
+          session?.userId ?? 0
+        )
+
+        return { newExpense, payableId }
+      })
+
+      // Audit log for payable creation (if created)
+      if (result.payableId && data.supplierId) {
+        const invoiceNumber = `EXP-${result.newExpense.id}-${Date.now()}`
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: data.branchId,
+          action: 'create',
+          entityType: 'account_payable',
+          entityId: result.payableId,
+          newValues: {
+            supplierId: data.supplierId,
+            invoiceNumber: invoiceNumber,
+            totalAmount: data.amount,
+            source: 'expense',
+            expenseId: result.newExpense.id,
+          },
+          description: `Auto-created payable from expense #${result.newExpense.id}`,
+        })
       }
 
       await createAuditLog({
@@ -206,18 +224,18 @@ export function registerExpenseHandlers(): void {
         branchId: data.branchId,
         action: 'create',
         entityType: 'expense',
-        entityId: newExpense.id,
+        entityId: result.newExpense.id,
         newValues: sanitizeForAudit({
           ...data,
-          payableId,
+          payableId: result.payableId,
         } as Record<string, unknown>),
         description: `Created ${data.paymentStatus || 'paid'} expense: ${data.category} - $${data.amount}`,
       })
 
       return {
         success: true,
-        data: { ...newExpense, payableId },
-        payableCreated: !!payableId,
+        data: { ...result.newExpense, payableId: result.payableId },
+        payableCreated: !!result.payableId,
       }
     } catch (error) {
       console.error('Create expense error:', error)
