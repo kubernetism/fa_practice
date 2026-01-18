@@ -3237,7 +3237,8 @@ function registerSalesHandlers() {
         });
       }
       const discountAmount = data.discountAmount || 0;
-      const totalAmount = subtotal + taxAmount - discountAmount;
+      const codCharges = data.codCharges || 0;
+      const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === "cod" ? codCharges : 0);
       const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0;
       const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
       const invoiceNumber = generateInvoiceNumber();
@@ -3294,6 +3295,19 @@ function registerSalesHandlers() {
           remainingAmount: outstandingAmount,
           status: "pending",
           createdBy: session?.userId
+        });
+      }
+      if (data.paymentMethod === "cod" && codCharges > 0) {
+        await db2.insert(expenses).values({
+          branchId: data.branchId,
+          userId: session?.userId ?? 0,
+          category: "other",
+          amount: codCharges,
+          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${data.codName || "N/A"}, Phone: ${data.codPhone || "N/A"}`,
+          paymentMethod: "cash",
+          reference: invoiceNumber,
+          paymentStatus: "unpaid"
+          // Mark as unpaid - to be paid to courier later
         });
       }
       await createAuditLog$1({
@@ -4053,7 +4067,8 @@ function registerSalesTabsHandlers() {
       const subtotal = tab.subtotal;
       const taxAmount = tab.tax;
       const discountAmount = checkoutData.discount ?? 0;
-      const totalAmount = subtotal + taxAmount - discountAmount;
+      const codCharges = checkoutData.codCharges ?? 0;
+      const totalAmount = subtotal + taxAmount - discountAmount + (checkoutData.paymentMethod === "cod" ? codCharges : 0);
       const amountPaid = checkoutData.amountPaid ?? 0;
       const changeGiven = amountPaid > totalAmount ? amountPaid - totalAmount : 0;
       let paymentStatus = "paid";
@@ -4076,6 +4091,10 @@ COD Details:
 Name: ${checkoutData.codName}
 Phone: ${checkoutData.codPhone}
 Address: ${checkoutData.codAddress}, ${checkoutData.codCity}`;
+        if (codCharges > 0) {
+          saleNotes = `${saleNotes}
+COD Charges: ${codCharges}`;
+        }
       }
       const [sale] = await db2.insert(sales).values({
         invoiceNumber,
@@ -4135,6 +4154,19 @@ Address: ${checkoutData.codAddress}, ${checkoutData.codCity}`;
           remainingAmount: totalAmount,
           status: "pending",
           createdBy: session.userId
+        });
+      }
+      if (checkoutData.paymentMethod === "cod" && codCharges > 0) {
+        await db2.insert(expenses).values({
+          branchId: tab.branchId,
+          userId: session.userId,
+          category: "other",
+          amount: codCharges,
+          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${checkoutData.codName}, Phone: ${checkoutData.codPhone}`,
+          paymentMethod: "cash",
+          reference: invoiceNumber,
+          paymentStatus: "unpaid"
+          // Mark as unpaid - to be paid to courier later
         });
       }
       await db2.update(salesTabs).set({
