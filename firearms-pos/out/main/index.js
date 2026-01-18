@@ -1242,6 +1242,57 @@ const messagesRelations = drizzleOrm.relations(messages, ({ one }) => ({
     relationName: "messageRecipient"
   })
 }));
+const inventoryCostLayers = sqliteCore.sqliteTable(
+  "inventory_cost_layers",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    productId: sqliteCore.integer("product_id").notNull().references(() => products.id),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    purchaseItemId: sqliteCore.integer("purchase_item_id").references(() => purchaseItems.id),
+    // Links to purchase for traceability
+    quantity: sqliteCore.integer("quantity").notNull(),
+    // Remaining quantity in this layer
+    originalQuantity: sqliteCore.integer("original_quantity").notNull(),
+    // Original quantity when layer was created
+    unitCost: sqliteCore.real("unit_cost").notNull(),
+    // Cost per unit in this layer
+    receivedDate: sqliteCore.text("received_date").notNull(),
+    // Date layer was created (for FIFO ordering)
+    isFullyConsumed: sqliteCore.integer("is_fully_consumed", { mode: "boolean" }).notNull().default(false),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    // Index for FIFO queries - oldest first by received date
+    productBranchDateIdx: sqliteCore.index("icl_product_branch_date_idx").on(
+      table.productId,
+      table.branchId,
+      table.receivedDate
+    ),
+    // Index for finding active (not fully consumed) layers
+    activeLayersIdx: sqliteCore.index("icl_active_layers_idx").on(
+      table.productId,
+      table.branchId,
+      table.isFullyConsumed
+    ),
+    // Index for purchase traceability
+    purchaseItemIdx: sqliteCore.index("icl_purchase_item_idx").on(table.purchaseItemId)
+  })
+);
+const inventoryCostLayersRelations = drizzleOrm.relations(inventoryCostLayers, ({ one }) => ({
+  product: one(products, {
+    fields: [inventoryCostLayers.productId],
+    references: [products.id]
+  }),
+  branch: one(branches, {
+    fields: [inventoryCostLayers.branchId],
+    references: [branches.id]
+  }),
+  purchaseItem: one(purchaseItems, {
+    fields: [inventoryCostLayers.purchaseItemId],
+    references: [purchaseItems.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1266,6 +1317,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   expenses,
   expensesRelations,
   inventory,
+  inventoryCostLayers,
+  inventoryCostLayersRelations,
   journalEntries,
   journalEntriesRelations,
   journalEntryLines,
@@ -1582,6 +1635,11 @@ async function runMigrations() {
     await ensureFinancialSystemTables();
   } catch (error) {
     console.error("Financial system tables migration error:", error);
+  }
+  try {
+    await ensureInventoryCostLayersTable();
+  } catch (error) {
+    console.error("Inventory cost layers table migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -1996,6 +2054,7 @@ async function ensureFinancialSystemTables() {
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1100', 'Accounts Receivable', 'asset', 'accounts_receivable', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1200', 'Inventory', 'asset', 'inventory', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('2000', 'Accounts Payable', 'liability', 'accounts_payable', 'credit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('2100', 'Sales Tax Payable', 'liability', 'other_liability', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('3000', 'Owner Capital', 'equity', 'owner_capital', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('3100', 'Retained Earnings', 'equity', 'retained_earnings', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4000', 'Sales Revenue', 'revenue', 'sales_revenue', 'credit', 1, datetime('now'), datetime('now'));
@@ -2105,6 +2164,42 @@ async function ensureFinancialSystemTables() {
     console.log("account_balances table created successfully!");
   } else {
     console.log("account_balances table exists: true");
+  }
+}
+async function ensureInventoryCostLayersTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_cost_layers'`
+  ).get();
+  if (!tableCheck) {
+    console.log("Creating inventory_cost_layers table...");
+    const costLayersMigration = `
+      CREATE TABLE IF NOT EXISTS "inventory_cost_layers" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "product_id" integer NOT NULL,
+        "branch_id" integer NOT NULL,
+        "purchase_item_id" integer,
+        "quantity" integer NOT NULL,
+        "original_quantity" integer NOT NULL,
+        "unit_cost" real NOT NULL,
+        "received_date" text NOT NULL,
+        "is_fully_consumed" integer DEFAULT 0 NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("product_id") REFERENCES "products"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("purchase_item_id") REFERENCES "purchase_items"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "icl_product_branch_date_idx" ON "inventory_cost_layers" ("product_id", "branch_id", "received_date");
+      CREATE INDEX IF NOT EXISTS "icl_active_layers_idx" ON "inventory_cost_layers" ("product_id", "branch_id", "is_fully_consumed");
+      CREATE INDEX IF NOT EXISTS "icl_purchase_item_idx" ON "inventory_cost_layers" ("purchase_item_id");
+    `;
+    db2.exec(costLayersMigration);
+    console.log("inventory_cost_layers table created successfully!");
+  } else {
+    console.log("inventory_cost_layers table exists: true");
   }
 }
 async function createAuditLog$1(params) {
@@ -2586,6 +2681,19 @@ function isLicenseExpiringSoon(expiryDate, daysThreshold = 30) {
   threshold.setDate(threshold.getDate() + daysThreshold);
   return expiry <= threshold;
 }
+async function withTransaction(fn) {
+  const rawDb = getRawDatabase();
+  const db2 = getDatabase();
+  rawDb.exec("BEGIN IMMEDIATE");
+  try {
+    const result = await fn({ rawDb, db: db2 });
+    rawDb.exec("COMMIT");
+    return result;
+  } catch (error) {
+    rawDb.exec("ROLLBACK");
+    throw error;
+  }
+}
 function registerInventoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("inventory:get-by-branch", async (_, branchId) => {
@@ -2761,31 +2869,33 @@ function registerInventoryHandlers() {
       if (transfer.status !== "pending" && transfer.status !== "in_transit") {
         return { success: false, message: "Transfer cannot be completed" };
       }
-      await db2.update(inventory).set({
-        quantity: drizzleOrm.sql`${inventory.quantity} - ${transfer.quantity}`,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, transfer.productId), drizzleOrm.eq(inventory.branchId, transfer.fromBranchId)));
-      const destInventory = await db2.query.inventory.findFirst({
-        where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, transfer.productId), drizzleOrm.eq(inventory.branchId, transfer.toBranchId))
-      });
-      if (destInventory) {
-        await db2.update(inventory).set({
-          quantity: drizzleOrm.sql`${inventory.quantity} + ${transfer.quantity}`,
+      await withTransaction(async ({ db: txDb }) => {
+        await txDb.update(inventory).set({
+          quantity: drizzleOrm.sql`${inventory.quantity} - ${transfer.quantity}`,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(inventory.id, destInventory.id));
-      } else {
-        await db2.insert(inventory).values({
-          productId: transfer.productId,
-          branchId: transfer.toBranchId,
-          quantity: transfer.quantity
+        }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, transfer.productId), drizzleOrm.eq(inventory.branchId, transfer.fromBranchId)));
+        const destInventory = await txDb.query.inventory.findFirst({
+          where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, transfer.productId), drizzleOrm.eq(inventory.branchId, transfer.toBranchId))
         });
-      }
-      await db2.update(stockTransfers).set({
-        status: "completed",
-        receivedDate: (/* @__PURE__ */ new Date()).toISOString(),
-        receivedBy: session?.userId,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(stockTransfers.id, transferId));
+        if (destInventory) {
+          await txDb.update(inventory).set({
+            quantity: drizzleOrm.sql`${inventory.quantity} + ${transfer.quantity}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(inventory.id, destInventory.id));
+        } else {
+          await txDb.insert(inventory).values({
+            productId: transfer.productId,
+            branchId: transfer.toBranchId,
+            quantity: transfer.quantity
+          });
+        }
+        await txDb.update(stockTransfers).set({
+          status: "completed",
+          receivedDate: (/* @__PURE__ */ new Date()).toISOString(),
+          receivedBy: session?.userId,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(stockTransfers.id, transferId));
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: transfer.toBranchId,
@@ -3161,6 +3271,374 @@ function registerSupplierHandlers() {
     }
   });
 }
+const ACCOUNT_CODES = {
+  CASH_IN_HAND: "1010",
+  CASH_IN_BANK: "1020",
+  ACCOUNTS_RECEIVABLE: "1100",
+  INVENTORY: "1200",
+  ACCOUNTS_PAYABLE: "2000",
+  SALES_TAX_PAYABLE: "2100",
+  SALES_REVENUE: "4000",
+  COGS: "5000"
+};
+function generateJournalEntryNumber() {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
+  return `JE-${year}-${timestamp}${random}`;
+}
+async function getAccountId(accountCode) {
+  const db2 = getDatabase();
+  const account = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
+  });
+  if (!account) {
+    throw new Error(`Account with code ${accountCode} not found`);
+  }
+  return account.id;
+}
+async function createJournalEntry(params) {
+  const db2 = getDatabase();
+  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
+  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
+  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
+  if (Math.abs(totalDebits - totalCredits) > 0.01) {
+    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
+  }
+  const entryNumber = generateJournalEntryNumber();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const [entry] = await db2.insert(journalEntries).values({
+    entryNumber,
+    entryDate: entryDate || now.split("T")[0],
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    status: isAutoGenerated ? "posted" : "draft",
+    isAutoGenerated,
+    createdBy: userId,
+    postedBy: isAutoGenerated ? userId : null,
+    postedAt: isAutoGenerated ? now : null
+  }).returning();
+  for (const line of lines) {
+    if (line.debitAmount === 0 && line.creditAmount === 0) {
+      continue;
+    }
+    const accountId = await getAccountId(line.accountCode);
+    await db2.insert(journalEntryLines).values({
+      journalEntryId: entry.id,
+      accountId,
+      debitAmount: line.debitAmount,
+      creditAmount: line.creditAmount,
+      description: line.description
+    });
+    if (isAutoGenerated) {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (account) {
+        let balanceChange;
+        if (account.normalBalance === "debit") {
+          balanceChange = line.debitAmount - line.creditAmount;
+        } else {
+          balanceChange = line.creditAmount - line.debitAmount;
+        }
+        await db2.update(chartOfAccounts).set({
+          currentBalance: account.currentBalance + balanceChange,
+          updatedAt: now
+        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
+      }
+    }
+  }
+  return entry.id;
+}
+async function postSaleToGL(sale, saleItems2, userId) {
+  const lines = [];
+  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  sale.paymentStatus !== "paid";
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (sale.amountPaid > 0) {
+    lines.push({
+      accountCode: cashAccountCode,
+      debitAmount: sale.amountPaid,
+      creditAmount: 0,
+      description: `Cash received for sale ${sale.invoiceNumber}`
+    });
+  }
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: receivableAmount,
+      creditAmount: 0,
+      description: `Receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: 0,
+      creditAmount: netRevenue,
+      description: `Revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: 0,
+      creditAmount: sale.taxAmount,
+      description: `Sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Cost of goods sold for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Inventory reduction for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
+  const lines = [];
+  const totalValue = receivedItems.reduce(
+    (sum, item) => sum + item.unitCost * item.receivedQuantity,
+    0
+  );
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value purchase to GL");
+  }
+  lines.push({
+    accountCode: ACCOUNT_CODES.INVENTORY,
+    debitAmount: totalValue,
+    creditAmount: 0,
+    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
+  });
+  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payable for PO ${purchase.purchaseOrderNumber}`
+    });
+  } else {
+    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payment for PO ${purchase.purchaseOrderNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
+    referenceType: "purchase",
+    referenceId: purchase.id,
+    branchId: purchase.branchId,
+    userId
+  });
+}
+async function postExpenseToGL(expense, userId) {
+  return createJournalEntry({
+    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ""}`,
+    referenceType: "expense",
+    referenceId: expense.id,
+    branchId: expense.branchId,
+    userId
+  });
+}
+async function postReturnToGL(returnData, returnItems2, userId) {
+  returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
+  return createJournalEntry({
+    description: `Return: ${returnData.returnNumber}`,
+    referenceType: "return",
+    referenceId: returnData.id,
+    branchId: returnData.branchId,
+    userId
+  });
+}
+async function postARPaymentToGL(payment, userId) {
+  return createJournalEntry({
+    description: `AR Payment: ${payment.invoiceNumber}`,
+    referenceType: "receivable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId
+  });
+}
+async function postAPPaymentToGL(payment, userId) {
+  return createJournalEntry({
+    description: `AP Payment: ${payment.invoiceNumber}`,
+    referenceType: "payable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId
+  });
+}
+async function postVoidSaleToGL(sale, saleItems2, userId) {
+  const lines = [];
+  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  if (sale.amountPaid > 0) {
+    lines.push({
+      accountCode: cashAccountCode,
+      debitAmount: 0,
+      creditAmount: sale.amountPaid,
+      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
+    });
+  }
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: 0,
+      creditAmount: receivableAmount,
+      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: sale.taxAmount,
+      creditAmount: 0,
+      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Void - reverse COGS for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Void - restore inventory for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Void Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale_void",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId
+  });
+}
+async function consumeCostLayersFIFO(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const layers = await db2.query.inventoryCostLayers.findMany({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(inventoryCostLayers.productId, productId),
+      drizzleOrm.eq(inventoryCostLayers.branchId, branchId),
+      drizzleOrm.eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: drizzleOrm.asc(inventoryCostLayers.receivedDate)
+  });
+  let remainingQty = quantity;
+  let totalCost = 0;
+  const layersConsumed = [];
+  for (const layer of layers) {
+    if (remainingQty <= 0) break;
+    const consumeQty = Math.min(remainingQty, layer.quantity);
+    const layerCost = consumeQty * layer.unitCost;
+    totalCost += layerCost;
+    remainingQty -= consumeQty;
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: layer.unitCost,
+      cost: layerCost
+    });
+    const newQuantity = layer.quantity - consumeQty;
+    const isFullyConsumed = newQuantity <= 0;
+    await db2.update(inventoryCostLayers).set({
+      quantity: newQuantity,
+      isFullyConsumed,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(inventoryCostLayers.id, layer.id));
+  }
+  if (remainingQty > 0) {
+    const product = await db2.query.products.findFirst({
+      where: drizzleOrm.eq(products.id, productId)
+    });
+    if (product) {
+      const fallbackCost = remainingQty * product.costPrice;
+      totalCost += fallbackCost;
+      layersConsumed.push({
+        layerId: -1,
+        // Indicates fallback to product cost
+        quantityConsumed: remainingQty,
+        unitCost: product.costPrice,
+        cost: fallbackCost
+      });
+      console.warn(
+        `FIFO: Insufficient cost layers for product ${productId}. Used product.costPrice (${product.costPrice}) for ${remainingQty} units.`
+      );
+    }
+  }
+  return { totalCost, layersConsumed };
+}
+async function addCostLayer(data) {
+  const db2 = getDatabase();
+  const [layer] = await db2.insert(inventoryCostLayers).values({
+    productId: data.productId,
+    branchId: data.branchId,
+    purchaseItemId: data.purchaseItemId,
+    quantity: data.quantity,
+    originalQuantity: data.quantity,
+    unitCost: data.unitCost,
+    receivedDate: data.receivedDate || (/* @__PURE__ */ new Date()).toISOString(),
+    isFullyConsumed: false
+  }).returning();
+  return layer.id;
+}
+async function restoreCostLayers(data) {
+  const db2 = getDatabase();
+  const [layer] = await db2.insert(inventoryCostLayers).values({
+    productId: data.productId,
+    branchId: data.branchId,
+    purchaseItemId: null,
+    // Not linked to a purchase
+    quantity: data.quantity,
+    originalQuantity: data.quantity,
+    unitCost: data.unitCost,
+    receivedDate: (/* @__PURE__ */ new Date()).toISOString(),
+    isFullyConsumed: false
+  }).returning();
+  return layer.id;
+}
 function registerSalesHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("sales:create", async (_, data) => {
@@ -3213,123 +3691,138 @@ function registerSalesHandlers() {
           }
         }
       }
-      let subtotal = 0;
-      let taxAmount = 0;
-      const saleItemsData = [];
-      for (const item of data.items) {
-        const itemSubtotal = item.unitPrice * item.quantity;
-        const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100);
-        const itemTaxable = itemSubtotal - itemDiscount;
-        const itemTax = itemTaxable * ((item.taxRate || 0) / 100);
-        const itemTotal = itemTaxable + itemTax;
-        subtotal += itemSubtotal;
-        taxAmount += itemTax;
-        saleItemsData.push({
-          productId: item.productId,
-          serialNumber: item.serialNumber,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          costPrice: item.costPrice,
-          discountPercent: item.discountPercent || 0,
-          discountAmount: itemDiscount,
-          taxAmount: itemTax,
-          totalPrice: itemTotal
-        });
-      }
-      const discountAmount = data.discountAmount || 0;
-      const codCharges = data.codCharges || 0;
-      const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === "cod" ? codCharges : 0);
-      const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0;
-      const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
-      const invoiceNumber = generateInvoiceNumber();
-      const outstandingAmount = totalAmount - data.amountPaid;
-      const [sale] = await db2.insert(sales).values({
-        invoiceNumber,
-        customerId: data.customerId,
-        branchId: data.branchId,
-        userId: session?.userId ?? 0,
-        subtotal,
-        taxAmount,
-        discountAmount,
-        totalAmount,
-        paymentMethod: data.paymentMethod,
-        paymentStatus,
-        amountPaid: data.amountPaid,
-        changeGiven,
-        notes: data.notes
-      }).returning();
-      for (const item of saleItemsData) {
-        await db2.insert(saleItems).values({
-          ...item,
-          saleId: sale.id
-        });
-      }
-      for (const item of data.items) {
-        await db2.update(inventory).set({
-          quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId)));
-      }
-      if (session?.userId) {
-        const commissionRate = 2;
-        const commissionAmount = subtotal * (commissionRate / 100);
-        await db2.insert(commissions).values({
-          saleId: sale.id,
-          userId: session.userId,
-          branchId: data.branchId,
-          commissionType: "sale",
-          baseAmount: subtotal,
-          rate: commissionRate,
-          commissionAmount,
-          status: "pending"
-        });
-      }
-      if (outstandingAmount > 0 && data.customerId) {
-        await db2.insert(accountReceivables).values({
-          customerId: data.customerId,
-          saleId: sale.id,
-          branchId: data.branchId,
+      const result = await withTransaction(async ({ db: txDb }) => {
+        let subtotal = 0;
+        let taxAmount = 0;
+        const saleItemsData = [];
+        for (const item of data.items) {
+          const fifoResult = await consumeCostLayersFIFO(
+            item.productId,
+            data.branchId,
+            item.quantity
+          );
+          const actualCostPerUnit = item.quantity > 0 ? fifoResult.totalCost / item.quantity : item.costPrice;
+          const itemSubtotal = item.unitPrice * item.quantity;
+          const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100);
+          const itemTaxable = itemSubtotal - itemDiscount;
+          const itemTax = itemTaxable * ((item.taxRate || 0) / 100);
+          const itemTotal = itemTaxable + itemTax;
+          subtotal += itemSubtotal;
+          taxAmount += itemTax;
+          saleItemsData.push({
+            productId: item.productId,
+            serialNumber: item.serialNumber,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            costPrice: actualCostPerUnit,
+            // Use FIFO cost instead of frontend cost
+            discountPercent: item.discountPercent || 0,
+            discountAmount: itemDiscount,
+            taxAmount: itemTax,
+            totalPrice: itemTotal,
+            fifoCost: fifoResult.totalCost
+            // Track total FIFO cost for GL posting
+          });
+        }
+        const discountAmount = data.discountAmount || 0;
+        const codCharges = data.codCharges || 0;
+        const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === "cod" ? codCharges : 0);
+        const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0;
+        const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
+        const invoiceNumber = generateInvoiceNumber();
+        const outstandingAmount = totalAmount - data.amountPaid;
+        const [sale] = await txDb.insert(sales).values({
           invoiceNumber,
-          totalAmount: outstandingAmount,
-          paidAmount: 0,
-          remainingAmount: outstandingAmount,
-          status: "pending",
-          createdBy: session?.userId
-        });
-      }
-      if (data.paymentMethod === "cod" && codCharges > 0) {
-        await db2.insert(expenses).values({
+          customerId: data.customerId,
           branchId: data.branchId,
           userId: session?.userId ?? 0,
-          category: "other",
-          amount: codCharges,
-          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${data.codName || "N/A"}, Phone: ${data.codPhone || "N/A"}`,
-          paymentMethod: "cash",
-          reference: invoiceNumber,
-          paymentStatus: "unpaid"
-          // Mark as unpaid - to be paid to courier later
-        });
-      }
+          subtotal,
+          taxAmount,
+          discountAmount,
+          totalAmount,
+          paymentMethod: data.paymentMethod,
+          paymentStatus,
+          amountPaid: data.amountPaid,
+          changeGiven,
+          notes: data.notes
+        }).returning();
+        const createdSaleItems = [];
+        for (const item of saleItemsData) {
+          const { fifoCost, ...itemData } = item;
+          await txDb.insert(saleItems).values({
+            ...itemData,
+            saleId: sale.id
+          });
+          createdSaleItems.push({ costPrice: item.costPrice, quantity: item.quantity });
+        }
+        for (const item of data.items) {
+          await txDb.update(inventory).set({
+            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId)));
+        }
+        if (session?.userId) {
+          const commissionRate = 2;
+          const commissionAmount = subtotal * (commissionRate / 100);
+          await txDb.insert(commissions).values({
+            saleId: sale.id,
+            userId: session.userId,
+            branchId: data.branchId,
+            commissionType: "sale",
+            baseAmount: subtotal,
+            rate: commissionRate,
+            commissionAmount,
+            status: "pending"
+          });
+        }
+        if (outstandingAmount > 0 && data.customerId) {
+          await txDb.insert(accountReceivables).values({
+            customerId: data.customerId,
+            saleId: sale.id,
+            branchId: data.branchId,
+            invoiceNumber,
+            totalAmount: outstandingAmount,
+            paidAmount: 0,
+            remainingAmount: outstandingAmount,
+            status: "pending",
+            createdBy: session?.userId
+          });
+        }
+        if (data.paymentMethod === "cod" && codCharges > 0) {
+          await txDb.insert(expenses).values({
+            branchId: data.branchId,
+            userId: session?.userId ?? 0,
+            category: "other",
+            amount: codCharges,
+            description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${data.codName || "N/A"}, Phone: ${data.codPhone || "N/A"}`,
+            paymentMethod: "cash",
+            reference: invoiceNumber,
+            paymentStatus: "unpaid"
+          });
+        }
+        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0);
+        return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "create",
         entityType: "sale",
-        entityId: sale.id,
+        entityId: result.sale.id,
         newValues: {
-          invoiceNumber,
-          subtotal,
-          discountAmount,
-          taxAmount,
-          totalAmount,
+          invoiceNumber: result.invoiceNumber,
+          subtotal: result.subtotal,
+          discountAmount: result.discountAmount,
+          taxAmount: result.taxAmount,
+          totalAmount: result.totalAmount,
           paymentMethod: data.paymentMethod,
-          paymentStatus,
+          paymentStatus: result.paymentStatus,
           amountPaid: data.amountPaid,
           itemCount: data.items.length
         },
-        description: `Created sale: ${invoiceNumber}${discountAmount > 0 ? ` (Discount: ${discountAmount})` : ""}`
+        description: `Created sale: ${result.invoiceNumber}${result.discountAmount > 0 ? ` (Discount: ${result.discountAmount})` : ""}`
       });
-      return { success: true, data: sale };
+      return { success: true, data: result.sale };
     } catch (error) {
       console.error("Create sale error:", error);
       return { success: false, message: "Failed to create sale" };
@@ -3430,30 +3923,45 @@ function registerSalesHandlers() {
       const items = await db2.query.saleItems.findMany({
         where: drizzleOrm.eq(saleItems.saleId, id)
       });
-      for (const item of items) {
-        await db2.update(inventory).set({
-          quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
+      await withTransaction(async ({ db: txDb }) => {
+        for (const item of items) {
+          await txDb.update(inventory).set({
+            quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, sale.branchId)));
+          await restoreCostLayers({
+            productId: item.productId,
+            branchId: sale.branchId,
+            quantity: item.quantity,
+            unitCost: item.costPrice,
+            referenceType: "void",
+            referenceId: sale.id
+          });
+        }
+        await txDb.update(sales).set({
+          isVoided: true,
+          voidReason: reason,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, sale.branchId)));
-      }
-      await db2.update(sales).set({
-        isVoided: true,
-        voidReason: reason,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(sales.id, id));
-      await db2.update(commissions).set({
-        status: "cancelled",
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(commissions.saleId, id));
-      const linkedReceivable = await db2.query.accountReceivables.findFirst({
-        where: drizzleOrm.eq(accountReceivables.saleId, id)
-      });
-      if (linkedReceivable) {
-        await db2.update(accountReceivables).set({
+        }).where(drizzleOrm.eq(sales.id, id));
+        await txDb.update(commissions).set({
           status: "cancelled",
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
-      }
+        }).where(drizzleOrm.eq(commissions.saleId, id));
+        const linkedReceivable = await txDb.query.accountReceivables.findFirst({
+          where: drizzleOrm.eq(accountReceivables.saleId, id)
+        });
+        if (linkedReceivable) {
+          await txDb.update(accountReceivables).set({
+            status: "cancelled",
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
+        }
+        await postVoidSaleToGL(
+          sale,
+          items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
+          session?.userId ?? 0
+        );
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: sale.branchId,
@@ -4391,47 +4899,63 @@ function registerPurchaseHandlers() {
         if (purchase.status === "received" || purchase.status === "cancelled") {
           return { success: false, message: "Cannot receive items for this purchase order" };
         }
-        for (const item of receivedItems) {
-          const purchaseItem = await db2.query.purchaseItems.findFirst({
-            where: drizzleOrm.eq(purchaseItems.id, item.itemId)
-          });
-          if (!purchaseItem) continue;
-          await db2.update(purchaseItems).set({
-            receivedQuantity: drizzleOrm.sql`${purchaseItems.receivedQuantity} + ${item.receivedQuantity}`
-          }).where(drizzleOrm.eq(purchaseItems.id, item.itemId));
-          const existingInventory = await db2.query.inventory.findFirst({
-            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, purchaseItem.productId), drizzleOrm.eq(inventory.branchId, purchase.branchId))
-          });
-          if (existingInventory) {
-            await db2.update(inventory).set({
-              quantity: drizzleOrm.sql`${inventory.quantity} + ${item.receivedQuantity}`,
-              lastRestockDate: (/* @__PURE__ */ new Date()).toISOString(),
-              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-            }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
-          } else {
-            await db2.insert(inventory).values({
+        const result = await withTransaction(async ({ db: txDb }) => {
+          const receivedItemDetails = [];
+          for (const item of receivedItems) {
+            const purchaseItem = await txDb.query.purchaseItems.findFirst({
+              where: drizzleOrm.eq(purchaseItems.id, item.itemId)
+            });
+            if (!purchaseItem) continue;
+            await txDb.update(purchaseItems).set({
+              receivedQuantity: drizzleOrm.sql`${purchaseItems.receivedQuantity} + ${item.receivedQuantity}`
+            }).where(drizzleOrm.eq(purchaseItems.id, item.itemId));
+            const existingInventory = await txDb.query.inventory.findFirst({
+              where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, purchaseItem.productId), drizzleOrm.eq(inventory.branchId, purchase.branchId))
+            });
+            if (existingInventory) {
+              await txDb.update(inventory).set({
+                quantity: drizzleOrm.sql`${inventory.quantity} + ${item.receivedQuantity}`,
+                lastRestockDate: (/* @__PURE__ */ new Date()).toISOString(),
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+            } else {
+              await txDb.insert(inventory).values({
+                productId: purchaseItem.productId,
+                branchId: purchase.branchId,
+                quantity: item.receivedQuantity,
+                lastRestockDate: (/* @__PURE__ */ new Date()).toISOString()
+              });
+            }
+            await addCostLayer({
               productId: purchaseItem.productId,
               branchId: purchase.branchId,
+              purchaseItemId: purchaseItem.id,
               quantity: item.receivedQuantity,
-              lastRestockDate: (/* @__PURE__ */ new Date()).toISOString()
+              unitCost: purchaseItem.unitCost,
+              receivedDate: (/* @__PURE__ */ new Date()).toISOString()
+            });
+            receivedItemDetails.push({
+              unitCost: purchaseItem.unitCost,
+              receivedQuantity: item.receivedQuantity,
+              purchaseItemId: purchaseItem.id
             });
           }
-          await db2.update(products).set({
-            costPrice: purchaseItem.unitCost,
+          const allItems = await txDb.query.purchaseItems.findMany({
+            where: drizzleOrm.eq(purchaseItems.purchaseId, purchaseId)
+          });
+          const allReceived = allItems.every((item) => item.receivedQuantity >= item.quantity);
+          const partiallyReceived = allItems.some((item) => item.receivedQuantity > 0);
+          const newStatus = allReceived ? "received" : partiallyReceived ? "partial" : purchase.status;
+          await txDb.update(purchases).set({
+            status: newStatus,
+            receivedDate: allReceived ? (/* @__PURE__ */ new Date()).toISOString() : null,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(products.id, purchaseItem.productId));
-        }
-        const allItems = await db2.query.purchaseItems.findMany({
-          where: drizzleOrm.eq(purchaseItems.purchaseId, purchaseId)
+          }).where(drizzleOrm.eq(purchases.id, purchaseId));
+          if (receivedItemDetails.length > 0) {
+            await postPurchaseReceiveToGL(purchase, receivedItemDetails, session?.userId ?? 0);
+          }
+          return { newStatus, receivedItemDetails };
         });
-        const allReceived = allItems.every((item) => item.receivedQuantity >= item.quantity);
-        const partiallyReceived = allItems.some((item) => item.receivedQuantity > 0);
-        const newStatus = allReceived ? "received" : partiallyReceived ? "partial" : purchase.status;
-        await db2.update(purchases).set({
-          status: newStatus,
-          receivedDate: allReceived ? (/* @__PURE__ */ new Date()).toISOString() : null,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(purchases.id, purchaseId));
         await createAuditLog$1({
           userId: session?.userId,
           branchId: purchase.branchId,
@@ -4439,7 +4963,7 @@ function registerPurchaseHandlers() {
           entityType: "purchase",
           entityId: purchaseId,
           newValues: {
-            status: newStatus,
+            status: result.newStatus,
             receivedItems: receivedItems.length
           },
           description: `Received items for purchase: ${purchase.purchaseOrderNumber}`
@@ -4552,87 +5076,123 @@ function registerReturnHandlers() {
       if (originalSale.isVoided) {
         return { success: false, message: "Cannot return items from a voided sale" };
       }
-      let subtotal = 0;
-      let taxAmount = 0;
-      const returnItemsData = [];
-      for (const item of data.items) {
-        const totalPrice = item.unitPrice * item.quantity;
-        subtotal += totalPrice;
-        const originalItem = await db2.query.saleItems.findFirst({
-          where: drizzleOrm.eq(saleItems.id, item.saleItemId)
-        });
-        if (originalItem) {
-          const itemTax = originalItem.taxAmount / originalItem.quantity * item.quantity;
-          taxAmount += itemTax;
-        }
-        returnItemsData.push({
-          saleItemId: item.saleItemId,
-          productId: item.productId,
-          serialNumber: item.serialNumber,
-          quantity: item.quantity,
-          unitPrice: item.unitPrice,
-          totalPrice,
-          condition: item.condition,
-          restockable: item.restockable
-        });
-      }
-      const totalAmount = subtotal + taxAmount;
-      const returnNumber = generateReturnNumber();
-      const [returnRecord] = await db2.insert(returns).values({
-        returnNumber,
-        originalSaleId: data.originalSaleId,
-        customerId: data.customerId,
-        branchId: data.branchId,
-        userId: session?.userId ?? 0,
-        returnType: data.returnType,
-        subtotal,
-        taxAmount,
-        totalAmount,
-        refundMethod: data.refundMethod,
-        refundAmount: data.returnType === "refund" ? totalAmount : 0,
-        reason: data.reason,
-        notes: data.notes
-      }).returning();
-      for (const item of returnItemsData) {
-        await db2.insert(returnItems).values({
-          ...item,
-          returnId: returnRecord.id
-        });
-      }
-      for (const item of data.items) {
-        if (item.restockable) {
-          const existingInventory = await db2.query.inventory.findFirst({
-            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
+      const result = await withTransaction(async ({ db: txDb }) => {
+        let subtotal = 0;
+        let taxAmount = 0;
+        const returnItemsData = [];
+        for (const item of data.items) {
+          const totalPrice = item.unitPrice * item.quantity;
+          subtotal += totalPrice;
+          const originalItem = await txDb.query.saleItems.findFirst({
+            where: drizzleOrm.eq(saleItems.id, item.saleItemId)
           });
-          if (existingInventory) {
-            await db2.update(inventory).set({
-              quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
-              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-            }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
-          } else {
-            await db2.insert(inventory).values({
-              productId: item.productId,
-              branchId: data.branchId,
-              quantity: item.quantity
+          let itemCostPrice = 0;
+          if (originalItem) {
+            const itemTax = originalItem.taxAmount / originalItem.quantity * item.quantity;
+            taxAmount += itemTax;
+            itemCostPrice = originalItem.costPrice;
+          }
+          returnItemsData.push({
+            saleItemId: item.saleItemId,
+            productId: item.productId,
+            serialNumber: item.serialNumber,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            totalPrice,
+            condition: item.condition,
+            restockable: item.restockable,
+            costPrice: itemCostPrice
+          });
+        }
+        const totalAmount = subtotal + taxAmount;
+        const returnNumber = generateReturnNumber();
+        const [returnRecord] = await txDb.insert(returns).values({
+          returnNumber,
+          originalSaleId: data.originalSaleId,
+          customerId: data.customerId,
+          branchId: data.branchId,
+          userId: session?.userId ?? 0,
+          returnType: data.returnType,
+          subtotal,
+          taxAmount,
+          totalAmount,
+          refundMethod: data.refundMethod,
+          refundAmount: data.returnType === "refund" ? totalAmount : 0,
+          reason: data.reason,
+          notes: data.notes
+        }).returning();
+        for (const item of returnItemsData) {
+          const { costPrice, ...itemData } = item;
+          await txDb.insert(returnItems).values({
+            ...itemData,
+            returnId: returnRecord.id
+          });
+        }
+        for (const item of data.items) {
+          if (item.restockable) {
+            const existingInventory = await txDb.query.inventory.findFirst({
+              where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
             });
+            if (existingInventory) {
+              await txDb.update(inventory).set({
+                quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+            } else {
+              await txDb.insert(inventory).values({
+                productId: item.productId,
+                branchId: data.branchId,
+                quantity: item.quantity
+              });
+            }
+            const returnItemData = returnItemsData.find((ri) => ri.productId === item.productId);
+            if (returnItemData && returnItemData.costPrice > 0) {
+              await restoreCostLayers({
+                productId: item.productId,
+                branchId: data.branchId,
+                quantity: item.quantity,
+                unitCost: returnItemData.costPrice,
+                referenceType: "return",
+                referenceId: returnRecord.id
+              });
+            }
           }
         }
-      }
+        const returnItemsForGL = returnItemsData.map((item) => ({
+          costPrice: item.costPrice,
+          quantity: item.quantity,
+          restockable: item.restockable
+        }));
+        await postReturnToGL(
+          {
+            id: returnRecord.id,
+            returnNumber,
+            branchId: data.branchId,
+            subtotal,
+            taxAmount,
+            totalAmount,
+            refundMethod: data.refundMethod
+          },
+          returnItemsForGL,
+          session?.userId ?? 0
+        );
+        return { returnRecord, returnNumber, totalAmount };
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "refund",
         entityType: "return",
-        entityId: returnRecord.id,
+        entityId: result.returnRecord.id,
         newValues: {
-          returnNumber,
+          returnNumber: result.returnNumber,
           originalSaleId: data.originalSaleId,
-          totalAmount,
+          totalAmount: result.totalAmount,
           itemCount: data.items.length
         },
-        description: `Created return: ${returnNumber}`
+        description: `Created return: ${result.returnNumber}`
       });
-      return { success: true, data: returnRecord };
+      return { success: true, data: result.returnRecord };
     } catch (error) {
       console.error("Create return error:", error);
       return { success: false, message: "Failed to create return" };
@@ -5204,18 +5764,18 @@ function registerExpenseHandlers() {
           message: "Due date is required for unpaid expenses"
         };
       }
-      let payableId = void 0;
-      const result = await db2.insert(expenses).values({
-        ...data,
-        userId: session?.userId ?? 0,
-        payableId: void 0
-        // Will be updated after payable creation
-      }).returning();
-      const newExpense = result[0];
-      if (data.paymentStatus === "unpaid" && data.supplierId) {
-        try {
+      const result = await withTransaction(async ({ db: txDb }) => {
+        let payableId = void 0;
+        const expenseResult = await txDb.insert(expenses).values({
+          ...data,
+          userId: session?.userId ?? 0,
+          payableId: void 0
+          // Will be updated after payable creation
+        }).returning();
+        const newExpense = expenseResult[0];
+        if (data.paymentStatus === "unpaid" && data.supplierId) {
           const invoiceNumber = `EXP-${newExpense.id}-${Date.now()}`;
-          const payableResult = await db2.insert(accountPayables).values({
+          const payableResult = await txDb.insert(accountPayables).values({
             supplierId: data.supplierId,
             purchaseId: null,
             branchId: data.branchId,
@@ -5231,42 +5791,56 @@ function registerExpenseHandlers() {
           }).returning();
           const newPayable = payableResult[0];
           payableId = newPayable.id;
-          await db2.update(expenses).set({ payableId: newPayable.id }).where(drizzleOrm.eq(expenses.id, newExpense.id));
-          await createAuditLog$1({
-            userId: session?.userId,
-            branchId: data.branchId,
-            action: "create",
-            entityType: "account_payable",
-            entityId: newPayable.id,
-            newValues: {
-              supplierId: data.supplierId,
-              invoiceNumber,
-              totalAmount: data.amount,
-              source: "expense",
-              expenseId: newExpense.id
-            },
-            description: `Auto-created payable from expense #${newExpense.id}`
-          });
-        } catch (payableError) {
-          console.error("Failed to create payable for expense:", payableError);
+          await txDb.update(expenses).set({ payableId: newPayable.id }).where(drizzleOrm.eq(expenses.id, newExpense.id));
         }
+        await postExpenseToGL(
+          {
+            id: newExpense.id,
+            branchId: data.branchId,
+            category: data.category,
+            amount: data.amount,
+            paymentStatus: data.paymentStatus || "paid",
+            paymentMethod: data.paymentMethod,
+            description: data.description
+          },
+          session?.userId ?? 0
+        );
+        return { newExpense, payableId };
+      });
+      if (result.payableId && data.supplierId) {
+        const invoiceNumber = `EXP-${result.newExpense.id}-${Date.now()}`;
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: data.branchId,
+          action: "create",
+          entityType: "account_payable",
+          entityId: result.payableId,
+          newValues: {
+            supplierId: data.supplierId,
+            invoiceNumber,
+            totalAmount: data.amount,
+            source: "expense",
+            expenseId: result.newExpense.id
+          },
+          description: `Auto-created payable from expense #${result.newExpense.id}`
+        });
       }
       await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
         action: "create",
         entityType: "expense",
-        entityId: newExpense.id,
+        entityId: result.newExpense.id,
         newValues: sanitizeForAudit({
           ...data,
-          payableId
+          payableId: result.payableId
         }),
         description: `Created ${data.paymentStatus || "paid"} expense: ${data.category} - $${data.amount}`
       });
       return {
         success: true,
-        data: { ...newExpense, payableId },
-        payableCreated: !!payableId
+        data: { ...result.newExpense, payableId: result.payableId },
+        payableCreated: !!result.payableId
       };
     } catch (error) {
       console.error("Create expense error:", error);
@@ -9539,36 +10113,49 @@ function registerAccountReceivablesHandlers() {
       const newPaidAmount = receivable.paidAmount + data.amount;
       const newRemainingAmount = receivable.totalAmount - newPaidAmount;
       const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
-      const [payment] = await db2.insert(receivablePayments).values({
-        receivableId: data.receivableId,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        referenceNumber: data.referenceNumber,
-        notes: data.notes,
-        receivedBy: session.userId
-      }).returning();
-      await db2.update(accountReceivables).set({
-        paidAmount: newPaidAmount,
-        remainingAmount: Math.max(0, newRemainingAmount),
-        status: newStatus,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(accountReceivables.id, data.receivableId));
-      if (receivable.saleId) {
-        const sale = await db2.query.sales.findFirst({
-          where: drizzleOrm.eq(sales.id, receivable.saleId)
-        });
-        if (sale) {
-          const newSaleAmountPaid = sale.amountPaid + data.amount;
-          const saleOutstanding = sale.totalAmount - newSaleAmountPaid;
-          const newSalePaymentStatus = saleOutstanding <= 0 ? "paid" : "partial";
-          await db2.update(sales).set({
-            amountPaid: newSaleAmountPaid,
-            paymentStatus: newSalePaymentStatus,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(sales.id, receivable.saleId));
+      const result = await withTransaction(async ({ db: txDb }) => {
+        const [payment] = await txDb.insert(receivablePayments).values({
+          receivableId: data.receivableId,
+          amount: data.amount,
+          paymentMethod: data.paymentMethod,
+          referenceNumber: data.referenceNumber,
+          notes: data.notes,
+          receivedBy: session.userId
+        }).returning();
+        await txDb.update(accountReceivables).set({
+          paidAmount: newPaidAmount,
+          remainingAmount: Math.max(0, newRemainingAmount),
+          status: newStatus,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(accountReceivables.id, data.receivableId));
+        if (receivable.saleId) {
+          const sale = await txDb.query.sales.findFirst({
+            where: drizzleOrm.eq(sales.id, receivable.saleId)
+          });
+          if (sale) {
+            const newSaleAmountPaid = sale.amountPaid + data.amount;
+            const saleOutstanding = sale.totalAmount - newSaleAmountPaid;
+            const newSalePaymentStatus = saleOutstanding <= 0 ? "paid" : "partial";
+            await txDb.update(sales).set({
+              amountPaid: newSaleAmountPaid,
+              paymentStatus: newSalePaymentStatus,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(sales.id, receivable.saleId));
+          }
         }
-      }
-      const result = payment;
+        await postARPaymentToGL(
+          {
+            id: payment.id,
+            receivableId: data.receivableId,
+            branchId: receivable.branchId,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            invoiceNumber: receivable.invoiceNumber
+          },
+          session.userId
+        );
+        return payment;
+      });
       await createAuditLog$1({
         userId: session.userId,
         branchId: receivable.branchId,
@@ -10099,32 +10686,53 @@ function registerAccountPayablesHandlers() {
           message: `Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`
         };
       }
-      const [payment] = await db2.insert(payablePayments).values({
-        payableId: data.payableId,
-        amount: data.amount,
-        paymentMethod: data.paymentMethod,
-        referenceNumber: data.referenceNumber,
-        notes: data.notes,
-        paidBy: session.userId
-      }).returning();
       const newPaidAmount = payable.paidAmount + data.amount;
       const newRemainingAmount = payable.totalAmount - newPaidAmount;
       const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
-      await db2.update(accountPayables).set({
-        paidAmount: newPaidAmount,
-        remainingAmount: Math.max(0, newRemainingAmount),
-        status: newStatus,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
+      const result = await withTransaction(async ({ db: txDb }) => {
+        const [payment] = await txDb.insert(payablePayments).values({
+          payableId: data.payableId,
+          amount: data.amount,
+          paymentMethod: data.paymentMethod,
+          referenceNumber: data.referenceNumber,
+          notes: data.notes,
+          paidBy: session.userId
+        }).returning();
+        await txDb.update(accountPayables).set({
+          paidAmount: newPaidAmount,
+          remainingAmount: Math.max(0, newRemainingAmount),
+          status: newStatus,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
+        if (newStatus === "paid") {
+          const linkedExpense = await txDb.query.expenses.findFirst({
+            where: drizzleOrm.eq(expenses.payableId, payable.id)
+          });
+          if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
+            await txDb.update(expenses).set({
+              paymentStatus: "paid",
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+          }
+        }
+        await postAPPaymentToGL(
+          {
+            id: payment.id,
+            payableId: data.payableId,
+            branchId: payable.branchId,
+            amount: data.amount,
+            paymentMethod: data.paymentMethod,
+            invoiceNumber: payable.invoiceNumber
+          },
+          session.userId
+        );
+        return payment;
+      });
       if (newStatus === "paid") {
         const linkedExpense = await db2.query.expenses.findFirst({
           where: drizzleOrm.eq(expenses.payableId, payable.id)
         });
-        if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
-          await db2.update(expenses).set({
-            paymentStatus: "paid",
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+        if (linkedExpense && linkedExpense.paymentStatus === "paid") {
           await createAuditLog$1({
             userId: session.userId,
             branchId: linkedExpense.branchId,
@@ -10159,7 +10767,7 @@ function registerAccountPayablesHandlers() {
       });
       return {
         success: true,
-        data: payment,
+        data: result,
         payable: {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),
