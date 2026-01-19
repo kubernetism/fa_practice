@@ -273,6 +273,18 @@ const saleItems = sqliteCore.sqliteTable("sale_items", {
   totalPrice: sqliteCore.real("total_price").notNull(),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const salePayments = sqliteCore.sqliteTable("sale_payments", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  saleId: sqliteCore.integer("sale_id").notNull().references(() => sales.id),
+  paymentMethod: sqliteCore.text("payment_method", {
+    enum: ["cash", "card", "debit_card", "mobile", "cheque", "bank_transfer"]
+  }).notNull(),
+  amount: sqliteCore.real("amount").notNull(),
+  referenceNumber: sqliteCore.text("reference_number"),
+  // For card/cheque/transfer reference
+  notes: sqliteCore.text("notes"),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
 const salesTabs = sqliteCore.sqliteTable(
   "sales_tabs",
   {
@@ -1439,6 +1451,7 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   returnItems,
   returns,
   saleItems,
+  salePayments,
   sales,
   salesTabItems,
   salesTabItemsRelations,
@@ -1748,6 +1761,11 @@ async function runMigrations() {
     await ensureInventoryCountsTables();
   } catch (error) {
     console.error("Inventory counts tables migration error:", error);
+  }
+  try {
+    await ensureSalePaymentsTable();
+  } catch (error) {
+    console.error("Sale payments table migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -2400,6 +2418,35 @@ async function ensureInventoryCountsTables() {
     console.log("inventory_count_items table exists: true");
   }
 }
+async function ensureSalePaymentsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='sale_payments'`
+  ).get();
+  if (!tableCheck) {
+    console.log("Creating sale_payments table...");
+    const migration = `
+      CREATE TABLE IF NOT EXISTS "sale_payments" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "sale_id" integer NOT NULL,
+        "payment_method" text NOT NULL,
+        "amount" real NOT NULL,
+        "reference_number" text,
+        "notes" text,
+        "created_at" text NOT NULL,
+        FOREIGN KEY ("sale_id") REFERENCES "sales"("id") ON UPDATE no action ON DELETE cascade
+      );
+
+      CREATE INDEX IF NOT EXISTS "sp_sale_idx" ON "sale_payments" ("sale_id");
+      CREATE INDEX IF NOT EXISTS "sp_method_idx" ON "sale_payments" ("payment_method");
+    `;
+    db2.exec(migration);
+    console.log("sale_payments table created successfully!");
+  } else {
+    console.log("sale_payments table exists: true");
+  }
+}
 function getLocalIpAddress() {
   try {
     const nets = os.networkInterfaces();
@@ -3016,12 +3063,23 @@ async function createJournalEntry(params) {
   });
   return entry.id;
 }
-async function postSaleToGL(sale, saleItems2, userId) {
+async function postSaleToGL(sale, saleItems2, userId, payments) {
   const lines = [];
-  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  sale.paymentStatus !== "paid";
   const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (sale.amountPaid > 0) {
+  if (payments && payments.length > 0) {
+    for (const payment of payments) {
+      if (payment.amount <= 0) continue;
+      const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : "Cash";
+      lines.push({
+        accountCode,
+        debitAmount: payment.amount,
+        creditAmount: 0,
+        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
+      });
+    }
+  } else if (sale.amountPaid > 0) {
+    const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
     lines.push({
       accountCode: cashAccountCode,
       debitAmount: sale.amountPaid,
@@ -4212,7 +4270,27 @@ function registerSalesHandlers() {
             paymentStatus: "unpaid"
           });
         }
-        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0);
+        const paymentRecords = [];
+        if (data.payments && data.payments.length > 0) {
+          for (const payment of data.payments) {
+            await txDb.insert(salePayments).values({
+              saleId: sale.id,
+              paymentMethod: payment.method,
+              amount: payment.amount,
+              referenceNumber: payment.referenceNumber
+            });
+            paymentRecords.push(payment);
+          }
+        } else if (data.amountPaid > 0 && data.paymentMethod !== "receivable") {
+          const method = data.paymentMethod === "card" ? "card" : data.paymentMethod === "mobile" ? "mobile" : data.paymentMethod === "cod" ? "cash" : "cash";
+          await txDb.insert(salePayments).values({
+            saleId: sale.id,
+            paymentMethod: method,
+            amount: data.amountPaid
+          });
+          paymentRecords.push({ method, amount: data.amountPaid });
+        }
+        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords);
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
       });
       await createAuditLog$1({

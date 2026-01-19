@@ -459,7 +459,7 @@ export interface AuditTrailData {
 
 // Sales Tabs types
 export type SalesTabStatus = 'open' | 'on_hold' | 'closed'
-export type PaymentMethod = 'cash' | 'card' | 'credit' | 'mixed' | 'mobile' | 'cod' | 'receivable'
+export type PaymentMethod = 'cash' | 'card' | 'debit_card' | 'credit' | 'mixed' | 'mobile' | 'cod' | 'receivable'
 export type SplitPaymentMethod = 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
 
 // Payment breakdown for mixed/split payments

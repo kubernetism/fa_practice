@@ -10,6 +10,9 @@ import {
   AlertCircle,
   CheckCircle2,
   X,
+  Plus,
+  Trash2,
+  Split,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,9 +20,17 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useTabs } from '@/contexts/tabs-context'
 import { useAuth } from '@/contexts/auth-context'
-import type { SalesTabWithItems, PaymentMethod } from '@shared/types'
+import type { PaymentMethod, SplitPaymentMethod, PaymentBreakdownItem } from '@shared/types'
 import { formatCurrency } from '@/lib/utils'
 
 const paymentMethods: Array<{
@@ -51,6 +62,18 @@ const paymentMethods: Array<{
   },
 ]
 
+const splitPaymentMethods: Array<{
+  value: SplitPaymentMethod
+  label: string
+}> = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'card', label: 'Credit Card' },
+  { value: 'debit_card', label: 'Debit Card' },
+  { value: 'mobile', label: 'Mobile Payment' },
+  { value: 'cheque', label: 'Cheque' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+]
+
 export function TabCheckoutScreen() {
   const { tabId } = useParams<{ tabId: string }>()
   const navigate = useNavigate()
@@ -68,6 +91,17 @@ export function TabCheckoutScreen() {
     totalAmount: number
     changeReturned: number
   } | null>(null)
+
+  // Split payment state
+  const [isSplitPayment, setIsSplitPayment] = useState(false)
+  const [splitPayments, setSplitPayments] = useState<Array<{
+    id: number
+    method: SplitPaymentMethod
+    amount: string
+    referenceNumber: string
+  }>>([
+    { id: 1, method: 'cash', amount: '', referenceNumber: '' },
+  ])
 
   // COD fields
   const [codName, setCodName] = useState('')
@@ -98,12 +132,25 @@ export function TabCheckoutScreen() {
     }
     return Math.max(0, base)
   }, [subtotal, tax, discount, paymentMethod, codChargesNum])
+
+  // Calculate split payment total
+  const splitPaymentTotal = useMemo(() => {
+    return splitPayments.reduce((sum, p) => {
+      const amount = p.amount === '' ? 0 : parseFloat(p.amount)
+      return sum + (isNaN(amount) ? 0 : amount)
+    }, 0)
+  }, [splitPayments])
+
+  const splitPaymentRemaining = totalAmount - splitPaymentTotal
+  const splitPaymentChange = splitPaymentTotal > totalAmount ? splitPaymentTotal - totalAmount : 0
+
   const amountPaidNum = amountPaid === '' ? 0 : parseFloat(amountPaid)
   const changeReturned = Math.max(0, amountPaidNum - totalAmount)
 
   // Handle payment method selection
   const handlePaymentMethodChange = (method: PaymentMethod) => {
     setPaymentMethod(method)
+    setIsSplitPayment(false)
     // Set default amount based on method
     if (method === 'cash') {
       setAmountPaid('')
@@ -112,6 +159,47 @@ export function TabCheckoutScreen() {
     } else {
       setAmountPaid(totalAmount.toString())
     }
+  }
+
+  // Handle split payment toggle
+  const handleSplitPaymentToggle = (enabled: boolean) => {
+    setIsSplitPayment(enabled)
+    if (enabled) {
+      setPaymentMethod('mixed')
+      setSplitPayments([{ id: 1, method: 'cash', amount: '', referenceNumber: '' }])
+    } else {
+      setPaymentMethod('cash')
+      setAmountPaid('')
+    }
+  }
+
+  // Add split payment entry
+  const addSplitPayment = () => {
+    const newId = Math.max(...splitPayments.map(p => p.id)) + 1
+    setSplitPayments([...splitPayments, { id: newId, method: 'card', amount: '', referenceNumber: '' }])
+  }
+
+  // Remove split payment entry
+  const removeSplitPayment = (id: number) => {
+    if (splitPayments.length > 1) {
+      setSplitPayments(splitPayments.filter(p => p.id !== id))
+    }
+  }
+
+  // Update split payment entry
+  const updateSplitPayment = (id: number, field: 'method' | 'amount' | 'referenceNumber', value: string) => {
+    setSplitPayments(splitPayments.map(p =>
+      p.id === id ? { ...p, [field]: value } : p
+    ))
+  }
+
+  // Set remaining amount to a split payment
+  const setRemainingToPayment = (id: number) => {
+    const otherTotal = splitPayments
+      .filter(p => p.id !== id)
+      .reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+    const remaining = Math.max(0, totalAmount - otherTotal)
+    updateSplitPayment(id, 'amount', remaining.toFixed(2))
   }
 
   // Validate form
@@ -134,8 +222,17 @@ export function TabCheckoutScreen() {
       return false
     }
 
+    // Split payment validation
+    if (isSplitPayment) {
+      // Must have at least one payment with amount
+      const hasValidPayment = splitPayments.some(p => parseFloat(p.amount) > 0)
+      if (!hasValidPayment) return false
+      // Total must cover the sale amount
+      if (splitPaymentTotal < totalAmount) return false
+    }
+
     return true
-  }, [tabItems.length, paymentMethod, codName, codPhone, codAddress, codCity, tab?.customerId])
+  }, [tabItems.length, paymentMethod, codName, codPhone, codAddress, codCity, tab?.customerId, isSplitPayment, splitPayments, splitPaymentTotal, totalAmount])
 
   // Process checkout
   const handleCheckout = async () => {
@@ -144,9 +241,22 @@ export function TabCheckoutScreen() {
     setIsProcessing(true)
 
     const checkoutData: any = {
-      paymentMethod,
+      paymentMethod: isSplitPayment ? 'mixed' : paymentMethod,
       discount,
-      amountPaid: paymentMethod === 'receivable' ? 0 : amountPaidNum,
+      amountPaid: isSplitPayment
+        ? splitPaymentTotal
+        : (paymentMethod === 'receivable' ? 0 : amountPaidNum),
+    }
+
+    // Add split payment breakdown if applicable
+    if (isSplitPayment) {
+      checkoutData.payments = splitPayments
+        .filter(p => parseFloat(p.amount) > 0)
+        .map(p => ({
+          method: p.method,
+          amount: parseFloat(p.amount),
+          referenceNumber: p.referenceNumber || undefined,
+        }))
     }
 
     // Add COD details if applicable
@@ -170,8 +280,8 @@ export function TabCheckoutScreen() {
     if (result && result.invoiceNumber) {
       setCheckoutResult({
         invoiceNumber: result.invoiceNumber,
-        totalAmount: result.totalAmount ?? totalAmount,
-        changeReturned: result.changeReturned ?? changeReturned,
+        totalAmount: result.sale?.totalAmount ?? totalAmount,
+        changeReturned: isSplitPayment ? splitPaymentChange : (result.sale?.changeGiven ?? changeReturned),
       })
       setShowSuccess(true)
     }
@@ -337,142 +447,263 @@ export function TabCheckoutScreen() {
       </div>
 
       {/* Right Side - Payment */}
-      <Card className="w-96">
+      <Card className="w-[420px]">
         <CardHeader>
-          <CardTitle>Payment</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Payment Method Selection */}
-          <div>
-            <Label className="mb-3 block">Payment Method</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {paymentMethods.map((method) => (
-                <button
-                  key={method.value}
-                  onClick={() => handlePaymentMethodChange(method.value)}
-                  className={`flex items-center gap-2 rounded-lg border p-3 text-left transition-all ${
-                    paymentMethod === method.value
-                      ? 'border-primary bg-primary/5'
-                      : 'border-input hover:border-primary'
-                  }`}
-                >
-                  {method.icon}
-                  <span className="text-sm font-medium">{method.label}</span>
-                </button>
-              ))}
+          <div className="flex items-center justify-between">
+            <CardTitle>Payment</CardTitle>
+            <div className="flex items-center gap-2">
+              <Label htmlFor="split-payment" className="text-sm font-normal cursor-pointer">
+                Split Payment
+              </Label>
+              <Switch
+                id="split-payment"
+                checked={isSplitPayment}
+                onCheckedChange={handleSplitPaymentToggle}
+              />
             </div>
           </div>
-
-          {/* COD Details */}
-          {paymentMethod === 'cod' && (
-            <div className="space-y-3 rounded-lg border p-4">
-              <Label className="block">COD Details</Label>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {!isSplitPayment ? (
+            <>
+              {/* Single Payment Method Selection */}
               <div>
-                <Label htmlFor="cod-charges">COD Charges (Delivery Fee)</Label>
-                <Input
-                  id="cod-charges"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={codCharges}
-                  onChange={(e) => setCodCharges(e.target.value)}
-                  placeholder="0.00"
-                  className="text-lg font-medium"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  This amount will be added to the customer's total and recorded as expense
-                </p>
-              </div>
-              <Separator />
-              <div>
-                <Label htmlFor="cod-name">Name *</Label>
-                <Input
-                  id="cod-name"
-                  value={codName}
-                  onChange={(e) => setCodName(e.target.value)}
-                  placeholder="Customer name"
-                />
-              </div>
-              <div>
-                <Label htmlFor="cod-phone">Phone *</Label>
-                <Input
-                  id="cod-phone"
-                  value={codPhone}
-                  onChange={(e) => setCodPhone(e.target.value)}
-                  placeholder="Phone number"
-                />
-              </div>
-              <div>
-                <Label htmlFor="cod-address">Address *</Label>
-                <Input
-                  id="cod-address"
-                  value={codAddress}
-                  onChange={(e) => setCodAddress(e.target.value)}
-                  placeholder="Delivery address"
-                />
-              </div>
-              <div>
-                <Label htmlFor="cod-city">City *</Label>
-                <Input
-                  id="cod-city"
-                  value={codCity}
-                  onChange={(e) => setCodCity(e.target.value)}
-                  placeholder="City"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* Receivable Warning - Customer Required */}
-          {paymentMethod === 'receivable' && !tab?.customerId && (
-            <div className="flex items-center gap-2 rounded-lg border border-yellow-500 bg-yellow-500/10 p-3 text-yellow-600 dark:text-yellow-400">
-              <AlertCircle className="h-5 w-5 flex-shrink-0" />
-              <span className="text-sm">
-                A customer must be assigned to the tab for Pay Later / Receivable payments. Please go back and assign a customer first.
-              </span>
-            </div>
-          )}
-
-          {/* Amount Paid */}
-          {paymentMethod === 'cash' && (
-            <div>
-              <Label htmlFor="amount-paid">Amount Received</Label>
-              <Input
-                id="amount-paid"
-                type="number"
-                step="0.01"
-                min="0"
-                value={amountPaid}
-                onChange={(e) => setAmountPaid(e.target.value)}
-                placeholder="Enter amount"
-                className="text-lg"
-              />
-              {amountPaidNum >= totalAmount && (
-                <p className="mt-2 flex items-center justify-center gap-1 text-sm text-green-600">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Change: {formatCurrency(changeReturned)}
-                </p>
-              )}
-              {amountPaidNum > 0 && amountPaidNum < totalAmount && (
-                <p className="mt-2 flex items-center gap-1 text-sm text-destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  Remaining: {formatCurrency(totalAmount - amountPaidNum)}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Pay Later / Receivable info */}
-          {paymentMethod === 'receivable' && (
-            <div className="rounded-lg bg-muted p-4">
-              <div className="flex items-start gap-2 text-sm">
-                <AlertCircle className="h-4 w-4 mt-0.5 text-yellow-600" />
-                <div>
-                  <p className="font-medium">Payment will be recorded as receivable</p>
-                  <p className="text-muted-foreground">
-                    The customer balance will be updated. Full payment is expected later.
-                  </p>
+                <Label className="mb-3 block">Payment Method</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {paymentMethods.map((method) => (
+                    <button
+                      key={method.value}
+                      onClick={() => handlePaymentMethodChange(method.value)}
+                      className={`flex items-center gap-2 rounded-lg border p-3 text-left transition-all ${
+                        paymentMethod === method.value
+                          ? 'border-primary bg-primary/5'
+                          : 'border-input hover:border-primary'
+                      }`}
+                    >
+                      {method.icon}
+                      <span className="text-sm font-medium">{method.label}</span>
+                    </button>
+                  ))}
                 </div>
+              </div>
+
+              {/* COD Details */}
+              {paymentMethod === 'cod' && (
+                <div className="space-y-3 rounded-lg border p-4">
+                  <Label className="block">COD Details</Label>
+                  <div>
+                    <Label htmlFor="cod-charges">COD Charges (Delivery Fee)</Label>
+                    <Input
+                      id="cod-charges"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={codCharges}
+                      onChange={(e) => setCodCharges(e.target.value)}
+                      placeholder="0.00"
+                      className="text-lg font-medium"
+                    />
+                    <p className="text-xs text-muted-foreground mt-1">
+                      This amount will be added to the customer's total and recorded as expense
+                    </p>
+                  </div>
+                  <Separator />
+                  <div>
+                    <Label htmlFor="cod-name">Name *</Label>
+                    <Input
+                      id="cod-name"
+                      value={codName}
+                      onChange={(e) => setCodName(e.target.value)}
+                      placeholder="Customer name"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="cod-phone">Phone *</Label>
+                    <Input
+                      id="cod-phone"
+                      value={codPhone}
+                      onChange={(e) => setCodPhone(e.target.value)}
+                      placeholder="Phone number"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="cod-address">Address *</Label>
+                    <Input
+                      id="cod-address"
+                      value={codAddress}
+                      onChange={(e) => setCodAddress(e.target.value)}
+                      placeholder="Delivery address"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="cod-city">City *</Label>
+                    <Input
+                      id="cod-city"
+                      value={codCity}
+                      onChange={(e) => setCodCity(e.target.value)}
+                      placeholder="City"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Receivable Warning - Customer Required */}
+              {paymentMethod === 'receivable' && !tab?.customerId && (
+                <div className="flex items-center gap-2 rounded-lg border border-yellow-500 bg-yellow-500/10 p-3 text-yellow-600 dark:text-yellow-400">
+                  <AlertCircle className="h-5 w-5 flex-shrink-0" />
+                  <span className="text-sm">
+                    A customer must be assigned to the tab for Pay Later / Receivable payments. Please go back and assign a customer first.
+                  </span>
+                </div>
+              )}
+
+              {/* Amount Paid */}
+              {paymentMethod === 'cash' && (
+                <div>
+                  <Label htmlFor="amount-paid">Amount Received</Label>
+                  <Input
+                    id="amount-paid"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                    placeholder="Enter amount"
+                    className="text-lg"
+                  />
+                  {amountPaidNum >= totalAmount && (
+                    <p className="mt-2 flex items-center justify-center gap-1 text-sm text-green-600">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Change: {formatCurrency(changeReturned)}
+                    </p>
+                  )}
+                  {amountPaidNum > 0 && amountPaidNum < totalAmount && (
+                    <p className="mt-2 flex items-center gap-1 text-sm text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      Remaining: {formatCurrency(totalAmount - amountPaidNum)}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Pay Later / Receivable info */}
+              {paymentMethod === 'receivable' && (
+                <div className="rounded-lg bg-muted p-4">
+                  <div className="flex items-start gap-2 text-sm">
+                    <AlertCircle className="h-4 w-4 mt-0.5 text-yellow-600" />
+                    <div>
+                      <p className="font-medium">Payment will be recorded as receivable</p>
+                      <p className="text-muted-foreground">
+                        The customer balance will be updated. Full payment is expected later.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            /* Split Payment UI */
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Split className="h-4 w-4" />
+                <span>Add multiple payment methods</span>
+              </div>
+
+              <div className="space-y-3">
+                {splitPayments.map((payment, index) => (
+                  <div key={payment.id} className="rounded-lg border p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        Payment {index + 1}
+                      </span>
+                      {splitPayments.length > 1 && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 ml-auto"
+                          onClick={() => removeSplitPayment(payment.id)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Select
+                        value={payment.method}
+                        onValueChange={(value) => updateSplitPayment(payment.id, 'method', value)}
+                      >
+                        <SelectTrigger className="w-[140px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {splitPaymentMethods.map((m) => (
+                            <SelectItem key={m.value} value={m.value}>
+                              {m.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <div className="flex-1 relative">
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Amount"
+                          value={payment.amount}
+                          onChange={(e) => updateSplitPayment(payment.id, 'amount', e.target.value)}
+                        />
+                        {splitPaymentRemaining > 0 && (
+                          <Button
+                            variant="link"
+                            size="sm"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 h-auto py-0 px-1 text-xs"
+                            onClick={() => setRemainingToPayment(payment.id)}
+                          >
+                            Fill
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {['card', 'debit_card', 'cheque', 'bank_transfer'].includes(payment.method) && (
+                      <Input
+                        placeholder="Reference # (optional)"
+                        value={payment.referenceNumber}
+                        onChange={(e) => updateSplitPayment(payment.id, 'referenceNumber', e.target.value)}
+                        className="text-sm"
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={addSplitPayment}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Payment Method
+              </Button>
+
+              {/* Split Payment Summary */}
+              <div className="rounded-lg bg-muted p-3 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Total Paid:</span>
+                  <span className="font-medium">{formatCurrency(splitPaymentTotal)}</span>
+                </div>
+                {splitPaymentRemaining > 0 && (
+                  <div className="flex justify-between text-sm text-destructive">
+                    <span>Remaining:</span>
+                    <span className="font-medium">{formatCurrency(splitPaymentRemaining)}</span>
+                  </div>
+                )}
+                {splitPaymentChange > 0 && (
+                  <div className="flex justify-between text-sm text-green-600">
+                    <span>Change:</span>
+                    <span className="font-medium">{formatCurrency(splitPaymentChange)}</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
