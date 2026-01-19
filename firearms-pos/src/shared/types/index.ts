@@ -460,6 +460,14 @@ export interface AuditTrailData {
 // Sales Tabs types
 export type SalesTabStatus = 'open' | 'on_hold' | 'closed'
 export type PaymentMethod = 'cash' | 'card' | 'credit' | 'mixed' | 'mobile' | 'cod' | 'receivable'
+export type SplitPaymentMethod = 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+
+// Payment breakdown for mixed/split payments
+export interface PaymentBreakdownItem {
+  method: SplitPaymentMethod
+  amount: number
+  referenceNumber?: string
+}
 
 export interface SalesTabWithItems extends SalesTab {
   items: SalesTabItem[]
@@ -482,6 +490,7 @@ export interface TabCheckoutData {
   codCity?: string
   codCharges?: number
   notes?: string
+  payments?: PaymentBreakdownItem[] // For mixed/split payments
 }
 
 export interface AvailableProduct {

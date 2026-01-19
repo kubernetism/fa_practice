@@ -4,6 +4,7 @@ import { getDatabase } from '../db'
 import {
   sales,
   saleItems,
+  salePayments,
   inventory,
   products,
   customers,
@@ -12,6 +13,7 @@ import {
   expenses,
   type NewSale,
   type NewSaleItem,
+  type NewSalePayment,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -30,6 +32,12 @@ interface CartItem {
   taxRate?: number
 }
 
+interface PaymentBreakdownItem {
+  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+  amount: number
+  referenceNumber?: string
+}
+
 interface CreateSaleData {
   customerId?: number
   branchId: number
@@ -44,6 +52,7 @@ interface CreateSaleData {
   codAddress?: string
   codCity?: string
   notes?: string
+  payments?: PaymentBreakdownItem[] // For mixed/split payments
 }
 
 export function registerSalesHandlers(): void {
@@ -252,8 +261,35 @@ export function registerSalesHandlers(): void {
           })
         }
 
-        // 7. Post to General Ledger (automated GL posting)
-        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0)
+        // 7. Create payment records for payment breakdown tracking
+        const paymentRecords: PaymentBreakdownItem[] = []
+        if (data.payments && data.payments.length > 0) {
+          // Use provided payment breakdown (mixed payments)
+          for (const payment of data.payments) {
+            await txDb.insert(salePayments).values({
+              saleId: sale.id,
+              paymentMethod: payment.method,
+              amount: payment.amount,
+              referenceNumber: payment.referenceNumber,
+            })
+            paymentRecords.push(payment)
+          }
+        } else if (data.amountPaid > 0 && data.paymentMethod !== 'receivable') {
+          // Single payment - create a record for consistency
+          const method = data.paymentMethod === 'card' ? 'card'
+            : data.paymentMethod === 'mobile' ? 'mobile'
+            : data.paymentMethod === 'cod' ? 'cash'
+            : 'cash'
+          await txDb.insert(salePayments).values({
+            saleId: sale.id,
+            paymentMethod: method,
+            amount: data.amountPaid,
+          })
+          paymentRecords.push({ method, amount: data.amountPaid })
+        }
+
+        // 8. Post to General Ledger (automated GL posting with payment breakdown)
+        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords)
 
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
       })

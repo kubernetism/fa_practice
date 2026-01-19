@@ -14,7 +14,9 @@ import {
   RefreshCw,
   BarChart3,
   List,
+  ClipboardList,
 } from 'lucide-react'
+import { CycleCountManager } from '@/components/cycle-count-manager'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -101,7 +103,7 @@ export function InventoryScreen() {
   const [viewingInventory, setViewingInventory] = useState<InventoryItem | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
-  const [activeView, setActiveView] = useState<'summary' | 'transactions'>('summary')
+  const [activeView, setActiveView] = useState<'summary' | 'transactions' | 'cycle-counts'>('summary')
   const [formData, setFormData] = useState<FormData>(initialFormData)
   const [isSaving, setIsSaving] = useState(false)
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all')
@@ -530,10 +532,24 @@ export function InventoryScreen() {
                 <List className="mr-2 h-4 w-4" />
                 Details
               </Button>
+              <Button
+                variant={activeView === 'cycle-counts' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setActiveView('cycle-counts')
+                  setCurrentPage(1)
+                }}
+              >
+                <ClipboardList className="mr-2 h-4 w-4" />
+                Cycle Counts
+              </Button>
             </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Cycle Counts View */}
+      {activeView === 'cycle-counts' && <CycleCountManager />}
 
       {/* Summary View */}
       {activeView === 'summary' && (

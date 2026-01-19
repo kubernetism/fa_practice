@@ -65,6 +65,28 @@ const api = {
     getTransfers: (branchId?: number) => ipcRenderer.invoke('inventory:get-transfers', branchId),
   },
 
+  // Inventory Counts (Cycle Counts / Reconciliation)
+  inventoryCounts: {
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('inventory-counts:create', data),
+    start: (countId: number, userId: number) =>
+      ipcRenderer.invoke('inventory-counts:start', countId, userId),
+    recordCount: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('inventory-counts:record-count', data),
+    complete: (countId: number, userId: number) =>
+      ipcRenderer.invoke('inventory-counts:complete', countId, userId),
+    applyAdjustments: (countId: number, userId: number) =>
+      ipcRenderer.invoke('inventory-counts:apply-adjustments', countId, userId),
+    varianceReport: (countId: number) =>
+      ipcRenderer.invoke('inventory-counts:variance-report', countId),
+    list: (branchId?: number, status?: string) =>
+      ipcRenderer.invoke('inventory-counts:list', branchId, status),
+    get: (countId: number) => ipcRenderer.invoke('inventory-counts:get', countId),
+    cancel: (countId: number, userId: number) =>
+      ipcRenderer.invoke('inventory-counts:cancel', countId, userId),
+    reconciliationSummary: (branchId: number) =>
+      ipcRenderer.invoke('inventory-counts:reconciliation-summary', branchId),
+  },
+
   // Customers
   customers: {
     getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('customers:get-all', params),

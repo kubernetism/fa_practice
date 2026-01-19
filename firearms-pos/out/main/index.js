@@ -8,6 +8,7 @@ const sqliteCore = require("drizzle-orm/sqlite-core");
 const drizzleOrm = require("drizzle-orm");
 const migrator = require("drizzle-orm/better-sqlite3/migrator");
 const bcrypt = require("bcryptjs");
+const os = require("os");
 const dateFns = require("date-fns");
 const path = require("path");
 const fs = require("fs");
@@ -1293,6 +1294,104 @@ const inventoryCostLayersRelations = drizzleOrm.relations(inventoryCostLayers, (
     references: [purchaseItems.id]
   })
 }));
+const inventoryCounts = sqliteCore.sqliteTable(
+  "inventory_counts",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    countNumber: sqliteCore.text("count_number").notNull().unique(),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    countType: sqliteCore.text("count_type", {
+      enum: ["full", "cycle", "spot", "annual"]
+    }).notNull(),
+    status: sqliteCore.text("status", {
+      enum: ["draft", "in_progress", "completed", "cancelled"]
+    }).notNull().default("draft"),
+    scheduledDate: sqliteCore.text("scheduled_date"),
+    startedAt: sqliteCore.text("started_at"),
+    completedAt: sqliteCore.text("completed_at"),
+    startedBy: sqliteCore.integer("started_by").references(() => users.id),
+    completedBy: sqliteCore.integer("completed_by").references(() => users.id),
+    createdBy: sqliteCore.integer("created_by").notNull().references(() => users.id),
+    notes: sqliteCore.text("notes"),
+    // Summary fields (calculated on completion)
+    totalItems: sqliteCore.integer("total_items").default(0),
+    itemsCounted: sqliteCore.integer("items_counted").default(0),
+    varianceCount: sqliteCore.integer("variance_count").default(0),
+    varianceValue: sqliteCore.real("variance_value").default(0),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    branchIdx: sqliteCore.index("ic_branch_idx").on(table.branchId),
+    statusIdx: sqliteCore.index("ic_status_idx").on(table.status),
+    dateIdx: sqliteCore.index("ic_date_idx").on(table.scheduledDate)
+  })
+);
+const inventoryCountItems = sqliteCore.sqliteTable(
+  "inventory_count_items",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    countId: sqliteCore.integer("count_id").notNull().references(() => inventoryCounts.id, { onDelete: "cascade" }),
+    productId: sqliteCore.integer("product_id").notNull().references(() => products.id),
+    // Expected quantity from system at time of count
+    expectedQuantity: sqliteCore.integer("expected_quantity").notNull(),
+    expectedCost: sqliteCore.real("expected_cost").notNull().default(0),
+    // Actual counted quantity
+    countedQuantity: sqliteCore.integer("counted_quantity"),
+    // Variance (counted - expected)
+    varianceQuantity: sqliteCore.integer("variance_quantity"),
+    varianceValue: sqliteCore.real("variance_value"),
+    variancePercent: sqliteCore.real("variance_percent"),
+    // Count details
+    countedBy: sqliteCore.integer("counted_by").references(() => users.id),
+    countedAt: sqliteCore.text("counted_at"),
+    // For serialized items
+    serialNumber: sqliteCore.text("serial_number"),
+    // Adjustment created flag
+    adjustmentCreated: sqliteCore.integer("adjustment_created", { mode: "boolean" }).notNull().default(false),
+    notes: sqliteCore.text("notes"),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    countIdx: sqliteCore.index("ici_count_idx").on(table.countId),
+    productIdx: sqliteCore.index("ici_product_idx").on(table.productId),
+    varianceIdx: sqliteCore.index("ici_variance_idx").on(table.varianceQuantity)
+  })
+);
+const inventoryCountsRelations = drizzleOrm.relations(inventoryCounts, ({ one, many }) => ({
+  branch: one(branches, {
+    fields: [inventoryCounts.branchId],
+    references: [branches.id]
+  }),
+  createdByUser: one(users, {
+    fields: [inventoryCounts.createdBy],
+    references: [users.id]
+  }),
+  startedByUser: one(users, {
+    fields: [inventoryCounts.startedBy],
+    references: [users.id]
+  }),
+  completedByUser: one(users, {
+    fields: [inventoryCounts.completedBy],
+    references: [users.id]
+  }),
+  items: many(inventoryCountItems)
+}));
+const inventoryCountItemsRelations = drizzleOrm.relations(inventoryCountItems, ({ one }) => ({
+  count: one(inventoryCounts, {
+    fields: [inventoryCountItems.countId],
+    references: [inventoryCounts.id]
+  }),
+  product: one(products, {
+    fields: [inventoryCountItems.productId],
+    references: [products.id]
+  }),
+  countedByUser: one(users, {
+    fields: [inventoryCountItems.countedBy],
+    references: [users.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1319,6 +1418,10 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   inventory,
   inventoryCostLayers,
   inventoryCostLayersRelations,
+  inventoryCountItems,
+  inventoryCountItemsRelations,
+  inventoryCounts,
+  inventoryCountsRelations,
   journalEntries,
   journalEntriesRelations,
   journalEntryLines,
@@ -1640,6 +1743,11 @@ async function runMigrations() {
     await ensureInventoryCostLayersTable();
   } catch (error) {
     console.error("Inventory cost layers table migration error:", error);
+  }
+  try {
+    await ensureInventoryCountsTables();
+  } catch (error) {
+    console.error("Inventory counts tables migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -2053,21 +2161,30 @@ async function ensureFinancialSystemTables() {
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1020', 'Cash in Bank', 'asset', 'bank', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1100', 'Accounts Receivable', 'asset', 'accounts_receivable', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1200', 'Inventory', 'asset', 'inventory', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1500', 'Fixed Assets', 'asset', 'fixed_asset', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('1510', 'Accumulated Depreciation', 'asset', 'accumulated_depreciation', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('2000', 'Accounts Payable', 'liability', 'accounts_payable', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('2100', 'Sales Tax Payable', 'liability', 'other_liability', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('3000', 'Owner Capital', 'equity', 'owner_capital', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('3100', 'Retained Earnings', 'equity', 'retained_earnings', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4000', 'Sales Revenue', 'revenue', 'sales_revenue', 'credit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4900', 'Inventory Adjustment Income', 'revenue', 'other_revenue', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5000', 'Cost of Goods Sold', 'expense', 'cost_of_goods_sold', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5100', 'Salaries and Wages', 'expense', 'payroll_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5200', 'Rent Expense', 'expense', 'rent_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5300', 'Utilities Expense', 'expense', 'utilities_expense', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5400', 'Inventory Shrinkage', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5900', 'Other Expenses', 'expense', 'other_expense', 'debit', 0, datetime('now'), datetime('now'));
     `;
     db2.exec(coaMigration);
     console.log("chart_of_accounts table created successfully!");
   } else {
     console.log("chart_of_accounts table exists: true");
+    db2.exec(`
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4900', 'Inventory Adjustment Income', 'revenue', 'other_revenue', 'credit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5400', 'Inventory Shrinkage', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
+    `);
+    console.log("Ensured inventory adjustment accounts exist (4900, 5400)");
   }
   const jeTableCheck = db2.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='journal_entries'`
@@ -2202,6 +2319,103 @@ async function ensureInventoryCostLayersTable() {
     console.log("inventory_cost_layers table exists: true");
   }
 }
+async function ensureInventoryCountsTables() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const countsTableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_counts'`
+  ).get();
+  if (!countsTableCheck) {
+    console.log("Creating inventory_counts table...");
+    const countsMigration = `
+      CREATE TABLE IF NOT EXISTS "inventory_counts" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "count_number" text NOT NULL UNIQUE,
+        "branch_id" integer NOT NULL,
+        "count_type" text NOT NULL,
+        "status" text DEFAULT 'draft' NOT NULL,
+        "scheduled_date" text,
+        "started_at" text,
+        "completed_at" text,
+        "started_by" integer,
+        "completed_by" integer,
+        "created_by" integer NOT NULL,
+        "notes" text,
+        "total_items" integer DEFAULT 0,
+        "items_counted" integer DEFAULT 0,
+        "variance_count" integer DEFAULT 0,
+        "variance_value" real DEFAULT 0,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("started_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("completed_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("created_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "ic_branch_idx" ON "inventory_counts" ("branch_id");
+      CREATE INDEX IF NOT EXISTS "ic_status_idx" ON "inventory_counts" ("status");
+      CREATE INDEX IF NOT EXISTS "ic_date_idx" ON "inventory_counts" ("scheduled_date");
+    `;
+    db2.exec(countsMigration);
+    console.log("inventory_counts table created successfully!");
+  } else {
+    console.log("inventory_counts table exists: true");
+  }
+  const itemsTableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_count_items'`
+  ).get();
+  if (!itemsTableCheck) {
+    console.log("Creating inventory_count_items table...");
+    const itemsMigration = `
+      CREATE TABLE IF NOT EXISTS "inventory_count_items" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "count_id" integer NOT NULL,
+        "product_id" integer NOT NULL,
+        "expected_quantity" integer NOT NULL,
+        "expected_cost" real DEFAULT 0 NOT NULL,
+        "counted_quantity" integer,
+        "variance_quantity" integer,
+        "variance_value" real,
+        "variance_percent" real,
+        "counted_by" integer,
+        "counted_at" text,
+        "serial_number" text,
+        "adjustment_created" integer DEFAULT 0 NOT NULL,
+        "notes" text,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("count_id") REFERENCES "inventory_counts"("id") ON UPDATE no action ON DELETE cascade,
+        FOREIGN KEY ("product_id") REFERENCES "products"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("counted_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "ici_count_idx" ON "inventory_count_items" ("count_id");
+      CREATE INDEX IF NOT EXISTS "ici_product_idx" ON "inventory_count_items" ("product_id");
+      CREATE INDEX IF NOT EXISTS "ici_variance_idx" ON "inventory_count_items" ("variance_quantity");
+    `;
+    db2.exec(itemsMigration);
+    console.log("inventory_count_items table created successfully!");
+  } else {
+    console.log("inventory_count_items table exists: true");
+  }
+}
+function getLocalIpAddress() {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      const netInterfaces = nets[name];
+      if (!netInterfaces) continue;
+      for (const net of netInterfaces) {
+        if (net.family === "IPv4" && !net.internal) {
+          return net.address;
+        }
+      }
+    }
+  } catch {
+  }
+  return "127.0.0.1";
+}
 async function createAuditLog$1(params) {
   const db2 = getDatabase();
   try {
@@ -2213,7 +2427,8 @@ async function createAuditLog$1(params) {
       entityId: params.entityId ?? null,
       oldValues: params.oldValues ?? null,
       newValues: params.newValues ?? null,
-      description: params.description ?? null
+      description: params.description ?? null,
+      ipAddress: params.ipAddress ?? getLocalIpAddress()
     });
   } catch (error) {
     console.error("Failed to create audit log:", error);
@@ -2694,6 +2909,464 @@ async function withTransaction(fn) {
     throw error;
   }
 }
+const ACCOUNT_CODES = {
+  CASH_IN_HAND: "1010",
+  CASH_IN_BANK: "1020",
+  ACCOUNTS_RECEIVABLE: "1100",
+  INVENTORY: "1200",
+  ACCOUNTS_PAYABLE: "2000",
+  SALES_TAX_PAYABLE: "2100",
+  SALES_REVENUE: "4000",
+  INVENTORY_ADJUSTMENT: "4900",
+  // Income from inventory surplus
+  COGS: "5000",
+  SALARIES_WAGES: "5100",
+  RENT_EXPENSE: "5200",
+  UTILITIES_EXPENSE: "5300",
+  INVENTORY_SHRINKAGE: "5400",
+  // Expense for inventory loss/damage/theft
+  OTHER_EXPENSE: "5900"
+};
+function generateJournalEntryNumber() {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
+  return `JE-${year}-${timestamp}${random}`;
+}
+async function getAccountId(accountCode) {
+  const db2 = getDatabase();
+  const account = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
+  });
+  if (!account) {
+    throw new Error(`Account with code ${accountCode} not found`);
+  }
+  return account.id;
+}
+async function createJournalEntry(params) {
+  const db2 = getDatabase();
+  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
+  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
+  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
+  if (Math.abs(totalDebits - totalCredits) > 0.01) {
+    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
+  }
+  const entryNumber = generateJournalEntryNumber();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const [entry] = await db2.insert(journalEntries).values({
+    entryNumber,
+    entryDate: entryDate || now.split("T")[0],
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    status: isAutoGenerated ? "posted" : "draft",
+    isAutoGenerated,
+    createdBy: userId,
+    postedBy: isAutoGenerated ? userId : null,
+    postedAt: isAutoGenerated ? now : null
+  }).returning();
+  for (const line of lines) {
+    if (line.debitAmount === 0 && line.creditAmount === 0) {
+      continue;
+    }
+    const accountId = await getAccountId(line.accountCode);
+    await db2.insert(journalEntryLines).values({
+      journalEntryId: entry.id,
+      accountId,
+      debitAmount: line.debitAmount,
+      creditAmount: line.creditAmount,
+      description: line.description
+    });
+    if (isAutoGenerated) {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (account) {
+        let balanceChange;
+        if (account.normalBalance === "debit") {
+          balanceChange = line.debitAmount - line.creditAmount;
+        } else {
+          balanceChange = line.creditAmount - line.debitAmount;
+        }
+        await db2.update(chartOfAccounts).set({
+          currentBalance: account.currentBalance + balanceChange,
+          updatedAt: now
+        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
+      }
+    }
+  }
+  await createAuditLog$1({
+    userId,
+    branchId,
+    action: "CREATE",
+    entityType: "journal_entry",
+    entityId: entry.id,
+    newValues: {
+      entryNumber: entry.entryNumber,
+      description,
+      referenceType,
+      referenceId,
+      status: entry.status,
+      totalDebits: lines.reduce((sum, l) => sum + l.debitAmount, 0),
+      totalCredits: lines.reduce((sum, l) => sum + l.creditAmount, 0),
+      lineCount: lines.length
+    },
+    description: `Journal entry ${entry.entryNumber} created for ${referenceType} #${referenceId}`
+  });
+  return entry.id;
+}
+async function postSaleToGL(sale, saleItems2, userId) {
+  const lines = [];
+  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  sale.paymentStatus !== "paid";
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (sale.amountPaid > 0) {
+    lines.push({
+      accountCode: cashAccountCode,
+      debitAmount: sale.amountPaid,
+      creditAmount: 0,
+      description: `Cash received for sale ${sale.invoiceNumber}`
+    });
+  }
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: receivableAmount,
+      creditAmount: 0,
+      description: `Receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: 0,
+      creditAmount: netRevenue,
+      description: `Revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: 0,
+      creditAmount: sale.taxAmount,
+      description: `Sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Cost of goods sold for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Inventory reduction for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
+  const lines = [];
+  const totalValue = receivedItems.reduce(
+    (sum, item) => sum + item.unitCost * item.receivedQuantity,
+    0
+  );
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value purchase to GL");
+  }
+  lines.push({
+    accountCode: ACCOUNT_CODES.INVENTORY,
+    debitAmount: totalValue,
+    creditAmount: 0,
+    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
+  });
+  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payable for PO ${purchase.purchaseOrderNumber}`
+    });
+  } else {
+    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payment for PO ${purchase.purchaseOrderNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
+    referenceType: "purchase",
+    referenceId: purchase.id,
+    branchId: purchase.branchId,
+    userId
+  });
+}
+async function postExpenseToGL(expense, userId) {
+  const lines = [];
+  const categoryToAccount = {
+    salaries: ACCOUNT_CODES.SALARIES_WAGES,
+    rent: ACCOUNT_CODES.RENT_EXPENSE,
+    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
+    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
+    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
+    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
+    other: ACCOUNT_CODES.OTHER_EXPENSE
+  };
+  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE;
+  lines.push({
+    accountCode: expenseAccount,
+    debitAmount: expense.amount,
+    creditAmount: 0,
+    description: expense.description || `Expense: ${expense.category}`
+  });
+  if (expense.paymentStatus === "unpaid") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payable for expense ${expense.category}`
+    });
+  } else {
+    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payment for expense ${expense.category}`
+    });
+  }
+  return createJournalEntry({
+    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ""}`,
+    referenceType: "expense",
+    referenceId: expense.id,
+    branchId: expense.branchId,
+    userId,
+    lines
+  });
+}
+async function postReturnToGL(returnData, returnItems2, userId) {
+  const lines = [];
+  const netRevenue = returnData.subtotal;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Revenue reversal for return ${returnData.returnNumber}`
+    });
+  }
+  if (returnData.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: returnData.taxAmount,
+      creditAmount: 0,
+      description: `Tax reversal for return ${returnData.returnNumber}`
+    });
+  }
+  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: returnData.totalAmount,
+    description: `Refund for return ${returnData.returnNumber}`
+  });
+  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
+  if (restockableCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: restockableCOGS,
+      creditAmount: 0,
+      description: `Inventory restored for return ${returnData.returnNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: restockableCOGS,
+      description: `COGS reversal for return ${returnData.returnNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Return: ${returnData.returnNumber}`,
+    referenceType: "return",
+    referenceId: returnData.id,
+    branchId: returnData.branchId,
+    userId,
+    lines
+  });
+}
+async function postARPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `Payment received for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `AR reduction for ${payment.invoiceNumber}`
+  });
+  return createJournalEntry({
+    description: `AR Payment: ${payment.invoiceNumber}`,
+    referenceType: "receivable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId,
+    lines
+  });
+}
+async function postAPPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `AP payment for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `Payment for ${payment.invoiceNumber}`
+  });
+  return createJournalEntry({
+    description: `AP Payment: ${payment.invoiceNumber}`,
+    referenceType: "payable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId,
+    lines
+  });
+}
+async function postVoidSaleToGL(sale, saleItems2, userId) {
+  const lines = [];
+  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  if (sale.amountPaid > 0) {
+    lines.push({
+      accountCode: cashAccountCode,
+      debitAmount: 0,
+      creditAmount: sale.amountPaid,
+      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
+    });
+  }
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: 0,
+      creditAmount: receivableAmount,
+      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: sale.taxAmount,
+      creditAmount: 0,
+      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Void - reverse COGS for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Void - restore inventory for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Void Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale_void",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postStockAdjustmentToGL(adjustment, userId) {
+  const lines = [];
+  const totalValue = adjustment.quantityChange * adjustment.unitCost;
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value adjustment to GL");
+  }
+  if (adjustment.adjustmentType === "remove") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory shrinkage: ${adjustment.reason}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${adjustment.reason}`
+    });
+  } else {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory increase: ${adjustment.reason}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory adjustment income: ${adjustment.reason}`
+    });
+  }
+  return createJournalEntry({
+    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
+    referenceType: "stock_adjustment",
+    referenceId: adjustment.id,
+    branchId: adjustment.branchId,
+    userId,
+    lines
+  });
+}
 function registerInventoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("inventory:get-by-branch", async (_, branchId) => {
@@ -2761,6 +3434,12 @@ function registerInventoryHandlers() {
         let currentInventory = await db2.query.inventory.findFirst({
           where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, data.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
         });
+        const product = await db2.query.products.findFirst({
+          where: drizzleOrm.eq(products.id, data.productId)
+        });
+        if (!product) {
+          return { success: false, message: "Product not found" };
+        }
         const quantityBefore = currentInventory?.quantity ?? 0;
         const quantityAfter = data.adjustmentType === "add" ? quantityBefore + data.quantityChange : quantityBefore - data.quantityChange;
         if (quantityAfter < 0) {
@@ -2778,7 +3457,7 @@ function registerInventoryHandlers() {
             quantity: quantityAfter
           });
         }
-        await db2.insert(stockAdjustments).values({
+        const [adjustment] = await db2.insert(stockAdjustments).values({
           productId: data.productId,
           branchId: data.branchId,
           userId: session?.userId ?? 0,
@@ -2789,7 +3468,25 @@ function registerInventoryHandlers() {
           serialNumber: data.serialNumber,
           reason: data.reason,
           reference: data.reference
-        });
+        }).returning();
+        if (data.quantityChange > 0) {
+          try {
+            await postStockAdjustmentToGL(
+              {
+                id: adjustment.id,
+                branchId: data.branchId,
+                adjustmentType: data.adjustmentType,
+                quantityChange: data.quantityChange,
+                unitCost: product.costPrice,
+                reason: data.reason,
+                reference: data.reference
+              },
+              session?.userId ?? 0
+            );
+          } catch (glError) {
+            console.error("GL posting for stock adjustment failed:", glError);
+          }
+        }
         await createAuditLog$1({
           userId: session?.userId,
           branchId: data.branchId,
@@ -3269,400 +3966,6 @@ function registerSupplierHandlers() {
       console.error("Delete supplier error:", error);
       return { success: false, message: "Failed to delete supplier" };
     }
-  });
-}
-const ACCOUNT_CODES = {
-  CASH_IN_HAND: "1010",
-  CASH_IN_BANK: "1020",
-  ACCOUNTS_RECEIVABLE: "1100",
-  INVENTORY: "1200",
-  ACCOUNTS_PAYABLE: "2000",
-  SALES_TAX_PAYABLE: "2100",
-  SALES_REVENUE: "4000",
-  COGS: "5000",
-  SALARIES_WAGES: "5100",
-  RENT_EXPENSE: "5200",
-  UTILITIES_EXPENSE: "5300",
-  OTHER_EXPENSE: "5900"
-};
-function generateJournalEntryNumber() {
-  const year = (/* @__PURE__ */ new Date()).getFullYear();
-  const timestamp = Date.now().toString().slice(-6);
-  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
-  return `JE-${year}-${timestamp}${random}`;
-}
-async function getAccountId(accountCode) {
-  const db2 = getDatabase();
-  const account = await db2.query.chartOfAccounts.findFirst({
-    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
-  });
-  if (!account) {
-    throw new Error(`Account with code ${accountCode} not found`);
-  }
-  return account.id;
-}
-async function createJournalEntry(params) {
-  const db2 = getDatabase();
-  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
-  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
-  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
-  if (Math.abs(totalDebits - totalCredits) > 0.01) {
-    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
-  }
-  const entryNumber = generateJournalEntryNumber();
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const [entry] = await db2.insert(journalEntries).values({
-    entryNumber,
-    entryDate: entryDate || now.split("T")[0],
-    description,
-    referenceType,
-    referenceId,
-    branchId,
-    status: isAutoGenerated ? "posted" : "draft",
-    isAutoGenerated,
-    createdBy: userId,
-    postedBy: isAutoGenerated ? userId : null,
-    postedAt: isAutoGenerated ? now : null
-  }).returning();
-  for (const line of lines) {
-    if (line.debitAmount === 0 && line.creditAmount === 0) {
-      continue;
-    }
-    const accountId = await getAccountId(line.accountCode);
-    await db2.insert(journalEntryLines).values({
-      journalEntryId: entry.id,
-      accountId,
-      debitAmount: line.debitAmount,
-      creditAmount: line.creditAmount,
-      description: line.description
-    });
-    if (isAutoGenerated) {
-      const account = await db2.query.chartOfAccounts.findFirst({
-        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
-      });
-      if (account) {
-        let balanceChange;
-        if (account.normalBalance === "debit") {
-          balanceChange = line.debitAmount - line.creditAmount;
-        } else {
-          balanceChange = line.creditAmount - line.debitAmount;
-        }
-        await db2.update(chartOfAccounts).set({
-          currentBalance: account.currentBalance + balanceChange,
-          updatedAt: now
-        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
-      }
-    }
-  }
-  return entry.id;
-}
-async function postSaleToGL(sale, saleItems2, userId) {
-  const lines = [];
-  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  sale.paymentStatus !== "paid";
-  const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (sale.amountPaid > 0) {
-    lines.push({
-      accountCode: cashAccountCode,
-      debitAmount: sale.amountPaid,
-      creditAmount: 0,
-      description: `Cash received for sale ${sale.invoiceNumber}`
-    });
-  }
-  if (receivableAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-      debitAmount: receivableAmount,
-      creditAmount: 0,
-      description: `Receivable for sale ${sale.invoiceNumber}`
-    });
-  }
-  const netRevenue = sale.subtotal - sale.discountAmount;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: 0,
-      creditAmount: netRevenue,
-      description: `Revenue from sale ${sale.invoiceNumber}`
-    });
-  }
-  if (sale.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: 0,
-      creditAmount: sale.taxAmount,
-      description: `Sales tax for sale ${sale.invoiceNumber}`
-    });
-  }
-  const totalCOGS = saleItems2.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
-  if (totalCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: totalCOGS,
-      creditAmount: 0,
-      description: `Cost of goods sold for ${sale.invoiceNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: 0,
-      creditAmount: totalCOGS,
-      description: `Inventory reduction for ${sale.invoiceNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Sale: ${sale.invoiceNumber}`,
-    referenceType: "sale",
-    referenceId: sale.id,
-    branchId: sale.branchId,
-    userId,
-    lines
-  });
-}
-async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
-  const lines = [];
-  const totalValue = receivedItems.reduce(
-    (sum, item) => sum + item.unitCost * item.receivedQuantity,
-    0
-  );
-  if (totalValue <= 0) {
-    throw new Error("Cannot post zero-value purchase to GL");
-  }
-  lines.push({
-    accountCode: ACCOUNT_CODES.INVENTORY,
-    debitAmount: totalValue,
-    creditAmount: 0,
-    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
-  });
-  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Payable for PO ${purchase.purchaseOrderNumber}`
-    });
-  } else {
-    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccount,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Payment for PO ${purchase.purchaseOrderNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
-    referenceType: "purchase",
-    referenceId: purchase.id,
-    branchId: purchase.branchId,
-    userId
-  });
-}
-async function postExpenseToGL(expense, userId) {
-  const lines = [];
-  const categoryToAccount = {
-    salaries: ACCOUNT_CODES.SALARIES_WAGES,
-    rent: ACCOUNT_CODES.RENT_EXPENSE,
-    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
-    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
-    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
-    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
-    other: ACCOUNT_CODES.OTHER_EXPENSE
-  };
-  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE;
-  lines.push({
-    accountCode: expenseAccount,
-    debitAmount: expense.amount,
-    creditAmount: 0,
-    description: expense.description || `Expense: ${expense.category}`
-  });
-  if (expense.paymentStatus === "unpaid") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-      debitAmount: 0,
-      creditAmount: expense.amount,
-      description: `Payable for expense ${expense.category}`
-    });
-  } else {
-    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccount,
-      debitAmount: 0,
-      creditAmount: expense.amount,
-      description: `Payment for expense ${expense.category}`
-    });
-  }
-  return createJournalEntry({
-    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ""}`,
-    referenceType: "expense",
-    referenceId: expense.id,
-    branchId: expense.branchId,
-    userId,
-    lines
-  });
-}
-async function postReturnToGL(returnData, returnItems2, userId) {
-  const lines = [];
-  const netRevenue = returnData.subtotal;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: netRevenue,
-      creditAmount: 0,
-      description: `Revenue reversal for return ${returnData.returnNumber}`
-    });
-  }
-  if (returnData.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: returnData.taxAmount,
-      creditAmount: 0,
-      description: `Tax reversal for return ${returnData.returnNumber}`
-    });
-  }
-  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: 0,
-    creditAmount: returnData.totalAmount,
-    description: `Refund for return ${returnData.returnNumber}`
-  });
-  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
-  if (restockableCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: restockableCOGS,
-      creditAmount: 0,
-      description: `Inventory restored for return ${returnData.returnNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: 0,
-      creditAmount: restockableCOGS,
-      description: `COGS reversal for return ${returnData.returnNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Return: ${returnData.returnNumber}`,
-    referenceType: "return",
-    referenceId: returnData.id,
-    branchId: returnData.branchId,
-    userId,
-    lines
-  });
-}
-async function postARPaymentToGL(payment, userId) {
-  const lines = [];
-  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: payment.amount,
-    creditAmount: 0,
-    description: `Payment received for ${payment.invoiceNumber}`
-  });
-  lines.push({
-    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-    debitAmount: 0,
-    creditAmount: payment.amount,
-    description: `AR reduction for ${payment.invoiceNumber}`
-  });
-  return createJournalEntry({
-    description: `AR Payment: ${payment.invoiceNumber}`,
-    referenceType: "receivable_payment",
-    referenceId: payment.id,
-    branchId: payment.branchId,
-    userId,
-    lines
-  });
-}
-async function postAPPaymentToGL(payment, userId) {
-  const lines = [];
-  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-    debitAmount: payment.amount,
-    creditAmount: 0,
-    description: `AP payment for ${payment.invoiceNumber}`
-  });
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: 0,
-    creditAmount: payment.amount,
-    description: `Payment for ${payment.invoiceNumber}`
-  });
-  return createJournalEntry({
-    description: `AP Payment: ${payment.invoiceNumber}`,
-    referenceType: "payable_payment",
-    referenceId: payment.id,
-    branchId: payment.branchId,
-    userId,
-    lines
-  });
-}
-async function postVoidSaleToGL(sale, saleItems2, userId) {
-  const lines = [];
-  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  if (sale.amountPaid > 0) {
-    lines.push({
-      accountCode: cashAccountCode,
-      debitAmount: 0,
-      creditAmount: sale.amountPaid,
-      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
-    });
-  }
-  const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (receivableAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-      debitAmount: 0,
-      creditAmount: receivableAmount,
-      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
-    });
-  }
-  const netRevenue = sale.subtotal - sale.discountAmount;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: netRevenue,
-      creditAmount: 0,
-      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
-    });
-  }
-  if (sale.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: sale.taxAmount,
-      creditAmount: 0,
-      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
-    });
-  }
-  const totalCOGS = saleItems2.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
-  if (totalCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: 0,
-      creditAmount: totalCOGS,
-      description: `Void - reverse COGS for ${sale.invoiceNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: totalCOGS,
-      creditAmount: 0,
-      description: `Void - restore inventory for ${sale.invoiceNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Void Sale: ${sale.invoiceNumber}`,
-    referenceType: "sale_void",
-    referenceId: sale.id,
-    branchId: sale.branchId,
-    userId,
-    lines
   });
 }
 async function consumeCostLayersFIFO(productId, branchId, quantity) {
@@ -16428,6 +16731,508 @@ function registerDiscountManagementHandlers() {
     }
   );
 }
+function generateCountNumber() {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 100).toString().padStart(2, "0");
+  return `IC-${year}-${timestamp}${random}`;
+}
+function registerInventoryCountsHandlers() {
+  electron.ipcMain.handle(
+    "inventory-counts:create",
+    async (_, data) => {
+      try {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const [count] = await db2.insert(inventoryCounts).values({
+          countNumber: generateCountNumber(),
+          branchId: data.branchId,
+          countType: data.countType,
+          status: "draft",
+          scheduledDate: data.scheduledDate || now.split("T")[0],
+          createdBy: data.userId,
+          notes: data.notes,
+          createdAt: now,
+          updatedAt: now
+        }).returning();
+        let productsToCount;
+        if (data.productIds && data.productIds.length > 0) {
+          productsToCount = await db2.query.products.findMany({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(products.isActive, true),
+              drizzleOrm.inArray(products.id, data.productIds)
+            )
+          });
+        } else {
+          productsToCount = await db2.query.products.findMany({
+            where: drizzleOrm.eq(products.isActive, true)
+          });
+        }
+        let totalItems = 0;
+        for (const product of productsToCount) {
+          const inv = await db2.query.inventory.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(inventory.productId, product.id),
+              drizzleOrm.eq(inventory.branchId, data.branchId)
+            )
+          });
+          const expectedQuantity = inv?.quantity || 0;
+          const expectedCost = product.costPrice || 0;
+          await db2.insert(inventoryCountItems).values({
+            countId: count.id,
+            productId: product.id,
+            expectedQuantity,
+            expectedCost,
+            createdAt: now,
+            updatedAt: now
+          });
+          totalItems++;
+        }
+        await db2.update(inventoryCounts).set({ totalItems, updatedAt: now }).where(drizzleOrm.eq(inventoryCounts.id, count.id));
+        await createAuditLog$1({
+          userId: data.userId,
+          branchId: data.branchId,
+          action: "CREATE",
+          entityType: "inventory_count",
+          entityId: count.id,
+          newValues: {
+            countNumber: count.countNumber,
+            countType: data.countType,
+            totalItems
+          },
+          description: `Inventory count ${count.countNumber} created with ${totalItems} items`
+        });
+        return {
+          success: true,
+          message: `Inventory count created with ${totalItems} items`,
+          data: { ...count, totalItems }
+        };
+      } catch (error) {
+        console.error("Create inventory count error:", error);
+        return {
+          success: false,
+          message: `Failed to create inventory count: ${error instanceof Error ? error.message : "Unknown error"}`
+        };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "inventory-counts:start",
+    async (_, countId, userId) => {
+      try {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const count = await db2.query.inventoryCounts.findFirst({
+          where: drizzleOrm.eq(inventoryCounts.id, countId)
+        });
+        if (!count) {
+          return { success: false, message: "Count session not found" };
+        }
+        if (count.status !== "draft") {
+          return { success: false, message: "Count session has already been started" };
+        }
+        await db2.update(inventoryCounts).set({
+          status: "in_progress",
+          startedAt: now,
+          startedBy: userId,
+          updatedAt: now
+        }).where(drizzleOrm.eq(inventoryCounts.id, countId));
+        return { success: true, message: "Count session started" };
+      } catch (error) {
+        console.error("Start count error:", error);
+        return { success: false, message: "Failed to start count session" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "inventory-counts:record-count",
+    async (_, data) => {
+      try {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const item = await db2.query.inventoryCountItems.findFirst({
+          where: drizzleOrm.eq(inventoryCountItems.id, data.countItemId),
+          with: { count: true }
+        });
+        if (!item) {
+          return { success: false, message: "Count item not found" };
+        }
+        if (item.count.status !== "in_progress") {
+          return { success: false, message: "Count session is not in progress" };
+        }
+        const varianceQuantity = data.countedQuantity - item.expectedQuantity;
+        const varianceValue = varianceQuantity * item.expectedCost;
+        const variancePercent = item.expectedQuantity > 0 ? varianceQuantity / item.expectedQuantity * 100 : data.countedQuantity > 0 ? 100 : 0;
+        await db2.update(inventoryCountItems).set({
+          countedQuantity: data.countedQuantity,
+          varianceQuantity,
+          varianceValue,
+          variancePercent,
+          countedBy: data.userId,
+          countedAt: now,
+          notes: data.notes,
+          updatedAt: now
+        }).where(drizzleOrm.eq(inventoryCountItems.id, data.countItemId));
+        const countedCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(inventoryCountItems).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(inventoryCountItems.countId, item.countId),
+            drizzleOrm.sql`${inventoryCountItems.countedQuantity} IS NOT NULL`
+          )
+        );
+        await db2.update(inventoryCounts).set({
+          itemsCounted: countedCount[0]?.count || 0,
+          updatedAt: now
+        }).where(drizzleOrm.eq(inventoryCounts.id, item.countId));
+        return {
+          success: true,
+          message: "Count recorded",
+          data: { varianceQuantity, varianceValue, variancePercent }
+        };
+      } catch (error) {
+        console.error("Record count error:", error);
+        return { success: false, message: "Failed to record count" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "inventory-counts:complete",
+    async (_, countId, userId) => {
+      try {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const count = await db2.query.inventoryCounts.findFirst({
+          where: drizzleOrm.eq(inventoryCounts.id, countId),
+          with: { items: true }
+        });
+        if (!count) {
+          return { success: false, message: "Count session not found" };
+        }
+        if (count.status !== "in_progress") {
+          return { success: false, message: "Count session is not in progress" };
+        }
+        const uncountedItems = count.items.filter((i) => i.countedQuantity === null);
+        if (uncountedItems.length > 0) {
+          return {
+            success: false,
+            message: `${uncountedItems.length} items have not been counted yet`
+          };
+        }
+        const varianceItems = count.items.filter((i) => i.varianceQuantity !== 0);
+        const totalVarianceValue = count.items.reduce(
+          (sum, i) => sum + (i.varianceValue || 0),
+          0
+        );
+        await db2.update(inventoryCounts).set({
+          status: "completed",
+          completedAt: now,
+          completedBy: userId,
+          varianceCount: varianceItems.length,
+          varianceValue: totalVarianceValue,
+          updatedAt: now
+        }).where(drizzleOrm.eq(inventoryCounts.id, countId));
+        await createAuditLog$1({
+          userId,
+          branchId: count.branchId,
+          action: "UPDATE",
+          entityType: "inventory_count",
+          entityId: countId,
+          newValues: {
+            status: "completed",
+            varianceCount: varianceItems.length,
+            varianceValue: totalVarianceValue
+          },
+          description: `Inventory count ${count.countNumber} completed with ${varianceItems.length} variances totaling $${totalVarianceValue.toFixed(2)}`
+        });
+        return {
+          success: true,
+          message: "Count session completed",
+          data: {
+            varianceCount: varianceItems.length,
+            varianceValue: totalVarianceValue
+          }
+        };
+      } catch (error) {
+        console.error("Complete count error:", error);
+        return { success: false, message: "Failed to complete count session" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "inventory-counts:apply-adjustments",
+    async (_, countId, userId) => {
+      try {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const count = await db2.query.inventoryCounts.findFirst({
+          where: drizzleOrm.eq(inventoryCounts.id, countId),
+          with: { items: true }
+        });
+        if (!count) {
+          return { success: false, message: "Count session not found" };
+        }
+        if (count.status !== "completed") {
+          return { success: false, message: "Count session must be completed first" };
+        }
+        const itemsToAdjust = count.items.filter(
+          (i) => i.varianceQuantity !== 0 && !i.adjustmentCreated
+        );
+        if (itemsToAdjust.length === 0) {
+          return { success: false, message: "No variance items to adjust" };
+        }
+        let adjustedCount = 0;
+        for (const item of itemsToAdjust) {
+          const inv = await db2.query.inventory.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(inventory.productId, item.productId),
+              drizzleOrm.eq(inventory.branchId, count.branchId)
+            )
+          });
+          if (!inv) continue;
+          const varianceQty = item.varianceQuantity || 0;
+          const newQuantity = inv.quantity + varianceQty;
+          await db2.update(inventory).set({
+            quantity: newQuantity,
+            updatedAt: now
+          }).where(drizzleOrm.eq(inventory.id, inv.id));
+          await db2.insert(stockAdjustments).values({
+            productId: item.productId,
+            branchId: count.branchId,
+            userId,
+            adjustmentType: "correction",
+            quantityBefore: inv.quantity,
+            quantityChange: varianceQty,
+            quantityAfter: newQuantity,
+            reason: `Cycle count adjustment - Count #${count.countNumber}`,
+            reference: count.countNumber,
+            createdAt: now
+          });
+          await db2.update(inventoryCountItems).set({ adjustmentCreated: true, updatedAt: now }).where(drizzleOrm.eq(inventoryCountItems.id, item.id));
+          adjustedCount++;
+        }
+        await createAuditLog$1({
+          userId,
+          branchId: count.branchId,
+          action: "UPDATE",
+          entityType: "inventory_count",
+          entityId: countId,
+          newValues: { adjustmentsApplied: adjustedCount },
+          description: `Applied ${adjustedCount} inventory adjustments from count ${count.countNumber}`
+        });
+        return {
+          success: true,
+          message: `Applied ${adjustedCount} inventory adjustments`,
+          data: { adjustedCount }
+        };
+      } catch (error) {
+        console.error("Apply adjustments error:", error);
+        return { success: false, message: "Failed to apply adjustments" };
+      }
+    }
+  );
+  electron.ipcMain.handle("inventory-counts:variance-report", async (_, countId) => {
+    try {
+      const db2 = getDatabase();
+      const count = await db2.query.inventoryCounts.findFirst({
+        where: drizzleOrm.eq(inventoryCounts.id, countId),
+        with: {
+          items: {
+            with: {
+              product: true
+            }
+          },
+          branch: true,
+          createdByUser: true,
+          completedByUser: true
+        }
+      });
+      if (!count) {
+        return { success: false, message: "Count session not found" };
+      }
+      const totalExpectedValue = count.items.reduce(
+        (sum, i) => sum + i.expectedQuantity * i.expectedCost,
+        0
+      );
+      const totalCountedValue = count.items.reduce(
+        (sum, i) => sum + (i.countedQuantity || 0) * i.expectedCost,
+        0
+      );
+      const totalVarianceValue = count.items.reduce(
+        (sum, i) => sum + (i.varianceValue || 0),
+        0
+      );
+      const itemsWithVariance = count.items.filter((i) => i.varianceQuantity !== 0);
+      const positiveVariances = itemsWithVariance.filter((i) => (i.varianceQuantity || 0) > 0);
+      const negativeVariances = itemsWithVariance.filter((i) => (i.varianceQuantity || 0) < 0);
+      const summary = {
+        countNumber: count.countNumber,
+        countType: count.countType,
+        status: count.status,
+        branchName: count.branch?.name,
+        scheduledDate: count.scheduledDate,
+        completedAt: count.completedAt,
+        completedBy: count.completedByUser?.username,
+        totalItems: count.totalItems,
+        itemsCounted: count.itemsCounted,
+        totalExpectedValue,
+        totalCountedValue,
+        totalVarianceValue,
+        variancePercent: totalExpectedValue > 0 ? totalVarianceValue / totalExpectedValue * 100 : 0,
+        itemsWithVariance: itemsWithVariance.length,
+        positiveVarianceCount: positiveVariances.length,
+        positiveVarianceValue: positiveVariances.reduce(
+          (sum, i) => sum + (i.varianceValue || 0),
+          0
+        ),
+        negativeVarianceCount: negativeVariances.length,
+        negativeVarianceValue: negativeVariances.reduce(
+          (sum, i) => sum + (i.varianceValue || 0),
+          0
+        )
+      };
+      const items = count.items.map((i) => ({
+        productId: i.productId,
+        productName: i.product?.name,
+        sku: i.product?.sku,
+        expectedQuantity: i.expectedQuantity,
+        countedQuantity: i.countedQuantity,
+        varianceQuantity: i.varianceQuantity,
+        varianceValue: i.varianceValue,
+        variancePercent: i.variancePercent,
+        expectedCost: i.expectedCost,
+        adjustmentCreated: i.adjustmentCreated,
+        notes: i.notes
+      }));
+      return {
+        success: true,
+        data: { summary, items }
+      };
+    } catch (error) {
+      console.error("Variance report error:", error);
+      return { success: false, message: "Failed to generate variance report" };
+    }
+  });
+  electron.ipcMain.handle(
+    "inventory-counts:list",
+    async (_, branchId, status) => {
+      try {
+        const db2 = getDatabase();
+        const conditions = [];
+        if (branchId) conditions.push(drizzleOrm.eq(inventoryCounts.branchId, branchId));
+        if (status) conditions.push(drizzleOrm.eq(inventoryCounts.status, status));
+        const counts = await db2.query.inventoryCounts.findMany({
+          where: conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0,
+          with: {
+            branch: true,
+            createdByUser: true
+          },
+          orderBy: drizzleOrm.desc(inventoryCounts.createdAt)
+        });
+        return { success: true, data: counts };
+      } catch (error) {
+        console.error("List counts error:", error);
+        return { success: false, message: "Failed to list counts" };
+      }
+    }
+  );
+  electron.ipcMain.handle("inventory-counts:get", async (_, countId) => {
+    try {
+      const db2 = getDatabase();
+      const count = await db2.query.inventoryCounts.findFirst({
+        where: drizzleOrm.eq(inventoryCounts.id, countId),
+        with: {
+          items: {
+            with: {
+              product: true
+            }
+          },
+          branch: true,
+          createdByUser: true,
+          startedByUser: true,
+          completedByUser: true
+        }
+      });
+      if (!count) {
+        return { success: false, message: "Count not found" };
+      }
+      return { success: true, data: count };
+    } catch (error) {
+      console.error("Get count error:", error);
+      return { success: false, message: "Failed to get count" };
+    }
+  });
+  electron.ipcMain.handle(
+    "inventory-counts:cancel",
+    async (_, countId, userId) => {
+      try {
+        const db2 = getDatabase();
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const count = await db2.query.inventoryCounts.findFirst({
+          where: drizzleOrm.eq(inventoryCounts.id, countId)
+        });
+        if (!count) {
+          return { success: false, message: "Count not found" };
+        }
+        if (count.status === "completed") {
+          return { success: false, message: "Cannot cancel a completed count" };
+        }
+        await db2.update(inventoryCounts).set({ status: "cancelled", updatedAt: now }).where(drizzleOrm.eq(inventoryCounts.id, countId));
+        await createAuditLog$1({
+          userId,
+          branchId: count.branchId,
+          action: "UPDATE",
+          entityType: "inventory_count",
+          entityId: countId,
+          newValues: { status: "cancelled" },
+          description: `Inventory count ${count.countNumber} cancelled`
+        });
+        return { success: true, message: "Count cancelled" };
+      } catch (error) {
+        console.error("Cancel count error:", error);
+        return { success: false, message: "Failed to cancel count" };
+      }
+    }
+  );
+  electron.ipcMain.handle("inventory-counts:reconciliation-summary", async (_, branchId) => {
+    try {
+      const db2 = getDatabase();
+      const recentCounts = await db2.query.inventoryCounts.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(inventoryCounts.branchId, branchId),
+          drizzleOrm.eq(inventoryCounts.status, "completed")
+        ),
+        orderBy: drizzleOrm.desc(inventoryCounts.completedAt),
+        limit: 10,
+        with: {
+          items: true
+        }
+      });
+      const summary = {
+        totalCountsSinceInception: recentCounts.length,
+        lastCountDate: recentCounts[0]?.completedAt || null,
+        totalVarianceValue: recentCounts.reduce(
+          (sum, c) => sum + (c.varianceValue || 0),
+          0
+        ),
+        averageVariancePerCount: recentCounts.length > 0 ? recentCounts.reduce((sum, c) => sum + (c.varianceValue || 0), 0) / recentCounts.length : 0,
+        countsWithVariance: recentCounts.filter((c) => (c.varianceCount || 0) > 0).length,
+        recentCounts: recentCounts.map((c) => ({
+          id: c.id,
+          countNumber: c.countNumber,
+          countType: c.countType,
+          completedAt: c.completedAt,
+          totalItems: c.totalItems,
+          varianceCount: c.varianceCount,
+          varianceValue: c.varianceValue
+        }))
+      };
+      return { success: true, data: summary };
+    } catch (error) {
+      console.error("Reconciliation summary error:", error);
+      return { success: false, message: "Failed to get reconciliation summary" };
+    }
+  });
+  console.log("Inventory counts IPC handlers registered");
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -16464,6 +17269,7 @@ function registerAllHandlers() {
   registerBackupHandlers();
   registerTaxCollectionsHandlers();
   registerDiscountManagementHandlers();
+  registerInventoryCountsHandlers();
   console.log("All IPC handlers registered");
 }
 process.on("uncaughtException", (error) => {

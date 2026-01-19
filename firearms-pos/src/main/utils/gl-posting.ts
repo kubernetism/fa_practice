@@ -11,6 +11,7 @@ import {
   type NewJournalEntry,
   type NewJournalEntryLine,
 } from '../db/schema'
+import { createAuditLog } from './audit'
 
 // Account Codes - these correspond to the chart of accounts
 export const ACCOUNT_CODES = {
@@ -21,10 +22,12 @@ export const ACCOUNT_CODES = {
   ACCOUNTS_PAYABLE: '2000',
   SALES_TAX_PAYABLE: '2100',
   SALES_REVENUE: '4000',
+  INVENTORY_ADJUSTMENT: '4900', // Income from inventory surplus
   COGS: '5000',
   SALARIES_WAGES: '5100',
   RENT_EXPENSE: '5200',
   UTILITIES_EXPENSE: '5300',
+  INVENTORY_SHRINKAGE: '5400', // Expense for inventory loss/damage/theft
   OTHER_EXPENSE: '5900',
 } as const
 
@@ -149,14 +152,40 @@ export async function createJournalEntry(params: CreateJournalEntryParams): Prom
     }
   }
 
+  // Create audit log for journal entry
+  await createAuditLog({
+    userId,
+    branchId,
+    action: 'CREATE',
+    entityType: 'journal_entry',
+    entityId: entry.id,
+    newValues: {
+      entryNumber: entry.entryNumber,
+      description,
+      referenceType,
+      referenceId,
+      status: entry.status,
+      totalDebits: lines.reduce((sum, l) => sum + l.debitAmount, 0),
+      totalCredits: lines.reduce((sum, l) => sum + l.creditAmount, 0),
+      lineCount: lines.length,
+    },
+    description: `Journal entry ${entry.entryNumber} created for ${referenceType} #${referenceId}`,
+  })
+
   return entry.id
+}
+
+interface PaymentBreakdownForGL {
+  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+  amount: number
+  referenceNumber?: string
 }
 
 /**
  * Post a sale transaction to the General Ledger.
  *
  * Journal Entry:
- * DR Cash/AR (1010/1100)     $totalAmount
+ * DR Cash/AR (1010/1100)     $totalAmount (split by payment method)
  *     CR Sales Revenue (4000)    $subtotal
  *     CR Sales Tax Payable (2100) $taxAmount
  * DR COGS (5000)             $totalCOGS
@@ -165,20 +194,44 @@ export async function createJournalEntry(params: CreateJournalEntryParams): Prom
 export async function postSaleToGL(
   sale: Sale,
   saleItems: Array<{ costPrice: number; quantity: number }>,
-  userId: number
+  userId: number,
+  payments?: PaymentBreakdownForGL[]
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  // Determine if cash or receivable based on payment status
-  const cashAccountCode = sale.paymentMethod === 'card' || sale.paymentMethod === 'mobile'
-    ? ACCOUNT_CODES.CASH_IN_BANK
-    : ACCOUNT_CODES.CASH_IN_HAND
-
-  const isCredit = sale.paymentStatus !== 'paid'
   const receivableAmount = sale.totalAmount - sale.amountPaid
 
-  // DR Cash for amount paid
-  if (sale.amountPaid > 0) {
+  // DR Cash for amount paid - use payment breakdown if available
+  if (payments && payments.length > 0) {
+    // Mixed/split payment - create separate entries for each payment method
+    for (const payment of payments) {
+      if (payment.amount <= 0) continue
+
+      // Determine account based on payment method
+      const accountCode = ['card', 'debit_card', 'mobile', 'cheque', 'bank_transfer'].includes(payment.method)
+        ? ACCOUNT_CODES.CASH_IN_BANK
+        : ACCOUNT_CODES.CASH_IN_HAND
+
+      const methodLabel = payment.method === 'card' ? 'Card'
+        : payment.method === 'debit_card' ? 'Debit Card'
+        : payment.method === 'mobile' ? 'Mobile'
+        : payment.method === 'cheque' ? 'Cheque'
+        : payment.method === 'bank_transfer' ? 'Bank Transfer'
+        : 'Cash'
+
+      lines.push({
+        accountCode,
+        debitAmount: payment.amount,
+        creditAmount: 0,
+        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ''}`,
+      })
+    }
+  } else if (sale.amountPaid > 0) {
+    // Single payment - use old logic
+    const cashAccountCode = sale.paymentMethod === 'card' || sale.paymentMethod === 'mobile'
+      ? ACCOUNT_CODES.CASH_IN_BANK
+      : ACCOUNT_CODES.CASH_IN_HAND
+
     lines.push({
       accountCode: cashAccountCode,
       debitAmount: sale.amountPaid,
@@ -663,6 +716,76 @@ export async function postVoidSaleToGL(
     referenceType: 'sale_void',
     referenceId: sale.id,
     branchId: sale.branchId,
+    userId,
+    lines,
+  })
+}
+
+/**
+ * Post a stock adjustment to the General Ledger.
+ *
+ * For inventory reduction (damage/theft/loss):
+ * DR Inventory Shrinkage (5400)  $value
+ *     CR Inventory (1200)            $value
+ *
+ * For inventory addition (surplus found):
+ * DR Inventory (1200)            $value
+ *     CR Inventory Adjustment (4900) $value
+ */
+export async function postStockAdjustmentToGL(
+  adjustment: {
+    id: number
+    branchId: number
+    adjustmentType: 'add' | 'remove'
+    quantityChange: number
+    unitCost: number
+    reason: string
+    reference?: string
+  },
+  userId: number
+): Promise<number> {
+  const lines: JournalLine[] = []
+  const totalValue = adjustment.quantityChange * adjustment.unitCost
+
+  if (totalValue <= 0) {
+    throw new Error('Cannot post zero-value adjustment to GL')
+  }
+
+  if (adjustment.adjustmentType === 'remove') {
+    // Reduction: DR Shrinkage Expense, CR Inventory
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory shrinkage: ${adjustment.reason}`,
+    })
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${adjustment.reason}`,
+    })
+  } else {
+    // Addition: DR Inventory, CR Inventory Adjustment Income
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory increase: ${adjustment.reason}`,
+    })
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory adjustment income: ${adjustment.reason}`,
+    })
+  }
+
+  return createJournalEntry({
+    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
+    referenceType: 'stock_adjustment',
+    referenceId: adjustment.id,
+    branchId: adjustment.branchId,
     userId,
     lines,
   })

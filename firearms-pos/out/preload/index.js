@@ -40,6 +40,19 @@ const api = {
     getAdjustments: (productId, branchId) => electron.ipcRenderer.invoke("inventory:get-adjustments", productId, branchId),
     getTransfers: (branchId) => electron.ipcRenderer.invoke("inventory:get-transfers", branchId)
   },
+  // Inventory Counts (Cycle Counts / Reconciliation)
+  inventoryCounts: {
+    create: (data) => electron.ipcRenderer.invoke("inventory-counts:create", data),
+    start: (countId, userId) => electron.ipcRenderer.invoke("inventory-counts:start", countId, userId),
+    recordCount: (data) => electron.ipcRenderer.invoke("inventory-counts:record-count", data),
+    complete: (countId, userId) => electron.ipcRenderer.invoke("inventory-counts:complete", countId, userId),
+    applyAdjustments: (countId, userId) => electron.ipcRenderer.invoke("inventory-counts:apply-adjustments", countId, userId),
+    varianceReport: (countId) => electron.ipcRenderer.invoke("inventory-counts:variance-report", countId),
+    list: (branchId, status) => electron.ipcRenderer.invoke("inventory-counts:list", branchId, status),
+    get: (countId) => electron.ipcRenderer.invoke("inventory-counts:get", countId),
+    cancel: (countId, userId) => electron.ipcRenderer.invoke("inventory-counts:cancel", countId, userId),
+    reconciliationSummary: (branchId) => electron.ipcRenderer.invoke("inventory-counts:reconciliation-summary", branchId)
+  },
   // Customers
   customers: {
     getAll: (params) => electron.ipcRenderer.invoke("customers:get-all", params),

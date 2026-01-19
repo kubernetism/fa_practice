@@ -15,6 +15,7 @@ import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generateTransferNumber } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
+import { postStockAdjustmentToGL } from '../utils/gl-posting'
 
 export function registerInventoryHandlers(): void {
   const db = getDatabase()
@@ -121,6 +122,15 @@ export function registerInventoryHandlers(): void {
           where: and(eq(inventory.productId, data.productId), eq(inventory.branchId, data.branchId)),
         })
 
+        // Get product for cost price
+        const product = await db.query.products.findFirst({
+          where: eq(products.id, data.productId),
+        })
+
+        if (!product) {
+          return { success: false, message: 'Product not found' }
+        }
+
         const quantityBefore = currentInventory?.quantity ?? 0
         const quantityAfter =
           data.adjustmentType === 'add'
@@ -148,8 +158,8 @@ export function registerInventoryHandlers(): void {
           })
         }
 
-        // Create adjustment record
-        await db.insert(stockAdjustments).values({
+        // Create adjustment record with returning to get ID
+        const [adjustment] = await db.insert(stockAdjustments).values({
           productId: data.productId,
           branchId: data.branchId,
           userId: session?.userId ?? 0,
@@ -160,7 +170,28 @@ export function registerInventoryHandlers(): void {
           serialNumber: data.serialNumber,
           reason: data.reason,
           reference: data.reference,
-        })
+        }).returning()
+
+        // Post to GL if quantity changed
+        if (data.quantityChange > 0) {
+          try {
+            await postStockAdjustmentToGL(
+              {
+                id: adjustment.id,
+                branchId: data.branchId,
+                adjustmentType: data.adjustmentType,
+                quantityChange: data.quantityChange,
+                unitCost: product.costPrice,
+                reason: data.reason,
+                reference: data.reference,
+              },
+              session?.userId ?? 0
+            )
+          } catch (glError) {
+            console.error('GL posting for stock adjustment failed:', glError)
+            // Don't fail the adjustment if GL posting fails
+          }
+        }
 
         await createAuditLog({
           userId: session?.userId,
