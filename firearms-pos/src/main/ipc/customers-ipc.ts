@@ -5,6 +5,66 @@ import { customers, type NewCustomer } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { isLicenseExpired, isLicenseExpiringSoon, type PaginationParams, type PaginatedResult } from '../utils/helpers'
+import {
+  sanitizeName,
+  sanitizeEmail,
+  sanitizePhone,
+  sanitizeForStorage,
+  sanitizeText,
+  isValidEmail,
+  isValidPhone,
+} from '../utils/validation'
+import { encryptCustomerData, decryptCustomerData } from '../utils/encryption'
+
+/**
+ * Sanitize and validate customer input data
+ * Section 5.2 - Input sanitization for text fields
+ */
+function sanitizeCustomerInput(data: Partial<NewCustomer>): Partial<NewCustomer> {
+  const sanitized = { ...data }
+
+  // Sanitize name fields
+  if (sanitized.firstName) sanitized.firstName = sanitizeName(sanitized.firstName)
+  if (sanitized.lastName) sanitized.lastName = sanitizeName(sanitized.lastName)
+
+  // Sanitize contact info
+  if (sanitized.email) sanitized.email = sanitizeEmail(sanitized.email)
+  if (sanitized.phone) sanitized.phone = sanitizePhone(sanitized.phone)
+
+  // Sanitize address fields
+  if (sanitized.address) sanitized.address = sanitizeForStorage(sanitized.address)
+  if (sanitized.city) sanitized.city = sanitizeName(sanitized.city)
+  if (sanitized.state) sanitized.state = sanitizeName(sanitized.state)
+  if (sanitized.zipCode) sanitized.zipCode = sanitizeText(sanitized.zipCode)
+
+  // Sanitize ID fields (alphanumeric with some special chars)
+  if (sanitized.governmentIdNumber) sanitized.governmentIdNumber = sanitizeForStorage(sanitized.governmentIdNumber)
+  if (sanitized.firearmLicenseNumber) sanitized.firearmLicenseNumber = sanitizeForStorage(sanitized.firearmLicenseNumber)
+
+  // Sanitize notes
+  if (sanitized.notes) sanitized.notes = sanitizeForStorage(sanitized.notes)
+
+  return sanitized
+}
+
+/**
+ * Validate customer data
+ */
+function validateCustomerInput(data: Partial<NewCustomer>): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+
+  // Validate email format if provided
+  if (data.email && !isValidEmail(data.email)) {
+    errors.push('Invalid email format')
+  }
+
+  // Validate phone format if provided
+  if (data.phone && !isValidPhone(data.phone)) {
+    errors.push('Invalid phone number format')
+  }
+
+  return { valid: errors.length === 0, errors }
+}
 
 export function registerCustomerHandlers(): void {
   const db = getDatabase()
@@ -76,7 +136,10 @@ export function registerCustomerHandlers(): void {
         return { success: false, message: 'Customer not found' }
       }
 
-      return { success: true, data: customer }
+      // Decrypt sensitive fields before returning
+      const decryptedCustomer = decryptCustomerData(customer)
+
+      return { success: true, data: decryptedCustomer }
     } catch (error) {
       console.error('Get customer error:', error)
       return { success: false, message: 'Failed to fetch customer' }
@@ -87,8 +150,23 @@ export function registerCustomerHandlers(): void {
     try {
       const session = getCurrentSession()
 
-      const result = await db.insert(customers).values(data).returning()
+      // Section 5.2: Sanitize input data
+      const sanitizedData = sanitizeCustomerInput(data) as NewCustomer
+
+      // Validate input
+      const validation = validateCustomerInput(sanitizedData)
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(', ') }
+      }
+
+      // Section 5.3: Encrypt sensitive fields before storage
+      const encryptedData = encryptCustomerData(sanitizedData)
+
+      const result = await db.insert(customers).values(encryptedData).returning()
       const newCustomer = result[0]
+
+      // Decrypt for audit log (show original values, not encrypted)
+      const decryptedForAudit = decryptCustomerData(newCustomer)
 
       await createAuditLog({
         userId: session?.userId,
@@ -96,11 +174,12 @@ export function registerCustomerHandlers(): void {
         action: 'create',
         entityType: 'customer',
         entityId: newCustomer.id,
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
-        description: `Created customer: ${data.firstName} ${data.lastName}`,
+        newValues: sanitizeForAudit(decryptedForAudit as Record<string, unknown>),
+        description: `Created customer: ${sanitizedData.firstName} ${sanitizedData.lastName}`,
       })
 
-      return { success: true, data: newCustomer }
+      // Return decrypted data to the client
+      return { success: true, data: decryptedForAudit }
     } catch (error) {
       console.error('Create customer error:', error)
       return { success: false, message: 'Failed to create customer' }
@@ -119,11 +198,27 @@ export function registerCustomerHandlers(): void {
         return { success: false, message: 'Customer not found' }
       }
 
+      // Section 5.2: Sanitize input data
+      const sanitizedData = sanitizeCustomerInput(data)
+
+      // Validate input
+      const validation = validateCustomerInput(sanitizedData)
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(', ') }
+      }
+
+      // Section 5.3: Encrypt sensitive fields before storage
+      const encryptedData = encryptCustomerData(sanitizedData)
+
       const result = await db
         .update(customers)
-        .set({ ...data, updatedAt: new Date().toISOString() })
+        .set({ ...encryptedData, updatedAt: new Date().toISOString() })
         .where(eq(customers.id, id))
         .returning()
+
+      // Decrypt for audit log
+      const decryptedOld = decryptCustomerData(existing)
+      const decryptedNew = decryptCustomerData(result[0])
 
       await createAuditLog({
         userId: session?.userId,
@@ -131,12 +226,13 @@ export function registerCustomerHandlers(): void {
         action: 'update',
         entityType: 'customer',
         entityId: id,
-        oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
+        oldValues: sanitizeForAudit(decryptedOld as unknown as Record<string, unknown>),
+        newValues: sanitizeForAudit(decryptedNew as Record<string, unknown>),
         description: `Updated customer: ${existing.firstName} ${existing.lastName}`,
       })
 
-      return { success: true, data: result[0] }
+      // Return decrypted data to client
+      return { success: true, data: decryptedNew }
     } catch (error) {
       console.error('Update customer error:', error)
       return { success: false, message: 'Failed to update customer' }

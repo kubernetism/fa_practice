@@ -5,6 +5,97 @@ import { products, categories, type NewProduct } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
+import {
+  sanitizeForStorage,
+  sanitizeAlphanumeric,
+  validatePrice,
+  validateCostPrice,
+  validateQuantity,
+  validateTaxRate,
+  validatePercentage,
+} from '../utils/validation'
+
+/**
+ * Sanitize and validate product input data
+ * Section 5.2 - Input sanitization and range validation
+ */
+function sanitizeProductInput(data: Partial<NewProduct>): Partial<NewProduct> {
+  const sanitized = { ...data }
+
+  // Sanitize text fields
+  if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name)
+  if (sanitized.code) sanitized.code = sanitizeAlphanumeric(sanitized.code)
+  if (sanitized.barcode) sanitized.barcode = sanitizeAlphanumeric(sanitized.barcode)
+  if (sanitized.description) sanitized.description = sanitizeForStorage(sanitized.description)
+  if (sanitized.manufacturer) sanitized.manufacturer = sanitizeForStorage(sanitized.manufacturer)
+  if (sanitized.model) sanitized.model = sanitizeForStorage(sanitized.model)
+  if (sanitized.caliber) sanitized.caliber = sanitizeForStorage(sanitized.caliber)
+  if (sanitized.sku) sanitized.sku = sanitizeAlphanumeric(sanitized.sku)
+
+  return sanitized
+}
+
+/**
+ * Validate product numeric fields
+ */
+function validateProductInput(data: Partial<NewProduct>): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+
+  // Validate prices
+  if (data.sellingPrice !== undefined) {
+    const validatedPrice = validatePrice(data.sellingPrice)
+    if (validatedPrice === null) {
+      errors.push('Selling price must be a positive number')
+    }
+  }
+
+  if (data.costPrice !== undefined) {
+    const validatedCost = validateCostPrice(data.costPrice)
+    if (validatedCost === null && data.costPrice !== 0) {
+      errors.push('Cost price must be a non-negative number')
+    }
+  }
+
+  // Validate quantities
+  if (data.minStockLevel !== undefined) {
+    const validatedMin = validateQuantity(data.minStockLevel)
+    if (validatedMin === null) {
+      errors.push('Minimum stock level must be a non-negative integer')
+    }
+  }
+
+  if (data.maxStockLevel !== undefined) {
+    const validatedMax = validateQuantity(data.maxStockLevel)
+    if (validatedMax === null) {
+      errors.push('Maximum stock level must be a non-negative integer')
+    }
+  }
+
+  if (data.reorderLevel !== undefined) {
+    const validatedReorder = validateQuantity(data.reorderLevel)
+    if (validatedReorder === null) {
+      errors.push('Reorder level must be a non-negative integer')
+    }
+  }
+
+  // Validate tax rate
+  if (data.taxRate !== undefined) {
+    const validatedTax = validateTaxRate(data.taxRate)
+    if (validatedTax === null) {
+      errors.push('Tax rate must be between 0 and 100')
+    }
+  }
+
+  // Validate discount percentage
+  if (data.maxDiscountPercent !== undefined) {
+    const validatedDiscount = validatePercentage(data.maxDiscountPercent)
+    if (validatedDiscount === null) {
+      errors.push('Max discount percent must be between 0 and 100')
+    }
+  }
+
+  return { valid: errors.length === 0, errors }
+}
 
 export function registerProductHandlers(): void {
   const db = getDatabase()
@@ -114,16 +205,25 @@ export function registerProductHandlers(): void {
     try {
       const session = getCurrentSession()
 
+      // Section 5.2: Sanitize input data
+      const sanitizedData = sanitizeProductInput(data) as NewProduct
+
+      // Section 5.2: Validate numeric ranges
+      const validation = validateProductInput(sanitizedData)
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(', ') }
+      }
+
       // Check for duplicate code
       const existing = await db.query.products.findFirst({
-        where: eq(products.code, data.code),
+        where: eq(products.code, sanitizedData.code),
       })
 
       if (existing) {
         return { success: false, message: 'Product code already exists' }
       }
 
-      const result = await db.insert(products).values(data).returning()
+      const result = await db.insert(products).values(sanitizedData).returning()
       const newProduct = result[0]
 
       await createAuditLog({
@@ -132,8 +232,8 @@ export function registerProductHandlers(): void {
         action: 'create',
         entityType: 'product',
         entityId: newProduct.id,
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
-        description: `Created product: ${data.name}`,
+        newValues: sanitizeForAudit(sanitizedData as Record<string, unknown>),
+        description: `Created product: ${sanitizedData.name}`,
       })
 
       return { success: true, data: newProduct }
@@ -155,10 +255,19 @@ export function registerProductHandlers(): void {
         return { success: false, message: 'Product not found' }
       }
 
+      // Section 5.2: Sanitize input data
+      const sanitizedData = sanitizeProductInput(data)
+
+      // Section 5.2: Validate numeric ranges
+      const validation = validateProductInput(sanitizedData)
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(', ') }
+      }
+
       // Check for duplicate code if code is being changed
-      if (data.code && data.code !== existing.code) {
+      if (sanitizedData.code && sanitizedData.code !== existing.code) {
         const duplicate = await db.query.products.findFirst({
-          where: eq(products.code, data.code),
+          where: eq(products.code, sanitizedData.code),
         })
         if (duplicate) {
           return { success: false, message: 'Product code already exists' }
@@ -167,7 +276,7 @@ export function registerProductHandlers(): void {
 
       const result = await db
         .update(products)
-        .set({ ...data, updatedAt: new Date().toISOString() })
+        .set({ ...sanitizedData, updatedAt: new Date().toISOString() })
         .where(eq(products.id, id))
         .returning()
 
@@ -178,7 +287,7 @@ export function registerProductHandlers(): void {
         entityType: 'product',
         entityId: id,
         oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
+        newValues: sanitizeForAudit(sanitizedData as Record<string, unknown>),
         description: `Updated product: ${existing.name}`,
       })
 

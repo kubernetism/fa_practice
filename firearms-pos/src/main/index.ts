@@ -5,6 +5,7 @@ import { initDatabase, closeDatabase } from './db'
 import { runMigrations, seedInitialData } from './db/migrate'
 import { registerAllHandlers } from './ipc'
 import { performCloseBackup, stopBackupScheduler } from './ipc/backup-ipc'
+import { initializeEncryption } from './utils/encryption'
 
 // Global error handler for uncaught exceptions
 process.on('uncaughtException', (error) => {
@@ -67,6 +68,10 @@ app.whenReady().then(async () => {
     // Initialize database
     initDatabase()
     console.log('Database initialized')
+
+    // Initialize encryption for sensitive data (Section 5.3 Security)
+    initializeEncryption()
+    console.log('Encryption initialized')
 
     // Run migrations
     await runMigrations()

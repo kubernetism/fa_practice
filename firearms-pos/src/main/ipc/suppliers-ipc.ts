@@ -5,6 +5,63 @@ import { suppliers, type NewSupplier } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
+import {
+  sanitizeName,
+  sanitizeEmail,
+  sanitizePhone,
+  sanitizeForStorage,
+  isValidEmail,
+  isValidPhone,
+} from '../utils/validation'
+import { encryptSupplierData, decryptSupplierData } from '../utils/encryption'
+
+/**
+ * Sanitize and validate supplier input data
+ * Section 5.2 - Input sanitization for text fields
+ */
+function sanitizeSupplierInput(data: Partial<NewSupplier>): Partial<NewSupplier> {
+  const sanitized = { ...data }
+
+  // Sanitize name fields
+  if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name)
+  if (sanitized.contactPerson) sanitized.contactPerson = sanitizeName(sanitized.contactPerson)
+
+  // Sanitize contact info
+  if (sanitized.email) sanitized.email = sanitizeEmail(sanitized.email)
+  if (sanitized.phone) sanitized.phone = sanitizePhone(sanitized.phone)
+
+  // Sanitize address fields
+  if (sanitized.address) sanitized.address = sanitizeForStorage(sanitized.address)
+  if (sanitized.city) sanitized.city = sanitizeName(sanitized.city)
+  if (sanitized.state) sanitized.state = sanitizeName(sanitized.state)
+  if (sanitized.zipCode) sanitized.zipCode = sanitizeForStorage(sanitized.zipCode)
+
+  // Sanitize business fields
+  if (sanitized.taxId) sanitized.taxId = sanitizeForStorage(sanitized.taxId)
+  if (sanitized.paymentTerms) sanitized.paymentTerms = sanitizeForStorage(sanitized.paymentTerms)
+  if (sanitized.notes) sanitized.notes = sanitizeForStorage(sanitized.notes)
+
+  return sanitized
+}
+
+/**
+ * Validate supplier data
+ */
+function validateSupplierInput(data: Partial<NewSupplier>): { valid: boolean; errors: string[] } {
+  const errors: string[] = []
+
+  // Validate email format if provided
+  if (data.email && !isValidEmail(data.email)) {
+    errors.push('Invalid email format')
+  }
+
+  // Validate phone format if provided
+  if (data.phone && !isValidPhone(data.phone)) {
+    errors.push('Invalid phone number format')
+  }
+
+  return { valid: errors.length === 0, errors }
+}
 
 export function registerSupplierHandlers(): void {
   const db = getDatabase()
@@ -74,7 +131,10 @@ export function registerSupplierHandlers(): void {
         return { success: false, message: 'Supplier not found' }
       }
 
-      return { success: true, data: supplier }
+      // Decrypt sensitive fields before returning
+      const decryptedSupplier = decryptSupplierData(supplier)
+
+      return { success: true, data: decryptedSupplier }
     } catch (error) {
       console.error('Get supplier error:', error)
       return { success: false, message: 'Failed to fetch supplier' }
@@ -85,8 +145,23 @@ export function registerSupplierHandlers(): void {
     try {
       const session = getCurrentSession()
 
-      const result = await db.insert(suppliers).values(data).returning()
+      // Section 5.2: Sanitize input data
+      const sanitizedData = sanitizeSupplierInput(data) as NewSupplier
+
+      // Validate input
+      const validation = validateSupplierInput(sanitizedData)
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(', ') }
+      }
+
+      // Section 5.3: Encrypt sensitive fields before storage
+      const encryptedData = encryptSupplierData(sanitizedData)
+
+      const result = await db.insert(suppliers).values(encryptedData).returning()
       const newSupplier = result[0]
+
+      // Decrypt for audit log
+      const decryptedForAudit = decryptSupplierData(newSupplier)
 
       await createAuditLog({
         userId: session?.userId,
@@ -94,11 +169,12 @@ export function registerSupplierHandlers(): void {
         action: 'create',
         entityType: 'supplier',
         entityId: newSupplier.id,
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
-        description: `Created supplier: ${data.name}`,
+        newValues: sanitizeForAudit(decryptedForAudit as Record<string, unknown>),
+        description: `Created supplier: ${sanitizedData.name}`,
       })
 
-      return { success: true, data: newSupplier }
+      // Return decrypted data to client
+      return { success: true, data: decryptedForAudit }
     } catch (error) {
       console.error('Create supplier error:', error)
       return { success: false, message: 'Failed to create supplier' }
@@ -117,11 +193,27 @@ export function registerSupplierHandlers(): void {
         return { success: false, message: 'Supplier not found' }
       }
 
+      // Section 5.2: Sanitize input data
+      const sanitizedData = sanitizeSupplierInput(data)
+
+      // Validate input
+      const validation = validateSupplierInput(sanitizedData)
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(', ') }
+      }
+
+      // Section 5.3: Encrypt sensitive fields before storage
+      const encryptedData = encryptSupplierData(sanitizedData)
+
       const result = await db
         .update(suppliers)
-        .set({ ...data, updatedAt: new Date().toISOString() })
+        .set({ ...encryptedData, updatedAt: new Date().toISOString() })
         .where(eq(suppliers.id, id))
         .returning()
+
+      // Decrypt for audit log
+      const decryptedOld = decryptSupplierData(existing)
+      const decryptedNew = decryptSupplierData(result[0])
 
       await createAuditLog({
         userId: session?.userId,
@@ -129,12 +221,13 @@ export function registerSupplierHandlers(): void {
         action: 'update',
         entityType: 'supplier',
         entityId: id,
-        oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
+        oldValues: sanitizeForAudit(decryptedOld as unknown as Record<string, unknown>),
+        newValues: sanitizeForAudit(decryptedNew as Record<string, unknown>),
         description: `Updated supplier: ${existing.name}`,
       })
 
-      return { success: true, data: result[0] }
+      // Return decrypted data to client
+      return { success: true, data: decryptedNew }
     } catch (error) {
       console.error('Update supplier error:', error)
       return { success: false, message: 'Failed to update supplier' }

@@ -10,8 +10,9 @@ const migrator = require("drizzle-orm/better-sqlite3/migrator");
 const bcrypt = require("bcryptjs");
 const os = require("os");
 const dateFns = require("date-fns");
-const path = require("path");
+const crypto = require("crypto");
 const fs = require("fs");
+const path = require("path");
 const node_crypto = require("node:crypto");
 const node_os = require("node:os");
 function _interopNamespaceDefault(e) {
@@ -30,8 +31,8 @@ function _interopNamespaceDefault(e) {
   n.default = e;
   return Object.freeze(n);
 }
-const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const fs__namespace = /* @__PURE__ */ _interopNamespaceDefault(fs);
+const path__namespace = /* @__PURE__ */ _interopNamespaceDefault(path);
 const is = {
   dev: !electron.app.isPackaged
 };
@@ -1471,9 +1472,41 @@ function getDbPath() {
   const userDataPath = electron.app.getPath("userData");
   const dbDir = node_path.join(userDataPath, "data");
   if (!node_fs.existsSync(dbDir)) {
-    node_fs.mkdirSync(dbDir, { recursive: true });
+    node_fs.mkdirSync(dbDir, { recursive: true, mode: 448 });
   }
   return node_path.join(dbDir, "firearms-pos.db");
+}
+function protectDatabaseFiles(dbPath) {
+  const filesToProtect = [
+    dbPath,
+    // Main database
+    `${dbPath}-wal`,
+    // WAL file
+    `${dbPath}-shm`
+    // Shared memory file
+  ];
+  for (const filePath of filesToProtect) {
+    if (node_fs.existsSync(filePath)) {
+      try {
+        node_fs.chmodSync(filePath, 384);
+      } catch (error) {
+        console.debug("Could not set file permissions (expected on Windows):", filePath);
+      }
+    }
+  }
+}
+function verifyDatabaseIntegrity(database) {
+  try {
+    const result = database.pragma("integrity_check");
+    if (Array.isArray(result) && result.length > 0) {
+      const checkResult = result[0];
+      return checkResult.integrity_check === "ok";
+    }
+    return false;
+  } catch (error) {
+    console.error("Database integrity check failed:", error);
+    return false;
+  }
 }
 function initDatabase() {
   if (db) return db;
@@ -1482,6 +1515,16 @@ function initDatabase() {
   sqlite = new Database(dbPath);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("secure_delete = ON");
+  sqlite.pragma("page_size = 4096");
+  sqlite.pragma("auto_vacuum = INCREMENTAL");
+  if (node_fs.existsSync(dbPath)) {
+    const integrityOk = verifyDatabaseIntegrity(sqlite);
+    if (!integrityOk) {
+      console.warn("Database integrity check failed - database may be corrupted");
+    }
+  }
+  protectDatabaseFiles(dbPath);
   db = betterSqlite3.drizzle(sqlite, { schema });
   return db;
 }
@@ -3701,6 +3744,251 @@ function registerInventoryHandlers() {
     }
   });
 }
+function sanitizeText(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().replace(/<[^>]*>/g, "").replace(/javascript:/gi, "").replace(/on\w+=/gi, "").replace(/\s+/g, " ").replace(/\0/g, "");
+}
+function sanitizeForStorage(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return sanitizeText(input).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+function sanitizeName(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return sanitizeText(input).replace(/[^a-zA-Z\s\-'.\u00C0-\u024F]/g, "").replace(/\s+/g, " ").trim();
+}
+function sanitizePhone(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().replace(/[^0-9+\-() ]/g, "").replace(/\s+/g, " ").trim();
+}
+function sanitizeEmail(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().toLowerCase().replace(/[^a-z0-9@._\-+]/g, "");
+}
+function isValidEmail(email) {
+  if (!email) return false;
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  return emailRegex.test(email);
+}
+function isValidPhone(phone) {
+  if (!phone) return false;
+  const digitsOnly = phone.replace(/\D/g, "");
+  return digitsOnly.length >= 7 && digitsOnly.length <= 15;
+}
+const ALGORITHM = "aes-256-gcm";
+const IV_LENGTH = 16;
+const AUTH_TAG_LENGTH = 16;
+const SALT_LENGTH = 32;
+const KEY_LENGTH = 32;
+const ENCRYPTED_PREFIX = "ENC:";
+const SCRYPT_N = 16384;
+const SCRYPT_R = 8;
+const SCRYPT_P = 1;
+let encryptionKey = null;
+let isInitialized = false;
+function getKeyFilePath() {
+  const userDataPath = electron.app.getPath("userData");
+  const secureDir = path.join(userDataPath, ".secure");
+  if (!fs.existsSync(secureDir)) {
+    fs.mkdirSync(secureDir, { recursive: true, mode: 448 });
+  }
+  return path.join(secureDir, ".enc_key");
+}
+function getMachineSeed() {
+  const os2 = require("os");
+  const components = [];
+  try {
+    components.push(os2.hostname());
+    components.push(os2.platform());
+    components.push(os2.arch());
+    const nets = os2.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      const netInterfaces = nets[name];
+      if (!netInterfaces) continue;
+      for (const net of netInterfaces) {
+        if (net.mac && net.mac !== "00:00:00:00:00:00") {
+          components.push(net.mac);
+        }
+      }
+    }
+    const cpus = os2.cpus();
+    if (cpus.length > 0) {
+      components.push(cpus[0].model);
+    }
+  } catch {
+    components.push("firearms-pos-default-seed");
+  }
+  const hash = crypto.createHash("sha256");
+  hash.update(components.join("|"));
+  return hash.digest("hex");
+}
+function initializeEncryption() {
+  if (isInitialized) return;
+  const keyFilePath = getKeyFilePath();
+  let salt;
+  if (fs.existsSync(keyFilePath)) {
+    try {
+      const keyData = fs.readFileSync(keyFilePath);
+      salt = keyData.subarray(0, SALT_LENGTH);
+    } catch {
+      salt = crypto.randomBytes(SALT_LENGTH);
+      saveKeyFile(salt);
+    }
+  } else {
+    salt = crypto.randomBytes(SALT_LENGTH);
+    saveKeyFile(salt);
+  }
+  const machineSeed = getMachineSeed();
+  encryptionKey = crypto.scryptSync(machineSeed, salt, KEY_LENGTH, {
+    N: SCRYPT_N,
+    r: SCRYPT_R,
+    p: SCRYPT_P
+  });
+  isInitialized = true;
+}
+function saveKeyFile(salt) {
+  const keyFilePath = getKeyFilePath();
+  try {
+    fs.writeFileSync(keyFilePath, salt, { mode: 384 });
+    try {
+      fs.chmodSync(keyFilePath, 384);
+    } catch {
+    }
+  } catch (error) {
+    console.error("Failed to save encryption key file:", error);
+    throw new Error("Failed to initialize encryption");
+  }
+}
+function getKey() {
+  if (!encryptionKey) {
+    initializeEncryption();
+  }
+  if (!encryptionKey) {
+    throw new Error("Encryption not initialized");
+  }
+  return encryptionKey;
+}
+function encryptField(plaintext) {
+  if (plaintext === null || plaintext === void 0 || plaintext === "") {
+    return "";
+  }
+  if (String(plaintext).startsWith(ENCRYPTED_PREFIX)) {
+    return plaintext;
+  }
+  const key = getKey();
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv, {
+    authTagLength: AUTH_TAG_LENGTH
+  });
+  let encrypted = cipher.update(String(plaintext), "utf8", "base64");
+  encrypted += cipher.final("base64");
+  const authTag = cipher.getAuthTag();
+  return `${ENCRYPTED_PREFIX}${iv.toString("base64")}:${authTag.toString("base64")}:${encrypted}`;
+}
+function decryptField(encryptedValue) {
+  if (encryptedValue === null || encryptedValue === void 0 || encryptedValue === "") {
+    return "";
+  }
+  const value = String(encryptedValue);
+  if (!value.startsWith(ENCRYPTED_PREFIX)) {
+    return value;
+  }
+  try {
+    const key = getKey();
+    const parts = value.substring(ENCRYPTED_PREFIX.length).split(":");
+    if (parts.length !== 3) {
+      console.warn("Invalid encrypted value format");
+      return value;
+    }
+    const [ivBase64, authTagBase64, ciphertext] = parts;
+    const iv = Buffer.from(ivBase64, "base64");
+    const authTag = Buffer.from(authTagBase64, "base64");
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv, {
+      authTagLength: AUTH_TAG_LENGTH
+    });
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(ciphertext, "base64", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (error) {
+    console.error("Decryption failed:", error);
+    return value;
+  }
+}
+function encryptFields(obj, fieldsToEncrypt) {
+  const result = { ...obj };
+  for (const field of fieldsToEncrypt) {
+    const value = result[field];
+    if (typeof value === "string") {
+      result[field] = encryptField(value);
+    }
+  }
+  return result;
+}
+function decryptFields(obj, fieldsToDecrypt) {
+  const result = { ...obj };
+  for (const field of fieldsToDecrypt) {
+    const value = result[field];
+    if (typeof value === "string") {
+      result[field] = decryptField(value);
+    }
+  }
+  return result;
+}
+function encryptCustomerData(customer) {
+  return encryptFields(customer, [
+    "governmentIdNumber",
+    "firearmLicenseNumber",
+    "dateOfBirth"
+  ]);
+}
+function decryptCustomerData(customer) {
+  return decryptFields(customer, [
+    "governmentIdNumber",
+    "firearmLicenseNumber",
+    "dateOfBirth"
+  ]);
+}
+function encryptSupplierData(supplier) {
+  return encryptFields(supplier, ["taxId"]);
+}
+function decryptSupplierData(supplier) {
+  return decryptFields(supplier, ["taxId"]);
+}
+function sanitizeCustomerInput(data) {
+  const sanitized = { ...data };
+  if (sanitized.firstName) sanitized.firstName = sanitizeName(sanitized.firstName);
+  if (sanitized.lastName) sanitized.lastName = sanitizeName(sanitized.lastName);
+  if (sanitized.email) sanitized.email = sanitizeEmail(sanitized.email);
+  if (sanitized.phone) sanitized.phone = sanitizePhone(sanitized.phone);
+  if (sanitized.address) sanitized.address = sanitizeForStorage(sanitized.address);
+  if (sanitized.city) sanitized.city = sanitizeName(sanitized.city);
+  if (sanitized.state) sanitized.state = sanitizeName(sanitized.state);
+  if (sanitized.zipCode) sanitized.zipCode = sanitizeText(sanitized.zipCode);
+  if (sanitized.governmentIdNumber) sanitized.governmentIdNumber = sanitizeForStorage(sanitized.governmentIdNumber);
+  if (sanitized.firearmLicenseNumber) sanitized.firearmLicenseNumber = sanitizeForStorage(sanitized.firearmLicenseNumber);
+  if (sanitized.notes) sanitized.notes = sanitizeForStorage(sanitized.notes);
+  return sanitized;
+}
+function validateCustomerInput(data) {
+  const errors = [];
+  if (data.email && !isValidEmail(data.email)) {
+    errors.push("Invalid email format");
+  }
+  if (data.phone && !isValidPhone(data.phone)) {
+    errors.push("Invalid phone number format");
+  }
+  return { valid: errors.length === 0, errors };
+}
 function registerCustomerHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle(
@@ -3755,7 +4043,8 @@ function registerCustomerHandlers() {
       if (!customer) {
         return { success: false, message: "Customer not found" };
       }
-      return { success: true, data: customer };
+      const decryptedCustomer = decryptCustomerData(customer);
+      return { success: true, data: decryptedCustomer };
     } catch (error) {
       console.error("Get customer error:", error);
       return { success: false, message: "Failed to fetch customer" };
@@ -3764,18 +4053,25 @@ function registerCustomerHandlers() {
   electron.ipcMain.handle("customers:create", async (_, data) => {
     try {
       const session = getCurrentSession();
-      const result = await db2.insert(customers).values(data).returning();
+      const sanitizedData = sanitizeCustomerInput(data);
+      const validation = validateCustomerInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      const encryptedData = encryptCustomerData(sanitizedData);
+      const result = await db2.insert(customers).values(encryptedData).returning();
       const newCustomer = result[0];
+      const decryptedForAudit = decryptCustomerData(newCustomer);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
         entityType: "customer",
         entityId: newCustomer.id,
-        newValues: sanitizeForAudit(data),
-        description: `Created customer: ${data.firstName} ${data.lastName}`
+        newValues: sanitizeForAudit(decryptedForAudit),
+        description: `Created customer: ${sanitizedData.firstName} ${sanitizedData.lastName}`
       });
-      return { success: true, data: newCustomer };
+      return { success: true, data: decryptedForAudit };
     } catch (error) {
       console.error("Create customer error:", error);
       return { success: false, message: "Failed to create customer" };
@@ -3790,18 +4086,26 @@ function registerCustomerHandlers() {
       if (!existing) {
         return { success: false, message: "Customer not found" };
       }
-      const result = await db2.update(customers).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(customers.id, id)).returning();
+      const sanitizedData = sanitizeCustomerInput(data);
+      const validation = validateCustomerInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      const encryptedData = encryptCustomerData(sanitizedData);
+      const result = await db2.update(customers).set({ ...encryptedData, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(customers.id, id)).returning();
+      const decryptedOld = decryptCustomerData(existing);
+      const decryptedNew = decryptCustomerData(result[0]);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
         entityType: "customer",
         entityId: id,
-        oldValues: sanitizeForAudit(existing),
-        newValues: sanitizeForAudit(data),
+        oldValues: sanitizeForAudit(decryptedOld),
+        newValues: sanitizeForAudit(decryptedNew),
         description: `Updated customer: ${existing.firstName} ${existing.lastName}`
       });
-      return { success: true, data: result[0] };
+      return { success: true, data: decryptedNew };
     } catch (error) {
       console.error("Update customer error:", error);
       return { success: false, message: "Failed to update customer" };
@@ -3896,6 +4200,31 @@ function registerCustomerHandlers() {
     }
   });
 }
+function sanitizeSupplierInput(data) {
+  const sanitized = { ...data };
+  if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name);
+  if (sanitized.contactPerson) sanitized.contactPerson = sanitizeName(sanitized.contactPerson);
+  if (sanitized.email) sanitized.email = sanitizeEmail(sanitized.email);
+  if (sanitized.phone) sanitized.phone = sanitizePhone(sanitized.phone);
+  if (sanitized.address) sanitized.address = sanitizeForStorage(sanitized.address);
+  if (sanitized.city) sanitized.city = sanitizeName(sanitized.city);
+  if (sanitized.state) sanitized.state = sanitizeName(sanitized.state);
+  if (sanitized.zipCode) sanitized.zipCode = sanitizeForStorage(sanitized.zipCode);
+  if (sanitized.taxId) sanitized.taxId = sanitizeForStorage(sanitized.taxId);
+  if (sanitized.paymentTerms) sanitized.paymentTerms = sanitizeForStorage(sanitized.paymentTerms);
+  if (sanitized.notes) sanitized.notes = sanitizeForStorage(sanitized.notes);
+  return sanitized;
+}
+function validateSupplierInput(data) {
+  const errors = [];
+  if (data.email && !isValidEmail(data.email)) {
+    errors.push("Invalid email format");
+  }
+  if (data.phone && !isValidPhone(data.phone)) {
+    errors.push("Invalid phone number format");
+  }
+  return { valid: errors.length === 0, errors };
+}
 function registerSupplierHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle(
@@ -3948,7 +4277,8 @@ function registerSupplierHandlers() {
       if (!supplier) {
         return { success: false, message: "Supplier not found" };
       }
-      return { success: true, data: supplier };
+      const decryptedSupplier = decryptSupplierData(supplier);
+      return { success: true, data: decryptedSupplier };
     } catch (error) {
       console.error("Get supplier error:", error);
       return { success: false, message: "Failed to fetch supplier" };
@@ -3957,18 +4287,25 @@ function registerSupplierHandlers() {
   electron.ipcMain.handle("suppliers:create", async (_, data) => {
     try {
       const session = getCurrentSession();
-      const result = await db2.insert(suppliers).values(data).returning();
+      const sanitizedData = sanitizeSupplierInput(data);
+      const validation = validateSupplierInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      const encryptedData = encryptSupplierData(sanitizedData);
+      const result = await db2.insert(suppliers).values(encryptedData).returning();
       const newSupplier = result[0];
+      const decryptedForAudit = decryptSupplierData(newSupplier);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "create",
         entityType: "supplier",
         entityId: newSupplier.id,
-        newValues: sanitizeForAudit(data),
-        description: `Created supplier: ${data.name}`
+        newValues: sanitizeForAudit(decryptedForAudit),
+        description: `Created supplier: ${sanitizedData.name}`
       });
-      return { success: true, data: newSupplier };
+      return { success: true, data: decryptedForAudit };
     } catch (error) {
       console.error("Create supplier error:", error);
       return { success: false, message: "Failed to create supplier" };
@@ -3983,18 +4320,26 @@ function registerSupplierHandlers() {
       if (!existing) {
         return { success: false, message: "Supplier not found" };
       }
-      const result = await db2.update(suppliers).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(suppliers.id, id)).returning();
+      const sanitizedData = sanitizeSupplierInput(data);
+      const validation = validateSupplierInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      const encryptedData = encryptSupplierData(sanitizedData);
+      const result = await db2.update(suppliers).set({ ...encryptedData, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(suppliers.id, id)).returning();
+      const decryptedOld = decryptSupplierData(existing);
+      const decryptedNew = decryptSupplierData(result[0]);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
         action: "update",
         entityType: "supplier",
         entityId: id,
-        oldValues: sanitizeForAudit(existing),
-        newValues: sanitizeForAudit(data),
+        oldValues: sanitizeForAudit(decryptedOld),
+        newValues: sanitizeForAudit(decryptedNew),
         description: `Updated supplier: ${existing.name}`
       });
-      return { success: true, data: result[0] };
+      return { success: true, data: decryptedNew };
     } catch (error) {
       console.error("Update supplier error:", error);
       return { success: false, message: "Failed to update supplier" };
