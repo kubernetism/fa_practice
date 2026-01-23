@@ -104,6 +104,11 @@ const DiscountManagementScreen = lazy(() =>
     default: m.DiscountManagementScreen,
   })),
 );
+const JournalsScreen = lazy(() =>
+  import("@/screens/journals").then((m) => ({
+    default: m.JournalsScreen,
+  })),
+);
 
 // Wrapper component for lazy loaded routes
 function LazyRoute({ children }: { children: React.ReactNode }) {
@@ -371,6 +376,14 @@ export function AppRoutes() {
           element={
             <LazyRoute>
               <DiscountManagementScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="journals"
+          element={
+            <LazyRoute>
+              <JournalsScreen />
             </LazyRoute>
           }
         />

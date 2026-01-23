@@ -355,23 +355,252 @@ export function registerChartOfAccountsHandlers() {
     return updated
   })
 
-  // Get Journal Entries
+  // Get Journal Entries with filtering
   ipcMain.handle(
     'journal:get-all',
-    async (_, filters?: { startDate?: string; endDate?: string; status?: string; branchId?: number }) => {
-      return db.query.journalEntries.findMany({
-        orderBy: [desc(journalEntries.entryDate), desc(journalEntries.id)],
-        with: {
-          lines: {
-            with: {
-              account: true,
+    async (_, filters?: { startDate?: string; endDate?: string; status?: string; branchId?: number; referenceType?: string; page?: number; limit?: number }) => {
+      try {
+        const conditions = []
+
+        // Date range filter
+        if (filters?.startDate) {
+          conditions.push(sql`${journalEntries.entryDate} >= ${filters.startDate}`)
+        }
+        if (filters?.endDate) {
+          conditions.push(sql`${journalEntries.entryDate} <= ${filters.endDate}`)
+        }
+
+        // Status filter
+        if (filters?.status) {
+          conditions.push(eq(journalEntries.status, filters.status))
+        }
+
+        // Branch filter
+        if (filters?.branchId) {
+          conditions.push(eq(journalEntries.branchId, filters.branchId))
+        }
+
+        // Reference type filter
+        if (filters?.referenceType) {
+          conditions.push(eq(journalEntries.referenceType, filters.referenceType))
+        }
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined
+
+        // Get total count
+        const countResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(journalEntries)
+          .where(whereClause)
+
+        const total = countResult[0]?.count || 0
+
+        // Get paginated data
+        const page = filters?.page || 1
+        const limit = filters?.limit || 50
+        const offset = (page - 1) * limit
+
+        const entries = await db.query.journalEntries.findMany({
+          where: whereClause,
+          orderBy: [desc(journalEntries.entryDate), desc(journalEntries.id)],
+          with: {
+            lines: {
+              with: {
+                account: true,
+              },
+            },
+            createdByUser: true,
+            postedByUser: true,
+          },
+          limit,
+          offset,
+        })
+
+        // Calculate totals
+        const totals = entries.reduce(
+          (acc, entry) => {
+            const entryDebits = entry.lines.reduce((sum, l) => sum + l.debitAmount, 0)
+            const entryCredits = entry.lines.reduce((sum, l) => sum + l.creditAmount, 0)
+            return {
+              totalDebits: acc.totalDebits + entryDebits,
+              totalCredits: acc.totalCredits + entryCredits,
+            }
+          },
+          { totalDebits: 0, totalCredits: 0 }
+        )
+
+        return {
+          success: true,
+          data: entries,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          summary: {
+            totalEntries: total,
+            ...totals,
+            postedCount: entries.filter((e) => e.status === 'posted').length,
+            draftCount: entries.filter((e) => e.status === 'draft').length,
+          },
+        }
+      } catch (error) {
+        console.error('Get journal entries error:', error)
+        return { success: false, message: 'Failed to fetch journal entries' }
+      }
+    }
+  )
+
+  // Get Journal Summary/Statistics
+  ipcMain.handle(
+    'journal:get-summary',
+    async (_, params: { branchId?: number; startDate?: string; endDate?: string }) => {
+      try {
+        const conditions = []
+
+        if (params?.startDate) {
+          conditions.push(sql`${journalEntries.entryDate} >= ${params.startDate}`)
+        }
+        if (params?.endDate) {
+          conditions.push(sql`${journalEntries.entryDate} <= ${params.endDate}`)
+        }
+        if (params?.branchId) {
+          conditions.push(eq(journalEntries.branchId, params.branchId))
+        }
+
+        const whereClause = conditions.length > 0 ? and(...conditions) : undefined
+
+        const entries = await db.query.journalEntries.findMany({
+          where: whereClause,
+          with: {
+            lines: true,
+          },
+        })
+
+        // Calculate summary statistics
+        const totalEntries = entries.length
+        const postedEntries = entries.filter((e) => e.status === 'posted').length
+        const draftEntries = entries.filter((e) => e.status === 'draft').length
+        const reversedEntries = entries.filter((e) => e.status === 'reversed').length
+
+        let totalDebits = 0
+        let totalCredits = 0
+
+        entries.forEach((entry) => {
+          entry.lines.forEach((line) => {
+            totalDebits += line.debitAmount
+            totalCredits += line.creditAmount
+          })
+        })
+
+        // Group by reference type
+        const byReferenceType = entries.reduce(
+          (acc, entry) => {
+            const type = entry.referenceType || 'manual'
+            if (!acc[type]) {
+              acc[type] = { count: 0, debits: 0, credits: 0 }
+            }
+            acc[type].count++
+            entry.lines.forEach((line) => {
+              acc[type].debits += line.debitAmount
+              acc[type].credits += line.creditAmount
+            })
+            return acc
+          },
+          {} as Record<string, { count: number; debits: number; credits: number }>
+        )
+
+        return {
+          success: true,
+          data: {
+            totalEntries,
+            postedEntries,
+            draftEntries,
+            reversedEntries,
+            totalDebits,
+            totalCredits,
+            byReferenceType,
+            isBalanced: Math.abs(totalDebits - totalCredits) < 0.01,
+          },
+        }
+      } catch (error) {
+        console.error('Get journal summary error:', error)
+        return { success: false, message: 'Failed to fetch journal summary' }
+      }
+    }
+  )
+
+  // Export Journal Entries Report
+  ipcMain.handle(
+    'journal:export',
+    async (_, params: { branchId?: number; startDate: string; endDate: string; format?: 'csv' | 'json' }) => {
+      try {
+        const conditions = [
+          sql`${journalEntries.entryDate} >= ${params.startDate}`,
+          sql`${journalEntries.entryDate} <= ${params.endDate}`,
+        ]
+
+        if (params.branchId) {
+          conditions.push(eq(journalEntries.branchId, params.branchId))
+        }
+
+        const entries = await db.query.journalEntries.findMany({
+          where: and(...conditions),
+          orderBy: [desc(journalEntries.entryDate), desc(journalEntries.id)],
+          with: {
+            lines: {
+              with: {
+                account: true,
+              },
+            },
+            createdByUser: true,
+            postedByUser: true,
+          },
+        })
+
+        // Format data for export
+        const exportData = entries.map((entry) => ({
+          entryNumber: entry.entryNumber,
+          entryDate: entry.entryDate,
+          description: entry.description,
+          status: entry.status,
+          referenceType: entry.referenceType || 'Manual',
+          referenceId: entry.referenceId,
+          createdBy: entry.createdByUser?.fullName || 'Unknown',
+          postedBy: entry.postedByUser?.fullName || '',
+          postedAt: entry.postedAt || '',
+          lines: entry.lines.map((line) => ({
+            accountCode: line.account?.accountCode || '',
+            accountName: line.account?.accountName || '',
+            debit: line.debitAmount,
+            credit: line.creditAmount,
+            description: line.description || '',
+          })),
+          totalDebits: entry.lines.reduce((sum, l) => sum + l.debitAmount, 0),
+          totalCredits: entry.lines.reduce((sum, l) => sum + l.creditAmount, 0),
+        }))
+
+        // Calculate grand totals
+        const grandTotalDebits = exportData.reduce((sum, e) => sum + e.totalDebits, 0)
+        const grandTotalCredits = exportData.reduce((sum, e) => sum + e.totalCredits, 0)
+
+        return {
+          success: true,
+          data: {
+            entries: exportData,
+            summary: {
+              totalEntries: exportData.length,
+              grandTotalDebits,
+              grandTotalCredits,
+              startDate: params.startDate,
+              endDate: params.endDate,
+              generatedAt: new Date().toISOString(),
             },
           },
-          createdByUser: true,
-          postedByUser: true,
-        },
-        limit: 100,
-      })
+        }
+      } catch (error) {
+        console.error('Export journal entries error:', error)
+        return { success: false, message: 'Failed to export journal entries' }
+      }
     }
   )
 

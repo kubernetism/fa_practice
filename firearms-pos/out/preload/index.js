@@ -285,7 +285,9 @@ const api = {
     getAll: (filters) => electron.ipcRenderer.invoke("journal:get-all", filters),
     getById: (id) => electron.ipcRenderer.invoke("journal:get-by-id", id),
     create: (data) => electron.ipcRenderer.invoke("journal:create", data),
-    post: (entryId, postedBy) => electron.ipcRenderer.invoke("journal:post", entryId, postedBy)
+    post: (entryId, postedBy) => electron.ipcRenderer.invoke("journal:post", entryId, postedBy),
+    getSummary: (params) => electron.ipcRenderer.invoke("journal:get-summary", params),
+    export: (params) => electron.ipcRenderer.invoke("journal:export", params)
   },
   // Receipt Generation
   receipt: {

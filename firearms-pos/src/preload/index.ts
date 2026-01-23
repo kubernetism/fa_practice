@@ -410,6 +410,10 @@ const api = {
     getById: (id: number) => ipcRenderer.invoke('journal:get-by-id', id),
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('journal:create', data),
     post: (entryId: number, postedBy: number) => ipcRenderer.invoke('journal:post', entryId, postedBy),
+    getSummary: (params: { branchId?: number; startDate?: string; endDate?: string }) =>
+      ipcRenderer.invoke('journal:get-summary', params),
+    export: (params: { branchId?: number; startDate: string; endDate: string; format?: string }) =>
+      ipcRenderer.invoke('journal:export', params),
   },
 
   // Receipt Generation

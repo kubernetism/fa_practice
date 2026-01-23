@@ -30,6 +30,7 @@ import {
   Percent,
   FolderTree,
   Tags,
+  BookOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -77,6 +78,7 @@ const managementNavItems: NavItem[] = [
 const financeNavItems: NavItem[] = [
   { title: 'Cash Register', href: '/cash-register', icon: Banknote, allowedRoles: ['admin'] },
   { title: 'Chart of Accounts', href: '/chart-of-accounts', icon: Landmark, allowedRoles: ['admin'] },
+  { title: 'Journals', href: '/journals', icon: BookOpen, allowedRoles: ['admin'] },
   { title: 'Tax Collections', href: '/tax-collections', icon: Percent, allowedRoles: ['admin'] },
   { title: 'Discounts', href: '/discount-management', icon: Tags, allowedRoles: ['admin', 'manager'] },
 ]

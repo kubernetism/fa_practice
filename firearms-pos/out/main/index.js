@@ -2646,6 +2646,182 @@ function registerAuthHandlers() {
 function getCurrentSession() {
   return currentSession;
 }
+function sanitizeText(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().replace(/<[^>]*>/g, "").replace(/javascript:/gi, "").replace(/on\w+=/gi, "").replace(/\s+/g, " ").replace(/\0/g, "");
+}
+function sanitizeForStorage(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return sanitizeText(input).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+}
+function sanitizeName(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return sanitizeText(input).replace(/[^a-zA-Z\s\-'.\u00C0-\u024F]/g, "").replace(/\s+/g, " ").trim();
+}
+function sanitizeAlphanumeric(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().replace(/[^a-zA-Z0-9\-_]/g, "");
+}
+function sanitizePhone(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().replace(/[^0-9+\-() ]/g, "").replace(/\s+/g, " ").trim();
+}
+function sanitizeEmail(input) {
+  if (input === null || input === void 0) {
+    return "";
+  }
+  return String(input).trim().toLowerCase().replace(/[^a-z0-9@._\-+]/g, "");
+}
+function validateNumericRange(value, options = {}) {
+  const {
+    min = Number.MIN_SAFE_INTEGER,
+    max = Number.MAX_SAFE_INTEGER,
+    allowNegative = true,
+    allowZero = true,
+    maxDecimalPlaces
+  } = options;
+  if (value === null || value === void 0 || value === "") {
+    return null;
+  }
+  let num = typeof value === "string" ? parseFloat(value) : value;
+  if (isNaN(num) || !isFinite(num)) {
+    return null;
+  }
+  if (!allowNegative && num < 0) {
+    return null;
+  }
+  if (!allowZero && num === 0) {
+    return null;
+  }
+  num = Math.max(min, Math.min(max, num));
+  if (maxDecimalPlaces !== void 0) {
+    const factor = Math.pow(10, maxDecimalPlaces);
+    num = Math.round(num * factor) / factor;
+  }
+  return num;
+}
+function validateAmount(value) {
+  return validateNumericRange(value, {
+    min: 0,
+    max: 99999999999e-2,
+    // ~1 billion max
+    allowNegative: false,
+    allowZero: true,
+    maxDecimalPlaces: 2
+  });
+}
+function validateQuantity(value) {
+  const result = validateNumericRange(value, {
+    min: 0,
+    max: 999999999,
+    allowNegative: false,
+    allowZero: true,
+    maxDecimalPlaces: 0
+  });
+  return result !== null ? Math.floor(result) : null;
+}
+function validatePercentage(value) {
+  return validateNumericRange(value, {
+    min: 0,
+    max: 100,
+    allowNegative: false,
+    allowZero: true,
+    maxDecimalPlaces: 2
+  });
+}
+function validateTaxRate(value) {
+  return validatePercentage(value);
+}
+function validatePrice(value) {
+  return validateNumericRange(value, {
+    min: 0.01,
+    max: 99999999999e-2,
+    allowNegative: false,
+    allowZero: false,
+    maxDecimalPlaces: 2
+  });
+}
+function validateCostPrice(value) {
+  return validateAmount(value);
+}
+function isValidEmail(email) {
+  if (!email) return false;
+  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+  return emailRegex.test(email);
+}
+function isValidPhone(phone) {
+  if (!phone) return false;
+  const digitsOnly = phone.replace(/\D/g, "");
+  return digitsOnly.length >= 7 && digitsOnly.length <= 15;
+}
+function sanitizeProductInput(data) {
+  const sanitized = { ...data };
+  if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name);
+  if (sanitized.code) sanitized.code = sanitizeAlphanumeric(sanitized.code);
+  if (sanitized.barcode) sanitized.barcode = sanitizeAlphanumeric(sanitized.barcode);
+  if (sanitized.description) sanitized.description = sanitizeForStorage(sanitized.description);
+  if (sanitized.manufacturer) sanitized.manufacturer = sanitizeForStorage(sanitized.manufacturer);
+  if (sanitized.model) sanitized.model = sanitizeForStorage(sanitized.model);
+  if (sanitized.caliber) sanitized.caliber = sanitizeForStorage(sanitized.caliber);
+  if (sanitized.sku) sanitized.sku = sanitizeAlphanumeric(sanitized.sku);
+  return sanitized;
+}
+function validateProductInput(data) {
+  const errors = [];
+  if (data.sellingPrice !== void 0) {
+    const validatedPrice = validatePrice(data.sellingPrice);
+    if (validatedPrice === null) {
+      errors.push("Selling price must be a positive number");
+    }
+  }
+  if (data.costPrice !== void 0) {
+    const validatedCost = validateCostPrice(data.costPrice);
+    if (validatedCost === null && data.costPrice !== 0) {
+      errors.push("Cost price must be a non-negative number");
+    }
+  }
+  if (data.minStockLevel !== void 0) {
+    const validatedMin = validateQuantity(data.minStockLevel);
+    if (validatedMin === null) {
+      errors.push("Minimum stock level must be a non-negative integer");
+    }
+  }
+  if (data.maxStockLevel !== void 0) {
+    const validatedMax = validateQuantity(data.maxStockLevel);
+    if (validatedMax === null) {
+      errors.push("Maximum stock level must be a non-negative integer");
+    }
+  }
+  if (data.reorderLevel !== void 0) {
+    const validatedReorder = validateQuantity(data.reorderLevel);
+    if (validatedReorder === null) {
+      errors.push("Reorder level must be a non-negative integer");
+    }
+  }
+  if (data.taxRate !== void 0) {
+    const validatedTax = validateTaxRate(data.taxRate);
+    if (validatedTax === null) {
+      errors.push("Tax rate must be between 0 and 100");
+    }
+  }
+  if (data.maxDiscountPercent !== void 0) {
+    const validatedDiscount = validatePercentage(data.maxDiscountPercent);
+    if (validatedDiscount === null) {
+      errors.push("Max discount percent must be between 0 and 100");
+    }
+  }
+  return { valid: errors.length === 0, errors };
+}
 function registerProductHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle(
@@ -2727,13 +2903,18 @@ function registerProductHandlers() {
   electron.ipcMain.handle("products:create", async (_, data) => {
     try {
       const session = getCurrentSession();
+      const sanitizedData = sanitizeProductInput(data);
+      const validation = validateProductInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
       const existing = await db2.query.products.findFirst({
-        where: drizzleOrm.eq(products.code, data.code)
+        where: drizzleOrm.eq(products.code, sanitizedData.code)
       });
       if (existing) {
         return { success: false, message: "Product code already exists" };
       }
-      const result = await db2.insert(products).values(data).returning();
+      const result = await db2.insert(products).values(sanitizedData).returning();
       const newProduct = result[0];
       await createAuditLog$1({
         userId: session?.userId,
@@ -2741,8 +2922,8 @@ function registerProductHandlers() {
         action: "create",
         entityType: "product",
         entityId: newProduct.id,
-        newValues: sanitizeForAudit(data),
-        description: `Created product: ${data.name}`
+        newValues: sanitizeForAudit(sanitizedData),
+        description: `Created product: ${sanitizedData.name}`
       });
       return { success: true, data: newProduct };
     } catch (error) {
@@ -2759,15 +2940,20 @@ function registerProductHandlers() {
       if (!existing) {
         return { success: false, message: "Product not found" };
       }
-      if (data.code && data.code !== existing.code) {
+      const sanitizedData = sanitizeProductInput(data);
+      const validation = validateProductInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      if (sanitizedData.code && sanitizedData.code !== existing.code) {
         const duplicate = await db2.query.products.findFirst({
-          where: drizzleOrm.eq(products.code, data.code)
+          where: drizzleOrm.eq(products.code, sanitizedData.code)
         });
         if (duplicate) {
           return { success: false, message: "Product code already exists" };
         }
       }
-      const result = await db2.update(products).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(products.id, id)).returning();
+      const result = await db2.update(products).set({ ...sanitizedData, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(products.id, id)).returning();
       await createAuditLog$1({
         userId: session?.userId,
         branchId: session?.branchId,
@@ -2775,7 +2961,7 @@ function registerProductHandlers() {
         entityType: "product",
         entityId: id,
         oldValues: sanitizeForAudit(existing),
-        newValues: sanitizeForAudit(data),
+        newValues: sanitizeForAudit(sanitizedData),
         description: `Updated product: ${existing.name}`
       });
       return { success: true, data: result[0] };
@@ -3743,46 +3929,6 @@ function registerInventoryHandlers() {
       return { success: false, message: "Failed to fetch transfers" };
     }
   });
-}
-function sanitizeText(input) {
-  if (input === null || input === void 0) {
-    return "";
-  }
-  return String(input).trim().replace(/<[^>]*>/g, "").replace(/javascript:/gi, "").replace(/on\w+=/gi, "").replace(/\s+/g, " ").replace(/\0/g, "");
-}
-function sanitizeForStorage(input) {
-  if (input === null || input === void 0) {
-    return "";
-  }
-  return sanitizeText(input).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
-}
-function sanitizeName(input) {
-  if (input === null || input === void 0) {
-    return "";
-  }
-  return sanitizeText(input).replace(/[^a-zA-Z\s\-'.\u00C0-\u024F]/g, "").replace(/\s+/g, " ").trim();
-}
-function sanitizePhone(input) {
-  if (input === null || input === void 0) {
-    return "";
-  }
-  return String(input).trim().replace(/[^0-9+\-() ]/g, "").replace(/\s+/g, " ").trim();
-}
-function sanitizeEmail(input) {
-  if (input === null || input === void 0) {
-    return "";
-  }
-  return String(input).trim().toLowerCase().replace(/[^a-z0-9@._\-+]/g, "");
-}
-function isValidEmail(email) {
-  if (!email) return false;
-  const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-  return emailRegex.test(email);
-}
-function isValidPhone(phone) {
-  if (!phone) return false;
-  const digitsOnly = phone.replace(/\D/g, "");
-  return digitsOnly.length >= 7 && digitsOnly.length <= 15;
 }
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
@@ -12629,19 +12775,206 @@ function registerChartOfAccountsHandlers() {
   electron.ipcMain.handle(
     "journal:get-all",
     async (_, filters) => {
-      return db2.query.journalEntries.findMany({
-        orderBy: [drizzleOrm.desc(journalEntries.entryDate), drizzleOrm.desc(journalEntries.id)],
-        with: {
-          lines: {
-            with: {
-              account: true
-            }
+      try {
+        const conditions = [];
+        if (filters?.startDate) {
+          conditions.push(drizzleOrm.sql`${journalEntries.entryDate} >= ${filters.startDate}`);
+        }
+        if (filters?.endDate) {
+          conditions.push(drizzleOrm.sql`${journalEntries.entryDate} <= ${filters.endDate}`);
+        }
+        if (filters?.status) {
+          conditions.push(drizzleOrm.eq(journalEntries.status, filters.status));
+        }
+        if (filters?.branchId) {
+          conditions.push(drizzleOrm.eq(journalEntries.branchId, filters.branchId));
+        }
+        if (filters?.referenceType) {
+          conditions.push(drizzleOrm.eq(journalEntries.referenceType, filters.referenceType));
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(journalEntries).where(whereClause);
+        const total = countResult[0]?.count || 0;
+        const page = filters?.page || 1;
+        const limit = filters?.limit || 50;
+        const offset = (page - 1) * limit;
+        const entries = await db2.query.journalEntries.findMany({
+          where: whereClause,
+          orderBy: [drizzleOrm.desc(journalEntries.entryDate), drizzleOrm.desc(journalEntries.id)],
+          with: {
+            lines: {
+              with: {
+                account: true
+              }
+            },
+            createdByUser: true,
+            postedByUser: true
           },
-          createdByUser: true,
-          postedByUser: true
-        },
-        limit: 100
-      });
+          limit,
+          offset
+        });
+        const totals = entries.reduce(
+          (acc, entry) => {
+            const entryDebits = entry.lines.reduce((sum, l) => sum + l.debitAmount, 0);
+            const entryCredits = entry.lines.reduce((sum, l) => sum + l.creditAmount, 0);
+            return {
+              totalDebits: acc.totalDebits + entryDebits,
+              totalCredits: acc.totalCredits + entryCredits
+            };
+          },
+          { totalDebits: 0, totalCredits: 0 }
+        );
+        return {
+          success: true,
+          data: entries,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit),
+          summary: {
+            totalEntries: total,
+            ...totals,
+            postedCount: entries.filter((e) => e.status === "posted").length,
+            draftCount: entries.filter((e) => e.status === "draft").length
+          }
+        };
+      } catch (error) {
+        console.error("Get journal entries error:", error);
+        return { success: false, message: "Failed to fetch journal entries" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "journal:get-summary",
+    async (_, params) => {
+      try {
+        const conditions = [];
+        if (params?.startDate) {
+          conditions.push(drizzleOrm.sql`${journalEntries.entryDate} >= ${params.startDate}`);
+        }
+        if (params?.endDate) {
+          conditions.push(drizzleOrm.sql`${journalEntries.entryDate} <= ${params.endDate}`);
+        }
+        if (params?.branchId) {
+          conditions.push(drizzleOrm.eq(journalEntries.branchId, params.branchId));
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const entries = await db2.query.journalEntries.findMany({
+          where: whereClause,
+          with: {
+            lines: true
+          }
+        });
+        const totalEntries = entries.length;
+        const postedEntries = entries.filter((e) => e.status === "posted").length;
+        const draftEntries = entries.filter((e) => e.status === "draft").length;
+        const reversedEntries = entries.filter((e) => e.status === "reversed").length;
+        let totalDebits = 0;
+        let totalCredits = 0;
+        entries.forEach((entry) => {
+          entry.lines.forEach((line) => {
+            totalDebits += line.debitAmount;
+            totalCredits += line.creditAmount;
+          });
+        });
+        const byReferenceType = entries.reduce(
+          (acc, entry) => {
+            const type = entry.referenceType || "manual";
+            if (!acc[type]) {
+              acc[type] = { count: 0, debits: 0, credits: 0 };
+            }
+            acc[type].count++;
+            entry.lines.forEach((line) => {
+              acc[type].debits += line.debitAmount;
+              acc[type].credits += line.creditAmount;
+            });
+            return acc;
+          },
+          {}
+        );
+        return {
+          success: true,
+          data: {
+            totalEntries,
+            postedEntries,
+            draftEntries,
+            reversedEntries,
+            totalDebits,
+            totalCredits,
+            byReferenceType,
+            isBalanced: Math.abs(totalDebits - totalCredits) < 0.01
+          }
+        };
+      } catch (error) {
+        console.error("Get journal summary error:", error);
+        return { success: false, message: "Failed to fetch journal summary" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "journal:export",
+    async (_, params) => {
+      try {
+        const conditions = [
+          drizzleOrm.sql`${journalEntries.entryDate} >= ${params.startDate}`,
+          drizzleOrm.sql`${journalEntries.entryDate} <= ${params.endDate}`
+        ];
+        if (params.branchId) {
+          conditions.push(drizzleOrm.eq(journalEntries.branchId, params.branchId));
+        }
+        const entries = await db2.query.journalEntries.findMany({
+          where: drizzleOrm.and(...conditions),
+          orderBy: [drizzleOrm.desc(journalEntries.entryDate), drizzleOrm.desc(journalEntries.id)],
+          with: {
+            lines: {
+              with: {
+                account: true
+              }
+            },
+            createdByUser: true,
+            postedByUser: true
+          }
+        });
+        const exportData = entries.map((entry) => ({
+          entryNumber: entry.entryNumber,
+          entryDate: entry.entryDate,
+          description: entry.description,
+          status: entry.status,
+          referenceType: entry.referenceType || "Manual",
+          referenceId: entry.referenceId,
+          createdBy: entry.createdByUser?.fullName || "Unknown",
+          postedBy: entry.postedByUser?.fullName || "",
+          postedAt: entry.postedAt || "",
+          lines: entry.lines.map((line) => ({
+            accountCode: line.account?.accountCode || "",
+            accountName: line.account?.accountName || "",
+            debit: line.debitAmount,
+            credit: line.creditAmount,
+            description: line.description || ""
+          })),
+          totalDebits: entry.lines.reduce((sum, l) => sum + l.debitAmount, 0),
+          totalCredits: entry.lines.reduce((sum, l) => sum + l.creditAmount, 0)
+        }));
+        const grandTotalDebits = exportData.reduce((sum, e) => sum + e.totalDebits, 0);
+        const grandTotalCredits = exportData.reduce((sum, e) => sum + e.totalCredits, 0);
+        return {
+          success: true,
+          data: {
+            entries: exportData,
+            summary: {
+              totalEntries: exportData.length,
+              grandTotalDebits,
+              grandTotalCredits,
+              startDate: params.startDate,
+              endDate: params.endDate,
+              generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }
+          }
+        };
+      } catch (error) {
+        console.error("Export journal entries error:", error);
+        return { success: false, message: "Failed to export journal entries" };
+      }
     }
   );
   electron.ipcMain.handle("journal:get-by-id", async (_, id) => {
@@ -17744,6 +18077,8 @@ electron.app.whenReady().then(async () => {
   try {
     initDatabase();
     console.log("Database initialized");
+    initializeEncryption();
+    console.log("Encryption initialized");
     await runMigrations();
     await seedInitialData();
     registerAllHandlers();
