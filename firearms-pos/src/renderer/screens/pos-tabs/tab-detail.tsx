@@ -13,6 +13,7 @@ import {
   User,
   AlertCircle,
   X,
+  Percent,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,6 +40,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useTabs } from '@/contexts/tabs-context'
 import { useBranch } from '@/contexts/branch-context'
 import { useAuth } from '@/contexts/auth-context'
@@ -64,6 +71,32 @@ export function TabDetailScreen() {
   const [serialNumber, setSerialNumber] = useState('')
   const [discount, setDiscount] = useState(0)
   const [notes, setNotes] = useState('')
+
+  // Tax settings state
+  const [taxSettings, setTaxSettings] = useState<{
+    taxRate: number
+    taxName: string
+    taxNumber: string
+  } | null>(null)
+
+  // Load tax settings
+  useEffect(() => {
+    const loadTaxSettings = async () => {
+      try {
+        const settings = await window.api.settings.get()
+        if (settings) {
+          setTaxSettings({
+            taxRate: settings.taxRate ?? 0,
+            taxName: settings.taxName ?? 'GST',
+            taxNumber: settings.taxNumber ?? '',
+          })
+        }
+      } catch (error) {
+        console.error('Failed to load tax settings:', error)
+      }
+    }
+    loadTaxSettings()
+  }, [])
 
   const tab = activeTab
   const tabItems = tab?.items ?? []
@@ -498,10 +531,50 @@ export function TabDetailScreen() {
               <span>Subtotal</span>
               <span>{formatCurrency(subtotal)}</span>
             </div>
-            <div className="flex justify-between text-sm">
-              <span>Tax</span>
-              <span>{formatCurrency(tax)}</span>
-            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex justify-between text-sm cursor-help group">
+                    <span className="flex items-center gap-1.5">
+                      <Percent className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>{taxSettings?.taxName ?? 'Tax'}</span>
+                      {taxSettings?.taxRate !== undefined && taxSettings.taxRate > 0 && (
+                        <span className="text-xs text-muted-foreground">
+                          ({taxSettings.taxRate}%)
+                        </span>
+                      )}
+                    </span>
+                    <span className="font-medium text-emerald-600 group-hover:text-emerald-700">
+                      {formatCurrency(tax)}
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  <div className="space-y-1.5 text-xs">
+                    <p className="font-semibold">{taxSettings?.taxName ?? 'Tax'} Details</p>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">Rate:</span>
+                      <span>{taxSettings?.taxRate ?? 0}%</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">On Subtotal:</span>
+                      <span>{formatCurrency(subtotal)}</span>
+                    </div>
+                    {taxSettings?.taxNumber && (
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Tax ID:</span>
+                        <span className="font-mono">{taxSettings.taxNumber}</span>
+                      </div>
+                    )}
+                    <Separator className="my-1" />
+                    <div className="flex justify-between gap-4 font-medium">
+                      <span>Tax Amount:</span>
+                      <span>{formatCurrency(tax)}</span>
+                    </div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <div className="flex items-center justify-between text-sm">
               <span>Discount</span>
               <Input

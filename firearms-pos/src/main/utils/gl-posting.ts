@@ -21,6 +21,7 @@ export const ACCOUNT_CODES = {
   INVENTORY: '1200',
   ACCOUNTS_PAYABLE: '2000',
   SALES_TAX_PAYABLE: '2100',
+  COD_CHARGES_PAYABLE: '2150', // COD charges collected - liability until paid to courier
   SALES_REVENUE: '4000',
   INVENTORY_ADJUSTMENT: '4900', // Income from inventory surplus
   COGS: '5000',
@@ -60,15 +61,134 @@ function generateJournalEntryNumber(): string {
 }
 
 /**
- * Get account ID by account code
+ * Default account definitions for auto-creation
+ */
+const DEFAULT_ACCOUNTS: Record<string, {
+  accountName: string
+  accountType: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
+  normalBalance: 'debit' | 'credit'
+  description: string
+}> = {
+  '1010': {
+    accountName: 'Cash in Hand',
+    accountType: 'asset',
+    normalBalance: 'debit',
+    description: 'Cash on hand for daily transactions',
+  },
+  '1020': {
+    accountName: 'Cash in Bank',
+    accountType: 'asset',
+    normalBalance: 'debit',
+    description: 'Bank account balances',
+  },
+  '1100': {
+    accountName: 'Accounts Receivable',
+    accountType: 'asset',
+    normalBalance: 'debit',
+    description: 'Amounts owed by customers',
+  },
+  '1200': {
+    accountName: 'Inventory',
+    accountType: 'asset',
+    normalBalance: 'debit',
+    description: 'Merchandise inventory',
+  },
+  '2000': {
+    accountName: 'Accounts Payable',
+    accountType: 'liability',
+    normalBalance: 'credit',
+    description: 'Amounts owed to suppliers',
+  },
+  '2100': {
+    accountName: 'Sales Tax Payable',
+    accountType: 'liability',
+    normalBalance: 'credit',
+    description: 'Sales tax collected to be remitted',
+  },
+  '4000': {
+    accountName: 'Sales Revenue',
+    accountType: 'revenue',
+    normalBalance: 'credit',
+    description: 'Revenue from product sales',
+  },
+  '4900': {
+    accountName: 'Inventory Adjustment Income',
+    accountType: 'revenue',
+    normalBalance: 'credit',
+    description: 'Income from inventory surplus adjustments',
+  },
+  '5000': {
+    accountName: 'Cost of Goods Sold',
+    accountType: 'expense',
+    normalBalance: 'debit',
+    description: 'Cost of products sold',
+  },
+  '5100': {
+    accountName: 'Salaries & Wages',
+    accountType: 'expense',
+    normalBalance: 'debit',
+    description: 'Employee salaries and wages',
+  },
+  '5200': {
+    accountName: 'Rent Expense',
+    accountType: 'expense',
+    normalBalance: 'debit',
+    description: 'Rent for premises',
+  },
+  '5300': {
+    accountName: 'Utilities Expense',
+    accountType: 'expense',
+    normalBalance: 'debit',
+    description: 'Electricity, water, gas expenses',
+  },
+  '5400': {
+    accountName: 'Inventory Shrinkage',
+    accountType: 'expense',
+    normalBalance: 'debit',
+    description: 'Expense for inventory loss/damage/theft',
+  },
+  '5900': {
+    accountName: 'Other Expenses',
+    accountType: 'expense',
+    normalBalance: 'debit',
+    description: 'Miscellaneous expenses',
+  },
+}
+
+/**
+ * Get account ID by account code - auto-creates missing required accounts
  */
 async function getAccountId(accountCode: string): Promise<number> {
   const db = getDatabase()
-  const account = await db.query.chartOfAccounts.findFirst({
+  let account = await db.query.chartOfAccounts.findFirst({
     where: eq(chartOfAccounts.accountCode, accountCode),
   })
+
+  // If account doesn't exist, try to auto-create it
   if (!account) {
-    throw new Error(`Account with code ${accountCode} not found`)
+    const defaultAccount = DEFAULT_ACCOUNTS[accountCode]
+    if (defaultAccount) {
+      console.log(`Auto-creating missing GL account: ${accountCode} - ${defaultAccount.accountName}`)
+      const [newAccount] = await db
+        .insert(chartOfAccounts)
+        .values({
+          accountCode,
+          accountName: defaultAccount.accountName,
+          accountType: defaultAccount.accountType,
+          normalBalance: defaultAccount.normalBalance,
+          description: defaultAccount.description,
+          currentBalance: 0,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        })
+        .returning()
+      account = newAccount
+    }
+  }
+
+  if (!account) {
+    throw new Error(`Account with code ${accountCode} not found and could not be auto-created`)
   }
   return account.id
 }

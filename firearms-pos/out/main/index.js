@@ -3209,13 +3209,117 @@ function generateJournalEntryNumber() {
   const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
   return `JE-${year}-${timestamp}${random}`;
 }
+const DEFAULT_ACCOUNTS = {
+  "1010": {
+    accountName: "Cash in Hand",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Cash on hand for daily transactions"
+  },
+  "1020": {
+    accountName: "Cash in Bank",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Bank account balances"
+  },
+  "1100": {
+    accountName: "Accounts Receivable",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Amounts owed by customers"
+  },
+  "1200": {
+    accountName: "Inventory",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Merchandise inventory"
+  },
+  "2000": {
+    accountName: "Accounts Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "Amounts owed to suppliers"
+  },
+  "2100": {
+    accountName: "Sales Tax Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "Sales tax collected to be remitted"
+  },
+  "4000": {
+    accountName: "Sales Revenue",
+    accountType: "revenue",
+    normalBalance: "credit",
+    description: "Revenue from product sales"
+  },
+  "4900": {
+    accountName: "Inventory Adjustment Income",
+    accountType: "revenue",
+    normalBalance: "credit",
+    description: "Income from inventory surplus adjustments"
+  },
+  "5000": {
+    accountName: "Cost of Goods Sold",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Cost of products sold"
+  },
+  "5100": {
+    accountName: "Salaries & Wages",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Employee salaries and wages"
+  },
+  "5200": {
+    accountName: "Rent Expense",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Rent for premises"
+  },
+  "5300": {
+    accountName: "Utilities Expense",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Electricity, water, gas expenses"
+  },
+  "5400": {
+    accountName: "Inventory Shrinkage",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Expense for inventory loss/damage/theft"
+  },
+  "5900": {
+    accountName: "Other Expenses",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Miscellaneous expenses"
+  }
+};
 async function getAccountId(accountCode) {
   const db2 = getDatabase();
-  const account = await db2.query.chartOfAccounts.findFirst({
+  let account = await db2.query.chartOfAccounts.findFirst({
     where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
   });
   if (!account) {
-    throw new Error(`Account with code ${accountCode} not found`);
+    const defaultAccount = DEFAULT_ACCOUNTS[accountCode];
+    if (defaultAccount) {
+      console.log(`Auto-creating missing GL account: ${accountCode} - ${defaultAccount.accountName}`);
+      const [newAccount] = await db2.insert(chartOfAccounts).values({
+        accountCode,
+        accountName: defaultAccount.accountName,
+        accountType: defaultAccount.accountType,
+        normalBalance: defaultAccount.normalBalance,
+        description: defaultAccount.description,
+        currentBalance: 0,
+        isActive: true,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).returning();
+      account = newAccount;
+    }
+  }
+  if (!account) {
+    throw new Error(`Account with code ${accountCode} not found and could not be auto-created`);
   }
   return account.id;
 }
@@ -4806,7 +4910,8 @@ function registerSalesHandlers() {
       return { success: true, data: result.sale };
     } catch (error) {
       console.error("Create sale error:", error);
-      return { success: false, message: "Failed to create sale" };
+      const errorMessage = error instanceof Error ? error.message : "Failed to create sale";
+      return { success: false, message: errorMessage };
     }
   });
   electron.ipcMain.handle(

@@ -13,6 +13,13 @@ import {
   Plus,
   Trash2,
   Split,
+  Truck,
+  MapPin,
+  Phone,
+  User,
+  DollarSign,
+  Building2,
+  Percent,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +35,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useTabs } from '@/contexts/tabs-context'
 import { useAuth } from '@/contexts/auth-context'
 import type { PaymentMethod, SplitPaymentMethod, PaymentBreakdownItem } from '@shared/types'
@@ -109,6 +130,33 @@ export function TabCheckoutScreen() {
   const [codAddress, setCodAddress] = useState('')
   const [codCity, setCodCity] = useState('')
   const [codCharges, setCodCharges] = useState<string>('0')
+  const [showCodDialog, setShowCodDialog] = useState(false)
+
+  // Tax settings state
+  const [taxSettings, setTaxSettings] = useState<{
+    taxRate: number
+    taxName: string
+    taxNumber: string
+  } | null>(null)
+
+  // Load tax settings
+  useEffect(() => {
+    const loadTaxSettings = async () => {
+      try {
+        const settings = await window.api.settings.get()
+        if (settings) {
+          setTaxSettings({
+            taxRate: settings.taxRate ?? 0,
+            taxName: settings.taxName ?? 'GST',
+            taxNumber: settings.taxNumber ?? '',
+          })
+        }
+      } catch (error) {
+        console.error('Failed to load tax settings:', error)
+      }
+    }
+    loadTaxSettings()
+  }, [])
 
   const tab = activeTab
   const tabItems = tab?.items ?? []
@@ -158,6 +206,41 @@ export function TabCheckoutScreen() {
       setAmountPaid('0')
     } else {
       setAmountPaid(totalAmount.toString())
+    }
+    // Open COD dialog when COD is selected
+    if (method === 'cod') {
+      setShowCodDialog(true)
+    }
+  }
+
+  // COD form validation
+  const isCodFormValid = useMemo(() => {
+    return (
+      codName.trim() !== '' &&
+      codPhone.trim() !== '' &&
+      codAddress.trim() !== '' &&
+      codCity.trim() !== ''
+    )
+  }, [codName, codPhone, codAddress, codCity])
+
+  // Handle COD dialog save
+  const handleCodSave = () => {
+    if (isCodFormValid) {
+      setShowCodDialog(false)
+    }
+  }
+
+  // Handle COD dialog cancel
+  const handleCodCancel = () => {
+    setShowCodDialog(false)
+    // Reset to cash if COD details not filled
+    if (!isCodFormValid) {
+      setPaymentMethod('cash')
+      setCodName('')
+      setCodPhone('')
+      setCodAddress('')
+      setCodCity('')
+      setCodCharges('0')
     }
   }
 
@@ -416,10 +499,50 @@ export function TabCheckoutScreen() {
                 <span>Subtotal</span>
                 <span>{formatCurrency(subtotal)}</span>
               </div>
-              <div className="flex justify-between text-sm">
-                <span>Tax</span>
-                <span>{formatCurrency(tax)}</span>
-              </div>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex justify-between text-sm cursor-help group">
+                      <span className="flex items-center gap-1.5">
+                        <Percent className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>{taxSettings?.taxName ?? 'Tax'}</span>
+                        {taxSettings?.taxRate !== undefined && taxSettings.taxRate > 0 && (
+                          <span className="text-xs text-muted-foreground">
+                            ({taxSettings.taxRate}%)
+                          </span>
+                        )}
+                      </span>
+                      <span className="font-medium text-emerald-600 group-hover:text-emerald-700">
+                        {formatCurrency(tax)}
+                      </span>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="max-w-xs">
+                    <div className="space-y-1.5 text-xs">
+                      <p className="font-semibold">{taxSettings?.taxName ?? 'Tax'} Details</p>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">Rate:</span>
+                        <span>{taxSettings?.taxRate ?? 0}%</span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span className="text-muted-foreground">On Subtotal:</span>
+                        <span>{formatCurrency(subtotal)}</span>
+                      </div>
+                      {taxSettings?.taxNumber && (
+                        <div className="flex justify-between gap-4">
+                          <span className="text-muted-foreground">Tax ID:</span>
+                          <span className="font-mono">{taxSettings.taxNumber}</span>
+                        </div>
+                      )}
+                      <Separator className="my-1" />
+                      <div className="flex justify-between gap-4 font-medium">
+                        <span>Tax Amount:</span>
+                        <span>{formatCurrency(tax)}</span>
+                      </div>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <div className="flex items-center justify-between text-sm">
                 <span>Discount</span>
                 <Input
@@ -487,63 +610,59 @@ export function TabCheckoutScreen() {
                 </div>
               </div>
 
-              {/* COD Details */}
+              {/* COD Summary Card */}
               {paymentMethod === 'cod' && (
-                <div className="space-y-3 rounded-lg border p-4">
-                  <Label className="block">COD Details</Label>
-                  <div>
-                    <Label htmlFor="cod-charges">COD Charges (Delivery Fee)</Label>
-                    <Input
-                      id="cod-charges"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={codCharges}
-                      onChange={(e) => setCodCharges(e.target.value)}
-                      placeholder="0.00"
-                      className="text-lg font-medium"
-                    />
-                    <p className="text-xs text-muted-foreground mt-1">
-                      This amount will be added to the customer's total and recorded as expense
-                    </p>
+                <div className="rounded-xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 dark:border-amber-800 p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500 text-white">
+                        <Truck className="h-4 w-4" />
+                      </div>
+                      <span className="font-semibold text-amber-900 dark:text-amber-100">
+                        Cash on Delivery
+                      </span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowCodDialog(true)}
+                      className="border-amber-300 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900/50"
+                    >
+                      {isCodFormValid ? 'Edit Details' : 'Add Details'}
+                    </Button>
                   </div>
-                  <Separator />
-                  <div>
-                    <Label htmlFor="cod-name">Name *</Label>
-                    <Input
-                      id="cod-name"
-                      value={codName}
-                      onChange={(e) => setCodName(e.target.value)}
-                      placeholder="Customer name"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="cod-phone">Phone *</Label>
-                    <Input
-                      id="cod-phone"
-                      value={codPhone}
-                      onChange={(e) => setCodPhone(e.target.value)}
-                      placeholder="Phone number"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="cod-address">Address *</Label>
-                    <Input
-                      id="cod-address"
-                      value={codAddress}
-                      onChange={(e) => setCodAddress(e.target.value)}
-                      placeholder="Delivery address"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="cod-city">City *</Label>
-                    <Input
-                      id="cod-city"
-                      value={codCity}
-                      onChange={(e) => setCodCity(e.target.value)}
-                      placeholder="City"
-                    />
-                  </div>
+
+                  {isCodFormValid ? (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-start gap-2">
+                        <User className="h-4 w-4 text-amber-600 mt-0.5" />
+                        <span className="text-amber-900 dark:text-amber-100">{codName}</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Phone className="h-4 w-4 text-amber-600 mt-0.5" />
+                        <span className="text-amber-900 dark:text-amber-100">{codPhone}</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <MapPin className="h-4 w-4 text-amber-600 mt-0.5" />
+                        <span className="text-amber-900 dark:text-amber-100">
+                          {codAddress}, {codCity}
+                        </span>
+                      </div>
+                      {codChargesNum > 0 && (
+                        <div className="flex items-start gap-2 pt-1 border-t border-amber-200 dark:border-amber-800">
+                          <DollarSign className="h-4 w-4 text-amber-600 mt-0.5" />
+                          <span className="text-amber-900 dark:text-amber-100 font-medium">
+                            Delivery: {formatCurrency(codChargesNum)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>Please add delivery details to continue</span>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -759,6 +878,150 @@ export function TabCheckoutScreen() {
           </div>
         </CardContent>
       </Card>
+
+      {/* COD Details Dialog */}
+      <Dialog open={showCodDialog} onOpenChange={setShowCodDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="pb-4 border-b">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-amber-400 to-orange-500 text-white shadow-lg">
+                <Truck className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl">Cash on Delivery</DialogTitle>
+                <DialogDescription>
+                  Enter delivery details for COD payment
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Delivery Charges Section */}
+            <div className="rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30 p-4 border border-blue-100 dark:border-blue-900">
+              <Label htmlFor="cod-charges" className="flex items-center gap-2 text-blue-700 dark:text-blue-300 font-medium mb-2">
+                <DollarSign className="h-4 w-4" />
+                Delivery Charges (Optional)
+              </Label>
+              <Input
+                id="cod-charges"
+                type="number"
+                step="0.01"
+                min="0"
+                value={codCharges}
+                onChange={(e) => setCodCharges(e.target.value)}
+                placeholder="0.00"
+                className="text-lg font-semibold bg-white dark:bg-gray-950 border-blue-200 dark:border-blue-800 focus:ring-blue-500"
+              />
+              <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 flex items-start gap-1">
+                <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                This amount will be added to the total and recorded as delivery expense
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Customer Details Section */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">
+                Customer Information
+              </h4>
+
+              <div className="space-y-1">
+                <Label htmlFor="cod-name" className="flex items-center gap-2">
+                  <User className="h-3.5 w-3.5 text-muted-foreground" />
+                  Full Name <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="cod-name"
+                  value={codName}
+                  onChange={(e) => setCodName(e.target.value)}
+                  placeholder="Enter customer's full name"
+                  className={!codName.trim() && showCodDialog ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="cod-phone" className="flex items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                  Phone Number <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="cod-phone"
+                  value={codPhone}
+                  onChange={(e) => setCodPhone(e.target.value)}
+                  placeholder="Enter contact number"
+                  className={!codPhone.trim() && showCodDialog ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="cod-address" className="flex items-center gap-2">
+                  <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+                  Delivery Address <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="cod-address"
+                  value={codAddress}
+                  onChange={(e) => setCodAddress(e.target.value)}
+                  placeholder="Enter complete delivery address"
+                  className={!codAddress.trim() && showCodDialog ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="cod-city" className="flex items-center gap-2">
+                  <Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+                  City <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="cod-city"
+                  value={codCity}
+                  onChange={(e) => setCodCity(e.target.value)}
+                  placeholder="Enter city name"
+                  className={!codCity.trim() && showCodDialog ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+              </div>
+            </div>
+
+            {/* Order Summary in Dialog */}
+            {codChargesNum > 0 && (
+              <>
+                <Separator />
+                <div className="rounded-lg bg-muted/50 p-3 space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Order Amount</span>
+                    <span>{formatCurrency(subtotal + tax - discount)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm text-amber-600 dark:text-amber-400">
+                    <span>+ Delivery Charges</span>
+                    <span>{formatCurrency(codChargesNum)}</span>
+                  </div>
+                  <Separator className="my-1" />
+                  <div className="flex justify-between font-bold">
+                    <span>Total to Collect</span>
+                    <span className="text-lg">{formatCurrency(totalAmount)}</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={handleCodCancel}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCodSave}
+              disabled={!isCodFormValid}
+              className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white"
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Confirm Details
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

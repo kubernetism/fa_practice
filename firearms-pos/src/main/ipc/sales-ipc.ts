@@ -317,7 +317,9 @@ export function registerSalesHandlers(): void {
       return { success: true, data: result.sale }
     } catch (error) {
       console.error('Create sale error:', error)
-      return { success: false, message: 'Failed to create sale' }
+      // Provide more detailed error message
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create sale'
+      return { success: false, message: errorMessage }
     }
   })
 
