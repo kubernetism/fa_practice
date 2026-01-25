@@ -8212,10 +8212,10 @@ async function generateReportPDF(options) {
     printBackground: true,
     landscape: false,
     margins: {
-      top: 0.4,
-      bottom: 0.4,
-      left: 0.4,
-      right: 0.4
+      top: 0.2,
+      bottom: 0.2,
+      left: 0.2,
+      right: 0.2
     }
   });
   const downloadsPath = electron.app.getPath("downloads");
@@ -8236,70 +8236,70 @@ function getReportTemplate(title, content, filters, businessInfo) {
 
         @page {
           size: A4;
-          margin: 15mm;
+          margin: 10mm;
         }
 
         body {
           font-family: 'Segoe UI', 'Arial', sans-serif;
-          font-size: 12px;
-          line-height: 1.6;
+          font-size: 11px;
+          line-height: 1.4;
           color: #333;
           background: white;
-          padding: 30px 40px;
+          padding: 15px 20px;
           max-width: 800px;
           margin: 0 auto;
         }
 
-        /* Header */
+        /* Header - Compact */
         .header {
           text-align: center;
-          margin-bottom: 25px;
-          padding-bottom: 15px;
+          margin-bottom: 12px;
+          padding-bottom: 8px;
         }
 
         .business-name {
-          font-size: 28px;
+          font-size: 18px;
           font-weight: bold;
           color: #1a1a1a;
           text-transform: uppercase;
-          letter-spacing: 4px;
-          margin-bottom: 12px;
+          letter-spacing: 2px;
+          margin-bottom: 6px;
         }
 
         .report-title {
-          font-size: 14px;
+          font-size: 13px;
           color: #555;
-          margin: 8px 0;
+          margin: 4px 0;
         }
 
         .report-date {
-          font-size: 13px;
+          font-size: 11px;
           color: #666;
-          margin-top: 5px;
+          margin-top: 3px;
         }
 
-        /* Separator Lines */
+        /* Separator Lines - Tighter */
         .line {
           border-top: 1px solid #ddd;
-          margin: 15px 0;
+          margin: 8px 0;
         }
 
         .dashed-line {
           border-top: 1px dashed #ccc;
-          margin: 15px 0;
+          margin: 8px 0;
         }
 
         .double-line {
           border-top: 2px solid #333;
-          margin: 20px 0;
+          margin: 10px 0;
         }
 
-        /* Info Row */
+        /* Info Row - Compact */
         .info-row {
           display: flex;
           justify-content: space-between;
-          font-size: 12px;
-          padding: 6px 0;
+          font-size: 11px;
+          padding: 3px 0;
         }
 
         .info-row span:first-child {
@@ -8312,29 +8312,29 @@ function getReportTemplate(title, content, filters, businessInfo) {
           font-weight: 600;
         }
 
-        /* Table Header */
+        /* Table Header - Compact */
         .table-header {
           display: flex;
           justify-content: space-between;
-          font-size: 12px;
+          font-size: 11px;
           font-weight: bold;
           text-transform: uppercase;
-          padding: 10px 0;
+          padding: 6px 0;
           border-bottom: 2px solid #333;
-          margin-bottom: 8px;
+          margin-bottom: 4px;
           color: #1a1a1a;
         }
 
-        .col-qty { width: 60px; }
-        .col-item { flex: 1; padding: 0 15px; }
-        .col-total { width: 120px; text-align: right; }
+        .col-qty { width: 50px; }
+        .col-item { flex: 1; padding: 0 10px; }
+        .col-total { width: 100px; text-align: right; }
 
-        /* Table Row */
+        /* Table Row - Tight spacing */
         .table-row {
           display: flex;
           justify-content: space-between;
-          font-size: 12px;
-          padding: 8px 0;
+          font-size: 11px;
+          padding: 4px 0;
           border-bottom: 1px solid #eee;
         }
 
@@ -8346,101 +8346,99 @@ function getReportTemplate(title, content, filters, businessInfo) {
         .table-row .col-item { color: #2980b9; }
         .table-row .col-total { font-weight: 600; color: #27ae60; }
 
-        /* Summary Section */
+        /* Summary Section - Compact */
         .summary-row {
           display: flex;
           justify-content: space-between;
-          font-size: 12px;
-          padding: 6px 0;
+          font-size: 11px;
+          padding: 4px 0;
         }
 
         .summary-row.subtotal {
-          padding-top: 10px;
+          padding-top: 6px;
           border-top: 1px dashed #ccc;
         }
 
         .summary-row.total {
-          font-size: 14px;
+          font-size: 12px;
           font-weight: bold;
-          padding: 10px 0;
+          padding: 6px 0;
           border-top: 1px solid #333;
         }
 
         .summary-row.grand-total {
-          font-size: 18px;
+          font-size: 14px;
           font-weight: bold;
-          padding: 15px 0;
-          margin-top: 10px;
+          padding: 8px 6px;
+          margin-top: 6px;
           border-top: 2px solid #333;
           background: #f8f9fa;
-          padding-left: 10px;
-          padding-right: 10px;
         }
 
-        /* Section */
+        /* Section - Reduced gaps */
         .section {
-          margin: 20px 0;
+          margin: 10px 0;
         }
 
         .section-title {
-          font-size: 13px;
+          font-size: 11px;
           font-weight: bold;
           text-transform: uppercase;
           text-align: center;
-          padding: 10px 15px;
-          margin-bottom: 12px;
+          padding: 6px 10px;
+          margin-bottom: 6px;
           background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
-          border-left: 4px solid #3498db;
+          border-left: 3px solid #3498db;
           color: #2c3e50;
         }
 
-        /* Footer */
+        /* Footer - Compact */
         .footer {
-          margin-top: 30px;
+          margin-top: 15px;
           text-align: center;
-          padding-top: 20px;
+          padding-top: 10px;
           border-top: 2px solid #333;
         }
 
         .thank-you {
-          font-size: 12px;
+          font-size: 10px;
           font-style: italic;
           color: #7f8c8d;
-          margin: 12px 0;
+          margin: 6px 0;
         }
 
         .footer-message {
-          font-size: 14px;
+          font-size: 12px;
           font-weight: bold;
-          letter-spacing: 3px;
-          margin: 12px 0;
+          letter-spacing: 2px;
+          margin: 6px 0;
           color: #2c3e50;
         }
 
         .footer-date {
-          font-size: 11px;
+          font-size: 10px;
           color: #95a5a6;
-          margin-top: 12px;
+          margin-top: 6px;
         }
 
         /* Utility */
         .text-center { text-align: center; }
         .text-right { text-align: right; }
         .bold { font-weight: bold; }
-        .small { font-size: 11px; }
+        .small { font-size: 10px; }
         .muted { color: #95a5a6; }
 
-        /* Data List */
+        /* Data List - Tighter */
         .data-list {
-          margin: 12px 0;
+          margin: 6px 0;
         }
 
         .data-item {
           display: flex;
           justify-content: space-between;
-          padding: 8px 0;
+          padding: 4px 0;
           border-bottom: 1px solid #eee;
-          font-size: 12px;
+          font-size: 11px;
         }
 
         .data-item:last-child {
@@ -8738,7 +8736,7 @@ function generateExpenseReportHTML(data, filters, businessInfo) {
           <span class="col-item">${item.category}${item.description ? " - " + item.description.substring(0, 15) : ""}</span>
           <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
         </div>
-        <div class="small muted" style="padding-left:35px;">${formatDate(item.date)}</div>
+        <div class="small muted" style="padding-left:20px;">${formatDate(item.date)}</div>
       `
   ).join("")}
     </div>
@@ -8825,7 +8823,7 @@ function generatePurchaseReportHTML(data, filters, businessInfo) {
           <span class="col-item">${item.purchaseOrderNumber}</span>
           <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
         </div>
-        <div class="small muted" style="padding-left:35px;">${item.supplierName} | ${formatDate(item.createdAt)}</div>
+        <div class="small muted" style="padding-left:20px;">${item.supplierName} | ${formatDate(item.createdAt)}</div>
       `
   ).join("")}
     </div>
@@ -8952,7 +8950,7 @@ function generateCommissionReportHTML(data, filters, businessInfo) {
           <span class="col-item">${item.userName}</span>
           <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
         </div>
-        <div class="small muted" style="padding-left:35px;">${formatDate(item.date)} | ${item.saleInvoice}</div>
+        <div class="small muted" style="padding-left:20px;">${formatDate(item.date)} | ${item.saleInvoice}</div>
       `
   ).join("")}
     </div>
@@ -9120,12 +9118,12 @@ function generateBranchPerformanceHTML(data, filters, businessInfo) {
       <div class="section-title">Branch Rankings</div>
       ${data.branchMetrics?.sort((a, b) => b.revenue - a.revenue).map(
     (item, index2) => `
-        <div style="margin-bottom:3mm;padding-bottom:2mm;border-bottom:1px dotted #ddd;">
+        <div style="margin-bottom:2mm;padding-bottom:1mm;border-bottom:1px dotted #ddd;">
           <div class="table-row" style="padding:0;">
             <span class="col-qty bold">#${index2 + 1}</span>
             <span class="col-item bold">${item.branchName}</span>
           </div>
-          <div class="data-list" style="padding-left:35px;margin-top:1mm;">
+          <div class="data-list" style="padding-left:25px;margin-top:1mm;">
             <div class="data-item">
               <span class="label">Sales:</span>
               <span class="value">${item.salesCount}</span>
@@ -9431,7 +9429,7 @@ function generateAuditTrailHTML(data, filters, businessInfo) {
           <span class="col-item">${item.action} ${item.tableName}</span>
           <span class="col-total">${item.userName}</span>
         </div>
-        <div class="small muted" style="padding-left:35px;">${formatDateTime(item.timestamp)}</div>
+        <div class="small muted" style="padding-left:20px;">${formatDateTime(item.timestamp)}</div>
       `
   ).join("")}
     </div>
