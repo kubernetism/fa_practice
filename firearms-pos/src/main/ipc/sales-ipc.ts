@@ -51,6 +51,14 @@ interface CreateSaleData {
   codPhone?: string
   codAddress?: string
   codCity?: string
+  // Mobile payment fields
+  mobileProvider?: 'jazzcash' | 'easypaisa' | 'nayapay' | 'sadapay' | 'other'
+  mobileReceiverPhone?: string
+  mobileSenderPhone?: string
+  mobileTransactionId?: string
+  // Card payment fields
+  cardHolderName?: string
+  cardLastFourDigits?: string
   notes?: string
   payments?: PaymentBreakdownItem[] // For mixed/split payments
 }
@@ -276,20 +284,44 @@ export function registerSalesHandlers(): void {
           }
         } else if (data.amountPaid > 0 && data.paymentMethod !== 'receivable') {
           // Single payment - create a record for consistency
+          // Use net amount (excluding change given) for GL posting
+          const netPaymentAmount = Math.min(data.amountPaid, totalAmount)
           const method = data.paymentMethod === 'card' ? 'card'
             : data.paymentMethod === 'mobile' ? 'mobile'
             : data.paymentMethod === 'cod' ? 'cash'
             : 'cash'
+
+          // Build reference and notes for mobile/card payments
+          let referenceNumber: string | undefined
+          let paymentNotes: string | undefined
+
+          if (data.paymentMethod === 'mobile' && data.mobileTransactionId) {
+            referenceNumber = data.mobileTransactionId
+            const providerLabels: Record<string, string> = {
+              jazzcash: 'JazzCash',
+              easypaisa: 'Easypaisa',
+              nayapay: 'NayaPay',
+              sadapay: 'SadaPay',
+              other: 'Other',
+            }
+            paymentNotes = `Provider: ${providerLabels[data.mobileProvider || 'other']} | To: ${data.mobileReceiverPhone} | From: ${data.mobileSenderPhone}`
+          } else if (data.paymentMethod === 'card' && data.cardLastFourDigits) {
+            referenceNumber = `****${data.cardLastFourDigits}`
+            paymentNotes = `Card Holder: ${data.cardHolderName || 'N/A'}`
+          }
+
           await txDb.insert(salePayments).values({
             saleId: sale.id,
             paymentMethod: method,
-            amount: data.amountPaid,
+            amount: netPaymentAmount,
+            referenceNumber,
+            notes: paymentNotes,
           })
-          paymentRecords.push({ method, amount: data.amountPaid })
+          paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber })
         }
 
         // 8. Post to General Ledger (automated GL posting with payment breakdown)
-        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords)
+        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === 'cod' ? codCharges : 0)
 
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
       })

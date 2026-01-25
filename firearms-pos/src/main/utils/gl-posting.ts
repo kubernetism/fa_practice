@@ -105,6 +105,12 @@ const DEFAULT_ACCOUNTS: Record<string, {
     normalBalance: 'credit',
     description: 'Sales tax collected to be remitted',
   },
+  '2150': {
+    accountName: 'COD Charges Payable',
+    accountType: 'liability',
+    normalBalance: 'credit',
+    description: 'COD charges collected - liability until paid to courier',
+  },
   '4000': {
     accountName: 'Sales Revenue',
     accountType: 'revenue',
@@ -308,6 +314,7 @@ interface PaymentBreakdownForGL {
  * DR Cash/AR (1010/1100)     $totalAmount (split by payment method)
  *     CR Sales Revenue (4000)    $subtotal
  *     CR Sales Tax Payable (2100) $taxAmount
+ *     CR COD Charges Payable (2150) $codCharges (if COD payment)
  * DR COGS (5000)             $totalCOGS
  *     CR Inventory (1200)        $totalCOGS
  */
@@ -315,7 +322,8 @@ export async function postSaleToGL(
   sale: Sale,
   saleItems: Array<{ costPrice: number; quantity: number }>,
   userId: number,
-  payments?: PaymentBreakdownForGL[]
+  payments?: PaymentBreakdownForGL[],
+  codCharges?: number
 ): Promise<number> {
   const lines: JournalLine[] = []
 
@@ -348,16 +356,20 @@ export async function postSaleToGL(
     }
   } else if (sale.amountPaid > 0) {
     // Single payment - use old logic
+    // Debit only the net cash retained (amountPaid minus change given back)
+    const netCashReceived = sale.amountPaid - (sale.changeGiven || 0)
     const cashAccountCode = sale.paymentMethod === 'card' || sale.paymentMethod === 'mobile'
       ? ACCOUNT_CODES.CASH_IN_BANK
       : ACCOUNT_CODES.CASH_IN_HAND
 
-    lines.push({
-      accountCode: cashAccountCode,
-      debitAmount: sale.amountPaid,
-      creditAmount: 0,
-      description: `Cash received for sale ${sale.invoiceNumber}`,
-    })
+    if (netCashReceived > 0) {
+      lines.push({
+        accountCode: cashAccountCode,
+        debitAmount: netCashReceived,
+        creditAmount: 0,
+        description: `Cash received for sale ${sale.invoiceNumber}`,
+      })
+    }
   }
 
   // DR Accounts Receivable for outstanding amount
@@ -388,6 +400,16 @@ export async function postSaleToGL(
       debitAmount: 0,
       creditAmount: sale.taxAmount,
       description: `Sales tax for sale ${sale.invoiceNumber}`,
+    })
+  }
+
+  // CR COD Charges Payable (liability until paid to courier)
+  if (codCharges && codCharges > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: 0,
+      creditAmount: codCharges,
+      description: `COD charges collected for sale ${sale.invoiceNumber}`,
     })
   }
 

@@ -37,6 +37,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
@@ -133,6 +140,18 @@ export function POSScreen() {
   const [codCharges, setCodCharges] = useState('')
   const [showCodDialog, setShowCodDialog] = useState(false)
 
+  // Mobile Payment fields
+  const [mobileProvider, setMobileProvider] = useState<'jazzcash' | 'easypaisa' | 'nayapay' | 'sadapay' | 'other'>('jazzcash')
+  const [mobileReceiverPhone, setMobileReceiverPhone] = useState('')
+  const [mobileSenderPhone, setMobileSenderPhone] = useState('')
+  const [mobileTransactionId, setMobileTransactionId] = useState('')
+  const [showMobileDialog, setShowMobileDialog] = useState(false)
+
+  // Card Payment fields
+  const [cardHolderName, setCardHolderName] = useState('')
+  const [cardLastFourDigits, setCardLastFourDigits] = useState('')
+  const [showCardDialog, setShowCardDialog] = useState(false)
+
   // Discount field
   const [discountAmount, setDiscountAmount] = useState('')
 
@@ -145,6 +164,32 @@ export function POSScreen() {
       codCity.trim() !== ''
     )
   }, [codName, codPhone, codAddress, codCity])
+
+  // Mobile payment form validation
+  const isMobileFormValid = useMemo(() => {
+    return (
+      mobileReceiverPhone.trim() !== '' &&
+      mobileSenderPhone.trim() !== '' &&
+      mobileTransactionId.trim() !== ''
+    )
+  }, [mobileReceiverPhone, mobileSenderPhone, mobileTransactionId])
+
+  // Card payment form validation
+  const isCardFormValid = useMemo(() => {
+    return (
+      cardHolderName.trim() !== '' &&
+      cardLastFourDigits.trim().length === 4
+    )
+  }, [cardHolderName, cardLastFourDigits])
+
+  // Mobile provider labels
+  const mobileProviderLabels: Record<string, string> = {
+    jazzcash: 'JazzCash',
+    easypaisa: 'Easypaisa',
+    nayapay: 'NayaPay',
+    sadapay: 'SadaPay',
+    other: 'Other',
+  }
 
   // Handle COD dialog save
   const handleCodSave = () => {
@@ -163,6 +208,42 @@ export function POSScreen() {
       setCodAddress('')
       setCodCity('')
       setCodCharges('')
+    }
+  }
+
+  // Handle Mobile dialog save
+  const handleMobileSave = () => {
+    if (isMobileFormValid) {
+      setShowMobileDialog(false)
+    }
+  }
+
+  // Handle Mobile dialog cancel
+  const handleMobileCancel = () => {
+    setShowMobileDialog(false)
+    // Reset mobile fields if not valid
+    if (!isMobileFormValid) {
+      setMobileProvider('jazzcash')
+      setMobileReceiverPhone('')
+      setMobileSenderPhone('')
+      setMobileTransactionId('')
+    }
+  }
+
+  // Handle Card dialog save
+  const handleCardSave = () => {
+    if (isCardFormValid) {
+      setShowCardDialog(false)
+    }
+  }
+
+  // Handle Card dialog cancel
+  const handleCardCancel = () => {
+    setShowCardDialog(false)
+    // Reset card fields if not valid
+    if (!isCardFormValid) {
+      setCardHolderName('')
+      setCardLastFourDigits('')
     }
   }
 
@@ -412,13 +493,17 @@ export function POSScreen() {
         }
       }
 
-      // Build notes for COD
+      // Build notes for COD, Mobile, or Card payment
       let notes = ''
       if (paymentMethod === 'cod') {
         notes = `COD Details:\nName: ${codName}\nPhone: ${codPhone}\nAddress: ${codAddress}, ${codCity}`
         if (codChargesNum > 0) {
           notes += `\nCOD Charges: ${codChargesNum}`
         }
+      } else if (paymentMethod === 'mobile') {
+        notes = `Mobile Payment Details:\nProvider: ${mobileProviderLabels[mobileProvider]}\nReceiver: ${mobileReceiverPhone}\nSender: ${mobileSenderPhone}\nTransaction ID: ${mobileTransactionId}`
+      } else if (paymentMethod === 'card') {
+        notes = `Card Payment Details:\nCard Holder: ${cardHolderName}\nCard: **** **** **** ${cardLastFourDigits}`
       }
 
       // Calculate payment status based on amount paid and receivable option
@@ -461,6 +546,14 @@ export function POSScreen() {
         codPhone: paymentMethod === 'cod' ? codPhone : undefined,
         codAddress: paymentMethod === 'cod' ? codAddress : undefined,
         codCity: paymentMethod === 'cod' ? codCity : undefined,
+        // Mobile payment fields
+        mobileProvider: paymentMethod === 'mobile' ? mobileProvider : undefined,
+        mobileReceiverPhone: paymentMethod === 'mobile' ? mobileReceiverPhone : undefined,
+        mobileSenderPhone: paymentMethod === 'mobile' ? mobileSenderPhone : undefined,
+        mobileTransactionId: paymentMethod === 'mobile' ? mobileTransactionId : undefined,
+        // Card payment fields
+        cardHolderName: paymentMethod === 'card' ? cardHolderName : undefined,
+        cardLastFourDigits: paymentMethod === 'card' ? cardLastFourDigits : undefined,
         notes: notes || undefined,
       }
 
@@ -494,6 +587,14 @@ export function POSScreen() {
         setCodAddress('')
         setCodCity('')
         setCodCharges('')
+        // Clear mobile payment fields
+        setMobileProvider('jazzcash')
+        setMobileReceiverPhone('')
+        setMobileSenderPhone('')
+        setMobileTransactionId('')
+        // Clear card payment fields
+        setCardHolderName('')
+        setCardLastFourDigits('')
         setAddToReceivable(false)
 
         // Reload products to update stock quantities
@@ -1034,14 +1135,101 @@ export function POSScreen() {
               </div>
             )}
             {paymentMethod === 'card' && !addToReceivable && (
-              <p className="text-center text-muted-foreground">
-                Process card payment on terminal
-              </p>
+              <div className="rounded-xl border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-cyan-50 dark:from-blue-950/30 dark:to-cyan-950/30 dark:border-blue-800 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-500 text-white">
+                      <CreditCard className="h-4 w-4" />
+                    </div>
+                    <span className="font-semibold text-blue-900 dark:text-blue-100">
+                      Card Payment
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowCardDialog(true)}
+                    className="border-blue-300 hover:bg-blue-100 dark:border-blue-700 dark:hover:bg-blue-900/50"
+                  >
+                    {isCardFormValid ? 'Edit Details' : 'Add Details'}
+                  </Button>
+                </div>
+
+                {isCardFormValid ? (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-start gap-2">
+                      <User className="h-4 w-4 text-blue-600 mt-0.5" />
+                      <span className="text-blue-900 dark:text-blue-100">{cardHolderName}</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <CreditCard className="h-4 w-4 text-blue-600 mt-0.5" />
+                      <span className="text-blue-900 dark:text-blue-100 font-mono">
+                        **** **** **** {cardLastFourDigits}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>Please add card details to continue</span>
+                  </div>
+                )}
+              </div>
             )}
             {paymentMethod === 'mobile' && !addToReceivable && (
-              <p className="text-center text-muted-foreground">
-                Process mobile payment (JazzCash, Easypaisa, etc.)
-              </p>
+              <div className="rounded-xl border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-indigo-50 dark:from-purple-950/30 dark:to-indigo-950/30 dark:border-purple-800 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-purple-500 text-white">
+                      <Smartphone className="h-4 w-4" />
+                    </div>
+                    <span className="font-semibold text-purple-900 dark:text-purple-100">
+                      Mobile Payment
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowMobileDialog(true)}
+                    className="border-purple-300 hover:bg-purple-100 dark:border-purple-700 dark:hover:bg-purple-900/50"
+                  >
+                    {isMobileFormValid ? 'Edit Details' : 'Add Details'}
+                  </Button>
+                </div>
+
+                {isMobileFormValid ? (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+                        {mobileProviderLabels[mobileProvider]}
+                      </Badge>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Phone className="h-4 w-4 text-purple-600 mt-0.5" />
+                      <div className="text-purple-900 dark:text-purple-100">
+                        <span className="text-xs text-muted-foreground">To:</span> {mobileReceiverPhone}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Phone className="h-4 w-4 text-purple-600 mt-0.5" />
+                      <div className="text-purple-900 dark:text-purple-100">
+                        <span className="text-xs text-muted-foreground">From:</span> {mobileSenderPhone}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2 pt-1 border-t border-purple-200 dark:border-purple-800">
+                      <Receipt className="h-4 w-4 text-purple-600 mt-0.5" />
+                      <div className="text-purple-900 dark:text-purple-100 font-mono">
+                        <span className="text-xs text-muted-foreground">TxID:</span> {mobileTransactionId}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-purple-700 dark:text-purple-300">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>Please add payment details to continue</span>
+                  </div>
+                )}
+              </div>
             )}
             {paymentMethod === 'cod' && !addToReceivable && (
               <div className="rounded-xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 dark:border-amber-800 p-4 space-y-3">
@@ -1154,7 +1342,9 @@ export function POSScreen() {
                 (paymentMethod === 'receivable' && !selectedCustomer) ||
                 (addToReceivable && !selectedCustomer && paymentMethod !== 'cod') ||
                 (addToReceivable && !selectedCustomer && paymentMethod === 'cod' && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim())) ||
-                (paymentMethod === 'cod' && !addToReceivable && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim()))
+                (paymentMethod === 'cod' && !addToReceivable && (!codName.trim() || !codPhone.trim() || !codAddress.trim() || !codCity.trim())) ||
+                (paymentMethod === 'mobile' && !addToReceivable && !isMobileFormValid) ||
+                (paymentMethod === 'card' && !addToReceivable && !isCardFormValid)
               }
             >
               {isProcessing ? (
@@ -1312,6 +1502,235 @@ export function POSScreen() {
             >
               <CheckCircle2 className="mr-2 h-4 w-4" />
               Confirm Details
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Mobile Payment Details Dialog */}
+      <Dialog open={showMobileDialog} onOpenChange={setShowMobileDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="pb-4 border-b">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-purple-400 to-indigo-500 text-white shadow-lg">
+                <Smartphone className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl">Mobile Payment</DialogTitle>
+                <DialogDescription>
+                  Enter mobile payment details
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Provider Selection */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <Smartphone className="h-3.5 w-3.5 text-muted-foreground" />
+                Payment Provider <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={mobileProvider}
+                onValueChange={(value: 'jazzcash' | 'easypaisa' | 'nayapay' | 'sadapay' | 'other') => setMobileProvider(value)}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jazzcash">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-red-500" />
+                      JazzCash
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="easypaisa">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-green-500" />
+                      Easypaisa
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="nayapay">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-blue-500" />
+                      NayaPay
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="sadapay">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-purple-500" />
+                      SadaPay
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="other">
+                    <span className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-gray-500" />
+                      Other
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Separator />
+
+            {/* Phone Numbers Section */}
+            <div className="space-y-3">
+              <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">
+                Payment Details
+              </h4>
+
+              <div className="space-y-1">
+                <Label htmlFor="mobile-receiver-phone" className="flex items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                  Receiver Phone Number <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="mobile-receiver-phone"
+                  value={mobileReceiverPhone}
+                  onChange={(e) => setMobileReceiverPhone(e.target.value)}
+                  placeholder="Phone number where payment is sent"
+                  className={!mobileReceiverPhone.trim() ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+                <p className="text-xs text-muted-foreground">Your account number receiving the payment</p>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="mobile-sender-phone" className="flex items-center gap-2">
+                  <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+                  Sender Phone Number <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="mobile-sender-phone"
+                  value={mobileSenderPhone}
+                  onChange={(e) => setMobileSenderPhone(e.target.value)}
+                  placeholder="Customer's phone number"
+                  className={!mobileSenderPhone.trim() ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+                <p className="text-xs text-muted-foreground">Customer's account number sending the payment</p>
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="mobile-transaction-id" className="flex items-center gap-2">
+                  <Receipt className="h-3.5 w-3.5 text-muted-foreground" />
+                  Transaction ID <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="mobile-transaction-id"
+                  value={mobileTransactionId}
+                  onChange={(e) => setMobileTransactionId(e.target.value)}
+                  placeholder="Enter transaction ID"
+                  className={`font-mono ${!mobileTransactionId.trim() ? 'border-red-200 focus:ring-red-500' : ''}`}
+                />
+                <p className="text-xs text-muted-foreground">Transaction reference from payment confirmation</p>
+              </div>
+            </div>
+
+            {/* Payment Summary */}
+            <Separator />
+            <div className="rounded-lg bg-purple-50 dark:bg-purple-950/30 p-3 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Payment Amount</span>
+                <span className="font-bold text-lg">{formatCurrency(total)}</span>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={handleMobileCancel}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleMobileSave}
+              disabled={!isMobileFormValid}
+              className="bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-600 hover:to-indigo-600 text-white"
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Confirm Payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Card Payment Details Dialog */}
+      <Dialog open={showCardDialog} onOpenChange={setShowCardDialog}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader className="pb-4 border-b">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-blue-400 to-cyan-500 text-white shadow-lg">
+                <CreditCard className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl">Card Payment</DialogTitle>
+                <DialogDescription>
+                  Enter card payment details (non-sensitive info only)
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            {/* Card Details Section */}
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <Label htmlFor="card-holder-name" className="flex items-center gap-2">
+                  <User className="h-3.5 w-3.5 text-muted-foreground" />
+                  Card Holder Name <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="card-holder-name"
+                  value={cardHolderName}
+                  onChange={(e) => setCardHolderName(e.target.value)}
+                  placeholder="Enter name on card"
+                  className={!cardHolderName.trim() ? 'border-red-200 focus:ring-red-500' : ''}
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="card-last-four" className="flex items-center gap-2">
+                  <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
+                  Last 4 Digits of Card <span className="text-red-500">*</span>
+                </Label>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground font-mono">**** **** ****</span>
+                  <Input
+                    id="card-last-four"
+                    value={cardLastFourDigits}
+                    onChange={(e) => {
+                      const value = e.target.value.replace(/\D/g, '').slice(0, 4)
+                      setCardLastFourDigits(value)
+                    }}
+                    placeholder="1234"
+                    maxLength={4}
+                    className={`w-20 font-mono text-center ${cardLastFourDigits.length !== 4 ? 'border-red-200 focus:ring-red-500' : ''}`}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">Only last 4 digits for reference - no sensitive data stored</p>
+              </div>
+            </div>
+
+            {/* Payment Summary */}
+            <Separator />
+            <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 p-3 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Payment Amount</span>
+                <span className="font-bold text-lg">{formatCurrency(total)}</span>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={handleCardCancel}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleCardSave}
+              disabled={!isCardFormValid}
+              className="bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white"
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Confirm Payment
             </Button>
           </DialogFooter>
         </DialogContent>

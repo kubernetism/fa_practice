@@ -3192,6 +3192,8 @@ const ACCOUNT_CODES = {
   INVENTORY: "1200",
   ACCOUNTS_PAYABLE: "2000",
   SALES_TAX_PAYABLE: "2100",
+  COD_CHARGES_PAYABLE: "2150",
+  // COD charges collected - liability until paid to courier
   SALES_REVENUE: "4000",
   INVENTORY_ADJUSTMENT: "4900",
   // Income from inventory surplus
@@ -3245,6 +3247,12 @@ const DEFAULT_ACCOUNTS = {
     accountType: "liability",
     normalBalance: "credit",
     description: "Sales tax collected to be remitted"
+  },
+  "2150": {
+    accountName: "COD Charges Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "COD charges collected - liability until paid to courier"
   },
   "4000": {
     accountName: "Sales Revenue",
@@ -3396,7 +3404,7 @@ async function createJournalEntry(params) {
   });
   return entry.id;
 }
-async function postSaleToGL(sale, saleItems2, userId, payments) {
+async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
   const lines = [];
   const receivableAmount = sale.totalAmount - sale.amountPaid;
   if (payments && payments.length > 0) {
@@ -3412,13 +3420,16 @@ async function postSaleToGL(sale, saleItems2, userId, payments) {
       });
     }
   } else if (sale.amountPaid > 0) {
+    const netCashReceived = sale.amountPaid - (sale.changeGiven || 0);
     const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccountCode,
-      debitAmount: sale.amountPaid,
-      creditAmount: 0,
-      description: `Cash received for sale ${sale.invoiceNumber}`
-    });
+    if (netCashReceived > 0) {
+      lines.push({
+        accountCode: cashAccountCode,
+        debitAmount: netCashReceived,
+        creditAmount: 0,
+        description: `Cash received for sale ${sale.invoiceNumber}`
+      });
+    }
   }
   if (receivableAmount > 0) {
     lines.push({
@@ -3443,6 +3454,14 @@ async function postSaleToGL(sale, saleItems2, userId, payments) {
       debitAmount: 0,
       creditAmount: sale.taxAmount,
       description: `Sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  if (codCharges && codCharges > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: 0,
+      creditAmount: codCharges,
+      description: `COD charges collected for sale ${sale.invoiceNumber}`
     });
   }
   const totalCOGS = saleItems2.reduce(
@@ -4877,15 +4896,34 @@ function registerSalesHandlers() {
             paymentRecords.push(payment);
           }
         } else if (data.amountPaid > 0 && data.paymentMethod !== "receivable") {
+          const netPaymentAmount = Math.min(data.amountPaid, totalAmount);
           const method = data.paymentMethod === "card" ? "card" : data.paymentMethod === "mobile" ? "mobile" : data.paymentMethod === "cod" ? "cash" : "cash";
+          let referenceNumber;
+          let paymentNotes;
+          if (data.paymentMethod === "mobile" && data.mobileTransactionId) {
+            referenceNumber = data.mobileTransactionId;
+            const providerLabels = {
+              jazzcash: "JazzCash",
+              easypaisa: "Easypaisa",
+              nayapay: "NayaPay",
+              sadapay: "SadaPay",
+              other: "Other"
+            };
+            paymentNotes = `Provider: ${providerLabels[data.mobileProvider || "other"]} | To: ${data.mobileReceiverPhone} | From: ${data.mobileSenderPhone}`;
+          } else if (data.paymentMethod === "card" && data.cardLastFourDigits) {
+            referenceNumber = `****${data.cardLastFourDigits}`;
+            paymentNotes = `Card Holder: ${data.cardHolderName || "N/A"}`;
+          }
           await txDb.insert(salePayments).values({
             saleId: sale.id,
             paymentMethod: method,
-            amount: data.amountPaid
+            amount: netPaymentAmount,
+            referenceNumber,
+            notes: paymentNotes
           });
-          paymentRecords.push({ method, amount: data.amountPaid });
+          paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber });
         }
-        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords);
+        await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === "cod" ? codCharges : 0);
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
       });
       await createAuditLog$1({
