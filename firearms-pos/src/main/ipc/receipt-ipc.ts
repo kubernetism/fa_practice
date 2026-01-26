@@ -10,6 +10,8 @@ import {
   accountReceivables,
   receivablePayments,
   users,
+  saleServices,
+  services,
 } from '../db/schema'
 import {
   generateReceipt,
@@ -18,6 +20,7 @@ import {
   type ReceiptOptions,
   type ReceiptSaleData,
   type ReceiptItemData,
+  type ReceiptServiceData,
   type ReceiptCustomerData,
   type PaymentHistoryData,
 } from '../utils/receipt-generator'
@@ -46,6 +49,16 @@ export function registerReceiptHandlers(): void {
         .from(saleItems)
         .innerJoin(products, eq(saleItems.productId, products.id))
         .where(eq(saleItems.saleId, saleId))
+
+      // 2b. Fetch sale services with service details
+      const saleServiceItems = await db
+        .select({
+          saleService: saleServices,
+          service: services,
+        })
+        .from(saleServices)
+        .innerJoin(services, eq(saleServices.serviceId, services.id))
+        .where(eq(saleServices.saleId, saleId))
 
       // 3. Fetch customer if exists
       let customer: ReceiptCustomerData | null = null
@@ -114,9 +127,22 @@ export function registerReceiptHandlers(): void {
         totalPrice: item.saleItem.totalPrice || 0,
       }))
 
+      // Map services for the receipt
+      const receiptServices: ReceiptServiceData[] = saleServiceItems.map((item) => ({
+        serviceName: item.saleService.serviceName || item.service.name,
+        serviceCode: item.service.code || undefined,
+        quantity: item.saleService.quantity || 1,
+        unitPrice: item.saleService.unitPrice || 0,
+        hours: item.saleService.hours || undefined,
+        taxAmount: item.saleService.taxAmount || 0,
+        totalAmount: item.saleService.totalPrice || 0,
+        notes: item.saleService.notes || undefined,
+      }))
+
       const receiptData: ReceiptData = {
         sale: receiptSale,
         items: receiptItems,
+        services: receiptServices,
         customer,
         businessSettings: settings,
       }
@@ -245,9 +271,11 @@ export function registerReceiptHandlers(): void {
         }
       }
 
-      // 3. Fetch sale items if sale exists
+      // 3. Fetch sale items and services if sale exists
       let receiptItems: ReceiptItemData[] = []
+      let receiptServices: ReceiptServiceData[] = []
       if (receivable.saleId) {
+        // Fetch products
         const items = await db
           .select({
             saleItem: saleItems,
@@ -266,6 +294,27 @@ export function registerReceiptHandlers(): void {
           discountAmount: item.saleItem.discountAmount || 0,
           taxAmount: item.saleItem.taxAmount || 0,
           totalPrice: item.saleItem.totalPrice || 0,
+        }))
+
+        // Fetch services
+        const serviceItems = await db
+          .select({
+            saleService: saleServices,
+            service: services,
+          })
+          .from(saleServices)
+          .innerJoin(services, eq(saleServices.serviceId, services.id))
+          .where(eq(saleServices.saleId, receivable.saleId))
+
+        receiptServices = serviceItems.map((item) => ({
+          serviceName: item.saleService.serviceName || item.service.name,
+          serviceCode: item.service.code || undefined,
+          quantity: item.saleService.quantity || 1,
+          unitPrice: item.saleService.unitPrice || 0,
+          hours: item.saleService.hours || undefined,
+          taxAmount: item.saleService.taxAmount || 0,
+          totalAmount: item.saleService.totalPrice || 0,
+          notes: item.saleService.notes || undefined,
         }))
       }
 
@@ -346,6 +395,7 @@ export function registerReceiptHandlers(): void {
           totalAmount: sale.totalAmount || receivable.totalAmount || 0,
         },
         items: receiptItems,
+        services: receiptServices,
         customer,
         businessSettings: settings,
       }

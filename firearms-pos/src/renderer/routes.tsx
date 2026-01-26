@@ -109,6 +109,11 @@ const JournalsScreen = lazy(() =>
     default: m.JournalsScreen,
   })),
 );
+const ServicesScreen = lazy(() =>
+  import("@/screens/services").then((m) => ({
+    default: m.ServicesScreen,
+  })),
+);
 
 // Wrapper component for lazy loaded routes
 function LazyRoute({ children }: { children: React.ReactNode }) {
@@ -157,6 +162,14 @@ export function AppRoutes() {
           element={
             <LazyRoute>
               <ProductsScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="services"
+          element={
+            <LazyRoute>
+              <ServicesScreen />
             </LazyRoute>
           }
         />

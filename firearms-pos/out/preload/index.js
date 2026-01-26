@@ -28,6 +28,26 @@ const api = {
     update: (id, data) => electron.ipcRenderer.invoke("categories:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("categories:delete", id)
   },
+  // Service Categories
+  serviceCategories: {
+    getAll: () => electron.ipcRenderer.invoke("service-categories:get-all"),
+    getActive: () => electron.ipcRenderer.invoke("service-categories:get-active"),
+    getById: (id) => electron.ipcRenderer.invoke("service-categories:get-by-id", id),
+    create: (data) => electron.ipcRenderer.invoke("service-categories:create", data),
+    update: (id, data) => electron.ipcRenderer.invoke("service-categories:update", id, data),
+    delete: (id) => electron.ipcRenderer.invoke("service-categories:delete", id)
+  },
+  // Services
+  services: {
+    getAll: (params) => electron.ipcRenderer.invoke("services:get-all", params),
+    getActive: () => electron.ipcRenderer.invoke("services:get-active"),
+    getById: (id) => electron.ipcRenderer.invoke("services:get-by-id", id),
+    getByCode: (code) => electron.ipcRenderer.invoke("services:get-by-code", code),
+    create: (data) => electron.ipcRenderer.invoke("services:create", data),
+    update: (id, data) => electron.ipcRenderer.invoke("services:update", id, data),
+    delete: (id) => electron.ipcRenderer.invoke("services:delete", id),
+    search: (query) => electron.ipcRenderer.invoke("services:search", query)
+  },
   // Inventory
   inventory: {
     getAll: () => electron.ipcRenderer.invoke("inventory:get-all"),

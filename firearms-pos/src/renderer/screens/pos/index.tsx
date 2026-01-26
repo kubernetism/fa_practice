@@ -20,6 +20,7 @@ import {
   DollarSign,
   Building2,
   CheckCircle2,
+  Wrench,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -50,16 +51,20 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Label } from '@/components/ui/label'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBranch } from '@/contexts/branch-context'
 import { useCurrency } from '@/contexts/settings-context'
 import { useCurrentBranchSettings } from '@/contexts/settings-context'
 import { debounce } from '@/lib/utils'
-import type { Product, Customer } from '@shared/types'
+import type { Product, Customer, Service } from '@shared/types'
 
 interface CartItem {
-  product: Product
+  type: 'product' | 'service'
+  product?: Product
+  service?: Service
   quantity: number
   serialNumber?: string
+  hours?: number // For hourly services
 }
 
 interface AvailableProduct {
@@ -71,10 +76,17 @@ export function POSScreen() {
   const { currentBranch } = useBranch()
   const { formatCurrency } = useCurrency()
   const { settings } = useCurrentBranchSettings()
+  const [activeTab, setActiveTab] = useState<'products' | 'services'>('products')
   const [searchQuery, setSearchQuery] = useState('')
+  const [serviceSearchQuery, setServiceSearchQuery] = useState('')
   const [allProducts, setAllProducts] = useState<AvailableProduct[]>([])
+  const [allServices, setAllServices] = useState<Service[]>([])
   const [isLoadingProducts, setIsLoadingProducts] = useState(true)
+  const [isLoadingServices, setIsLoadingServices] = useState(true)
   const [cart, setCart] = useState<CartItem[]>([])
+  const [showHoursDialog, setShowHoursDialog] = useState(false)
+  const [pendingHourlyService, setPendingHourlyService] = useState<Service | null>(null)
+  const [serviceHours, setServiceHours] = useState('1')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [customerSearch, setCustomerSearch] = useState('')
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -250,8 +262,18 @@ export function POSScreen() {
   // Get tax rate from taxSettings (loaded from businessSettings)
   const taxRate = taxSettings.taxRate
 
-  // Calculate totals
-  const subtotal = cart.reduce((sum, item) => sum + item.product.sellingPrice * item.quantity, 0)
+  // Calculate totals - handle both products and services
+  const subtotal = cart.reduce((sum, item) => {
+    if (item.type === 'product' && item.product) {
+      return sum + item.product.sellingPrice * item.quantity
+    } else if (item.type === 'service' && item.service) {
+      if (item.service.pricingType === 'hourly' && item.hours) {
+        return sum + item.service.price * item.hours
+      }
+      return sum + item.service.price * item.quantity
+    }
+    return sum
+  }, 0)
   const discount = parseFloat(discountAmount) || 0
   const codChargesNum = parseFloat(codCharges) || 0
   const taxableAmount = subtotal - discount
@@ -279,9 +301,25 @@ export function POSScreen() {
     }
   }, [currentBranch])
 
+  // Load all active services
+  const loadServices = useCallback(async () => {
+    setIsLoadingServices(true)
+    try {
+      const result = await window.api.services.getActive()
+      if (result.success && result.data) {
+        setAllServices(result.data)
+      }
+    } catch (error) {
+      console.error('Failed to load services:', error)
+    } finally {
+      setIsLoadingServices(false)
+    }
+  }, [])
+
   useEffect(() => {
     loadAvailableProducts()
-  }, [loadAvailableProducts])
+    loadServices()
+  }, [loadAvailableProducts, loadServices])
 
   // Filter products based on search query
   const filteredProducts = searchQuery.trim()
@@ -292,6 +330,16 @@ export function POSScreen() {
           item.product.barcode?.toLowerCase().includes(searchQuery.toLowerCase())
       )
     : allProducts
+
+  // Filter services based on search query
+  const filteredServices = serviceSearchQuery.trim()
+    ? allServices.filter(
+        (service) =>
+          service.name.toLowerCase().includes(serviceSearchQuery.toLowerCase()) ||
+          service.code?.toLowerCase().includes(serviceSearchQuery.toLowerCase()) ||
+          service.description?.toLowerCase().includes(serviceSearchQuery.toLowerCase())
+      )
+    : allServices
 
   // Load all customers when dialog opens
   const loadAllCustomers = useCallback(async () => {
@@ -336,7 +384,7 @@ export function POSScreen() {
     }
   }, [showCustomerDialog, allCustomers.length, loadAllCustomers])
 
-  // Add to cart
+  // Add product to cart
   const addToCart = (product: Product, availableQty: number) => {
     if (product.isSerialTracked) {
       setPendingSerialProduct(product)
@@ -345,7 +393,7 @@ export function POSScreen() {
     }
 
     // Check if we have enough stock
-    const existingInCart = cart.find((item) => item.product.id === product.id)
+    const existingInCart = cart.find((item) => item.type === 'product' && item.product?.id === product.id)
     const currentCartQty = existingInCart?.quantity ?? 0
 
     if (currentCartQty >= availableQty) {
@@ -354,14 +402,51 @@ export function POSScreen() {
     }
 
     setCart((prevCart) => {
-      const existing = prevCart.find((item) => item.product.id === product.id)
+      const existing = prevCart.find((item) => item.type === 'product' && item.product?.id === product.id)
       if (existing) {
         return prevCart.map((item) =>
-          item.product.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          item.type === 'product' && item.product?.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
         )
       }
-      return [...prevCart, { product, quantity: 1 }]
+      return [...prevCart, { type: 'product', product, quantity: 1 }]
     })
+    setError('')
+  }
+
+  // Add service to cart
+  const addServiceToCart = (service: Service) => {
+    // For hourly services, ask for hours
+    if (service.pricingType === 'hourly') {
+      setPendingHourlyService(service)
+      setServiceHours('1')
+      setShowHoursDialog(true)
+      return
+    }
+
+    setCart((prevCart) => {
+      const existing = prevCart.find((item) => item.type === 'service' && item.service?.id === service.id)
+      if (existing) {
+        return prevCart.map((item) =>
+          item.type === 'service' && item.service?.id === service.id ? { ...item, quantity: item.quantity + 1 } : item
+        )
+      }
+      return [...prevCart, { type: 'service', service, quantity: 1 }]
+    })
+    setError('')
+  }
+
+  // Add hourly service with hours
+  const addHourlyServiceToCart = () => {
+    if (!pendingHourlyService) return
+    const hours = parseFloat(serviceHours) || 1
+
+    setCart((prevCart) => [
+      ...prevCart,
+      { type: 'service', service: pendingHourlyService, quantity: 1, hours }
+    ])
+    setShowHoursDialog(false)
+    setPendingHourlyService(null)
+    setServiceHours('1')
     setError('')
   }
 
@@ -371,7 +456,7 @@ export function POSScreen() {
 
     setCart((prevCart) => [
       ...prevCart,
-      { product: pendingSerialProduct, quantity: 1, serialNumber: serialNumber.trim() },
+      { type: 'product', product: pendingSerialProduct, quantity: 1, serialNumber: serialNumber.trim() },
     ])
     setShowSerialDialog(false)
     setPendingSerialProduct(null)
@@ -379,37 +464,56 @@ export function POSScreen() {
     setSearchQuery('')
   }
 
-  // Update quantity with inventory cap
-  const updateQuantity = (productId: number, delta: number) => {
-    // Get available stock for this product
-    const productStock = allProducts.find((p) => p.product.id === productId)
-    const availableStock = productStock?.quantity ?? 0
+  // Update quantity with inventory cap (for products) or unlimited (for services)
+  const updateQuantity = (itemType: 'product' | 'service', itemId: number, delta: number) => {
+    if (itemType === 'product') {
+      // Get available stock for this product
+      const productStock = allProducts.find((p) => p.product.id === itemId)
+      const availableStock = productStock?.quantity ?? 0
 
-    setCart((prevCart) =>
-      prevCart
-        .map((item) => {
-          if (item.product.id === productId) {
-            const newQty = item.quantity + delta
-            // Cap at 0 minimum, and at available stock maximum
-            const clampedQty = Math.min(Math.max(0, newQty), availableStock)
-            if (delta > 0 && clampedQty === item.quantity) {
-              // Tried to increment but hit stock limit
-              setError(`Only ${availableStock} units available in stock`)
+      setCart((prevCart) =>
+        prevCart
+          .map((item) => {
+            if (item.type === 'product' && item.product?.id === itemId) {
+              const newQty = item.quantity + delta
+              // Cap at 0 minimum, and at available stock maximum
+              const clampedQty = Math.min(Math.max(0, newQty), availableStock)
+              if (delta > 0 && clampedQty === item.quantity) {
+                // Tried to increment but hit stock limit
+                setError(`Only ${availableStock} units available in stock`)
+              }
+              return { ...item, quantity: clampedQty }
             }
-            return { ...item, quantity: clampedQty }
-          }
-          return item
-        })
-        .filter((item) => item.quantity > 0)
-    )
+            return item
+          })
+          .filter((item) => item.quantity > 0)
+      )
+    } else {
+      // Services don't have stock limits
+      setCart((prevCart) =>
+        prevCart
+          .map((item) => {
+            if (item.type === 'service' && item.service?.id === itemId) {
+              const newQty = Math.max(0, item.quantity + delta)
+              return { ...item, quantity: newQty }
+            }
+            return item
+          })
+          .filter((item) => item.quantity > 0)
+      )
+    }
   }
 
   // Remove from cart
-  const removeFromCart = (productId: number, serialNumber?: string) => {
+  const removeFromCart = (itemType: 'product' | 'service', itemId: number, serialNumber?: string) => {
     setCart((prevCart) =>
-      prevCart.filter(
-        (item) => !(item.product.id === productId && item.serialNumber === serialNumber)
-      )
+      prevCart.filter((item) => {
+        if (itemType === 'product') {
+          return !(item.type === 'product' && item.product?.id === itemId && item.serialNumber === serialNumber)
+        } else {
+          return !(item.type === 'service' && item.service?.id === itemId)
+        }
+      })
     )
   }
 
@@ -426,7 +530,7 @@ export function POSScreen() {
     if (cart.length === 0) return
 
     // Check for firearms without customer
-    const hasFirearms = cart.some((item) => item.product.isSerialTracked)
+    const hasFirearms = cart.some((item) => item.type === 'product' && item.product?.isSerialTracked)
     if (hasFirearms && !selectedCustomer) {
       setError('Customer selection is required for firearm purchases')
       return
@@ -526,16 +630,28 @@ export function POSScreen() {
 
       const remainingAmount = total - actualAmountPaid
 
+      // Separate products and services from cart
+      const productItems = cart.filter((item) => item.type === 'product' && item.product)
+      const serviceItems = cart.filter((item) => item.type === 'service' && item.service)
+
       const saleData = {
         customerId: customerIdToUse,
         branchId: currentBranch.id,
-        items: cart.map((item) => ({
-          productId: item.product.id,
+        items: productItems.map((item) => ({
+          productId: item.product!.id,
           quantity: item.quantity,
-          unitPrice: item.product.sellingPrice,
-          costPrice: item.product.costPrice,
+          unitPrice: item.product!.sellingPrice,
+          costPrice: item.product!.costPrice,
           serialNumber: item.serialNumber,
-          taxRate: item.product.isTaxable ? taxRate : 0,
+          taxRate: item.product!.isTaxable ? taxRate : 0,
+        })),
+        services: serviceItems.map((item) => ({
+          serviceId: item.service!.id,
+          serviceName: item.service!.name,
+          quantity: item.quantity,
+          unitPrice: item.service!.price,
+          hours: item.hours,
+          taxRate: item.service!.isTaxable ? taxRate : 0,
         })),
         paymentMethod: addToReceivable ? 'receivable' : paymentMethod,
         paymentStatus,
@@ -623,94 +739,205 @@ export function POSScreen() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] gap-4">
-      {/* Product Search and List */}
+      {/* Products and Services Tabs */}
       <div className="flex flex-1 flex-col">
-        <div className="mb-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search products by name, code, or barcode..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 text-lg"
-            />
-          </div>
-        </div>
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'products' | 'services')} className="flex flex-col h-full">
+          <TabsList className="mb-4 grid w-full grid-cols-2">
+            <TabsTrigger value="products" className="flex items-center gap-2">
+              <Package className="h-4 w-4" />
+              Products
+            </TabsTrigger>
+            <TabsTrigger value="services" className="flex items-center gap-2">
+              <Wrench className="h-4 w-4" />
+              Services
+            </TabsTrigger>
+          </TabsList>
 
-        <Card className="flex-1 overflow-hidden">
-          <CardContent className="p-4 h-full">
-            {isLoadingProducts ? (
-              <div className="flex h-full items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          {/* Products Tab */}
+          <TabsContent value="products" className="flex-1 flex flex-col mt-0">
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search products by name, code, or barcode..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 text-lg"
+                />
               </div>
-            ) : filteredProducts.length > 0 ? (
-              <ScrollArea className="h-[calc(100vh-20rem)]">
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {filteredProducts.map((item) => {
-                    const cartItem = cart.find((c) => c.product.id === item.product.id)
-                    const inCartQty = cartItem?.quantity ?? 0
-                    const remainingStock = item.quantity - inCartQty
+            </div>
 
-                    return (
-                      <button
-                        key={item.product.id}
-                        onClick={() => addToCart(item.product, item.quantity)}
-                        disabled={remainingStock <= 0 && !item.product.isSerialTracked}
-                        className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed h-full group"
-                      >
-                        {/* Plus Icon - appears on hover */}
-                        <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                          <Plus className="h-12 w-12 text-green-600" strokeWidth={3} />
-                        </div>
+            <Card className="flex-1 overflow-hidden">
+              <CardContent className="p-4 h-full">
+                {isLoadingProducts ? (
+                  <div className="flex h-full items-center justify-center">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                  </div>
+                ) : filteredProducts.length > 0 ? (
+                  <ScrollArea className="h-[calc(100vh-24rem)]">
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {filteredProducts.map((item) => {
+                        const cartItem = cart.find((c) => c.type === 'product' && c.product?.id === item.product.id)
+                        const inCartQty = cartItem?.quantity ?? 0
+                        const remainingStock = item.quantity - inCartQty
 
-                        <div className="flex items-start justify-between gap-2 mb-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium break-words whitespace-normal leading-tight text-sm">
-                              {item.product.name}
-                            </p>
-                            <p className="text-xs text-muted-foreground mt-0.5">{item.product.code}</p>
-                          </div>
-                          <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                            {item.product.isSerialTracked && (
-                              <Badge variant="outline" className="text-xs">
-                                Serial
-                              </Badge>
+                        return (
+                          <button
+                            key={item.product.id}
+                            onClick={() => addToCart(item.product, item.quantity)}
+                            disabled={remainingStock <= 0 && !item.product.isSerialTracked}
+                            className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed h-full group"
+                          >
+                            {/* Plus Icon - appears on hover */}
+                            <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                              <Plus className="h-12 w-12 text-green-600" strokeWidth={3} />
+                            </div>
+
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium break-words whitespace-normal leading-tight text-sm">
+                                  {item.product.name}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-0.5">{item.product.code}</p>
+                              </div>
+                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                {item.product.isSerialTracked && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Serial
+                                  </Badge>
+                                )}
+                                <Badge
+                                  variant={remainingStock <= 5 ? "destructive" : "secondary"}
+                                  className="text-xs whitespace-nowrap"
+                                >
+                                  {remainingStock} left
+                                </Badge>
+                              </div>
+                            </div>
+                            <div className="mt-auto flex items-center justify-between pt-2 border-t">
+                              <p className="text-lg font-bold">{formatCurrency(item.product.sellingPrice)}</p>
+                              {inCartQty > 0 && (
+                                <Badge variant="default" className="text-xs">
+                                  {inCartQty} in cart
+                                </Badge>
+                              )}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+                ) : searchQuery ? (
+                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                    <Package className="h-12 w-12 mb-4" />
+                    <p>No products found for "{searchQuery}"</p>
+                  </div>
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                    <Package className="h-12 w-12 mb-4" />
+                    <p>No products available in inventory</p>
+                    <p className="text-sm">Add products to inventory first</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Services Tab */}
+          <TabsContent value="services" className="flex-1 flex flex-col mt-0">
+            <div className="mb-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search services by name, code, or description..."
+                  value={serviceSearchQuery}
+                  onChange={(e) => setServiceSearchQuery(e.target.value)}
+                  className="pl-9 text-lg"
+                />
+              </div>
+            </div>
+
+            <Card className="flex-1 overflow-hidden">
+              <CardContent className="p-4 h-full">
+                {isLoadingServices ? (
+                  <div className="flex h-full items-center justify-center">
+                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                  </div>
+                ) : filteredServices.length > 0 ? (
+                  <ScrollArea className="h-[calc(100vh-24rem)]">
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                      {filteredServices.map((service) => {
+                        const cartItem = cart.find((c) => c.type === 'service' && c.service?.id === service.id)
+                        const inCartQty = cartItem?.quantity ?? 0
+
+                        return (
+                          <button
+                            key={service.id}
+                            onClick={() => addServiceToCart(service)}
+                            className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md h-full group border-blue-200 bg-blue-50/30"
+                          >
+                            {/* Plus Icon - appears on hover */}
+                            <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                              <Plus className="h-12 w-12 text-blue-600" strokeWidth={3} />
+                            </div>
+
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium break-words whitespace-normal leading-tight text-sm">
+                                  {service.name}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-0.5">{service.code}</p>
+                              </div>
+                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                                <Badge variant="outline" className="text-xs bg-blue-100 text-blue-700 border-blue-300">
+                                  <Wrench className="h-3 w-3 mr-1" />
+                                  Service
+                                </Badge>
+                                {service.pricingType === 'hourly' && (
+                                  <Badge variant="secondary" className="text-xs">
+                                    <Clock className="h-3 w-3 mr-1" />
+                                    Hourly
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            {service.description && (
+                              <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                                {service.description}
+                              </p>
                             )}
-                            <Badge
-                              variant={remainingStock <= 5 ? "destructive" : "secondary"}
-                              className="text-xs whitespace-nowrap"
-                            >
-                              {remainingStock} left
-                            </Badge>
-                          </div>
-                        </div>
-                        <div className="mt-auto flex items-center justify-between pt-2 border-t">
-                          <p className="text-lg font-bold">{formatCurrency(item.product.sellingPrice)}</p>
-                          {inCartQty > 0 && (
-                            <Badge variant="default" className="text-xs">
-                              {inCartQty} in cart
-                            </Badge>
-                          )}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              </ScrollArea>
-            ) : searchQuery ? (
-              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                <Package className="h-12 w-12 mb-4" />
-                <p>No products found for "{searchQuery}"</p>
-              </div>
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                <Package className="h-12 w-12 mb-4" />
-                <p>No products available in inventory</p>
-                <p className="text-sm">Add products to inventory first</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                            <div className="mt-auto flex items-center justify-between pt-2 border-t">
+                              <p className="text-lg font-bold text-blue-700">
+                                {formatCurrency(service.price)}
+                                {service.pricingType === 'hourly' && <span className="text-xs font-normal">/hr</span>}
+                              </p>
+                              {inCartQty > 0 && (
+                                <Badge variant="default" className="text-xs bg-blue-600">
+                                  {inCartQty} in cart
+                                </Badge>
+                              )}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </ScrollArea>
+                ) : serviceSearchQuery ? (
+                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                    <Wrench className="h-12 w-12 mb-4" />
+                    <p>No services found for "{serviceSearchQuery}"</p>
+                  </div>
+                ) : (
+                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+                    <Wrench className="h-12 w-12 mb-4" />
+                    <p>No services available</p>
+                    <p className="text-sm">Add services in the Services section first</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Cart */}
@@ -770,26 +997,44 @@ export function POSScreen() {
                 <div className="space-y-2 pr-2">
                   {cart.map((item, index) => (
                     <div
-                      key={`${item.product.id}-${item.serialNumber || index}`}
-                      className="flex items-center gap-2 rounded-lg border p-2"
+                      key={`${item.type}-${item.type === 'product' ? item.product?.id : item.service?.id}-${item.serialNumber || index}`}
+                      className={`flex items-center gap-2 rounded-lg border p-2 ${item.type === 'service' ? 'border-blue-200 bg-blue-50/30' : ''}`}
                     >
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm leading-tight break-words">{item.product.name}</p>
+                        <div className="flex items-center gap-2">
+                          {item.type === 'service' && (
+                            <Wrench className="h-3 w-3 text-blue-600 flex-shrink-0" />
+                          )}
+                          <p className="font-medium text-sm leading-tight break-words">
+                            {item.type === 'product' ? item.product?.name : item.service?.name}
+                          </p>
+                        </div>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatCurrency(item.product.sellingPrice)}
-                          {item.serialNumber && (
-                            <span className="ml-2">SN: {item.serialNumber}</span>
+                          {item.type === 'product' ? (
+                            <>
+                              {formatCurrency(item.product?.sellingPrice ?? 0)}
+                              {item.serialNumber && (
+                                <span className="ml-2">SN: {item.serialNumber}</span>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              {formatCurrency(item.service?.price ?? 0)}
+                              {item.service?.pricingType === 'hourly' && item.hours && (
+                                <span className="ml-2">× {item.hours} hr{item.hours > 1 ? 's' : ''}</span>
+                              )}
+                            </>
                           )}
                         </p>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
-                        {!item.serialNumber && (
+                        {item.type === 'product' && !item.serialNumber && (
                           <>
                             <Button
                               variant="outline"
                               size="icon"
                               className="h-6 w-6"
-                              onClick={() => updateQuantity(item.product.id, -1)}
+                              onClick={() => updateQuantity('product', item.product!.id, -1)}
                             >
                               <Minus className="h-3 w-3" />
                             </Button>
@@ -798,7 +1043,28 @@ export function POSScreen() {
                               variant="outline"
                               size="icon"
                               className="h-6 w-6"
-                              onClick={() => updateQuantity(item.product.id, 1)}
+                              onClick={() => updateQuantity('product', item.product!.id, 1)}
+                            >
+                              <Plus className="h-3 w-3" />
+                            </Button>
+                          </>
+                        )}
+                        {item.type === 'service' && item.service?.pricingType !== 'hourly' && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => updateQuantity('service', item.service!.id, -1)}
+                            >
+                              <Minus className="h-3 w-3" />
+                            </Button>
+                            <span className="w-6 text-center text-xs font-medium">{item.quantity}</span>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => updateQuantity('service', item.service!.id, 1)}
                             >
                               <Plus className="h-3 w-3" />
                             </Button>
@@ -808,7 +1074,11 @@ export function POSScreen() {
                           variant="ghost"
                           size="icon"
                           className="h-6 w-6 text-destructive"
-                          onClick={() => removeFromCart(item.product.id, item.serialNumber)}
+                          onClick={() => removeFromCart(
+                            item.type,
+                            item.type === 'product' ? item.product!.id : item.service!.id,
+                            item.serialNumber
+                          )}
                         >
                           <Trash2 className="h-3 w-3" />
                         </Button>
@@ -1053,6 +1323,50 @@ export function POSScreen() {
               Cancel
             </Button>
             <Button onClick={addSerialTrackedItem} disabled={!serialNumber.trim()}>
+              Add to Cart
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Service Hours Dialog */}
+      <Dialog open={showHoursDialog} onOpenChange={setShowHoursDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Enter Service Hours</DialogTitle>
+            <DialogDescription>
+              {pendingHourlyService?.name} is charged at {formatCurrency(pendingHourlyService?.price ?? 0)}/hour
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="hours">Number of Hours</Label>
+              <Input
+                id="hours"
+                type="number"
+                step="0.5"
+                min="0.5"
+                value={serviceHours}
+                onChange={(e) => setServiceHours(e.target.value)}
+                placeholder="Enter hours"
+              />
+            </div>
+            {parseFloat(serviceHours) > 0 && (
+              <div className="rounded-lg bg-blue-50 p-3">
+                <p className="text-sm text-blue-700">
+                  Total: {formatCurrency((pendingHourlyService?.price ?? 0) * parseFloat(serviceHours))}
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setShowHoursDialog(false)
+              setPendingHourlyService(null)
+            }}>
+              Cancel
+            </Button>
+            <Button onClick={addHourlyServiceToCart} disabled={!serviceHours || parseFloat(serviceHours) <= 0}>
               Add to Cart
             </Button>
           </DialogFooter>

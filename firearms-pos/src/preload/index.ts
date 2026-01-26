@@ -49,6 +49,30 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('categories:delete', id),
   },
 
+  // Service Categories
+  serviceCategories: {
+    getAll: () => ipcRenderer.invoke('service-categories:get-all'),
+    getActive: () => ipcRenderer.invoke('service-categories:get-active'),
+    getById: (id: number) => ipcRenderer.invoke('service-categories:get-by-id', id),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('service-categories:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('service-categories:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('service-categories:delete', id),
+  },
+
+  // Services
+  services: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('services:get-all', params),
+    getActive: () => ipcRenderer.invoke('services:get-active'),
+    getById: (id: number) => ipcRenderer.invoke('services:get-by-id', id),
+    getByCode: (code: string) => ipcRenderer.invoke('services:get-by-code', code),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('services:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('services:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('services:delete', id),
+    search: (query: string) => ipcRenderer.invoke('services:search', query),
+  },
+
   // Inventory
   inventory: {
     getAll: () => ipcRenderer.invoke('inventory:get-all'),

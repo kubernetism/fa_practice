@@ -31,6 +31,7 @@ import {
   FolderTree,
   Tags,
   BookOpen,
+  Wrench,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -59,6 +60,7 @@ const mainNavItems: NavItem[] = [
 
 const inventoryNavItems: NavItem[] = [
   { title: 'Products', href: '/products', icon: Package, allowedRoles: ['admin', 'manager'] },
+  { title: 'Services', href: '/services', icon: Wrench, allowedRoles: ['admin', 'manager'] },
   { title: 'Categories', href: '/categories-management', icon: FolderTree, allowedRoles: ['admin', 'manager'] },
   { title: 'Inventory', href: '/inventory', icon: Warehouse, allowedRoles: ['admin', 'manager'] },
   { title: 'Purchases', href: '/purchases', icon: Truck, allowedRoles: ['admin', 'manager'] },

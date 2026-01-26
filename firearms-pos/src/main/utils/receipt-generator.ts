@@ -31,6 +31,17 @@ export interface ReceiptItemData {
   totalPrice: number
 }
 
+export interface ReceiptServiceData {
+  serviceName: string
+  serviceCode?: string
+  quantity: number
+  unitPrice: number
+  hours?: number // For hourly services
+  taxAmount: number
+  totalAmount: number
+  notes?: string
+}
+
 export interface ReceiptCustomerData {
   name: string
   phone?: string
@@ -41,6 +52,7 @@ export interface ReceiptCustomerData {
 export interface ReceiptData {
   sale: ReceiptSaleData
   items: ReceiptItemData[]
+  services?: ReceiptServiceData[]
   customer: ReceiptCustomerData | null
   businessSettings: BusinessSettings
 }
@@ -80,6 +92,7 @@ export interface PaymentHistoryData {
     totalAmount: number
   }
   items: ReceiptItemData[]
+  services?: ReceiptServiceData[]
   customer: ReceiptCustomerData | null
   businessSettings: BusinessSettings
 }
@@ -136,7 +149,7 @@ function getPaymentMethodLabel(method: string): string {
 
 // Generate PDF Receipt HTML (A4 format) - Executive Minimal Design
 function generatePDFReceiptHTML(data: ReceiptData): string {
-  const { sale, items, customer, businessSettings: settings } = data
+  const { sale, items, services = [], customer, businessSettings: settings } = data
   const fontSize = fontSizeMap[settings.receiptFontSize as keyof typeof fontSizeMap] || fontSizeMap.medium
   const colors = designColors
   const showTax = settings.showTaxOnReceipt !== false
@@ -154,8 +167,8 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
     customFieldsHTML += `<div class="custom-field"><span class="cf-label">${settings.receiptCustomField3Label}</span><span class="cf-value">${settings.receiptCustomField3Value}</span></div>`
   }
 
-  // Build items rows
-  const itemsHTML = items
+  // Build items rows (products)
+  const productItemsHTML = items
     .map(
       (item, index) => `
       <tr class="${index % 2 === 0 ? 'row-even' : 'row-odd'}">
@@ -171,6 +184,30 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
     `
     )
     .join('')
+
+  // Build service rows
+  const serviceItemsHTML = services
+    .map(
+      (service, index) => `
+      <tr class="${(items.length + index) % 2 === 0 ? 'row-even' : 'row-odd'} service-row">
+        <td class="item-cell">
+          <span class="item-name">${service.serviceName}</span>
+          ${service.serviceCode ? `<span class="item-serial">Code: ${service.serviceCode}</span>` : ''}
+          ${service.hours ? `<span class="item-serial">${service.hours} hour${service.hours > 1 ? 's' : ''} @ ${formatCurrency(service.unitPrice, settings)}/hr</span>` : ''}
+          ${service.notes ? `<span class="item-serial">${service.notes}</span>` : ''}
+          <span class="service-badge">SERVICE</span>
+        </td>
+        <td class="text-center qty-cell">${service.quantity}</td>
+        <td class="text-right">${formatCurrency(service.unitPrice, settings)}</td>
+        ${showTax ? `<td class="text-right">${formatCurrency(service.taxAmount, settings)}</td>` : ''}
+        <td class="text-right amount-cell">${formatCurrency(service.totalAmount, settings)}</td>
+      </tr>
+    `
+    )
+    .join('')
+
+  // Combined items HTML
+  const itemsHTML = productItemsHTML + serviceItemsHTML
 
   // Format date elegantly
   const saleDate = new Date(sale.saleDate)
@@ -413,6 +450,22 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
           font-size: ${fontSize.caption}px;
           color: var(--gray-400);
           margin-top: 2px;
+        }
+
+        .service-badge {
+          display: inline-block;
+          padding: 2px 8px;
+          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+          color: white;
+          font-size: ${fontSize.caption - 1}px;
+          font-weight: 600;
+          border-radius: 10px;
+          margin-top: 4px;
+          letter-spacing: 0.5px;
+        }
+
+        .service-row {
+          background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%) !important;
         }
 
         .qty-cell {
@@ -706,7 +759,7 @@ function generatePDFReceiptHTML(data: ReceiptData): string {
 
 // Generate Thermal Receipt HTML (80mm format) - Optimized for thermal printers
 function generateThermalReceiptHTML(data: ReceiptData): string {
-  const { sale, items, customer, businessSettings: settings } = data
+  const { sale, items, services = [], customer, businessSettings: settings } = data
   const showTax = settings.showTaxOnReceipt !== false
 
   // Helper to pad string for alignment (thermal receipt formatting)
@@ -722,8 +775,8 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
   const shortDate = `${saleDate.getDate().toString().padStart(2, '0')}/${(saleDate.getMonth() + 1).toString().padStart(2, '0')}/${saleDate.getFullYear().toString().slice(-2)}`
   const shortTime = saleDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
 
-  // Build items rows for thermal with dot leaders
-  const itemsHTML = items
+  // Build product items rows for thermal with dot leaders
+  const productItemsHTML = items
     .map(
       (item) => {
         const priceStr = formatCurrency(item.totalPrice, settings)
@@ -738,6 +791,29 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
       }
     )
     .join('')
+
+  // Build service items rows for thermal
+  const serviceItemsHTML = services
+    .map(
+      (service) => {
+        const priceStr = formatCurrency(service.totalAmount, settings)
+        const serviceName = service.serviceName.length > 28 ? service.serviceName.substring(0, 25) + '...' : service.serviceName
+        return `
+      <div class="item-row service-item">
+        <div class="item-name">${serviceName} <span class="svc-tag">[SVC]</span></div>
+        ${service.serviceCode ? `<div class="item-serial">CODE: ${service.serviceCode}</div>` : ''}
+        ${service.hours ? `<div class="item-serial">${service.hours}hr @ ${formatCurrency(service.unitPrice, settings)}/hr</div>` : ''}
+        ${service.notes ? `<div class="item-serial">${service.notes}</div>` : ''}
+        <div class="item-qty-price">${service.quantity} × ${formatCurrency(service.unitPrice, settings)}</div>
+        <div class="item-total">${priceStr}</div>
+      </div>
+    `
+      }
+    )
+    .join('')
+
+  // Combined items HTML
+  const itemsHTML = productItemsHTML + serviceItemsHTML
 
   // Build custom fields
   let customFieldsHTML = ''
@@ -892,6 +968,21 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
           font-weight: 700;
           font-size: 10px;
           text-align: right;
+        }
+
+        .service-item {
+          background: #f0f7ff;
+          padding: 4px;
+          margin-left: -4px;
+          margin-right: -4px;
+          border-left: 2px solid #3b82f6;
+        }
+
+        .svc-tag {
+          font-size: 7px;
+          font-weight: 700;
+          color: #3b82f6;
+          vertical-align: super;
         }
 
         /* Totals Section */
@@ -1137,7 +1228,7 @@ function generateThermalReceiptHTML(data: ReceiptData): string {
 
 // Generate PDF Payment History Receipt HTML (A4 format) - Executive Minimal Design
 function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string {
-  const { receivable, payments, sale, items, customer, businessSettings: settings } = data
+  const { receivable, payments, sale, items, services = [], customer, businessSettings: settings } = data
   const fontSize = fontSizeMap[settings.receiptFontSize as keyof typeof fontSizeMap] || fontSizeMap.medium
   const colors = designColors
   const showTax = settings.showTaxOnReceipt !== false
@@ -1157,8 +1248,8 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
   const formattedSaleDate = saleDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
   const formattedReceiptDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
-  // Build items rows
-  const itemsHTML = items
+  // Build product items rows
+  const productItemsHTML = items
     .map(
       (item, index) => `
       <tr class="${index % 2 === 0 ? 'row-even' : 'row-odd'}">
@@ -1174,6 +1265,29 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
     `
     )
     .join('')
+
+  // Build service items rows
+  const serviceItemsHTML = services
+    .map(
+      (service, index) => `
+      <tr class="${(items.length + index) % 2 === 0 ? 'row-even' : 'row-odd'}" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%) !important;">
+        <td class="item-cell">
+          <span class="item-name">${service.serviceName}</span>
+          ${service.serviceCode ? `<span class="item-serial">Code: ${service.serviceCode}</span>` : ''}
+          ${service.hours ? `<span class="item-serial">${service.hours} hour${service.hours > 1 ? 's' : ''} @ ${formatCurrency(service.unitPrice, settings)}/hr</span>` : ''}
+          <span style="display: inline-block; padding: 2px 8px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; font-size: 9px; font-weight: 600; border-radius: 10px; margin-top: 4px;">SERVICE</span>
+        </td>
+        <td class="text-center">${service.quantity}</td>
+        <td class="text-right">${formatCurrency(service.unitPrice, settings)}</td>
+        ${showTax ? `<td class="text-right">${formatCurrency(service.taxAmount, settings)}</td>` : ''}
+        <td class="text-right amount-cell">${formatCurrency(service.totalAmount, settings)}</td>
+      </tr>
+    `
+    )
+    .join('')
+
+  // Combined items HTML
+  const itemsHTML = productItemsHTML + serviceItemsHTML
 
   // Build payment history with running balance
   let runningBalance = 0
@@ -1634,8 +1748,8 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
           </div>
         </div>
 
-        ${items.length > 0 ? `
-        <div class="section-title">Items Purchased</div>
+        ${(items.length > 0 || services.length > 0) ? `
+        <div class="section-title">Items & Services Purchased</div>
         <table>
           <thead>
             <tr>
@@ -1673,7 +1787,7 @@ function generatePDFPaymentHistoryReceiptHTML(data: PaymentHistoryData): string 
             <span>${formatCurrency(sale.totalAmount, settings)}</span>
           </div>
         </div>
-        ` : ''}
+        ` : '' /* items.length > 0 || services.length > 0 */}
 
         <div class="payment-history-section">
           <div class="section-title">Payment History</div>

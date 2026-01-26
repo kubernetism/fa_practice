@@ -50,6 +50,12 @@ export type {
   NewReceivablePayment,
   Todo,
   NewTodo,
+  ServiceCategory,
+  NewServiceCategory,
+  Service,
+  NewService,
+  SaleService,
+  NewSaleService,
 } from '../../main/db/schema'
 
 // API Response types

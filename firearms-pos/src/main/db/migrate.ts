@@ -133,6 +133,14 @@ export async function runMigrations(): Promise<void> {
     console.error('Sale payments table migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Ensure services tables exist
+  try {
+    await ensureServicesTables()
+  } catch (error) {
+    console.error('Services tables migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -895,10 +903,10 @@ async function ensureInventoryCountsTables(): Promise<void> {
 
 async function ensureSalePaymentsTable(): Promise<void> {
   const { getRawDatabase } = await import('./index')
-  const db = getRawDatabase()
+  const rawDb = getRawDatabase()
 
   // Check if sale_payments table exists
-  const tableCheck = db.prepare(
+  const tableCheck = rawDb.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='sale_payments'`
   ).get()
 
@@ -919,9 +927,125 @@ async function ensureSalePaymentsTable(): Promise<void> {
       CREATE INDEX IF NOT EXISTS "sp_sale_idx" ON "sale_payments" ("sale_id");
       CREATE INDEX IF NOT EXISTS "sp_method_idx" ON "sale_payments" ("payment_method");
     `
-    db.exec(migration)
+    rawDb.exec(migration)
     console.log('sale_payments table created successfully!')
   } else {
     console.log('sale_payments table exists: true')
+  }
+}
+
+async function ensureServicesTables(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check and create service_categories table
+  const categoriesTableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='service_categories'`
+  ).get()
+
+  if (!categoriesTableCheck) {
+    console.log('Creating service_categories table...')
+    const categoriesMigration = `
+      CREATE TABLE IF NOT EXISTS "service_categories" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "name" text NOT NULL UNIQUE,
+        "description" text,
+        "is_active" integer DEFAULT 1 NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL
+      );
+
+      -- Insert default service categories
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Repair', 'Weapon repair services', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Maintenance', 'Regular maintenance and servicing', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Customization', 'Custom painting, coating, and modifications', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Testing', 'Testing and inspection services', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Other', 'Other services', 1, datetime('now'), datetime('now'));
+    `
+    rawDb.exec(categoriesMigration)
+    console.log('service_categories table created successfully!')
+  } else {
+    console.log('service_categories table exists: true')
+  }
+
+  // Check and create services table
+  const servicesTableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='services'`
+  ).get()
+
+  if (!servicesTableCheck) {
+    console.log('Creating services table...')
+    const servicesMigration = `
+      CREATE TABLE IF NOT EXISTS "services" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "code" text NOT NULL UNIQUE,
+        "name" text NOT NULL,
+        "description" text,
+        "category_id" integer REFERENCES "service_categories"("id"),
+        "price" real DEFAULT 0 NOT NULL,
+        "pricing_type" text DEFAULT 'flat' NOT NULL,
+        "estimated_duration" integer DEFAULT 60,
+        "is_taxable" integer DEFAULT 1 NOT NULL,
+        "tax_rate" real DEFAULT 0 NOT NULL,
+        "is_active" integer DEFAULT 1 NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS "services_category_idx" ON "services" ("category_id");
+      CREATE INDEX IF NOT EXISTS "services_active_idx" ON "services" ("is_active");
+    `
+    rawDb.exec(servicesMigration)
+    console.log('services table created successfully!')
+  } else {
+    console.log('services table exists: true')
+  }
+
+  // Check and create sale_services table
+  const saleServicesTableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='sale_services'`
+  ).get()
+
+  if (!saleServicesTableCheck) {
+    console.log('Creating sale_services table...')
+    const saleServicesMigration = `
+      CREATE TABLE IF NOT EXISTS "sale_services" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "sale_id" integer NOT NULL REFERENCES "sales"("id"),
+        "service_id" integer NOT NULL REFERENCES "services"("id"),
+        "service_name" text NOT NULL,
+        "quantity" integer DEFAULT 1 NOT NULL,
+        "unit_price" real NOT NULL,
+        "hours" real,
+        "tax_rate" real DEFAULT 0 NOT NULL,
+        "tax_amount" real DEFAULT 0 NOT NULL,
+        "total_amount" real NOT NULL,
+        "notes" text,
+        "created_at" text NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS "ss_sale_idx" ON "sale_services" ("sale_id");
+      CREATE INDEX IF NOT EXISTS "ss_service_idx" ON "sale_services" ("service_id");
+    `
+    rawDb.exec(saleServicesMigration)
+    console.log('sale_services table created successfully!')
+  } else {
+    console.log('sale_services table exists: true')
+  }
+
+  // Add Service Revenue account to chart of accounts if it doesn't exist
+  try {
+    rawDb.exec(`
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at")
+      VALUES ('4100', 'Service Revenue', 'revenue', 'service_revenue', 'credit', 1, datetime('now'), datetime('now'));
+    `)
+    console.log('Service Revenue account (4100) ensured in chart of accounts')
+  } catch (error) {
+    console.error('Error adding Service Revenue account:', error)
   }
 }

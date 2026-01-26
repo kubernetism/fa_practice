@@ -1405,6 +1405,57 @@ const inventoryCountItemsRelations = drizzleOrm.relations(inventoryCountItems, (
     references: [users.id]
   })
 }));
+const serviceCategories = sqliteCore.sqliteTable("service_categories", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  name: sqliteCore.text("name").notNull().unique(),
+  description: sqliteCore.text("description"),
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const services = sqliteCore.sqliteTable("services", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  code: sqliteCore.text("code").notNull().unique(),
+  name: sqliteCore.text("name").notNull(),
+  description: sqliteCore.text("description"),
+  categoryId: sqliteCore.integer("category_id").references(() => serviceCategories.id),
+  // Pricing
+  price: sqliteCore.real("price").notNull().default(0),
+  pricingType: sqliteCore.text("pricing_type", {
+    enum: ["flat", "hourly"]
+  }).notNull().default("flat"),
+  // Duration in minutes (for scheduling/estimation)
+  estimatedDuration: sqliteCore.integer("estimated_duration").default(60),
+  // Tax settings
+  isTaxable: sqliteCore.integer("is_taxable", { mode: "boolean" }).notNull().default(true),
+  taxRate: sqliteCore.real("tax_rate").notNull().default(0),
+  // Status
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  // Timestamps
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const saleServices = sqliteCore.sqliteTable("sale_services", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  saleId: sqliteCore.integer("sale_id").notNull().references(() => sales.id),
+  serviceId: sqliteCore.integer("service_id").notNull().references(() => services.id),
+  serviceName: sqliteCore.text("service_name").notNull(),
+  // Denormalized for historical reference
+  quantity: sqliteCore.integer("quantity").notNull().default(1),
+  unitPrice: sqliteCore.real("unit_price").notNull(),
+  // Price at time of sale
+  // For hourly services
+  hours: sqliteCore.real("hours"),
+  // Hours worked (if hourly pricing)
+  // Tax
+  taxRate: sqliteCore.real("tax_rate").notNull().default(0),
+  taxAmount: sqliteCore.real("tax_amount").notNull().default(0),
+  // Total = (unitPrice * quantity) or (unitPrice * hours) + taxAmount
+  totalAmount: sqliteCore.real("total_amount").notNull(),
+  // Notes for this specific service (e.g., description of work done)
+  notes: sqliteCore.text("notes"),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1453,11 +1504,14 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   returns,
   saleItems,
   salePayments,
+  saleServices,
   sales,
   salesTabItems,
   salesTabItemsRelations,
   salesTabs,
   salesTabsRelations,
+  serviceCategories,
+  services,
   settings,
   stockAdjustments,
   stockTransfers,
@@ -1809,6 +1863,11 @@ async function runMigrations() {
     await ensureSalePaymentsTable();
   } catch (error) {
     console.error("Sale payments table migration error:", error);
+  }
+  try {
+    await ensureServicesTables();
+  } catch (error) {
+    console.error("Services tables migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -2463,8 +2522,8 @@ async function ensureInventoryCountsTables() {
 }
 async function ensureSalePaymentsTable() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
-  const db2 = getRawDatabase2();
-  const tableCheck = db2.prepare(
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='sale_payments'`
   ).get();
   if (!tableCheck) {
@@ -2484,10 +2543,114 @@ async function ensureSalePaymentsTable() {
       CREATE INDEX IF NOT EXISTS "sp_sale_idx" ON "sale_payments" ("sale_id");
       CREATE INDEX IF NOT EXISTS "sp_method_idx" ON "sale_payments" ("payment_method");
     `;
-    db2.exec(migration);
+    rawDb.exec(migration);
     console.log("sale_payments table created successfully!");
   } else {
     console.log("sale_payments table exists: true");
+  }
+}
+async function ensureServicesTables() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const categoriesTableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='service_categories'`
+  ).get();
+  if (!categoriesTableCheck) {
+    console.log("Creating service_categories table...");
+    const categoriesMigration = `
+      CREATE TABLE IF NOT EXISTS "service_categories" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "name" text NOT NULL UNIQUE,
+        "description" text,
+        "is_active" integer DEFAULT 1 NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL
+      );
+
+      -- Insert default service categories
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Repair', 'Weapon repair services', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Maintenance', 'Regular maintenance and servicing', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Customization', 'Custom painting, coating, and modifications', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Testing', 'Testing and inspection services', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
+      VALUES ('Other', 'Other services', 1, datetime('now'), datetime('now'));
+    `;
+    rawDb.exec(categoriesMigration);
+    console.log("service_categories table created successfully!");
+  } else {
+    console.log("service_categories table exists: true");
+  }
+  const servicesTableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='services'`
+  ).get();
+  if (!servicesTableCheck) {
+    console.log("Creating services table...");
+    const servicesMigration = `
+      CREATE TABLE IF NOT EXISTS "services" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "code" text NOT NULL UNIQUE,
+        "name" text NOT NULL,
+        "description" text,
+        "category_id" integer REFERENCES "service_categories"("id"),
+        "price" real DEFAULT 0 NOT NULL,
+        "pricing_type" text DEFAULT 'flat' NOT NULL,
+        "estimated_duration" integer DEFAULT 60,
+        "is_taxable" integer DEFAULT 1 NOT NULL,
+        "tax_rate" real DEFAULT 0 NOT NULL,
+        "is_active" integer DEFAULT 1 NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS "services_category_idx" ON "services" ("category_id");
+      CREATE INDEX IF NOT EXISTS "services_active_idx" ON "services" ("is_active");
+    `;
+    rawDb.exec(servicesMigration);
+    console.log("services table created successfully!");
+  } else {
+    console.log("services table exists: true");
+  }
+  const saleServicesTableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='sale_services'`
+  ).get();
+  if (!saleServicesTableCheck) {
+    console.log("Creating sale_services table...");
+    const saleServicesMigration = `
+      CREATE TABLE IF NOT EXISTS "sale_services" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "sale_id" integer NOT NULL REFERENCES "sales"("id"),
+        "service_id" integer NOT NULL REFERENCES "services"("id"),
+        "service_name" text NOT NULL,
+        "quantity" integer DEFAULT 1 NOT NULL,
+        "unit_price" real NOT NULL,
+        "hours" real,
+        "tax_rate" real DEFAULT 0 NOT NULL,
+        "tax_amount" real DEFAULT 0 NOT NULL,
+        "total_amount" real NOT NULL,
+        "notes" text,
+        "created_at" text NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS "ss_sale_idx" ON "sale_services" ("sale_id");
+      CREATE INDEX IF NOT EXISTS "ss_service_idx" ON "sale_services" ("service_id");
+    `;
+    rawDb.exec(saleServicesMigration);
+    console.log("sale_services table created successfully!");
+  } else {
+    console.log("sale_services table exists: true");
+  }
+  try {
+    rawDb.exec(`
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at")
+      VALUES ('4100', 'Service Revenue', 'revenue', 'service_revenue', 'credit', 1, datetime('now'), datetime('now'));
+    `);
+    console.log("Service Revenue account (4100) ensured in chart of accounts");
+  } catch (error) {
+    console.error("Error adding Service Revenue account:", error);
   }
 }
 function getLocalIpAddress() {
@@ -4728,30 +4891,53 @@ function registerSalesHandlers() {
   electron.ipcMain.handle("sales:create", async (_, data) => {
     try {
       const session = getCurrentSession();
-      if (!data.items || data.items.length === 0) {
-        return { success: false, message: "No items in cart" };
+      const hasProducts = data.items && data.items.length > 0;
+      const hasServices = data.services && data.services.length > 0;
+      if (!hasProducts && !hasServices) {
+        return { success: false, message: "No items or services in cart" };
       }
-      for (const item of data.items) {
-        const product = await db2.query.products.findFirst({
-          where: drizzleOrm.eq(products.id, item.productId)
-        });
-        if (product?.isSerialTracked && !item.serialNumber) {
-          return {
-            success: false,
-            message: `Serial number required for ${product.name}`
-          };
-        }
-        const stock = await db2.query.inventory.findFirst({
-          where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
-        });
-        if (!stock || stock.quantity < item.quantity) {
-          return {
-            success: false,
-            message: `Insufficient stock for ${product?.name}`
-          };
+      if (hasProducts) {
+        for (const item of data.items) {
+          const product = await db2.query.products.findFirst({
+            where: drizzleOrm.eq(products.id, item.productId)
+          });
+          if (product?.isSerialTracked && !item.serialNumber) {
+            return {
+              success: false,
+              message: `Serial number required for ${product.name}`
+            };
+          }
+          const stock = await db2.query.inventory.findFirst({
+            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
+          });
+          if (!stock || stock.quantity < item.quantity) {
+            return {
+              success: false,
+              message: `Insufficient stock for ${product?.name}`
+            };
+          }
         }
       }
-      if (data.customerId) {
+      if (hasServices) {
+        for (const svc of data.services) {
+          const service = await db2.query.services.findFirst({
+            where: drizzleOrm.eq(services.id, svc.serviceId)
+          });
+          if (!service) {
+            return {
+              success: false,
+              message: `Service not found: ${svc.serviceName}`
+            };
+          }
+          if (!service.isActive) {
+            return {
+              success: false,
+              message: `Service is inactive: ${service.name}`
+            };
+          }
+        }
+      }
+      if (data.customerId && hasProducts) {
         const customer = await db2.query.customers.findFirst({
           where: drizzleOrm.eq(customers.id, data.customerId)
         });
@@ -4779,34 +4965,57 @@ function registerSalesHandlers() {
         let subtotal = 0;
         let taxAmount = 0;
         const saleItemsData = [];
-        for (const item of data.items) {
-          const fifoResult = await consumeCostLayersFIFO(
-            item.productId,
-            data.branchId,
-            item.quantity
-          );
-          const actualCostPerUnit = item.quantity > 0 ? fifoResult.totalCost / item.quantity : item.costPrice;
-          const itemSubtotal = item.unitPrice * item.quantity;
-          const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100);
-          const itemTaxable = itemSubtotal - itemDiscount;
-          const itemTax = itemTaxable * ((item.taxRate || 0) / 100);
-          const itemTotal = itemTaxable + itemTax;
-          subtotal += itemSubtotal;
-          taxAmount += itemTax;
-          saleItemsData.push({
-            productId: item.productId,
-            serialNumber: item.serialNumber,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            costPrice: actualCostPerUnit,
-            // Use FIFO cost instead of frontend cost
-            discountPercent: item.discountPercent || 0,
-            discountAmount: itemDiscount,
-            taxAmount: itemTax,
-            totalPrice: itemTotal,
-            fifoCost: fifoResult.totalCost
-            // Track total FIFO cost for GL posting
-          });
+        const saleServicesData = [];
+        if (hasProducts) {
+          for (const item of data.items) {
+            const fifoResult = await consumeCostLayersFIFO(
+              item.productId,
+              data.branchId,
+              item.quantity
+            );
+            const actualCostPerUnit = item.quantity > 0 ? fifoResult.totalCost / item.quantity : item.costPrice;
+            const itemSubtotal = item.unitPrice * item.quantity;
+            const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100);
+            const itemTaxable = itemSubtotal - itemDiscount;
+            const itemTax = itemTaxable * ((item.taxRate || 0) / 100);
+            const itemTotal = itemTaxable + itemTax;
+            subtotal += itemSubtotal;
+            taxAmount += itemTax;
+            saleItemsData.push({
+              productId: item.productId,
+              serialNumber: item.serialNumber,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              costPrice: actualCostPerUnit,
+              // Use FIFO cost instead of frontend cost
+              discountPercent: item.discountPercent || 0,
+              discountAmount: itemDiscount,
+              taxAmount: itemTax,
+              totalPrice: itemTotal,
+              fifoCost: fifoResult.totalCost
+              // Track total FIFO cost for GL posting
+            });
+          }
+        }
+        if (hasServices) {
+          for (const svc of data.services) {
+            const baseAmount = svc.hours ? svc.unitPrice * svc.hours : svc.unitPrice * svc.quantity;
+            const svcTax = baseAmount * ((svc.taxRate || 0) / 100);
+            const svcTotal = baseAmount + svcTax;
+            subtotal += baseAmount;
+            taxAmount += svcTax;
+            saleServicesData.push({
+              serviceId: svc.serviceId,
+              serviceName: svc.serviceName,
+              quantity: svc.quantity,
+              unitPrice: svc.unitPrice,
+              hours: svc.hours,
+              taxRate: svc.taxRate || 0,
+              taxAmount: svcTax,
+              totalAmount: svcTotal,
+              notes: svc.notes
+            });
+          }
         }
         const discountAmount = data.discountAmount || 0;
         const codCharges = data.codCharges || 0;
@@ -4839,11 +5048,19 @@ function registerSalesHandlers() {
           });
           createdSaleItems.push({ costPrice: item.costPrice, quantity: item.quantity });
         }
-        for (const item of data.items) {
-          await txDb.update(inventory).set({
-            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId)));
+        for (const svcItem of saleServicesData) {
+          await txDb.insert(saleServices).values({
+            ...svcItem,
+            saleId: sale.id
+          });
+        }
+        if (hasProducts) {
+          for (const item of data.items) {
+            await txDb.update(inventory).set({
+              quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId)));
+          }
         }
         if (session?.userId) {
           const commissionRate = 2;
@@ -4941,9 +5158,10 @@ function registerSalesHandlers() {
           paymentMethod: data.paymentMethod,
           paymentStatus: result.paymentStatus,
           amountPaid: data.amountPaid,
-          itemCount: data.items.length
+          itemCount: data.items?.length ?? 0,
+          serviceCount: data.services?.length ?? 0
         },
-        description: `Created sale: ${result.invoiceNumber}${result.discountAmount > 0 ? ` (Discount: ${result.discountAmount})` : ""}`
+        description: `Created sale: ${result.invoiceNumber}${result.discountAmount > 0 ? ` (Discount: ${result.discountAmount})` : ""}${data.services?.length ? ` (Services: ${data.services.length})` : ""}`
       });
       return { success: true, data: result.sale };
     } catch (error) {
@@ -13210,7 +13428,7 @@ function getPaymentMethodLabel(method) {
   return labels[method] || method;
 }
 function generatePDFReceiptHTML(data) {
-  const { sale, items, customer, businessSettings: settings2 } = data;
+  const { sale, items, services: services2 = [], customer, businessSettings: settings2 } = data;
   const fontSize = fontSizeMap[settings2.receiptFontSize] || fontSizeMap.medium;
   const colors = designColors;
   const showTax = settings2.showTaxOnReceipt !== false;
@@ -13225,7 +13443,7 @@ function generatePDFReceiptHTML(data) {
   if (settings2.receiptCustomField3Label && settings2.receiptCustomField3Value) {
     customFieldsHTML += `<div class="custom-field"><span class="cf-label">${settings2.receiptCustomField3Label}</span><span class="cf-value">${settings2.receiptCustomField3Value}</span></div>`;
   }
-  const itemsHTML = items.map(
+  const productItemsHTML = items.map(
     (item, index2) => `
       <tr class="${index2 % 2 === 0 ? "row-even" : "row-odd"}">
         <td class="item-cell">
@@ -13239,6 +13457,24 @@ function generatePDFReceiptHTML(data) {
       </tr>
     `
   ).join("");
+  const serviceItemsHTML = services2.map(
+    (service, index2) => `
+      <tr class="${(items.length + index2) % 2 === 0 ? "row-even" : "row-odd"} service-row">
+        <td class="item-cell">
+          <span class="item-name">${service.serviceName}</span>
+          ${service.serviceCode ? `<span class="item-serial">Code: ${service.serviceCode}</span>` : ""}
+          ${service.hours ? `<span class="item-serial">${service.hours} hour${service.hours > 1 ? "s" : ""} @ ${formatCurrency(service.unitPrice, settings2)}/hr</span>` : ""}
+          ${service.notes ? `<span class="item-serial">${service.notes}</span>` : ""}
+          <span class="service-badge">SERVICE</span>
+        </td>
+        <td class="text-center qty-cell">${service.quantity}</td>
+        <td class="text-right">${formatCurrency(service.unitPrice, settings2)}</td>
+        ${showTax ? `<td class="text-right">${formatCurrency(service.taxAmount, settings2)}</td>` : ""}
+        <td class="text-right amount-cell">${formatCurrency(service.totalAmount, settings2)}</td>
+      </tr>
+    `
+  ).join("");
+  const itemsHTML = productItemsHTML + serviceItemsHTML;
   const saleDate = new Date(sale.saleDate);
   const formattedDate = saleDate.toLocaleDateString("en-US", {
     year: "numeric",
@@ -13478,6 +13714,22 @@ function generatePDFReceiptHTML(data) {
           font-size: ${fontSize.caption}px;
           color: var(--gray-400);
           margin-top: 2px;
+        }
+
+        .service-badge {
+          display: inline-block;
+          padding: 2px 8px;
+          background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+          color: white;
+          font-size: ${fontSize.caption - 1}px;
+          font-weight: 600;
+          border-radius: 10px;
+          margin-top: 4px;
+          letter-spacing: 0.5px;
+        }
+
+        .service-row {
+          background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%) !important;
         }
 
         .qty-cell {
@@ -13749,12 +14001,12 @@ function generatePDFReceiptHTML(data) {
   `;
 }
 function generateThermalReceiptHTML(data) {
-  const { sale, items, customer, businessSettings: settings2 } = data;
+  const { sale, items, services: services2 = [], customer, businessSettings: settings2 } = data;
   const showTax = settings2.showTaxOnReceipt !== false;
   const saleDate = new Date(sale.saleDate);
   const shortDate = `${saleDate.getDate().toString().padStart(2, "0")}/${(saleDate.getMonth() + 1).toString().padStart(2, "0")}/${saleDate.getFullYear().toString().slice(-2)}`;
   const shortTime = saleDate.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-  const itemsHTML = items.map(
+  const productItemsHTML = items.map(
     (item) => {
       const priceStr = formatCurrency(item.totalPrice, settings2);
       return `
@@ -13767,6 +14019,23 @@ function generateThermalReceiptHTML(data) {
     `;
     }
   ).join("");
+  const serviceItemsHTML = services2.map(
+    (service) => {
+      const priceStr = formatCurrency(service.totalAmount, settings2);
+      const serviceName = service.serviceName.length > 28 ? service.serviceName.substring(0, 25) + "..." : service.serviceName;
+      return `
+      <div class="item-row service-item">
+        <div class="item-name">${serviceName} <span class="svc-tag">[SVC]</span></div>
+        ${service.serviceCode ? `<div class="item-serial">CODE: ${service.serviceCode}</div>` : ""}
+        ${service.hours ? `<div class="item-serial">${service.hours}hr @ ${formatCurrency(service.unitPrice, settings2)}/hr</div>` : ""}
+        ${service.notes ? `<div class="item-serial">${service.notes}</div>` : ""}
+        <div class="item-qty-price">${service.quantity} × ${formatCurrency(service.unitPrice, settings2)}</div>
+        <div class="item-total">${priceStr}</div>
+      </div>
+    `;
+    }
+  ).join("");
+  const itemsHTML = productItemsHTML + serviceItemsHTML;
   let customFieldsHTML = "";
   if (settings2.receiptCustomField1Label && settings2.receiptCustomField1Value) {
     customFieldsHTML += `<div class="cf-row">${settings2.receiptCustomField1Label}: ${settings2.receiptCustomField1Value}</div>`;
@@ -13918,6 +14187,21 @@ function generateThermalReceiptHTML(data) {
           font-weight: 700;
           font-size: 10px;
           text-align: right;
+        }
+
+        .service-item {
+          background: #f0f7ff;
+          padding: 4px;
+          margin-left: -4px;
+          margin-right: -4px;
+          border-left: 2px solid #3b82f6;
+        }
+
+        .svc-tag {
+          font-size: 7px;
+          font-weight: 700;
+          color: #3b82f6;
+          vertical-align: super;
         }
 
         /* Totals Section */
@@ -14145,7 +14429,7 @@ function generateThermalReceiptHTML(data) {
   `;
 }
 function generatePDFPaymentHistoryReceiptHTML(data) {
-  const { receivable, payments, sale, items, customer, businessSettings: settings2 } = data;
+  const { receivable, payments, sale, items, services: services2 = [], customer, businessSettings: settings2 } = data;
   const fontSize = fontSizeMap[settings2.receiptFontSize] || fontSizeMap.medium;
   const colors = designColors;
   const showTax = settings2.showTaxOnReceipt !== false;
@@ -14160,7 +14444,7 @@ function generatePDFPaymentHistoryReceiptHTML(data) {
   const saleDate = new Date(sale.saleDate);
   const formattedSaleDate = saleDate.toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const formattedReceiptDate = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  const itemsHTML = items.map(
+  const productItemsHTML = items.map(
     (item, index2) => `
       <tr class="${index2 % 2 === 0 ? "row-even" : "row-odd"}">
         <td class="item-cell">
@@ -14174,6 +14458,23 @@ function generatePDFPaymentHistoryReceiptHTML(data) {
       </tr>
     `
   ).join("");
+  const serviceItemsHTML = services2.map(
+    (service, index2) => `
+      <tr class="${(items.length + index2) % 2 === 0 ? "row-even" : "row-odd"}" style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%) !important;">
+        <td class="item-cell">
+          <span class="item-name">${service.serviceName}</span>
+          ${service.serviceCode ? `<span class="item-serial">Code: ${service.serviceCode}</span>` : ""}
+          ${service.hours ? `<span class="item-serial">${service.hours} hour${service.hours > 1 ? "s" : ""} @ ${formatCurrency(service.unitPrice, settings2)}/hr</span>` : ""}
+          <span style="display: inline-block; padding: 2px 8px; background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white; font-size: 9px; font-weight: 600; border-radius: 10px; margin-top: 4px;">SERVICE</span>
+        </td>
+        <td class="text-center">${service.quantity}</td>
+        <td class="text-right">${formatCurrency(service.unitPrice, settings2)}</td>
+        ${showTax ? `<td class="text-right">${formatCurrency(service.taxAmount, settings2)}</td>` : ""}
+        <td class="text-right amount-cell">${formatCurrency(service.totalAmount, settings2)}</td>
+      </tr>
+    `
+  ).join("");
+  const itemsHTML = productItemsHTML + serviceItemsHTML;
   let runningBalance = 0;
   const paymentsWithBalanceHTML = payments.map((payment, index2) => {
     runningBalance += payment.amount;
@@ -14629,8 +14930,8 @@ function generatePDFPaymentHistoryReceiptHTML(data) {
           </div>
         </div>
 
-        ${items.length > 0 ? `
-        <div class="section-title">Items Purchased</div>
+        ${items.length > 0 || services2.length > 0 ? `
+        <div class="section-title">Items & Services Purchased</div>
         <table>
           <thead>
             <tr>
@@ -15164,6 +15465,10 @@ function registerReceiptHandlers() {
         saleItem: saleItems,
         product: products
       }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      const saleServiceItems = await db2.select({
+        saleService: saleServices,
+        service: services
+      }).from(saleServices).innerJoin(services, drizzleOrm.eq(saleServices.serviceId, services.id)).where(drizzleOrm.eq(saleServices.saleId, saleId));
       let customer = null;
       if (sale.customerId) {
         const customerData = await db2.query.customers.findFirst({
@@ -15216,9 +15521,20 @@ function registerReceiptHandlers() {
         taxAmount: item.saleItem.taxAmount || 0,
         totalPrice: item.saleItem.totalPrice || 0
       }));
+      const receiptServices = saleServiceItems.map((item) => ({
+        serviceName: item.saleService.serviceName || item.service.name,
+        serviceCode: item.service.code || void 0,
+        quantity: item.saleService.quantity || 1,
+        unitPrice: item.saleService.unitPrice || 0,
+        hours: item.saleService.hours || void 0,
+        taxAmount: item.saleService.taxAmount || 0,
+        totalAmount: item.saleService.totalPrice || 0,
+        notes: item.saleService.notes || void 0
+      }));
       const receiptData = {
         sale: receiptSale,
         items: receiptItems,
+        services: receiptServices,
         customer,
         businessSettings: settings2
       };
@@ -15327,6 +15643,7 @@ function registerReceiptHandlers() {
         };
       }
       let receiptItems = [];
+      let receiptServices = [];
       if (receivable.saleId) {
         const items = await db2.select({
           saleItem: saleItems,
@@ -15341,6 +15658,20 @@ function registerReceiptHandlers() {
           discountAmount: item.saleItem.discountAmount || 0,
           taxAmount: item.saleItem.taxAmount || 0,
           totalPrice: item.saleItem.totalPrice || 0
+        }));
+        const serviceItems = await db2.select({
+          saleService: saleServices,
+          service: services
+        }).from(saleServices).innerJoin(services, drizzleOrm.eq(saleServices.serviceId, services.id)).where(drizzleOrm.eq(saleServices.saleId, receivable.saleId));
+        receiptServices = serviceItems.map((item) => ({
+          serviceName: item.saleService.serviceName || item.service.name,
+          serviceCode: item.service.code || void 0,
+          quantity: item.saleService.quantity || 1,
+          unitPrice: item.saleService.unitPrice || 0,
+          hours: item.saleService.hours || void 0,
+          taxAmount: item.saleService.taxAmount || 0,
+          totalAmount: item.saleService.totalPrice || 0,
+          notes: item.saleService.notes || void 0
         }));
       }
       const payments = await db2.select({
@@ -15405,6 +15736,7 @@ function registerReceiptHandlers() {
           totalAmount: sale.totalAmount || receivable.totalAmount || 0
         },
         items: receiptItems,
+        services: receiptServices,
         customer,
         businessSettings: settings2
       };
@@ -18130,6 +18462,376 @@ function registerInventoryCountsHandlers() {
   });
   console.log("Inventory counts IPC handlers registered");
 }
+function sanitizeServiceInput(data) {
+  const sanitized = { ...data };
+  if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name);
+  if (sanitized.code) sanitized.code = sanitizeAlphanumeric(sanitized.code);
+  if (sanitized.description) sanitized.description = sanitizeForStorage(sanitized.description);
+  return sanitized;
+}
+function validateServiceInput(data) {
+  const errors = [];
+  if (data.price !== void 0) {
+    const validatedPrice = validatePrice(data.price);
+    if (validatedPrice === null) {
+      errors.push("Price must be a non-negative number");
+    }
+  }
+  if (data.taxRate !== void 0) {
+    const validatedTax = validateTaxRate(data.taxRate);
+    if (validatedTax === null) {
+      errors.push("Tax rate must be between 0 and 100");
+    }
+  }
+  if (data.estimatedDuration !== void 0 && data.estimatedDuration < 0) {
+    errors.push("Estimated duration must be a non-negative number");
+  }
+  return { valid: errors.length === 0, errors };
+}
+function registerServicesHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("service-categories:get-all", async () => {
+    try {
+      const data = await db2.query.serviceCategories.findMany({
+        orderBy: drizzleOrm.desc(serviceCategories.name)
+      });
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get service categories error:", error);
+      return { success: false, message: "Failed to fetch service categories" };
+    }
+  });
+  electron.ipcMain.handle("service-categories:get-active", async () => {
+    try {
+      const data = await db2.query.serviceCategories.findMany({
+        where: drizzleOrm.eq(serviceCategories.isActive, true),
+        orderBy: drizzleOrm.desc(serviceCategories.name)
+      });
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get active service categories error:", error);
+      return { success: false, message: "Failed to fetch active service categories" };
+    }
+  });
+  electron.ipcMain.handle("service-categories:get-by-id", async (_, id) => {
+    try {
+      const category = await db2.query.serviceCategories.findFirst({
+        where: drizzleOrm.eq(serviceCategories.id, id)
+      });
+      if (!category) {
+        return { success: false, message: "Service category not found" };
+      }
+      return { success: true, data: category };
+    } catch (error) {
+      console.error("Get service category error:", error);
+      return { success: false, message: "Failed to fetch service category" };
+    }
+  });
+  electron.ipcMain.handle("service-categories:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      const existing = await db2.query.serviceCategories.findFirst({
+        where: drizzleOrm.eq(serviceCategories.name, data.name)
+      });
+      if (existing) {
+        return { success: false, message: "Service category with this name already exists" };
+      }
+      const result = await db2.insert(serviceCategories).values(data).returning();
+      const newCategory = result[0];
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "create",
+        entityType: "service_category",
+        entityId: newCategory.id,
+        newValues: sanitizeForAudit(data),
+        description: `Created service category: ${data.name}`
+      });
+      return { success: true, data: newCategory };
+    } catch (error) {
+      console.error("Create service category error:", error);
+      return { success: false, message: "Failed to create service category" };
+    }
+  });
+  electron.ipcMain.handle(
+    "service-categories:update",
+    async (_, id, data) => {
+      try {
+        const session = getCurrentSession();
+        const existing = await db2.query.serviceCategories.findFirst({
+          where: drizzleOrm.eq(serviceCategories.id, id)
+        });
+        if (!existing) {
+          return { success: false, message: "Service category not found" };
+        }
+        if (data.name && data.name !== existing.name) {
+          const duplicate = await db2.query.serviceCategories.findFirst({
+            where: drizzleOrm.eq(serviceCategories.name, data.name)
+          });
+          if (duplicate) {
+            return { success: false, message: "Service category with this name already exists" };
+          }
+        }
+        const result = await db2.update(serviceCategories).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(serviceCategories.id, id)).returning();
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "update",
+          entityType: "service_category",
+          entityId: id,
+          oldValues: sanitizeForAudit(existing),
+          newValues: sanitizeForAudit(data),
+          description: `Updated service category: ${existing.name}`
+        });
+        return { success: true, data: result[0] };
+      } catch (error) {
+        console.error("Update service category error:", error);
+        return { success: false, message: "Failed to update service category" };
+      }
+    }
+  );
+  electron.ipcMain.handle("service-categories:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const existing = await db2.query.serviceCategories.findFirst({
+        where: drizzleOrm.eq(serviceCategories.id, id)
+      });
+      if (!existing) {
+        return { success: false, message: "Service category not found" };
+      }
+      const servicesInCategory = await db2.query.services.findFirst({
+        where: drizzleOrm.eq(services.categoryId, id)
+      });
+      if (servicesInCategory) {
+        return {
+          success: false,
+          message: "Cannot delete category with associated services. Reassign services first."
+        };
+      }
+      await db2.update(serviceCategories).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(serviceCategories.id, id));
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "delete",
+        entityType: "service_category",
+        entityId: id,
+        oldValues: sanitizeForAudit(existing),
+        description: `Deactivated service category: ${existing.name}`
+      });
+      return { success: true, message: "Service category deactivated successfully" };
+    } catch (error) {
+      console.error("Delete service category error:", error);
+      return { success: false, message: "Failed to delete service category" };
+    }
+  });
+  electron.ipcMain.handle(
+    "services:get-all",
+    async (_, params) => {
+      try {
+        const {
+          page = 1,
+          limit = 20,
+          sortBy = "createdAt",
+          sortOrder = "desc",
+          search,
+          categoryId,
+          isActive
+        } = params;
+        const conditions = [];
+        if (search) {
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(services.name, `%${search}%`),
+              drizzleOrm.like(services.code, `%${search}%`),
+              drizzleOrm.like(services.description, `%${search}%`)
+            )
+          );
+        }
+        if (categoryId) {
+          conditions.push(drizzleOrm.eq(services.categoryId, categoryId));
+        }
+        if (isActive !== void 0) {
+          conditions.push(drizzleOrm.eq(services.isActive, isActive));
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(services).where(whereClause);
+        const total = countResult[0].count;
+        const orderColumn = services[sortBy] ?? services.createdAt;
+        const data = await db2.query.services.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: sortOrder === "desc" ? drizzleOrm.desc(orderColumn) : drizzleOrm.asc(orderColumn)
+        });
+        const result = {
+          data,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+        return { success: true, ...result };
+      } catch (error) {
+        console.error("Get services error:", error);
+        return { success: false, message: "Failed to fetch services" };
+      }
+    }
+  );
+  electron.ipcMain.handle("services:get-active", async () => {
+    try {
+      const data = await db2.query.services.findMany({
+        where: drizzleOrm.eq(services.isActive, true),
+        orderBy: drizzleOrm.desc(services.name)
+      });
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get active services error:", error);
+      return { success: false, message: "Failed to fetch active services" };
+    }
+  });
+  electron.ipcMain.handle("services:get-by-id", async (_, id) => {
+    try {
+      const service = await db2.query.services.findFirst({
+        where: drizzleOrm.eq(services.id, id)
+      });
+      if (!service) {
+        return { success: false, message: "Service not found" };
+      }
+      return { success: true, data: service };
+    } catch (error) {
+      console.error("Get service error:", error);
+      return { success: false, message: "Failed to fetch service" };
+    }
+  });
+  electron.ipcMain.handle("services:get-by-code", async (_, code) => {
+    try {
+      const service = await db2.query.services.findFirst({
+        where: drizzleOrm.eq(services.code, code)
+      });
+      if (!service) {
+        return { success: false, message: "Service not found" };
+      }
+      return { success: true, data: service };
+    } catch (error) {
+      console.error("Get service by code error:", error);
+      return { success: false, message: "Failed to fetch service" };
+    }
+  });
+  electron.ipcMain.handle("services:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      const sanitizedData = sanitizeServiceInput(data);
+      const validation = validateServiceInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      const existing = await db2.query.services.findFirst({
+        where: drizzleOrm.eq(services.code, sanitizedData.code)
+      });
+      if (existing) {
+        return { success: false, message: "Service code already exists" };
+      }
+      const result = await db2.insert(services).values(sanitizedData).returning();
+      const newService = result[0];
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "create",
+        entityType: "service",
+        entityId: newService.id,
+        newValues: sanitizeForAudit(sanitizedData),
+        description: `Created service: ${sanitizedData.name}`
+      });
+      return { success: true, data: newService };
+    } catch (error) {
+      console.error("Create service error:", error);
+      return { success: false, message: "Failed to create service" };
+    }
+  });
+  electron.ipcMain.handle("services:update", async (_, id, data) => {
+    try {
+      const session = getCurrentSession();
+      const existing = await db2.query.services.findFirst({
+        where: drizzleOrm.eq(services.id, id)
+      });
+      if (!existing) {
+        return { success: false, message: "Service not found" };
+      }
+      const sanitizedData = sanitizeServiceInput(data);
+      const validation = validateServiceInput(sanitizedData);
+      if (!validation.valid) {
+        return { success: false, message: validation.errors.join(", ") };
+      }
+      if (sanitizedData.code && sanitizedData.code !== existing.code) {
+        const duplicate = await db2.query.services.findFirst({
+          where: drizzleOrm.eq(services.code, sanitizedData.code)
+        });
+        if (duplicate) {
+          return { success: false, message: "Service code already exists" };
+        }
+      }
+      const result = await db2.update(services).set({ ...sanitizedData, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(services.id, id)).returning();
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "update",
+        entityType: "service",
+        entityId: id,
+        oldValues: sanitizeForAudit(existing),
+        newValues: sanitizeForAudit(sanitizedData),
+        description: `Updated service: ${existing.name}`
+      });
+      return { success: true, data: result[0] };
+    } catch (error) {
+      console.error("Update service error:", error);
+      return { success: false, message: "Failed to update service" };
+    }
+  });
+  electron.ipcMain.handle("services:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const existing = await db2.query.services.findFirst({
+        where: drizzleOrm.eq(services.id, id)
+      });
+      if (!existing) {
+        return { success: false, message: "Service not found" };
+      }
+      await db2.update(services).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(services.id, id));
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "delete",
+        entityType: "service",
+        entityId: id,
+        oldValues: sanitizeForAudit(existing),
+        description: `Deactivated service: ${existing.name}`
+      });
+      return { success: true, message: "Service deactivated successfully" };
+    } catch (error) {
+      console.error("Delete service error:", error);
+      return { success: false, message: "Failed to delete service" };
+    }
+  });
+  electron.ipcMain.handle("services:search", async (_, query) => {
+    try {
+      const results = await db2.query.services.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(services.isActive, true),
+          drizzleOrm.or(
+            drizzleOrm.like(services.name, `%${query}%`),
+            drizzleOrm.like(services.code, `%${query}%`),
+            drizzleOrm.like(services.description, `%${query}%`)
+          )
+        ),
+        limit: 20
+      });
+      return { success: true, data: results };
+    } catch (error) {
+      console.error("Search services error:", error);
+      return { success: false, message: "Failed to search services" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -18167,6 +18869,7 @@ function registerAllHandlers() {
   registerTaxCollectionsHandlers();
   registerDiscountManagementHandlers();
   registerInventoryCountsHandlers();
+  registerServicesHandlers();
   console.log("All IPC handlers registered");
 }
 process.on("uncaughtException", (error) => {

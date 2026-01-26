@@ -5,6 +5,8 @@ import {
   sales,
   saleItems,
   salePayments,
+  saleServices,
+  services,
   inventory,
   products,
   customers,
@@ -14,6 +16,7 @@ import {
   type NewSale,
   type NewSaleItem,
   type NewSalePayment,
+  type NewSaleService,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -32,6 +35,16 @@ interface CartItem {
   taxRate?: number
 }
 
+interface ServiceItem {
+  serviceId: number
+  serviceName: string
+  quantity: number
+  unitPrice: number
+  hours?: number // For hourly pricing
+  taxRate?: number
+  notes?: string
+}
+
 interface PaymentBreakdownItem {
   method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
   amount: number
@@ -42,6 +55,7 @@ interface CreateSaleData {
   customerId?: number
   branchId: number
   items: CartItem[]
+  services?: ServiceItem[] // Services included in the sale
   paymentMethod: 'cash' | 'card' | 'credit' | 'mixed' | 'mobile' | 'cod' | 'receivable'
   paymentStatus?: 'paid' | 'partial' | 'pending'
   amountPaid: number
@@ -70,39 +84,66 @@ export function registerSalesHandlers(): void {
     try {
       const session = getCurrentSession()
 
-      // Validate items
-      if (!data.items || data.items.length === 0) {
-        return { success: false, message: 'No items in cart' }
+      // Validate items - require at least products or services
+      const hasProducts = data.items && data.items.length > 0
+      const hasServices = data.services && data.services.length > 0
+      if (!hasProducts && !hasServices) {
+        return { success: false, message: 'No items or services in cart' }
       }
 
       // Pre-validation (outside transaction for faster feedback)
-      for (const item of data.items) {
-        const product = await db.query.products.findFirst({
-          where: eq(products.id, item.productId),
-        })
+      if (hasProducts) {
+        for (const item of data.items) {
+          const product = await db.query.products.findFirst({
+            where: eq(products.id, item.productId),
+          })
 
-        if (product?.isSerialTracked && !item.serialNumber) {
-          return {
-            success: false,
-            message: `Serial number required for ${product.name}`,
+          if (product?.isSerialTracked && !item.serialNumber) {
+            return {
+              success: false,
+              message: `Serial number required for ${product.name}`,
+            }
           }
-        }
 
-        // Check stock
-        const stock = await db.query.inventory.findFirst({
-          where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)),
-        })
+          // Check stock
+          const stock = await db.query.inventory.findFirst({
+            where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)),
+          })
 
-        if (!stock || stock.quantity < item.quantity) {
-          return {
-            success: false,
-            message: `Insufficient stock for ${product?.name}`,
+          if (!stock || stock.quantity < item.quantity) {
+            return {
+              success: false,
+              message: `Insufficient stock for ${product?.name}`,
+            }
           }
         }
       }
 
-      // If customer provided, validate license for firearms
-      if (data.customerId) {
+      // Validate services exist
+      if (hasServices) {
+        for (const svc of data.services!) {
+          const service = await db.query.services.findFirst({
+            where: eq(services.id, svc.serviceId),
+          })
+
+          if (!service) {
+            return {
+              success: false,
+              message: `Service not found: ${svc.serviceName}`,
+            }
+          }
+
+          if (!service.isActive) {
+            return {
+              success: false,
+              message: `Service is inactive: ${service.name}`,
+            }
+          }
+        }
+      }
+
+      // If customer provided and has products, validate license for firearms
+      if (data.customerId && hasProducts) {
         const customer = await db.query.customers.findFirst({
           where: eq(customers.id, data.customerId),
         })
@@ -131,45 +172,76 @@ export function registerSalesHandlers(): void {
 
       // Execute all database operations in a transaction
       const result = await withTransaction(async ({ db: txDb }) => {
-        // Calculate totals with FIFO cost pricing
+        // Calculate totals with FIFO cost pricing for products
         let subtotal = 0
         let taxAmount = 0
         const saleItemsData: Array<Omit<NewSaleItem, 'saleId'> & { fifoCost: number }> = []
+        const saleServicesData: Array<Omit<NewSaleService, 'saleId'>> = []
 
-        for (const item of data.items) {
-          // Get actual FIFO cost for this item
-          const fifoResult = await consumeCostLayersFIFO(
-            item.productId,
-            data.branchId,
-            item.quantity
-          )
+        // Process products
+        if (hasProducts) {
+          for (const item of data.items) {
+            // Get actual FIFO cost for this item
+            const fifoResult = await consumeCostLayersFIFO(
+              item.productId,
+              data.branchId,
+              item.quantity
+            )
 
-          // Calculate cost per unit from FIFO
-          const actualCostPerUnit = item.quantity > 0
-            ? fifoResult.totalCost / item.quantity
-            : item.costPrice
+            // Calculate cost per unit from FIFO
+            const actualCostPerUnit = item.quantity > 0
+              ? fifoResult.totalCost / item.quantity
+              : item.costPrice
 
-          const itemSubtotal = item.unitPrice * item.quantity
-          const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100)
-          const itemTaxable = itemSubtotal - itemDiscount
-          const itemTax = itemTaxable * ((item.taxRate || 0) / 100)
-          const itemTotal = itemTaxable + itemTax
+            const itemSubtotal = item.unitPrice * item.quantity
+            const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100)
+            const itemTaxable = itemSubtotal - itemDiscount
+            const itemTax = itemTaxable * ((item.taxRate || 0) / 100)
+            const itemTotal = itemTaxable + itemTax
 
-          subtotal += itemSubtotal
-          taxAmount += itemTax
+            subtotal += itemSubtotal
+            taxAmount += itemTax
 
-          saleItemsData.push({
-            productId: item.productId,
-            serialNumber: item.serialNumber,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            costPrice: actualCostPerUnit, // Use FIFO cost instead of frontend cost
-            discountPercent: item.discountPercent || 0,
-            discountAmount: itemDiscount,
-            taxAmount: itemTax,
-            totalPrice: itemTotal,
-            fifoCost: fifoResult.totalCost, // Track total FIFO cost for GL posting
-          })
+            saleItemsData.push({
+              productId: item.productId,
+              serialNumber: item.serialNumber,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              costPrice: actualCostPerUnit, // Use FIFO cost instead of frontend cost
+              discountPercent: item.discountPercent || 0,
+              discountAmount: itemDiscount,
+              taxAmount: itemTax,
+              totalPrice: itemTotal,
+              fifoCost: fifoResult.totalCost, // Track total FIFO cost for GL posting
+            })
+          }
+        }
+
+        // Process services
+        if (hasServices) {
+          for (const svc of data.services!) {
+            // For hourly services, use hours; otherwise use quantity
+            const baseAmount = svc.hours
+              ? svc.unitPrice * svc.hours
+              : svc.unitPrice * svc.quantity
+            const svcTax = baseAmount * ((svc.taxRate || 0) / 100)
+            const svcTotal = baseAmount + svcTax
+
+            subtotal += baseAmount
+            taxAmount += svcTax
+
+            saleServicesData.push({
+              serviceId: svc.serviceId,
+              serviceName: svc.serviceName,
+              quantity: svc.quantity,
+              unitPrice: svc.unitPrice,
+              hours: svc.hours,
+              taxRate: svc.taxRate || 0,
+              taxAmount: svcTax,
+              totalAmount: svcTotal,
+              notes: svc.notes,
+            })
+          }
         }
 
         const discountAmount = data.discountAmount || 0
@@ -212,15 +284,25 @@ export function registerSalesHandlers(): void {
           createdSaleItems.push({ costPrice: item.costPrice, quantity: item.quantity })
         }
 
-        // 3. Deduct inventory
-        for (const item of data.items) {
-          await txDb
-            .update(inventory)
-            .set({
-              quantity: sql`${inventory.quantity} - ${item.quantity}`,
-              updatedAt: new Date().toISOString(),
-            })
-            .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)))
+        // 2b. Create sale services
+        for (const svcItem of saleServicesData) {
+          await txDb.insert(saleServices).values({
+            ...svcItem,
+            saleId: sale.id,
+          })
+        }
+
+        // 3. Deduct inventory (only for products)
+        if (hasProducts) {
+          for (const item of data.items) {
+            await txDb
+              .update(inventory)
+              .set({
+                quantity: sql`${inventory.quantity} - ${item.quantity}`,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(and(eq(inventory.productId, item.productId), eq(inventory.branchId, data.branchId)))
+          }
         }
 
         // 4. Create commission if applicable (2% of subtotal)
@@ -341,9 +423,10 @@ export function registerSalesHandlers(): void {
           paymentMethod: data.paymentMethod,
           paymentStatus: result.paymentStatus,
           amountPaid: data.amountPaid,
-          itemCount: data.items.length,
+          itemCount: data.items?.length ?? 0,
+          serviceCount: data.services?.length ?? 0,
         },
-        description: `Created sale: ${result.invoiceNumber}${result.discountAmount > 0 ? ` (Discount: ${result.discountAmount})` : ''}`,
+        description: `Created sale: ${result.invoiceNumber}${result.discountAmount > 0 ? ` (Discount: ${result.discountAmount})` : ''}${data.services?.length ? ` (Services: ${data.services.length})` : ''}`,
       })
 
       return { success: true, data: result.sale }
