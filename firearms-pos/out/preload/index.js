@@ -239,7 +239,13 @@ const api = {
     deactivate: () => electron.ipcRenderer.invoke("license:deactivate"),
     validateKey: (licenseKey) => electron.ipcRenderer.invoke("license:validate-key", licenseKey),
     generateLicenseRequest: () => electron.ipcRenderer.invoke("license:generate-license-request"),
-    getHistory: () => electron.ipcRenderer.invoke("license:get-history")
+    getHistory: () => electron.ipcRenderer.invoke("license:get-history"),
+    checkLockStatus: () => electron.ipcRenderer.invoke("license:check-lock-status"),
+    unlockApplication: (licenseKey) => electron.ipcRenderer.invoke("license:unlock-application", licenseKey),
+    onApplicationUnlocked: (callback) => {
+      electron.ipcRenderer.on("license:application-unlocked", callback);
+      return () => electron.ipcRenderer.removeListener("license:application-unlocked", callback);
+    }
   },
   // Database Viewer
   database: {
@@ -348,7 +354,11 @@ const api = {
   setup: {
     checkFirstRun: () => electron.ipcRenderer.invoke("setup:check-first-run"),
     complete: (data) => electron.ipcRenderer.invoke("setup:complete", data),
-    generateBranchCode: (businessName) => electron.ipcRenderer.invoke("setup:generate-branch-code", businessName)
+    generateBranchCode: (businessName) => electron.ipcRenderer.invoke("setup:generate-branch-code", businessName),
+    getChecklistStatus: () => electron.ipcRenderer.invoke("setup:get-checklist-status"),
+    updateChecklistItem: (item, status) => electron.ipcRenderer.invoke("setup:update-checklist-item", item, status),
+    dismissChecklist: () => electron.ipcRenderer.invoke("setup:dismiss-checklist"),
+    refreshChecklist: () => electron.ipcRenderer.invoke("setup:refresh-checklist")
   },
   // Backup & Restore
   backup: {

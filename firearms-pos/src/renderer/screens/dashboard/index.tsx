@@ -18,6 +18,7 @@ import {
   Percent,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { SetupChecklist } from '@/components/setup-checklist'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBranch } from '@/contexts/branch-context'
@@ -181,6 +182,9 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
 
   return (
     <div className="space-y-6">
+      {/* Setup Checklist - shown until dismissed */}
+      <SetupChecklist />
+
       {/* Header with Time Period Selector */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>

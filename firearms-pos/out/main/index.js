@@ -2,10 +2,12 @@
 const electron = require("electron");
 const node_path = require("node:path");
 const betterSqlite3 = require("drizzle-orm/better-sqlite3");
-const Database = require("better-sqlite3");
+const Database = require("better-sqlite3-multiple-ciphers");
 const node_fs = require("node:fs");
 const sqliteCore = require("drizzle-orm/sqlite-core");
 const drizzleOrm = require("drizzle-orm");
+const node_crypto = require("node:crypto");
+const node_os = require("node:os");
 const migrator = require("drizzle-orm/better-sqlite3/migrator");
 const bcrypt = require("bcryptjs");
 const os = require("os");
@@ -13,8 +15,6 @@ const dateFns = require("date-fns");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const node_crypto = require("node:crypto");
-const node_os = require("node:os");
 function _interopNamespaceDefault(e) {
   const n = Object.create(null, { [Symbol.toStringTag]: { value: "Module" } });
   if (e) {
@@ -1520,6 +1520,287 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   todosRelations,
   users
 }, Symbol.toStringTag, { value: "Module" }));
+const LICENSE_SECRET = "FIREARMS_POS_LICENSE_2024";
+function getMachineId() {
+  const components = [];
+  const nets = node_os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (!net.internal && net.mac !== "00:00:00:00:00:00") {
+        components.push(net.mac);
+      }
+    }
+  }
+  const cpuInfo = node_os.cpus();
+  if (cpuInfo.length > 0) {
+    components.push(cpuInfo[0].model);
+  }
+  components.push(node_os.hostname());
+  components.push(node_os.platform());
+  const hash = node_crypto.createHash("sha256");
+  hash.update(components.join("|"));
+  return hash.digest("hex").toUpperCase();
+}
+function generateLicenseKey(machineId) {
+  const hash = node_crypto.createHash("sha256");
+  hash.update(`${machineId}|${LICENSE_SECRET}`);
+  return hash.digest("hex").toUpperCase();
+}
+function getMachineIdForDisplay() {
+  return getMachineId();
+}
+function validateLicenseKey(licenseKey, machineId) {
+  const validKey = generateLicenseKey(machineId);
+  return licenseKey.toUpperCase() === validKey.toUpperCase();
+}
+function getLicenseFilePath() {
+  return node_path.join(electron.app.getPath("userData"), "license.json");
+}
+function getLicenseStatus() {
+  const machineId = getMachineId();
+  const licensePath = getLicenseFilePath();
+  if (node_fs.existsSync(licensePath)) {
+    try {
+      const licenseData = JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
+      if (licenseData.machineId !== machineId) {
+        return {
+          status: "NO_MACHINE_ID",
+          isValid: false,
+          isActivated: false,
+          isTrial: false,
+          machineId,
+          expiresAt: null,
+          daysRemaining: 0,
+          message: "License is not valid for this machine.",
+          installationDate: null,
+          trialStartDate: null,
+          trialEndDate: null,
+          licenseStartDate: null
+        };
+      }
+      if (licenseData.licenseEndDate && new Date(licenseData.licenseEndDate) < /* @__PURE__ */ new Date()) {
+        return {
+          status: "LICENSE_EXPIRED",
+          isValid: false,
+          isActivated: true,
+          isTrial: false,
+          machineId,
+          expiresAt: licenseData.licenseEndDate,
+          daysRemaining: 0,
+          message: "License has expired. Please renew your license.",
+          installationDate: null,
+          trialStartDate: null,
+          trialEndDate: null,
+          licenseStartDate: licenseData.licenseStartDate
+        };
+      }
+      const daysRemaining = licenseData.licenseEndDate ? Math.max(0, Math.ceil((new Date(licenseData.licenseEndDate).getTime() - Date.now()) / (1e3 * 60 * 60 * 24))) : 0;
+      return {
+        status: "LICENSE_ACTIVE",
+        isValid: true,
+        isActivated: true,
+        isTrial: false,
+        machineId,
+        expiresAt: licenseData.licenseEndDate,
+        daysRemaining,
+        message: "License is active and valid.",
+        installationDate: null,
+        trialStartDate: null,
+        trialEndDate: null,
+        licenseStartDate: licenseData.licenseStartDate
+      };
+    } catch {
+    }
+  }
+  return {
+    status: "TRIAL_ACTIVE",
+    isValid: true,
+    isActivated: false,
+    isTrial: true,
+    machineId,
+    expiresAt: null,
+    daysRemaining: 30,
+    message: "Trial period active.",
+    installationDate: null,
+    trialStartDate: null,
+    trialEndDate: null,
+    licenseStartDate: null
+  };
+}
+function activateLicense(licenseKey) {
+  const machineId = getMachineId();
+  const licensePath = getLicenseFilePath();
+  const validKey = generateLicenseKey(machineId);
+  if (licenseKey.toUpperCase() !== validKey.toUpperCase()) {
+    return { success: false, message: "License key is not valid for this machine." };
+  }
+  const licenseData = {
+    machineId,
+    licenseKey: licenseKey.toUpperCase(),
+    licenseStartDate: (/* @__PURE__ */ new Date()).toISOString(),
+    licenseEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString(),
+    // 1 year
+    isPermanent: false,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  try {
+    node_fs.writeFileSync(licensePath, JSON.stringify(licenseData, null, 2));
+    return { success: true, message: "License activated successfully for 1 year." };
+  } catch {
+    return { success: false, message: "Failed to save license file." };
+  }
+}
+function deactivateLicense() {
+  const licensePath = getLicenseFilePath();
+  if (!node_fs.existsSync(licensePath)) {
+    return { success: false, message: "No license to deactivate." };
+  }
+  try {
+    const { unlinkSync } = require("node:fs");
+    unlinkSync(licensePath);
+    return { success: true, message: "License deactivated successfully." };
+  } catch {
+    return { success: false, message: "Failed to deactivate license." };
+  }
+}
+function getLicenseInfo() {
+  const licensePath = getLicenseFilePath();
+  if (!node_fs.existsSync(licensePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+const CIPHER_SALT = "FIREARMS_POS_CIPHER_2024";
+const PBKDF2_ITERATIONS = 1e5;
+const KEY_LENGTH$1 = 32;
+function getLockStatusFilePath() {
+  return node_path.join(electron.app.getPath("userData"), "lock-status.json");
+}
+function deriveEncryptionKey() {
+  const machineId = getMachineId();
+  const salt = node_crypto.createHash("sha256").update(CIPHER_SALT).digest();
+  const key = node_crypto.pbkdf2Sync(machineId, salt, PBKDF2_ITERATIONS, KEY_LENGTH$1, "sha512");
+  return key.toString("hex");
+}
+function isDbEncrypted() {
+  const statusPath = getLockStatusFilePath();
+  if (!node_fs.existsSync(statusPath)) {
+    return false;
+  }
+  try {
+    const data = JSON.parse(node_fs.readFileSync(statusPath, "utf-8"));
+    return data.isEncrypted === true;
+  } catch {
+    return false;
+  }
+}
+function setEncryptionStatus(isEncrypted) {
+  const statusPath = getLockStatusFilePath();
+  node_fs.writeFileSync(
+    statusPath,
+    JSON.stringify({
+      isEncrypted,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    })
+  );
+}
+function encryptDatabase(dbPath) {
+  if (isDbEncrypted()) {
+    return { success: true, message: "Database is already encrypted." };
+  }
+  if (!node_fs.existsSync(dbPath)) {
+    return { success: false, message: "Database file not found." };
+  }
+  const encryptedPath = `${dbPath}.encrypted`;
+  const key = deriveEncryptionKey();
+  try {
+    const plainDb = new Database(dbPath);
+    plainDb.pragma(`rekey='${key}'`);
+    plainDb.close();
+    setEncryptionStatus(true);
+    const walPath = `${dbPath}-wal`;
+    const shmPath = `${dbPath}-shm`;
+    if (node_fs.existsSync(walPath)) {
+      try {
+        node_fs.unlinkSync(walPath);
+      } catch {
+      }
+    }
+    if (node_fs.existsSync(shmPath)) {
+      try {
+        node_fs.unlinkSync(shmPath);
+      } catch {
+      }
+    }
+    console.log("Database encrypted successfully");
+    return { success: true, message: "Database encrypted successfully." };
+  } catch (error) {
+    console.error("Failed to encrypt database:", error);
+    if (node_fs.existsSync(encryptedPath)) {
+      try {
+        node_fs.unlinkSync(encryptedPath);
+      } catch {
+      }
+    }
+    return {
+      success: false,
+      message: `Failed to encrypt database: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+function decryptDatabase(dbPath) {
+  if (!isDbEncrypted()) {
+    return { success: true, message: "Database is not encrypted." };
+  }
+  if (!node_fs.existsSync(dbPath)) {
+    return { success: false, message: "Database file not found." };
+  }
+  const key = deriveEncryptionKey();
+  try {
+    const encDb = new Database(dbPath);
+    encDb.pragma(`key='${key}'`);
+    const result = encDb.pragma("integrity_check");
+    if (!Array.isArray(result) || result.length === 0) {
+      encDb.close();
+      return { success: false, message: "Failed to verify encrypted database." };
+    }
+    const checkResult = result[0];
+    if (checkResult.integrity_check !== "ok") {
+      encDb.close();
+      return { success: false, message: "Encrypted database integrity check failed." };
+    }
+    encDb.pragma("rekey=''");
+    encDb.close();
+    setEncryptionStatus(false);
+    const walPath = `${dbPath}-wal`;
+    const shmPath = `${dbPath}-shm`;
+    if (node_fs.existsSync(walPath)) {
+      try {
+        node_fs.unlinkSync(walPath);
+      } catch {
+      }
+    }
+    if (node_fs.existsSync(shmPath)) {
+      try {
+        node_fs.unlinkSync(shmPath);
+      } catch {
+      }
+    }
+    console.log("Database decrypted successfully");
+    return { success: true, message: "Database decrypted successfully." };
+  } catch (error) {
+    console.error("Failed to decrypt database:", error);
+    return {
+      success: false,
+      message: `Failed to decrypt database: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
 let db = null;
 let sqlite = null;
 function getDbPath() {
@@ -1562,10 +1843,36 @@ function verifyDatabaseIntegrity(database) {
     return false;
   }
 }
+function setDatabaseLocked(locked) {
+}
 function initDatabase() {
   if (db) return db;
   const dbPath = getDbPath();
   console.log("Initializing database at:", dbPath);
+  if (isDbEncrypted()) {
+    console.log("Database is encrypted - application is locked");
+    throw new Error("DATABASE_ENCRYPTED");
+  }
+  sqlite = new Database(dbPath);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  sqlite.pragma("secure_delete = ON");
+  sqlite.pragma("page_size = 4096");
+  sqlite.pragma("auto_vacuum = INCREMENTAL");
+  if (node_fs.existsSync(dbPath)) {
+    const integrityOk = verifyDatabaseIntegrity(sqlite);
+    if (!integrityOk) {
+      console.warn("Database integrity check failed - database may be corrupted");
+    }
+  }
+  protectDatabaseFiles(dbPath);
+  db = betterSqlite3.drizzle(sqlite, { schema });
+  return db;
+}
+function reinitializeDatabase() {
+  closeDatabase();
+  const dbPath = getDbPath();
+  console.log("Re-initializing database at:", dbPath);
   sqlite = new Database(dbPath);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
@@ -1608,7 +1915,9 @@ const index = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.definePropert
   getDbPath,
   getRawDatabase,
   initDatabase,
-  schema
+  reinitializeDatabase,
+  schema,
+  setDatabaseLocked
 }, Symbol.toStringTag, { value: "Module" }));
 async function migrateToBusinessSettings() {
   console.log("Starting migration to business_settings table...");
@@ -10694,161 +11003,6 @@ function registerReportHandlers() {
     }
   );
 }
-const LICENSE_SECRET = "FIREARMS_POS_LICENSE_2024";
-function getMachineId() {
-  const components = [];
-  const nets = node_os.networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name] || []) {
-      if (!net.internal && net.mac !== "00:00:00:00:00:00") {
-        components.push(net.mac);
-      }
-    }
-  }
-  const cpuInfo = node_os.cpus();
-  if (cpuInfo.length > 0) {
-    components.push(cpuInfo[0].model);
-  }
-  components.push(node_os.hostname());
-  components.push(node_os.platform());
-  const hash = node_crypto.createHash("sha256");
-  hash.update(components.join("|"));
-  return hash.digest("hex").toUpperCase();
-}
-function generateLicenseKey(machineId) {
-  const hash = node_crypto.createHash("sha256");
-  hash.update(`${machineId}|${LICENSE_SECRET}`);
-  return hash.digest("hex").toUpperCase();
-}
-function getMachineIdForDisplay() {
-  return getMachineId();
-}
-function validateLicenseKey(licenseKey, machineId) {
-  const validKey = generateLicenseKey(machineId);
-  return licenseKey.toUpperCase() === validKey.toUpperCase();
-}
-function getLicenseFilePath() {
-  return node_path.join(electron.app.getPath("userData"), "license.json");
-}
-function getLicenseStatus() {
-  const machineId = getMachineId();
-  const licensePath = getLicenseFilePath();
-  if (node_fs.existsSync(licensePath)) {
-    try {
-      const licenseData = JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
-      if (licenseData.machineId !== machineId) {
-        return {
-          status: "NO_MACHINE_ID",
-          isValid: false,
-          isActivated: false,
-          isTrial: false,
-          machineId,
-          expiresAt: null,
-          daysRemaining: 0,
-          message: "License is not valid for this machine.",
-          installationDate: null,
-          trialStartDate: null,
-          trialEndDate: null,
-          licenseStartDate: null
-        };
-      }
-      if (licenseData.licenseEndDate && new Date(licenseData.licenseEndDate) < /* @__PURE__ */ new Date()) {
-        return {
-          status: "LICENSE_EXPIRED",
-          isValid: false,
-          isActivated: true,
-          isTrial: false,
-          machineId,
-          expiresAt: licenseData.licenseEndDate,
-          daysRemaining: 0,
-          message: "License has expired. Please renew your license.",
-          installationDate: null,
-          trialStartDate: null,
-          trialEndDate: null,
-          licenseStartDate: licenseData.licenseStartDate
-        };
-      }
-      const daysRemaining = licenseData.licenseEndDate ? Math.max(0, Math.ceil((new Date(licenseData.licenseEndDate).getTime() - Date.now()) / (1e3 * 60 * 60 * 24))) : 0;
-      return {
-        status: "LICENSE_ACTIVE",
-        isValid: true,
-        isActivated: true,
-        isTrial: false,
-        machineId,
-        expiresAt: licenseData.licenseEndDate,
-        daysRemaining,
-        message: "License is active and valid.",
-        installationDate: null,
-        trialStartDate: null,
-        trialEndDate: null,
-        licenseStartDate: licenseData.licenseStartDate
-      };
-    } catch {
-    }
-  }
-  return {
-    status: "TRIAL_ACTIVE",
-    isValid: true,
-    isActivated: false,
-    isTrial: true,
-    machineId,
-    expiresAt: null,
-    daysRemaining: 30,
-    message: "Trial period active.",
-    installationDate: null,
-    trialStartDate: null,
-    trialEndDate: null,
-    licenseStartDate: null
-  };
-}
-function activateLicense(licenseKey) {
-  const machineId = getMachineId();
-  const licensePath = getLicenseFilePath();
-  const validKey = generateLicenseKey(machineId);
-  if (licenseKey.toUpperCase() !== validKey.toUpperCase()) {
-    return { success: false, message: "License key is not valid for this machine." };
-  }
-  const licenseData = {
-    machineId,
-    licenseKey: licenseKey.toUpperCase(),
-    licenseStartDate: (/* @__PURE__ */ new Date()).toISOString(),
-    licenseEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString(),
-    // 1 year
-    isPermanent: false,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  };
-  try {
-    node_fs.writeFileSync(licensePath, JSON.stringify(licenseData, null, 2));
-    return { success: true, message: "License activated successfully for 1 year." };
-  } catch {
-    return { success: false, message: "Failed to save license file." };
-  }
-}
-function deactivateLicense() {
-  const licensePath = getLicenseFilePath();
-  if (!node_fs.existsSync(licensePath)) {
-    return { success: false, message: "No license to deactivate." };
-  }
-  try {
-    const { unlinkSync } = require("node:fs");
-    unlinkSync(licensePath);
-    return { success: true, message: "License deactivated successfully." };
-  } catch {
-    return { success: false, message: "Failed to deactivate license." };
-  }
-}
-function getLicenseInfo() {
-  const licensePath = getLicenseFilePath();
-  if (!node_fs.existsSync(licensePath)) {
-    return null;
-  }
-  try {
-    return JSON.parse(node_fs.readFileSync(licensePath, "utf-8"));
-  } catch {
-    return null;
-  }
-}
 const applicationInfo = sqliteCore.sqliteTable("application_info", {
   infoId: sqliteCore.integer("info_id").primaryKey({ autoIncrement: true }),
   installationDate: sqliteCore.text("installation_date").notNull(),
@@ -10864,6 +11018,13 @@ const applicationInfo = sqliteCore.sqliteTable("application_info", {
   createdAt: sqliteCore.text("created_at").default(drizzleOrm.sql`CURRENT_TIMESTAMP`),
   updatedAt: sqliteCore.text("updated_at").default(drizzleOrm.sql`CURRENT_TIMESTAMP`)
 });
+let applicationLocked = false;
+function isApplicationLocked() {
+  return applicationLocked;
+}
+function setApplicationLocked(locked) {
+  applicationLocked = locked;
+}
 function getApplicationInfoFromDb() {
   const db2 = getDatabase();
   return db2.select().from(applicationInfo).limit(1).get();
@@ -10887,6 +11048,41 @@ function initializeApplicationInfo() {
   };
   const result = db2.insert(applicationInfo).values(newInfo).returning().get();
   return result;
+}
+function checkAndLockIfExpired() {
+  try {
+    const appInfo = initializeApplicationInfo();
+    const licenseInfo = getLicenseInfo();
+    const now = /* @__PURE__ */ new Date();
+    if (appInfo.isLicensed && licenseInfo) {
+      const licenseEnd = new Date(licenseInfo.licenseEndDate);
+      if (licenseEnd < now) {
+        console.log("License expired - locking application and encrypting database");
+        return true;
+      }
+      return false;
+    }
+    const trialEnd = new Date(appInfo.trialEndDate);
+    if (trialEnd < now) {
+      console.log("Trial expired - locking application and encrypting database");
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error("Error checking license status:", error);
+    return false;
+  }
+}
+function lockApplication() {
+  const dbPath = getDbPath();
+  const { closeDatabase: closeDatabase2 } = require("../db");
+  closeDatabase2();
+  const result = encryptDatabase(dbPath);
+  if (!result.success) {
+    return result;
+  }
+  setApplicationLocked(true);
+  return { success: true, message: "Application locked and database encrypted." };
 }
 function registerLicenseHandlers() {
   electron.ipcMain.handle("license:get-machine-id", async () => {
@@ -10917,6 +11113,28 @@ function registerLicenseHandlers() {
   });
   electron.ipcMain.handle("license:get-application-info", async () => {
     try {
+      if (isApplicationLocked()) {
+        const machineId2 = getMachineIdForDisplay();
+        const licenseInfo2 = getLicenseInfo();
+        return {
+          success: true,
+          data: {
+            status: licenseInfo2 ? "LICENSE_EXPIRED" : "TRIAL_EXPIRED",
+            isValid: false,
+            isActivated: !!licenseInfo2,
+            isTrial: !licenseInfo2,
+            machineId: machineId2,
+            expiresAt: null,
+            daysRemaining: 0,
+            message: "Application is locked. Please enter a valid license key to unlock.",
+            installationDate: null,
+            trialStartDate: null,
+            trialEndDate: null,
+            licenseStartDate: licenseInfo2?.licenseStartDate || null,
+            licenseEndDate: licenseInfo2?.licenseEndDate || null
+          }
+        };
+      }
       const appInfo = initializeApplicationInfo();
       const machineId = getMachineIdForDisplay();
       const licenseInfo = getLicenseInfo();
@@ -10973,15 +11191,100 @@ function registerLicenseHandlers() {
   });
   electron.ipcMain.handle("license:get-status", async () => {
     try {
+      if (isApplicationLocked()) {
+        return {
+          success: true,
+          data: {
+            status: "TRIAL_EXPIRED",
+            isValid: false,
+            isLocked: true,
+            message: "Application is locked."
+          }
+        };
+      }
       const status = getLicenseStatus();
-      return { success: true, data: status };
+      return { success: true, data: { ...status, isLocked: false } };
     } catch (error) {
       console.error("Get license status error:", error);
       return { success: false, message: "Failed to get license status" };
     }
   });
+  electron.ipcMain.handle("license:check-lock-status", async () => {
+    try {
+      const locked = isApplicationLocked();
+      const machineId = getMachineIdForDisplay();
+      const dbEncrypted = isDbEncrypted();
+      return {
+        success: true,
+        data: {
+          isLocked: locked,
+          isDbEncrypted: dbEncrypted,
+          machineId,
+          message: locked ? "Application is locked. Enter a valid license key to unlock." : "Application is unlocked."
+        }
+      };
+    } catch (error) {
+      console.error("Check lock status error:", error);
+      return { success: false, message: "Failed to check lock status" };
+    }
+  });
+  electron.ipcMain.handle("license:unlock-application", async (_, licenseKey) => {
+    try {
+      if (!isApplicationLocked()) {
+        return { success: false, message: "Application is not locked." };
+      }
+      const machineId = getMachineIdForDisplay();
+      if (!validateLicenseKey(licenseKey, machineId)) {
+        return { success: false, message: "Invalid license key for this machine." };
+      }
+      const dbPath = getDbPath();
+      const decryptResult = decryptDatabase(dbPath);
+      if (!decryptResult.success) {
+        return { success: false, message: `Failed to decrypt database: ${decryptResult.message}` };
+      }
+      reinitializeDatabase();
+      await runMigrations();
+      await seedInitialData();
+      const activateResult = activateLicense(licenseKey);
+      if (!activateResult.success) {
+        return { success: false, message: `Database decrypted but license activation failed: ${activateResult.message}` };
+      }
+      const db2 = getDatabase();
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString();
+      db2.update(applicationInfo).set({
+        isLicensed: true,
+        licenseStartDate: now,
+        licenseEndDate,
+        licenseKey: licenseKey.toUpperCase(),
+        updatedAt: now
+      }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
+      try {
+        registerAllHandlers();
+      } catch {
+        console.log("Some handlers may already be registered");
+      }
+      setApplicationLocked(false);
+      setDatabaseLocked(false);
+      const windows = electron.BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        win.webContents.send("license:application-unlocked");
+      }
+      console.log("Application unlocked successfully");
+      return { success: true, message: "Application unlocked successfully. License activated for 1 year." };
+    } catch (error) {
+      console.error("Unlock application error:", error);
+      return {
+        success: false,
+        message: `Failed to unlock application: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  });
   electron.ipcMain.handle("license:activate", async (_, licenseKey) => {
     try {
+      if (isApplicationLocked()) {
+        return electron.ipcMain.emit("license:unlock-application", licenseKey);
+      }
       const session = getCurrentSession();
       if (!session || session.role?.toLowerCase() !== "admin") {
         return { success: false, message: "Only administrators can activate licenses." };
@@ -16438,6 +16741,30 @@ function registerSetupHandlers() {
           updatedAt: now
         }).run();
       }
+      const initialChecklist = JSON.stringify({
+        registerStaff: "pending",
+        addProducts: "pending",
+        configureOperations: "pending",
+        addSuppliers: "pending",
+        addServices: "pending",
+        addAssets: "pending",
+        addPurchases: "pending",
+        addExpenses: "pending",
+        addReceivables: "pending",
+        addPayables: "pending",
+        registerCustomers: "pending",
+        setCashInHand: "pending",
+        reviewBalanceSheet: "pending",
+        dismissed: false
+      });
+      const rawDb = getRawDatabase();
+      if (rawDb) {
+        try {
+          rawDb.exec("ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT");
+        } catch {
+        }
+        rawDb.prepare("UPDATE application_info SET setup_checklist_status = ?").run(initialChecklist);
+      }
       const branchData = {
         name: data.branch.name,
         code: data.branch.code.toUpperCase(),
@@ -16450,15 +16777,16 @@ function registerSetupHandlers() {
       };
       const newBranch = db2.insert(branches).values(branchData).returning().get();
       const existingAdmin = await db2.query.users.findFirst({
-        where: (u, { eq }) => eq(u.username, "admin")
+        where: (u, { eq }) => eq(u.username, data.adminAccount.username)
       });
       if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash("admin123", 12);
+        const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12);
         const newAdmin = db2.insert(users).values({
-          username: "admin",
+          username: data.adminAccount.username,
           password: hashedPassword,
-          email: data.business.businessEmail || "admin@store.com",
-          fullName: "System Administrator",
+          email: data.adminAccount.email || data.business.businessEmail || "admin@store.com",
+          fullName: data.adminAccount.fullName,
+          phone: data.adminAccount.phone || "",
           role: "admin",
           permissions: ["*"],
           isActive: true,
@@ -16468,7 +16796,7 @@ function registerSetupHandlers() {
       }
       const settingsData = {
         branchId: newBranch.id,
-        // Business Info
+        // Business Info (from wizard)
         businessName: data.business.businessName,
         businessRegistrationNo: data.business.businessRegistrationNo,
         businessType: data.business.businessType,
@@ -16481,7 +16809,7 @@ function registerSetupHandlers() {
         businessEmail: data.business.businessEmail,
         businessWebsite: data.business.businessWebsite,
         businessLogo: data.business.businessLogo,
-        // Tax & Currency
+        // Tax & Currency (from wizard)
         currencyCode: data.taxCurrency.currencyCode,
         currencySymbol: data.taxCurrency.currencySymbol,
         currencyPosition: data.taxCurrency.currencyPosition,
@@ -16489,15 +16817,15 @@ function registerSetupHandlers() {
         taxName: data.taxCurrency.taxName,
         taxRate: data.taxCurrency.taxRate,
         taxId: data.taxCurrency.taxId,
-        // Operations
-        workingDaysStart: data.operations.workingDaysStart,
-        workingDaysEnd: data.operations.workingDaysEnd,
-        openingTime: data.operations.openingTime,
-        closingTime: data.operations.closingTime,
-        defaultPaymentMethod: data.operations.defaultPaymentMethod,
-        allowedPaymentMethods: data.operations.allowedPaymentMethods,
-        lowStockThreshold: data.operations.lowStockThreshold,
-        stockValuationMethod: data.operations.stockValuationMethod,
+        // Operations (defaults - configured in Phase 2)
+        workingDaysStart: "Monday",
+        workingDaysEnd: "Saturday",
+        openingTime: "09:00",
+        closingTime: "18:00",
+        defaultPaymentMethod: "Cash",
+        allowedPaymentMethods: "Cash,Card,Bank Transfer",
+        lowStockThreshold: 10,
+        stockValuationMethod: "FIFO",
         // Status
         isActive: true,
         isDefault: true
@@ -16523,6 +16851,96 @@ function registerSetupHandlers() {
     } catch (error) {
       console.error("Setup complete error:", error);
       return { success: false, message: "Failed to complete setup" };
+    }
+  });
+  electron.ipcMain.handle("setup:get-checklist-status", async () => {
+    try {
+      const rawDb = getRawDatabase();
+      const row = rawDb.prepare("SELECT setup_checklist_status FROM application_info LIMIT 1").get();
+      if (!row || !row.setup_checklist_status) {
+        return { success: true, data: null };
+      }
+      return { success: true, data: JSON.parse(row.setup_checklist_status) };
+    } catch (error) {
+      console.error("[Setup IPC] Get checklist status error:", error);
+      return { success: false, message: "Failed to get checklist status" };
+    }
+  });
+  electron.ipcMain.handle("setup:update-checklist-item", async (_, item, status) => {
+    try {
+      const rawDb = getRawDatabase();
+      const row = rawDb.prepare("SELECT setup_checklist_status FROM application_info LIMIT 1").get();
+      if (!row || !row.setup_checklist_status) {
+        return { success: false, message: "No checklist found" };
+      }
+      const checklist = JSON.parse(row.setup_checklist_status);
+      checklist[item] = status;
+      rawDb.prepare("UPDATE application_info SET setup_checklist_status = ?, updated_at = ?").run(
+        JSON.stringify(checklist),
+        (/* @__PURE__ */ new Date()).toISOString()
+      );
+      return { success: true, data: checklist };
+    } catch (error) {
+      console.error("[Setup IPC] Update checklist item error:", error);
+      return { success: false, message: "Failed to update checklist item" };
+    }
+  });
+  electron.ipcMain.handle("setup:dismiss-checklist", async () => {
+    try {
+      const rawDb = getRawDatabase();
+      const row = rawDb.prepare("SELECT setup_checklist_status FROM application_info LIMIT 1").get();
+      if (!row || !row.setup_checklist_status) {
+        return { success: false, message: "No checklist found" };
+      }
+      const checklist = JSON.parse(row.setup_checklist_status);
+      checklist.dismissed = true;
+      rawDb.prepare("UPDATE application_info SET setup_checklist_status = ?, updated_at = ?").run(
+        JSON.stringify(checklist),
+        (/* @__PURE__ */ new Date()).toISOString()
+      );
+      return { success: true };
+    } catch (error) {
+      console.error("[Setup IPC] Dismiss checklist error:", error);
+      return { success: false, message: "Failed to dismiss checklist" };
+    }
+  });
+  electron.ipcMain.handle("setup:refresh-checklist", async () => {
+    try {
+      const rawDb = getRawDatabase();
+      const row = rawDb.prepare("SELECT setup_checklist_status FROM application_info LIMIT 1").get();
+      if (!row || !row.setup_checklist_status) {
+        return { success: true, data: null };
+      }
+      const checklist = JSON.parse(row.setup_checklist_status);
+      if (checklist.dismissed) {
+        return { success: true, data: checklist };
+      }
+      const userCount = rawDb.prepare("SELECT COUNT(*) as count FROM users").get();
+      if (userCount && userCount.count > 1) checklist.registerStaff = "completed";
+      const productCount = rawDb.prepare("SELECT COUNT(*) as count FROM products").get();
+      if (productCount && productCount.count > 0) checklist.addProducts = "completed";
+      const supplierCount = rawDb.prepare("SELECT COUNT(*) as count FROM suppliers").get();
+      if (supplierCount && supplierCount.count > 0) checklist.addSuppliers = "completed";
+      const serviceCount = rawDb.prepare("SELECT COUNT(*) as count FROM services").get();
+      if (serviceCount && serviceCount.count > 0) checklist.addServices = "completed";
+      const purchaseCount = rawDb.prepare("SELECT COUNT(*) as count FROM purchases").get();
+      if (purchaseCount && purchaseCount.count > 0) checklist.addPurchases = "completed";
+      const expenseCount = rawDb.prepare("SELECT COUNT(*) as count FROM expenses").get();
+      if (expenseCount && expenseCount.count > 0) checklist.addExpenses = "completed";
+      const receivableCount = rawDb.prepare("SELECT COUNT(*) as count FROM account_receivables").get();
+      if (receivableCount && receivableCount.count > 0) checklist.addReceivables = "completed";
+      const payableCount = rawDb.prepare("SELECT COUNT(*) as count FROM account_payables").get();
+      if (payableCount && payableCount.count > 0) checklist.addPayables = "completed";
+      const customerCount = rawDb.prepare("SELECT COUNT(*) as count FROM customers").get();
+      if (customerCount && customerCount.count > 0) checklist.registerCustomers = "completed";
+      rawDb.prepare("UPDATE application_info SET setup_checklist_status = ?, updated_at = ?").run(
+        JSON.stringify(checklist),
+        (/* @__PURE__ */ new Date()).toISOString()
+      );
+      return { success: true, data: checklist };
+    } catch (error) {
+      console.error("[Setup IPC] Refresh checklist error:", error);
+      return { success: false, message: "Failed to refresh checklist" };
     }
   });
   electron.ipcMain.handle("setup:generate-branch-code", async (_, businessName) => {
@@ -18742,6 +19160,10 @@ function registerAllHandlers() {
   registerServicesHandlers();
   console.log("All IPC handlers registered");
 }
+function registerLicenseOnlyHandlers() {
+  registerLicenseHandlers();
+  console.log("License-only IPC handlers registered (application locked)");
+}
 process.on("uncaughtException", (error) => {
   console.error("Uncaught Exception:", error);
   electron.dialog.showErrorBox("Application Error", `An unexpected error occurred:
@@ -18755,6 +19177,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 let mainWindow = null;
+let isAppLocked = false;
 function createWindow() {
   mainWindow = new electron.BrowserWindow({
     width: 1400,
@@ -18789,28 +19212,59 @@ electron.app.whenReady().then(async () => {
     optimizer.watchWindowShortcuts(window);
   });
   try {
-    initDatabase();
-    console.log("Database initialized");
-    initializeEncryption();
-    console.log("Encryption initialized");
-    await runMigrations();
-    await seedInitialData();
-    registerAllHandlers();
-    console.log("IPC handlers registered");
+    if (isDbEncrypted()) {
+      console.log("Database is encrypted from previous lock. Starting in locked mode.");
+      isAppLocked = true;
+      setApplicationLocked(true);
+      initializeEncryption();
+      registerLicenseOnlyHandlers();
+      console.log("License-only IPC handlers registered (locked mode)");
+    } else {
+      initDatabase();
+      console.log("Database initialized");
+      initializeEncryption();
+      console.log("Encryption initialized");
+      await runMigrations();
+      await seedInitialData();
+      const shouldLock = checkAndLockIfExpired();
+      if (shouldLock) {
+        console.log("Trial/License expired - locking application...");
+        const lockResult = lockApplication();
+        if (lockResult.success) {
+          isAppLocked = true;
+          console.log("Application locked and database encrypted");
+          registerLicenseOnlyHandlers();
+        } else {
+          console.error("Failed to lock application:", lockResult.message);
+          registerAllHandlers();
+        }
+      } else {
+        registerAllHandlers();
+        console.log("IPC handlers registered");
+      }
+    }
   } catch (error) {
-    console.error("Failed to initialize app:", error);
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    const errorStack = error instanceof Error ? error.stack : "";
-    electron.dialog.showErrorBox(
-      "Initialization Error",
-      `Failed to initialize the application:
+    if (error instanceof Error && error.message === "DATABASE_ENCRYPTED") {
+      console.log("Database is encrypted - starting in locked mode");
+      isAppLocked = true;
+      setApplicationLocked(true);
+      initializeEncryption();
+      registerLicenseOnlyHandlers();
+    } else {
+      console.error("Failed to initialize app:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : "";
+      electron.dialog.showErrorBox(
+        "Initialization Error",
+        `Failed to initialize the application:
 
 ${errorMessage}
 
 ${errorStack}`
-    );
-    electron.app.quit();
-    return;
+      );
+      electron.app.quit();
+      return;
+    }
   }
   createWindow();
   electron.app.on("activate", () => {
@@ -18820,15 +19274,19 @@ ${errorStack}`
   });
 });
 electron.app.on("window-all-closed", async () => {
-  await performCloseBackup();
-  stopBackupScheduler();
+  if (!isAppLocked) {
+    await performCloseBackup();
+    stopBackupScheduler();
+  }
   closeDatabase();
   if (process.platform !== "darwin") {
     electron.app.quit();
   }
 });
 electron.app.on("before-quit", async () => {
-  await performCloseBackup();
-  stopBackupScheduler();
+  if (!isAppLocked) {
+    await performCloseBackup();
+    stopBackupScheduler();
+  }
   closeDatabase();
 });

@@ -2,7 +2,7 @@ import { ipcMain, app, dialog, BrowserWindow } from 'electron'
 import { getDbPath, closeDatabase, initDatabase, getRawDatabase, getDatabase } from '../db'
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
-import Database from 'better-sqlite3'
+import Database from 'better-sqlite3-multiple-ciphers'
 // Note: Audit logging for backup operations is disabled because the audit_logs
 // table schema doesn't include backup-related action types
 

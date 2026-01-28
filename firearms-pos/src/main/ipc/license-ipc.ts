@@ -1,4 +1,4 @@
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import {
   getMachineId,
   getMachineIdForDisplay,
@@ -10,14 +10,18 @@ import {
   getLicenseInfo,
   LicenseStatus,
 } from '../utils/license'
+import { encryptDatabase, decryptDatabase, isDbEncrypted } from '../utils/db-cipher'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
-import { getDatabase } from '../db'
+import { getDatabase, getDbPath, reinitializeDatabase, isDatabaseLocked, setDatabaseLocked } from '../db'
 import { applicationInfo } from '../db/schemas/application-info'
 import { eq, and } from 'drizzle-orm'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
+import { isApplicationLocked, setApplicationLocked } from '../utils/app-lock-state'
+import { registerAllHandlers } from './index'
+import { runMigrations, seedInitialData } from '../db/migrate'
 
 interface ExtendedLicenseStatus {
   status: LicenseStatus
@@ -69,6 +73,68 @@ function initializeApplicationInfo() {
   return result
 }
 
+/**
+ * Check if the trial or license has expired and lock the application if so.
+ * This is called on app startup after DB init.
+ * Returns true if the app should be locked.
+ */
+export function checkAndLockIfExpired(): boolean {
+  try {
+    const appInfo = initializeApplicationInfo()
+    const licenseInfo = getLicenseInfo()
+    const now = new Date()
+
+    // Check if licensed
+    if (appInfo.isLicensed && licenseInfo) {
+      const licenseEnd = new Date(licenseInfo.licenseEndDate)
+      if (licenseEnd < now) {
+        // License expired - lock the app
+        console.log('License expired - locking application and encrypting database')
+        return true
+      }
+      // License is valid
+      return false
+    }
+
+    // Check trial
+    const trialEnd = new Date(appInfo.trialEndDate)
+    if (trialEnd < now) {
+      // Trial expired - lock the app
+      console.log('Trial expired - locking application and encrypting database')
+      return true
+    }
+
+    // Trial is still active
+    return false
+  } catch (error) {
+    console.error('Error checking license status:', error)
+    return false
+  }
+}
+
+/**
+ * Lock the application: encrypt the DB and set the locked flag.
+ */
+export function lockApplication(): { success: boolean; message: string } {
+  const dbPath = getDbPath()
+
+  // Close the database before encrypting
+  const { closeDatabase } = require('../db')
+  closeDatabase()
+
+  // Encrypt the database
+  const result = encryptDatabase(dbPath)
+  if (!result.success) {
+    return result
+  }
+
+  // Set locked flags
+  setApplicationLocked(true)
+  setDatabaseLocked(true)
+
+  return { success: true, message: 'Application locked and database encrypted.' }
+}
+
 export function registerLicenseHandlers(): void {
   // Get machine ID
   ipcMain.handle('license:get-machine-id', async () => {
@@ -103,6 +169,30 @@ export function registerLicenseHandlers(): void {
   // Get extended application info with trial/license status
   ipcMain.handle('license:get-application-info', async () => {
     try {
+      // If application is locked, return locked status without DB access
+      if (isApplicationLocked()) {
+        const machineId = getMachineIdForDisplay()
+        const licenseInfo = getLicenseInfo()
+        return {
+          success: true,
+          data: {
+            status: licenseInfo ? 'LICENSE_EXPIRED' : 'TRIAL_EXPIRED',
+            isValid: false,
+            isActivated: !!licenseInfo,
+            isTrial: !licenseInfo,
+            machineId,
+            expiresAt: null,
+            daysRemaining: 0,
+            message: 'Application is locked. Please enter a valid license key to unlock.',
+            installationDate: null,
+            trialStartDate: null,
+            trialEndDate: null,
+            licenseStartDate: licenseInfo?.licenseStartDate || null,
+            licenseEndDate: licenseInfo?.licenseEndDate || null,
+          } as ExtendedLicenseStatus,
+        }
+      }
+
       // Initialize application info if not exists
       const appInfo = initializeApplicationInfo()
       const machineId = getMachineIdForDisplay()
@@ -169,17 +259,136 @@ export function registerLicenseHandlers(): void {
   // Get license status (simplified)
   ipcMain.handle('license:get-status', async () => {
     try {
+      if (isApplicationLocked()) {
+        return {
+          success: true,
+          data: {
+            status: 'TRIAL_EXPIRED',
+            isValid: false,
+            isLocked: true,
+            message: 'Application is locked.',
+          },
+        }
+      }
       const status = getLicenseStatus()
-      return { success: true, data: status }
+      return { success: true, data: { ...status, isLocked: false } }
     } catch (error) {
       console.error('Get license status error:', error)
       return { success: false, message: 'Failed to get license status' }
     }
   })
 
+  // Check lock status (always available, even when locked)
+  ipcMain.handle('license:check-lock-status', async () => {
+    try {
+      const locked = isApplicationLocked()
+      const machineId = getMachineIdForDisplay()
+      const dbEncrypted = isDbEncrypted()
+      return {
+        success: true,
+        data: {
+          isLocked: locked,
+          isDbEncrypted: dbEncrypted,
+          machineId,
+          message: locked
+            ? 'Application is locked. Enter a valid license key to unlock.'
+            : 'Application is unlocked.',
+        },
+      }
+    } catch (error) {
+      console.error('Check lock status error:', error)
+      return { success: false, message: 'Failed to check lock status' }
+    }
+  })
+
+  // Unlock application (decrypt DB, activate license, restore full functionality)
+  ipcMain.handle('license:unlock-application', async (_, licenseKey: string) => {
+    try {
+      if (!isApplicationLocked()) {
+        return { success: false, message: 'Application is not locked.' }
+      }
+
+      const machineId = getMachineIdForDisplay()
+
+      // Validate the license key
+      if (!validateLicenseKey(licenseKey, machineId)) {
+        return { success: false, message: 'Invalid license key for this machine.' }
+      }
+
+      // Decrypt the database
+      const dbPath = getDbPath()
+      const decryptResult = decryptDatabase(dbPath)
+      if (!decryptResult.success) {
+        return { success: false, message: `Failed to decrypt database: ${decryptResult.message}` }
+      }
+
+      // Re-initialize the database
+      reinitializeDatabase()
+
+      // Run migrations and seed data in case any are pending
+      await runMigrations()
+      await seedInitialData()
+
+      // Activate the license in the DB and file
+      const activateResult = activateLicense(licenseKey)
+      if (!activateResult.success) {
+        return { success: false, message: `Database decrypted but license activation failed: ${activateResult.message}` }
+      }
+
+      // Update the application_info table
+      const db = getDatabase()
+      const now = new Date().toISOString()
+      const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+
+      db.update(applicationInfo)
+        .set({
+          isLicensed: true,
+          licenseStartDate: now,
+          licenseEndDate,
+          licenseKey: licenseKey.toUpperCase(),
+          updatedAt: now,
+        })
+        .where(eq(applicationInfo.infoId, 1))
+        .run()
+
+      // Register all IPC handlers now that the DB is available
+      // (Only register the non-license handlers that weren't registered before)
+      try {
+        registerAllHandlers()
+      } catch {
+        // Handlers may already be registered if app started unlocked then locked
+        console.log('Some handlers may already be registered')
+      }
+
+      // Unlock the application
+      setApplicationLocked(false)
+      setDatabaseLocked(false)
+
+      // Notify the renderer to refresh
+      const windows = BrowserWindow.getAllWindows()
+      for (const win of windows) {
+        win.webContents.send('license:application-unlocked')
+      }
+
+      console.log('Application unlocked successfully')
+      return { success: true, message: 'Application unlocked successfully. License activated for 1 year.' }
+    } catch (error) {
+      console.error('Unlock application error:', error)
+      return {
+        success: false,
+        message: `Failed to unlock application: ${error instanceof Error ? error.message : String(error)}`,
+      }
+    }
+  })
+
   // Activate license
   ipcMain.handle('license:activate', async (_, licenseKey: string) => {
     try {
+      // If locked, redirect to unlock flow
+      if (isApplicationLocked()) {
+        return ipcMain.emit('license:unlock-application', licenseKey)
+      }
+
       const session = getCurrentSession()
       if (!session || session.role?.toLowerCase() !== 'admin') {
         return { success: false, message: 'Only administrators can activate licenses.' }

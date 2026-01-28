@@ -1,5 +1,5 @@
 import { getRawDatabase, getDatabase } from '../db/index'
-import type Database from 'better-sqlite3'
+import type Database from 'better-sqlite3-multiple-ciphers'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type * as schema from '../db/schema'
 

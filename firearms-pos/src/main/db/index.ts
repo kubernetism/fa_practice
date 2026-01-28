@@ -1,12 +1,14 @@
 import { drizzle } from 'drizzle-orm/better-sqlite3'
-import Database from 'better-sqlite3'
+import Database from 'better-sqlite3-multiple-ciphers'
 import { app } from 'electron'
 import { existsSync, mkdirSync, chmodSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import * as schema from './schema'
+import { isDbEncrypted } from '../utils/db-cipher'
 
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null
 let sqlite: Database.Database | null = null
+let dbIsLocked = false
 
 export function getDbPath(): string {
   const userDataPath = app.getPath('userData')
@@ -62,11 +64,30 @@ function verifyDatabaseIntegrity(database: Database.Database): boolean {
   }
 }
 
+export function isDatabaseLocked(): boolean {
+  return dbIsLocked
+}
+
+export function setDatabaseLocked(locked: boolean): void {
+  dbIsLocked = locked
+}
+
 export function initDatabase(): ReturnType<typeof drizzle<typeof schema>> {
   if (db) return db
 
   const dbPath = getDbPath()
   console.log('Initializing database at:', dbPath)
+
+  // Check if the database is encrypted (locked)
+  if (isDbEncrypted()) {
+    console.log('Database is encrypted - application is locked')
+    dbIsLocked = true
+    // We cannot initialize the DB while it's encrypted.
+    // Return a placeholder - the app must show the lock screen.
+    // We still need to create a minimal DB object so the app doesn't crash
+    // on handlers that check for DB existence before the lock guard catches them.
+    throw new Error('DATABASE_ENCRYPTED')
+  }
 
   sqlite = new Database(dbPath)
 
@@ -100,6 +121,41 @@ export function initDatabase(): ReturnType<typeof drizzle<typeof schema>> {
   // Protect database files with restrictive permissions
   protectDatabaseFiles(dbPath)
 
+  db = drizzle(sqlite, { schema })
+
+  return db
+}
+
+/**
+ * Re-initialize the database after decryption.
+ * Called when the user unlocks the application with a valid license key.
+ */
+export function reinitializeDatabase(): ReturnType<typeof drizzle<typeof schema>> {
+  // Close existing connection if any
+  closeDatabase()
+
+  // Reset lock state
+  dbIsLocked = false
+
+  const dbPath = getDbPath()
+  console.log('Re-initializing database at:', dbPath)
+
+  sqlite = new Database(dbPath)
+
+  sqlite.pragma('journal_mode = WAL')
+  sqlite.pragma('foreign_keys = ON')
+  sqlite.pragma('secure_delete = ON')
+  sqlite.pragma('page_size = 4096')
+  sqlite.pragma('auto_vacuum = INCREMENTAL')
+
+  if (existsSync(dbPath)) {
+    const integrityOk = verifyDatabaseIntegrity(sqlite)
+    if (!integrityOk) {
+      console.warn('Database integrity check failed - database may be corrupted')
+    }
+  }
+
+  protectDatabaseFiles(dbPath)
   db = drizzle(sqlite, { schema })
 
   return db

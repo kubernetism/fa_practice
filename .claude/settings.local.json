@@ -59,7 +59,9 @@
       "Bash(sudo chmod:*)",
       "Skill(frontend-design)",
       "Bash(npm i:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(npm view:*)",
+      "Bash(python3:*)"
     ]
   }
 }

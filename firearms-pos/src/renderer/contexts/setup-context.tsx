@@ -42,15 +42,13 @@ export interface TaxCurrencyInfo {
   taxId: string
 }
 
-export interface OperationsInfo {
-  workingDaysStart: string
-  workingDaysEnd: string
-  openingTime: string
-  closingTime: string
-  defaultPaymentMethod: string
-  allowedPaymentMethods: string
-  lowStockThreshold: number
-  stockValuationMethod: string
+export interface AdminAccountInfo {
+  fullName: string
+  username: string
+  email: string
+  phone: string
+  password: string
+  confirmPassword: string
 }
 
 interface SetupContextType {
@@ -65,7 +63,7 @@ interface SetupContextType {
   businessInfo: BusinessInfo
   branchInfo: BranchInfo
   taxCurrencyInfo: TaxCurrencyInfo
-  operationsInfo: OperationsInfo
+  adminAccountInfo: AdminAccountInfo
 
   // Actions
   setCurrentStep: (step: number) => void
@@ -74,7 +72,7 @@ interface SetupContextType {
   updateBusinessInfo: (info: Partial<BusinessInfo>) => void
   updateBranchInfo: (info: Partial<BranchInfo>) => void
   updateTaxCurrencyInfo: (info: Partial<TaxCurrencyInfo>) => void
-  updateOperationsInfo: (info: Partial<OperationsInfo>) => void
+  updateAdminAccountInfo: (info: Partial<AdminAccountInfo>) => void
   completeSetup: () => Promise<boolean>
   checkSetupStatus: () => Promise<void>
   generateBranchCode: (businessName: string) => Promise<string>
@@ -114,15 +112,13 @@ const defaultTaxCurrencyInfo: TaxCurrencyInfo = {
   taxId: '',
 }
 
-const defaultOperationsInfo: OperationsInfo = {
-  workingDaysStart: 'Monday',
-  workingDaysEnd: 'Saturday',
-  openingTime: '09:00',
-  closingTime: '18:00',
-  defaultPaymentMethod: 'Cash',
-  allowedPaymentMethods: 'Cash,Card,Bank Transfer',
-  lowStockThreshold: 10,
-  stockValuationMethod: 'FIFO',
+const defaultAdminAccountInfo: AdminAccountInfo = {
+  fullName: '',
+  username: 'admin',
+  email: '',
+  phone: '',
+  password: '',
+  confirmPassword: '',
 }
 
 const SetupContext = createContext<SetupContextType | undefined>(undefined)
@@ -137,7 +133,7 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(defaultBusinessInfo)
   const [branchInfo, setBranchInfo] = useState<BranchInfo>(defaultBranchInfo)
   const [taxCurrencyInfo, setTaxCurrencyInfo] = useState<TaxCurrencyInfo>(defaultTaxCurrencyInfo)
-  const [operationsInfo, setOperationsInfo] = useState<OperationsInfo>(defaultOperationsInfo)
+  const [adminAccountInfo, setAdminAccountInfo] = useState<AdminAccountInfo>(defaultAdminAccountInfo)
 
   // DISABLED - render tracking was causing issues
   const businessInfoUpdateCount = useRef(0)
@@ -172,7 +168,7 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
   }, [checkSetupStatus])
 
   const nextStep = useCallback(() => {
-    setCurrentStep((prev) => Math.min(prev + 1, 5))
+    setCurrentStep((prev) => Math.min(prev + 1, 4))
   }, [])
 
   const prevStep = useCallback(() => {
@@ -191,8 +187,8 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
     setTaxCurrencyInfo((prev) => ({ ...prev, ...info }))
   }, [])
 
-  const updateOperationsInfo = useCallback((info: Partial<OperationsInfo>) => {
-    setOperationsInfo((prev) => ({ ...prev, ...info }))
+  const updateAdminAccountInfo = useCallback((info: Partial<AdminAccountInfo>) => {
+    setAdminAccountInfo((prev) => ({ ...prev, ...info }))
   }, [])
 
   const generateBranchCode = useCallback(async (businessName: string): Promise<string> => {
@@ -217,7 +213,7 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
         business: businessInfo,
         branch: branchInfo,
         taxCurrency: taxCurrencyInfo,
-        operations: operationsInfo,
+        adminAccount: adminAccountInfo,
       }
 
       const result = await window.api.setup.complete(setupData)
@@ -236,7 +232,7 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoading(false)
     }
-  }, [businessInfo, branchInfo, taxCurrencyInfo, operationsInfo])
+  }, [businessInfo, branchInfo, taxCurrencyInfo, adminAccountInfo])
 
   // Memoize context value to prevent unnecessary re-renders
   const contextValue = useMemo(
@@ -249,14 +245,14 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
       businessInfo,
       branchInfo,
       taxCurrencyInfo,
-      operationsInfo,
+      adminAccountInfo,
       setCurrentStep,
       nextStep,
       prevStep,
       updateBusinessInfo,
       updateBranchInfo,
       updateTaxCurrencyInfo,
-      updateOperationsInfo,
+      updateAdminAccountInfo,
       completeSetup,
       checkSetupStatus,
       generateBranchCode,
@@ -270,14 +266,14 @@ export function SetupProvider({ children }: { children: React.ReactNode }) {
       businessInfo,
       branchInfo,
       taxCurrencyInfo,
-      operationsInfo,
+      adminAccountInfo,
       setCurrentStep,
       nextStep,
       prevStep,
       updateBusinessInfo,
       updateBranchInfo,
       updateTaxCurrencyInfo,
-      updateOperationsInfo,
+      updateAdminAccountInfo,
       completeSetup,
       checkSetupStatus,
       generateBranchCode,

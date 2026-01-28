@@ -345,6 +345,13 @@ const api = {
     validateKey: (licenseKey: string) => ipcRenderer.invoke('license:validate-key', licenseKey),
     generateLicenseRequest: () => ipcRenderer.invoke('license:generate-license-request'),
     getHistory: () => ipcRenderer.invoke('license:get-history'),
+    checkLockStatus: () => ipcRenderer.invoke('license:check-lock-status'),
+    unlockApplication: (licenseKey: string) =>
+      ipcRenderer.invoke('license:unlock-application', licenseKey),
+    onApplicationUnlocked: (callback: () => void) => {
+      ipcRenderer.on('license:application-unlocked', callback)
+      return () => ipcRenderer.removeListener('license:application-unlocked', callback)
+    },
   },
 
   // Database Viewer
@@ -486,9 +493,14 @@ const api = {
   // Setup Wizard
   setup: {
     checkFirstRun: () => ipcRenderer.invoke('setup:check-first-run'),
-    complete: (data: Record<string, unknown>) => ipcRenderer.invoke('setup:complete', data),
+    complete: (data: unknown) => ipcRenderer.invoke('setup:complete', data),
     generateBranchCode: (businessName: string) =>
       ipcRenderer.invoke('setup:generate-branch-code', businessName),
+    getChecklistStatus: () => ipcRenderer.invoke('setup:get-checklist-status'),
+    updateChecklistItem: (item: string, status: string) =>
+      ipcRenderer.invoke('setup:update-checklist-item', item, status),
+    dismissChecklist: () => ipcRenderer.invoke('setup:dismiss-checklist'),
+    refreshChecklist: () => ipcRenderer.invoke('setup:refresh-checklist'),
   },
 
   // Backup & Restore

@@ -50,6 +50,7 @@
     "@tanstack/react-table": "^8.20.6",
     "@types/pdfkit": "^0.17.4",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3-multiple-ciphers": "^11.7.0",
     "better-sqlite3": "^11.7.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -106,7 +107,7 @@
       "!node_modules/**/examples/**"
     ],
     "asarUnpack": [
-      "**/node_modules/better-sqlite3/**/*"
+      "**/node_modules/better-sqlite3-multiple-ciphers/**/*"
     ],
     "npmRebuild": true,
     "extraResources": [

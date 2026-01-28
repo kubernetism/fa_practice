@@ -14,16 +14,14 @@ import { Button } from '@/components/ui/button'
 import { ChevronLeft, ChevronRight, Check, Loader2 } from 'lucide-react'
 import { WelcomeStep } from './steps/welcome-step'
 import { BusinessInfoStep } from './steps/business-info-step'
-import { BranchSetupStep } from './steps/branch-setup-step'
-import { TaxCurrencyStep } from './steps/tax-currency-step'
-import { OperationsStep } from './steps/operations-step'
+import { BranchTaxStep } from './steps/branch-tax-step'
+import { AdminAccountStep } from './steps/admin-account-step'
 
 const STEPS = [
   { number: 1, title: 'Welcome', description: 'Getting Started' },
   { number: 2, title: 'Business', description: 'Business Information' },
-  { number: 3, title: 'Branch', description: 'Main Branch Setup' },
-  { number: 4, title: 'Tax & Currency', description: 'Financial Settings' },
-  { number: 5, title: 'Operations', description: 'Operational Settings' },
+  { number: 3, title: 'Branch & Tax', description: 'Branch & Financial Setup' },
+  { number: 4, title: 'Admin Account', description: 'Create Admin User' },
 ]
 
 function StepIndicator({
@@ -63,7 +61,7 @@ function StepIndicator({
 
 export function SetupWizardScreen() {
   const navigate = useNavigate()
-  const { currentStep, nextStep, prevStep, completeSetup, isLoading, error, businessInfo } =
+  const { currentStep, nextStep, prevStep, completeSetup, isLoading, error, businessInfo, adminAccountInfo } =
     useSetup()
 
   // DISABLED ALL LOGGING TO FIX FREEZE
@@ -72,22 +70,25 @@ export function SetupWizardScreen() {
   const canProceed = useCallback(() => {
     switch (currentStep) {
       case 1:
-        return true // Welcome step can always proceed
+        return true
       case 2:
         return businessInfo.businessName.trim() !== ''
       case 3:
-        return true // Branch info is optional or auto-filled
+        return true
       case 4:
-        return true // Tax/currency has defaults
-      case 5:
-        return true // Operations has defaults
+        return (
+          adminAccountInfo.fullName.trim() !== '' &&
+          adminAccountInfo.username.trim() !== '' &&
+          adminAccountInfo.password.length >= 6 &&
+          adminAccountInfo.password === adminAccountInfo.confirmPassword
+        )
       default:
         return true
     }
-  }, [currentStep, businessInfo.businessName])
+  }, [currentStep, businessInfo.businessName, adminAccountInfo])
 
   const handleNext = useCallback(() => {
-    if (currentStep < 5 && canProceed()) {
+    if (currentStep < 4 && canProceed()) {
       nextStep()
     }
   }, [currentStep, canProceed, nextStep])
@@ -164,11 +165,9 @@ export function SetupWizardScreen() {
       case 2:
         return <BusinessInfoStep />
       case 3:
-        return <BranchSetupStep />
+        return <BranchTaxStep />
       case 4:
-        return <TaxCurrencyStep />
-      case 5:
-        return <OperationsStep />
+        return <AdminAccountStep />
       default:
         return <WelcomeStep />
     }
@@ -225,7 +224,7 @@ export function SetupWizardScreen() {
                 </div>
               </div>
 
-              {currentStep < 5 ? (
+              {currentStep < 4 ? (
                 <Button onClick={handleNext} disabled={!canProceed() || isLoading}>
                   Next
                   <ChevronRight className="w-4 h-4 ml-1" />

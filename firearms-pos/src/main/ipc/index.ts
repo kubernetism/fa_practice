@@ -36,6 +36,9 @@ import { registerDiscountManagementHandlers } from './discount-management-ipc'
 import { registerInventoryCountsHandlers } from './inventory-counts-ipc'
 import { registerServicesHandlers } from './services-ipc'
 
+// Re-export lock state from the centralized module
+export { isApplicationLocked, setApplicationLocked, checkLockGuard } from '../utils/app-lock-state'
+
 export function registerAllHandlers(): void {
   registerAuthHandlers()
   registerProductHandlers()
@@ -76,4 +79,13 @@ export function registerAllHandlers(): void {
   registerServicesHandlers()
 
   console.log('All IPC handlers registered')
+}
+
+/**
+ * Register only license-related handlers.
+ * Used when the application starts in locked mode (DB is encrypted).
+ */
+export function registerLicenseOnlyHandlers(): void {
+  registerLicenseHandlers()
+  console.log('License-only IPC handlers registered (application locked)')
 }

@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { getDatabase } from '../db'
+import { getDatabase, getRawDatabase } from '../db'
 import { applicationInfo } from '../db/schemas/application-info'
 import { branches, type NewBranch } from '../db/schemas/branches'
 import { businessSettings, type InsertBusinessSettings } from '../db/schemas/business_settings'
@@ -39,15 +39,12 @@ export interface SetupData {
     taxRate: number
     taxId?: string
   }
-  operations: {
-    workingDaysStart: string
-    workingDaysEnd: string
-    openingTime: string
-    closingTime: string
-    defaultPaymentMethod: string
-    allowedPaymentMethods: string
-    lowStockThreshold: number
-    stockValuationMethod: string
+  adminAccount: {
+    fullName: string
+    username: string
+    email: string
+    phone: string
+    password: string
   }
 }
 
@@ -119,6 +116,34 @@ export function registerSetupHandlers(): void {
           .run()
       }
 
+      // Initialize setup checklist
+      const initialChecklist = JSON.stringify({
+        registerStaff: 'pending',
+        addProducts: 'pending',
+        configureOperations: 'pending',
+        addSuppliers: 'pending',
+        addServices: 'pending',
+        addAssets: 'pending',
+        addPurchases: 'pending',
+        addExpenses: 'pending',
+        addReceivables: 'pending',
+        addPayables: 'pending',
+        registerCustomers: 'pending',
+        setCashInHand: 'pending',
+        reviewBalanceSheet: 'pending',
+        dismissed: false,
+      })
+
+      const rawDb = getRawDatabase()
+      if (rawDb) {
+        try {
+          rawDb.exec('ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT')
+        } catch {
+          /* column may already exist */
+        }
+        rawDb.prepare('UPDATE application_info SET setup_checklist_status = ?').run(initialChecklist)
+      }
+
       // 2. Create main branch
       const branchData: NewBranch = {
         name: data.branch.name,
@@ -135,18 +160,19 @@ export function registerSetupHandlers(): void {
 
       // 3. Create admin user for the branch
       const existingAdmin = await db.query.users.findFirst({
-        where: (u, { eq }) => eq(u.username, 'admin'),
+        where: (u, { eq }) => eq(u.username, data.adminAccount.username),
       })
 
       if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash('admin123', 12)
+        const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12)
         const newAdmin = db
           .insert(users)
           .values({
-            username: 'admin',
+            username: data.adminAccount.username,
             password: hashedPassword,
-            email: data.business.businessEmail || 'admin@store.com',
-            fullName: 'System Administrator',
+            email: data.adminAccount.email || data.business.businessEmail || 'admin@store.com',
+            fullName: data.adminAccount.fullName,
+            phone: data.adminAccount.phone || '',
             role: 'admin',
             permissions: ['*'],
             isActive: true,
@@ -160,7 +186,7 @@ export function registerSetupHandlers(): void {
       // 4. Create business settings linked to the branch
       const settingsData: InsertBusinessSettings = {
         branchId: newBranch.id,
-        // Business Info
+        // Business Info (from wizard)
         businessName: data.business.businessName,
         businessRegistrationNo: data.business.businessRegistrationNo,
         businessType: data.business.businessType,
@@ -173,7 +199,7 @@ export function registerSetupHandlers(): void {
         businessEmail: data.business.businessEmail,
         businessWebsite: data.business.businessWebsite,
         businessLogo: data.business.businessLogo,
-        // Tax & Currency
+        // Tax & Currency (from wizard)
         currencyCode: data.taxCurrency.currencyCode,
         currencySymbol: data.taxCurrency.currencySymbol,
         currencyPosition: data.taxCurrency.currencyPosition,
@@ -181,15 +207,15 @@ export function registerSetupHandlers(): void {
         taxName: data.taxCurrency.taxName,
         taxRate: data.taxCurrency.taxRate,
         taxId: data.taxCurrency.taxId,
-        // Operations
-        workingDaysStart: data.operations.workingDaysStart,
-        workingDaysEnd: data.operations.workingDaysEnd,
-        openingTime: data.operations.openingTime,
-        closingTime: data.operations.closingTime,
-        defaultPaymentMethod: data.operations.defaultPaymentMethod,
-        allowedPaymentMethods: data.operations.allowedPaymentMethods,
-        lowStockThreshold: data.operations.lowStockThreshold,
-        stockValuationMethod: data.operations.stockValuationMethod,
+        // Operations (defaults - configured in Phase 2)
+        workingDaysStart: 'Monday',
+        workingDaysEnd: 'Saturday',
+        openingTime: '09:00',
+        closingTime: '18:00',
+        defaultPaymentMethod: 'Cash',
+        allowedPaymentMethods: 'Cash,Card,Bank Transfer',
+        lowStockThreshold: 10,
+        stockValuationMethod: 'FIFO',
         // Status
         isActive: true,
         isDefault: true,
@@ -221,6 +247,118 @@ export function registerSetupHandlers(): void {
     } catch (error) {
       console.error('Setup complete error:', error)
       return { success: false, message: 'Failed to complete setup' }
+    }
+  })
+
+  // Get checklist status
+  ipcMain.handle('setup:get-checklist-status', async () => {
+    try {
+      const rawDb = getRawDatabase()
+      const row = rawDb.prepare('SELECT setup_checklist_status FROM application_info LIMIT 1').get() as { setup_checklist_status?: string } | undefined
+      if (!row || !row.setup_checklist_status) {
+        return { success: true, data: null }
+      }
+      return { success: true, data: JSON.parse(row.setup_checklist_status) }
+    } catch (error) {
+      console.error('[Setup IPC] Get checklist status error:', error)
+      return { success: false, message: 'Failed to get checklist status' }
+    }
+  })
+
+  // Update a checklist item
+  ipcMain.handle('setup:update-checklist-item', async (_, item: string, status: string) => {
+    try {
+      const rawDb = getRawDatabase()
+      const row = rawDb.prepare('SELECT setup_checklist_status FROM application_info LIMIT 1').get() as { setup_checklist_status?: string } | undefined
+      if (!row || !row.setup_checklist_status) {
+        return { success: false, message: 'No checklist found' }
+      }
+      const checklist = JSON.parse(row.setup_checklist_status)
+      checklist[item] = status
+      rawDb.prepare('UPDATE application_info SET setup_checklist_status = ?, updated_at = ?').run(
+        JSON.stringify(checklist),
+        new Date().toISOString()
+      )
+      return { success: true, data: checklist }
+    } catch (error) {
+      console.error('[Setup IPC] Update checklist item error:', error)
+      return { success: false, message: 'Failed to update checklist item' }
+    }
+  })
+
+  // Dismiss checklist
+  ipcMain.handle('setup:dismiss-checklist', async () => {
+    try {
+      const rawDb = getRawDatabase()
+      const row = rawDb.prepare('SELECT setup_checklist_status FROM application_info LIMIT 1').get() as { setup_checklist_status?: string } | undefined
+      if (!row || !row.setup_checklist_status) {
+        return { success: false, message: 'No checklist found' }
+      }
+      const checklist = JSON.parse(row.setup_checklist_status)
+      checklist.dismissed = true
+      rawDb.prepare('UPDATE application_info SET setup_checklist_status = ?, updated_at = ?').run(
+        JSON.stringify(checklist),
+        new Date().toISOString()
+      )
+      return { success: true }
+    } catch (error) {
+      console.error('[Setup IPC] Dismiss checklist error:', error)
+      return { success: false, message: 'Failed to dismiss checklist' }
+    }
+  })
+
+  // Refresh checklist - auto-detect completed items from database
+  ipcMain.handle('setup:refresh-checklist', async () => {
+    try {
+      const rawDb = getRawDatabase()
+      const row = rawDb.prepare('SELECT setup_checklist_status FROM application_info LIMIT 1').get() as { setup_checklist_status?: string } | undefined
+      if (!row || !row.setup_checklist_status) {
+        return { success: true, data: null }
+      }
+
+      const checklist = JSON.parse(row.setup_checklist_status)
+      if (checklist.dismissed) {
+        return { success: true, data: checklist }
+      }
+
+      // Auto-detect completed items by checking DB tables
+      const userCount = rawDb.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number }
+      if (userCount && userCount.count > 1) checklist.registerStaff = 'completed'
+
+      const productCount = rawDb.prepare('SELECT COUNT(*) as count FROM products').get() as { count: number }
+      if (productCount && productCount.count > 0) checklist.addProducts = 'completed'
+
+      const supplierCount = rawDb.prepare('SELECT COUNT(*) as count FROM suppliers').get() as { count: number }
+      if (supplierCount && supplierCount.count > 0) checklist.addSuppliers = 'completed'
+
+      const serviceCount = rawDb.prepare('SELECT COUNT(*) as count FROM services').get() as { count: number }
+      if (serviceCount && serviceCount.count > 0) checklist.addServices = 'completed'
+
+      const purchaseCount = rawDb.prepare('SELECT COUNT(*) as count FROM purchases').get() as { count: number }
+      if (purchaseCount && purchaseCount.count > 0) checklist.addPurchases = 'completed'
+
+      const expenseCount = rawDb.prepare('SELECT COUNT(*) as count FROM expenses').get() as { count: number }
+      if (expenseCount && expenseCount.count > 0) checklist.addExpenses = 'completed'
+
+      const receivableCount = rawDb.prepare('SELECT COUNT(*) as count FROM account_receivables').get() as { count: number }
+      if (receivableCount && receivableCount.count > 0) checklist.addReceivables = 'completed'
+
+      const payableCount = rawDb.prepare('SELECT COUNT(*) as count FROM account_payables').get() as { count: number }
+      if (payableCount && payableCount.count > 0) checklist.addPayables = 'completed'
+
+      const customerCount = rawDb.prepare('SELECT COUNT(*) as count FROM customers').get() as { count: number }
+      if (customerCount && customerCount.count > 0) checklist.registerCustomers = 'completed'
+
+      // Save updated checklist
+      rawDb.prepare('UPDATE application_info SET setup_checklist_status = ?, updated_at = ?').run(
+        JSON.stringify(checklist),
+        new Date().toISOString()
+      )
+
+      return { success: true, data: checklist }
+    } catch (error) {
+      console.error('[Setup IPC] Refresh checklist error:', error)
+      return { success: false, message: 'Failed to refresh checklist' }
     }
   })
 
