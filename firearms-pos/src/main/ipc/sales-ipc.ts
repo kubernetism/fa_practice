@@ -17,6 +17,7 @@ import {
   type NewSaleItem,
   type NewSalePayment,
   type NewSaleService,
+  vouchers,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -75,6 +76,8 @@ interface CreateSaleData {
   cardLastFourDigits?: string
   notes?: string
   payments?: PaymentBreakdownItem[] // For mixed/split payments
+  // Voucher
+  voucherId?: number
 }
 
 export function registerSalesHandlers(): void {
@@ -404,6 +407,19 @@ export function registerSalesHandlers(): void {
 
         // 8. Post to General Ledger (automated GL posting with payment breakdown)
         await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === 'cod' ? codCharges : 0)
+
+        // 9. Mark voucher as used if provided
+        if (data.voucherId) {
+          await txDb
+            .update(vouchers)
+            .set({
+              isUsed: true,
+              usedAt: new Date().toISOString(),
+              usedInSaleId: sale.id,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(vouchers.id, data.voucherId))
+        }
 
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
       })

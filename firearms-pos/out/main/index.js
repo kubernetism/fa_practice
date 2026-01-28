@@ -1456,6 +1456,20 @@ const saleServices = sqliteCore.sqliteTable("sale_services", {
   notes: sqliteCore.text("notes"),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const vouchers = sqliteCore.sqliteTable("vouchers", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  code: sqliteCore.text("code").notNull().unique(),
+  description: sqliteCore.text("description"),
+  discountAmount: sqliteCore.real("discount_amount").notNull(),
+  expiresAt: sqliteCore.text("expires_at"),
+  isUsed: sqliteCore.integer("is_used", { mode: "boolean" }).notNull().default(false),
+  usedAt: sqliteCore.text("used_at"),
+  usedInSaleId: sqliteCore.integer("used_in_sale_id").references(() => sales.id),
+  createdBy: sqliteCore.integer("created_by").references(() => users.id),
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1518,7 +1532,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   suppliers,
   todos,
   todosRelations,
-  users
+  users,
+  vouchers
 }, Symbol.toStringTag, { value: "Module" }));
 const LICENSE_SECRET = "FIREARMS_POS_LICENSE_2024";
 function getMachineId() {
@@ -5450,6 +5465,14 @@ function registerSalesHandlers() {
           paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber });
         }
         await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === "cod" ? codCharges : 0);
+        if (data.voucherId) {
+          await txDb.update(vouchers).set({
+            isUsed: true,
+            usedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            usedInSaleId: sale.id,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(vouchers.id, data.voucherId));
+        }
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
       });
       await createAuditLog$1({
@@ -16992,6 +17015,8 @@ function registerDatabaseResetHandlers() {
         rawDb.prepare("DELETE FROM messages").run();
         console.log("Deleting todos...");
         rawDb.prepare("DELETE FROM todos").run();
+        console.log("Deleting receivable payments...");
+        rawDb.prepare("DELETE FROM receivable_payments").run();
         console.log("Deleting account receivables...");
         rawDb.prepare("DELETE FROM account_receivables").run();
         console.log("Deleting payable payments...");
@@ -17012,22 +17037,44 @@ function registerDatabaseResetHandlers() {
         rawDb.prepare("DELETE FROM stock_adjustments").run();
         console.log("Deleting stock transfers...");
         rawDb.prepare("DELETE FROM stock_transfers").run();
+        console.log("Deleting return items...");
+        rawDb.prepare("DELETE FROM return_items").run();
         console.log("Deleting returns...");
         rawDb.prepare("DELETE FROM returns").run();
+        console.log("Deleting sales tab items...");
+        rawDb.prepare("DELETE FROM sales_tab_items").run();
         console.log("Deleting sales tabs...");
         rawDb.prepare("DELETE FROM sales_tabs").run();
+        console.log("Deleting sale services...");
+        rawDb.prepare("DELETE FROM sale_services").run();
+        console.log("Deleting sale items...");
+        rawDb.prepare("DELETE FROM sale_items").run();
+        console.log("Deleting sale payments...");
+        rawDb.prepare("DELETE FROM sale_payments").run();
+        console.log("Deleting vouchers...");
+        rawDb.prepare("DELETE FROM vouchers").run();
         console.log("Deleting sales...");
         rawDb.prepare("DELETE FROM sales").run();
         console.log("Deleting purchases...");
         rawDb.prepare("DELETE FROM purchases").run();
         console.log("Deleting expenses...");
         rawDb.prepare("DELETE FROM expenses").run();
+        console.log("Deleting inventory cost layers...");
+        rawDb.prepare("DELETE FROM inventory_cost_layers").run();
+        console.log("Deleting inventory count items...");
+        rawDb.prepare("DELETE FROM inventory_count_items").run();
+        console.log("Deleting inventory counts...");
+        rawDb.prepare("DELETE FROM inventory_counts").run();
         console.log("Deleting inventory...");
         rawDb.prepare("DELETE FROM inventory").run();
         console.log("Deleting products...");
         rawDb.prepare("DELETE FROM products").run();
         console.log("Deleting categories...");
         rawDb.prepare("DELETE FROM categories").run();
+        console.log("Deleting services...");
+        rawDb.prepare("DELETE FROM services").run();
+        console.log("Deleting service categories...");
+        rawDb.prepare("DELETE FROM service_categories").run();
         console.log("Deleting customers...");
         rawDb.prepare("DELETE FROM customers").run();
         console.log("Deleting suppliers...");
@@ -19120,6 +19167,169 @@ function registerServicesHandlers() {
     }
   });
 }
+function generateVoucherCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  let code = "";
+  for (let i = 0; i < 10; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+}
+function registerVoucherHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "vouchers:get-all",
+    async (_, params) => {
+      try {
+        const { page = 1, limit = 20, search, filter = "all" } = params;
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const conditions = [];
+        if (filter !== "all") {
+          if (filter === "active") {
+            conditions.push(drizzleOrm.eq(vouchers.isActive, true));
+            conditions.push(drizzleOrm.eq(vouchers.isUsed, false));
+            conditions.push(
+              drizzleOrm.or(
+                drizzleOrm.sql`${vouchers.expiresAt} IS NULL`,
+                drizzleOrm.sql`${vouchers.expiresAt} > ${now}`
+              )
+            );
+          } else if (filter === "used") {
+            conditions.push(drizzleOrm.eq(vouchers.isUsed, true));
+          } else if (filter === "expired") {
+            conditions.push(drizzleOrm.eq(vouchers.isUsed, false));
+            conditions.push(drizzleOrm.eq(vouchers.isActive, true));
+            conditions.push(drizzleOrm.lte(vouchers.expiresAt, now));
+          }
+        }
+        if (search) {
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(vouchers.code, `%${search}%`),
+              drizzleOrm.like(vouchers.description, `%${search}%`)
+            )
+          );
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(vouchers).where(whereClause);
+        const total = countResult[0].count;
+        const data = await db2.query.vouchers.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: drizzleOrm.desc(vouchers.createdAt)
+        });
+        return {
+          success: true,
+          data,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+      } catch (error) {
+        console.error("Get vouchers error:", error);
+        return { success: false, message: "Failed to fetch vouchers" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "vouchers:create",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        let code = data.code?.trim().toUpperCase();
+        if (!code) {
+          code = generateVoucherCode();
+        }
+        const existing = await db2.query.vouchers.findFirst({
+          where: drizzleOrm.eq(vouchers.code, code)
+        });
+        if (existing) {
+          return { success: false, message: "Voucher code already exists" };
+        }
+        if (data.discountAmount <= 0) {
+          return { success: false, message: "Discount amount must be greater than 0" };
+        }
+        const [voucher] = await db2.insert(vouchers).values({
+          code,
+          description: data.description || null,
+          discountAmount: data.discountAmount,
+          expiresAt: data.expiresAt || null,
+          createdBy: session?.userId ?? null
+        }).returning();
+        return { success: true, data: voucher };
+      } catch (error) {
+        console.error("Create voucher error:", error);
+        return { success: false, message: "Failed to create voucher" };
+      }
+    }
+  );
+  electron.ipcMain.handle("vouchers:generate-code", async () => {
+    try {
+      let code = generateVoucherCode();
+      let attempts = 0;
+      while (attempts < 10) {
+        const existing = await db2.query.vouchers.findFirst({
+          where: drizzleOrm.eq(vouchers.code, code)
+        });
+        if (!existing) break;
+        code = generateVoucherCode();
+        attempts++;
+      }
+      return { success: true, data: code };
+    } catch (error) {
+      console.error("Generate voucher code error:", error);
+      return { success: false, message: "Failed to generate code" };
+    }
+  });
+  electron.ipcMain.handle("vouchers:validate", async (_, code) => {
+    try {
+      const voucher = await db2.query.vouchers.findFirst({
+        where: drizzleOrm.eq(vouchers.code, code.trim().toUpperCase())
+      });
+      if (!voucher) {
+        return { success: false, message: "Invalid voucher code" };
+      }
+      if (!voucher.isActive) {
+        return { success: false, message: "Voucher has been deactivated" };
+      }
+      if (voucher.isUsed) {
+        return { success: false, message: "Voucher has already been used" };
+      }
+      if (voucher.expiresAt && new Date(voucher.expiresAt) < /* @__PURE__ */ new Date()) {
+        return { success: false, message: "Voucher has expired" };
+      }
+      return {
+        success: true,
+        data: {
+          id: voucher.id,
+          code: voucher.code,
+          discountAmount: voucher.discountAmount,
+          description: voucher.description
+        }
+      };
+    } catch (error) {
+      console.error("Validate voucher error:", error);
+      return { success: false, message: "Failed to validate voucher" };
+    }
+  });
+  electron.ipcMain.handle("vouchers:delete", async (_, id) => {
+    try {
+      const existing = await db2.query.vouchers.findFirst({
+        where: drizzleOrm.eq(vouchers.id, id)
+      });
+      if (!existing) {
+        return { success: false, message: "Voucher not found" };
+      }
+      await db2.update(vouchers).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(vouchers.id, id));
+      return { success: true, message: "Voucher deactivated successfully" };
+    } catch (error) {
+      console.error("Delete voucher error:", error);
+      return { success: false, message: "Failed to delete voucher" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -19158,6 +19368,7 @@ function registerAllHandlers() {
   registerDiscountManagementHandlers();
   registerInventoryCountsHandlers();
   registerServicesHandlers();
+  registerVoucherHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

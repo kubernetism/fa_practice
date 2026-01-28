@@ -536,6 +536,15 @@ const api = {
       ipcRenderer.invoke('tax-collections:get-periodic-report', params),
   },
 
+  // Vouchers
+  vouchers: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('vouchers:get-all', params),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('vouchers:create', data),
+    generateCode: () => ipcRenderer.invoke('vouchers:generate-code'),
+    validate: (code: string) => ipcRenderer.invoke('vouchers:validate', code),
+    delete: (id: number) => ipcRenderer.invoke('vouchers:delete', id),
+  },
+
   // Discount Management
   discountManagement: {
     getSummary: (params: Record<string, unknown>) =>

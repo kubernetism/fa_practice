@@ -50,6 +50,9 @@ export function registerDatabaseResetHandlers(): void {
         rawDb.prepare('DELETE FROM todos').run()
 
         // 5. Delete account receivables and payables (with payment records first)
+        console.log('Deleting receivable payments...')
+        rawDb.prepare('DELETE FROM receivable_payments').run()
+
         console.log('Deleting account receivables...')
         rawDb.prepare('DELETE FROM account_receivables').run()
 
@@ -84,15 +87,33 @@ export function registerDatabaseResetHandlers(): void {
         console.log('Deleting stock transfers...')
         rawDb.prepare('DELETE FROM stock_transfers').run()
 
-        // 10. Delete returns (depends on sales)
+        // 10. Delete return items then returns
+        console.log('Deleting return items...')
+        rawDb.prepare('DELETE FROM return_items').run()
+
         console.log('Deleting returns...')
         rawDb.prepare('DELETE FROM returns').run()
 
-        // 11. Delete sales tabs
+        // 11. Delete sales tab items then sales tabs
+        console.log('Deleting sales tab items...')
+        rawDb.prepare('DELETE FROM sales_tab_items').run()
+
         console.log('Deleting sales tabs...')
         rawDb.prepare('DELETE FROM sales_tabs').run()
 
-        // 12. Delete sales (has items in JSON, no separate table)
+        // 12. Delete sale child tables then sales
+        console.log('Deleting sale services...')
+        rawDb.prepare('DELETE FROM sale_services').run()
+
+        console.log('Deleting sale items...')
+        rawDb.prepare('DELETE FROM sale_items').run()
+
+        console.log('Deleting sale payments...')
+        rawDb.prepare('DELETE FROM sale_payments').run()
+
+        console.log('Deleting vouchers...')
+        rawDb.prepare('DELETE FROM vouchers').run()
+
         console.log('Deleting sales...')
         rawDb.prepare('DELETE FROM sales').run()
 
@@ -104,7 +125,16 @@ export function registerDatabaseResetHandlers(): void {
         console.log('Deleting expenses...')
         rawDb.prepare('DELETE FROM expenses').run()
 
-        // 15. Delete inventory records
+        // 15. Delete inventory cost layers, count items, counts, then inventory
+        console.log('Deleting inventory cost layers...')
+        rawDb.prepare('DELETE FROM inventory_cost_layers').run()
+
+        console.log('Deleting inventory count items...')
+        rawDb.prepare('DELETE FROM inventory_count_items').run()
+
+        console.log('Deleting inventory counts...')
+        rawDb.prepare('DELETE FROM inventory_counts').run()
+
         console.log('Deleting inventory...')
         rawDb.prepare('DELETE FROM inventory').run()
 
@@ -115,6 +145,13 @@ export function registerDatabaseResetHandlers(): void {
         // 17. Delete categories
         console.log('Deleting categories...')
         rawDb.prepare('DELETE FROM categories').run()
+
+        // 17b. Delete services and service categories
+        console.log('Deleting services...')
+        rawDb.prepare('DELETE FROM services').run()
+
+        console.log('Deleting service categories...')
+        rawDb.prepare('DELETE FROM service_categories').run()
 
         // 18. Delete customers
         console.log('Deleting customers...')

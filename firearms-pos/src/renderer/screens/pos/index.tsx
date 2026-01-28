@@ -21,6 +21,7 @@ import {
   Building2,
   CheckCircle2,
   Wrench,
+  Ticket,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -166,6 +167,16 @@ export function POSScreen() {
 
   // Discount field
   const [discountAmount, setDiscountAmount] = useState('')
+
+  // Voucher state
+  const [voucherCode, setVoucherCode] = useState('')
+  const [appliedVoucher, setAppliedVoucher] = useState<{
+    id: number
+    code: string
+    discountAmount: number
+  } | null>(null)
+  const [voucherError, setVoucherError] = useState('')
+  const [isValidatingVoucher, setIsValidatingVoucher] = useState(false)
 
   // COD form validation
   const isCodFormValid = useMemo(() => {
@@ -517,11 +528,47 @@ export function POSScreen() {
     )
   }
 
+  // Validate and apply voucher
+  const validateVoucher = async () => {
+    if (!voucherCode.trim()) return
+    setIsValidatingVoucher(true)
+    setVoucherError('')
+    try {
+      const result = await window.api.vouchers.validate(voucherCode.trim())
+      if (result.success && result.data) {
+        setAppliedVoucher({
+          id: result.data.id,
+          code: result.data.code,
+          discountAmount: result.data.discountAmount,
+        })
+        setDiscountAmount(String(result.data.discountAmount))
+        setVoucherCode('')
+      } else {
+        setVoucherError(result.message || 'Invalid voucher code')
+      }
+    } catch (error) {
+      console.error('Voucher validation error:', error)
+      setVoucherError('Failed to validate voucher')
+    } finally {
+      setIsValidatingVoucher(false)
+    }
+  }
+
+  // Remove applied voucher
+  const removeVoucher = () => {
+    setAppliedVoucher(null)
+    setDiscountAmount('')
+    setVoucherError('')
+  }
+
   // Clear cart
   const clearCart = () => {
     setCart([])
     setSelectedCustomer(null)
     setError('')
+    setAppliedVoucher(null)
+    setVoucherCode('')
+    setVoucherError('')
   }
 
   // Process payment
@@ -671,6 +718,8 @@ export function POSScreen() {
         cardHolderName: paymentMethod === 'card' ? cardHolderName : undefined,
         cardLastFourDigits: paymentMethod === 'card' ? cardLastFourDigits : undefined,
         notes: notes || undefined,
+        // Voucher
+        voucherId: appliedVoucher?.id,
       }
 
       const result = await window.api.sales.create(saleData)
@@ -712,6 +761,10 @@ export function POSScreen() {
         setCardHolderName('')
         setCardLastFourDigits('')
         setAddToReceivable(false)
+        // Clear voucher fields
+        setAppliedVoucher(null)
+        setVoucherCode('')
+        setVoucherError('')
 
         // Reload products to update stock quantities
         loadAvailableProducts()
@@ -1383,6 +1436,65 @@ export function POSScreen() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Voucher Code Input */}
+            <div className="rounded-lg border p-3 bg-amber-50">
+              <div className="flex items-center gap-2 mb-2">
+                <Ticket className="h-4 w-4 text-amber-600" />
+                <Label htmlFor="voucher-code" className="font-medium text-amber-800">Voucher Code</Label>
+              </div>
+              {appliedVoucher ? (
+                <div className="flex items-center justify-between rounded-md bg-amber-100 px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span className="text-sm font-medium">
+                      Voucher Applied: <code className="font-mono">{appliedVoucher.code}</code>
+                    </span>
+                    <Badge variant="secondary" className="text-xs">
+                      {formatCurrency(appliedVoucher.discountAmount)} off
+                    </Badge>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={removeVoucher}
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Input
+                    id="voucher-code"
+                    value={voucherCode}
+                    onChange={(e) => {
+                      setVoucherCode(e.target.value.toUpperCase())
+                      setVoucherError('')
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        validateVoucher()
+                      }
+                    }}
+                    placeholder="Enter voucher code"
+                    className="bg-white font-mono"
+                    maxLength={10}
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={validateVoucher}
+                    disabled={isValidatingVoucher || !voucherCode.trim()}
+                  >
+                    {isValidatingVoucher ? 'Checking...' : 'Apply'}
+                  </Button>
+                </div>
+              )}
+              {voucherError && (
+                <p className="text-sm text-red-600 mt-2">{voucherError}</p>
+              )}
+            </div>
+
             {/* Discount Input - shown for all payment methods */}
             <div className="rounded-lg border p-3 bg-green-50">
               <div className="flex items-center gap-2 mb-2">
@@ -1404,6 +1516,7 @@ export function POSScreen() {
                 }}
                 placeholder="Enter discount amount"
                 className="bg-white"
+                disabled={!!appliedVoucher}
               />
               {discount > 0 && (
                 <p className="text-sm text-green-700 mt-2">

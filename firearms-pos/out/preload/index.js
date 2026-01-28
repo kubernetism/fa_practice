@@ -384,6 +384,14 @@ const api = {
     getSaleDetails: (saleId) => electron.ipcRenderer.invoke("tax-collections:get-sale-details", saleId),
     getPeriodicReport: (params) => electron.ipcRenderer.invoke("tax-collections:get-periodic-report", params)
   },
+  // Vouchers
+  vouchers: {
+    getAll: (params) => electron.ipcRenderer.invoke("vouchers:get-all", params),
+    create: (data) => electron.ipcRenderer.invoke("vouchers:create", data),
+    generateCode: () => electron.ipcRenderer.invoke("vouchers:generate-code"),
+    validate: (code) => electron.ipcRenderer.invoke("vouchers:validate", code),
+    delete: (id) => electron.ipcRenderer.invoke("vouchers:delete", id)
+  },
   // Discount Management
   discountManagement: {
     getSummary: (params) => electron.ipcRenderer.invoke("discount-management:get-summary", params),

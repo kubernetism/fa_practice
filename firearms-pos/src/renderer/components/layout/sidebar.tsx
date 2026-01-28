@@ -32,6 +32,7 @@ import {
   Tags,
   BookOpen,
   Wrench,
+  Ticket,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -75,6 +76,7 @@ const managementNavItems: NavItem[] = [
   { title: 'Referral Persons', href: '/referral-persons', icon: UserPlus, allowedRoles: ['admin', 'manager'] },
   { title: 'Receivables', href: '/receivables', icon: Wallet, allowedRoles: ['admin', 'manager'] },
   { title: 'Payables', href: '/payables', icon: CreditCard, allowedRoles: ['admin', 'manager'] },
+  { title: 'Vouchers', href: '/vouchers', icon: Ticket, allowedRoles: ['admin', 'manager'] },
 ]
 
 const financeNavItems: NavItem[] = [
