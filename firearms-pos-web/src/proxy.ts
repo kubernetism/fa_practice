@@ -4,7 +4,7 @@ import { getToken } from 'next-auth/jwt'
 
 const publicPaths = ['/login', '/signup', '/forgot-password', '/api/auth', '/api/webhooks']
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Allow public paths
