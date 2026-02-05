@@ -424,7 +424,11 @@ export default function ReferralPersonsScreen() {
 
       {/* Add/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md" onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          const nameInput = document.getElementById('name') as HTMLInputElement
+          nameInput?.focus()
+        }}>
           <DialogHeader>
             <DialogTitle>
               {editingReferralPerson ? 'Edit Referral Person' : 'Add New Referral Person'}
@@ -445,7 +449,6 @@ export default function ReferralPersonsScreen() {
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Enter referral person's name"
                   required
-                  autoFocus
                 />
               </div>
 

@@ -141,6 +141,22 @@ export async function runMigrations(): Promise<void> {
     console.error('Services tables migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Fix commissions.user_id to be nullable (was incorrectly NOT NULL in initial migration)
+  try {
+    await fixCommissionsUserIdNullable()
+  } catch (error) {
+    console.error('Commissions user_id nullable migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure application_info.setup_checklist_status column exists
+  try {
+    await ensureSetupChecklistStatusColumn()
+  } catch (error) {
+    console.error('Setup checklist status column migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -1048,4 +1064,98 @@ async function ensureServicesTables(): Promise<void> {
   } catch (error) {
     console.error('Error adding Service Revenue account:', error)
   }
+}
+
+async function fixCommissionsUserIdNullable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check if commissions table exists
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='commissions'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('commissions table does not exist, skipping user_id nullable fix')
+    return
+  }
+
+  // Check if user_id is currently NOT NULL
+  const tableInfo = rawDb.prepare('PRAGMA table_info(commissions)').all() as Array<{
+    name: string
+    notnull: number
+  }>
+  const userIdCol = tableInfo.find((col) => col.name === 'user_id')
+
+  if (!userIdCol || userIdCol.notnull === 0) {
+    console.log('commissions.user_id is already nullable or does not exist')
+    return
+  }
+
+  console.log('Fixing commissions.user_id to be nullable (recreating table)...')
+
+  // SQLite does not support ALTER COLUMN, so recreate the table with user_id nullable
+  const migrationStatements = [
+    `CREATE TABLE "commissions_new" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "sale_id" integer NOT NULL,
+      "user_id" integer,
+      "referral_person_id" integer,
+      "branch_id" integer NOT NULL,
+      "commission_type" text DEFAULT 'sale' NOT NULL,
+      "base_amount" real NOT NULL,
+      "rate" real NOT NULL,
+      "commission_amount" real NOT NULL,
+      "status" text DEFAULT 'pending' NOT NULL,
+      "paid_date" text,
+      "notes" text,
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL,
+      FOREIGN KEY ("sale_id") REFERENCES "sales"("id") ON UPDATE no action ON DELETE no action,
+      FOREIGN KEY ("user_id") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+      FOREIGN KEY ("referral_person_id") REFERENCES "referral_persons"("id") ON UPDATE no action ON DELETE no action,
+      FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+    )`,
+    'INSERT INTO "commissions_new" SELECT * FROM "commissions"',
+    'DROP TABLE "commissions"',
+    'ALTER TABLE "commissions_new" RENAME TO "commissions"',
+  ]
+
+  const runMigration = rawDb.transaction(() => {
+    for (const stmt of migrationStatements) {
+      rawDb.prepare(stmt).run()
+    }
+  })
+
+  runMigration()
+
+  console.log('commissions.user_id nullable fix completed successfully!')
+}
+
+async function ensureSetupChecklistStatusColumn(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check if application_info table exists
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='application_info'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('application_info table does not exist, skipping setup_checklist_status migration')
+    return
+  }
+
+  // Check if setup_checklist_status column exists
+  const tableInfo = rawDb.prepare('PRAGMA table_info(application_info)').all() as Array<{ name: string }>
+  const hasColumn = tableInfo.some((col) => col.name === 'setup_checklist_status')
+
+  if (hasColumn) {
+    console.log('application_info.setup_checklist_status column exists: true')
+    return
+  }
+
+  console.log('Adding application_info.setup_checklist_status column...')
+  rawDb.exec('ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT')
+  console.log('application_info.setup_checklist_status column added successfully')
 }

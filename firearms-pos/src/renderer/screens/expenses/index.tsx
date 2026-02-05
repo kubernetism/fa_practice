@@ -365,7 +365,11 @@ export default function ExpensesScreen() {
 
       {/* Add Expense Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md max-h-[85vh] flex flex-col">
+        <DialogContent className="max-w-md max-h-[85vh] flex flex-col" onOpenAutoFocus={(e) => {
+          e.preventDefault()
+          const amountInput = document.getElementById('amount') as HTMLInputElement
+          amountInput?.focus()
+        }}>
           <DialogHeader>
             <DialogTitle>Add New Expense</DialogTitle>
             <DialogDescription>Enter the details for the new expense.</DialogDescription>

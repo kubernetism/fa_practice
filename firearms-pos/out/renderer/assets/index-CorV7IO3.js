@@ -1,0 +1,590 @@
+import { h as createLucideIcon, r as reactExports, ab as debounce, j as jsxRuntimeExports, t as Tabs, v as TabsList, w as TabsTrigger, W as Wrench, G as TabsContent, I as Input, a6 as Select, a7 as SelectTrigger, a8 as SelectValue, a9 as SelectContent, aa as SelectItem, B as Button, J as Plus, C as Card, e as CardContent, ac as formatCurrency, K as Badge, D as DollarSign, M as Clock, Q as Trash2, Z as Dialog, _ as DialogContent, $ as DialogHeader, a0 as DialogTitle, a1 as DialogDescription, L as Label, ah as Textarea, a2 as DialogFooter } from "./index-XJV43N9P.js";
+import { T as Table, a as TableHeader, b as TableRow, c as TableHead, d as TableBody, e as TableCell } from "./table-DaTKnOMy.js";
+import { S as Search } from "./search-DIFxaHhC.js";
+import { S as SquarePen } from "./square-pen-BRS9cLiO.js";
+/**
+ * @license lucide-react v0.469.0 - ISC
+ *
+ * This source code is licensed under the ISC license.
+ * See the LICENSE file in the root directory of this source tree.
+ */
+const Tag = createLucideIcon("Tag", [
+  [
+    "path",
+    {
+      d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z",
+      key: "vktsd0"
+    }
+  ],
+  ["circle", { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor", key: "kqv944" }]
+]);
+function ServicesScreen() {
+  const [services, setServices] = reactExports.useState([]);
+  const [categories, setCategories] = reactExports.useState([]);
+  const [isLoading, setIsLoading] = reactExports.useState(true);
+  const [searchQuery, setSearchQuery] = reactExports.useState("");
+  const [selectedCategory, setSelectedCategory] = reactExports.useState("");
+  const [showServiceDialog, setShowServiceDialog] = reactExports.useState(false);
+  const [editingService, setEditingService] = reactExports.useState(null);
+  const [serviceFormData, setServiceFormData] = reactExports.useState({
+    code: "",
+    name: "",
+    description: "",
+    categoryId: "",
+    price: "",
+    pricingType: "flat",
+    estimatedDuration: "60",
+    isTaxable: true,
+    taxRate: "0"
+  });
+  const [isSaving, setIsSaving] = reactExports.useState(false);
+  const [page, setPage] = reactExports.useState(1);
+  const [totalPages, setTotalPages] = reactExports.useState(1);
+  const [showCategoryDialog, setShowCategoryDialog] = reactExports.useState(false);
+  const [editingCategory, setEditingCategory] = reactExports.useState(null);
+  const [categoryFormData, setCategoryFormData] = reactExports.useState({
+    name: "",
+    description: ""
+  });
+  const fetchServices = reactExports.useCallback(async () => {
+    setIsLoading(true);
+    try {
+      const result = await window.api.services.getAll({
+        page,
+        limit: 20,
+        search: searchQuery,
+        categoryId: selectedCategory ? parseInt(selectedCategory) : void 0,
+        isActive: true
+      });
+      if (result.success && result.data) {
+        setServices(result.data);
+        setTotalPages(result.totalPages || 1);
+      }
+    } catch (error) {
+      console.error("Failed to fetch services:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [page, searchQuery, selectedCategory]);
+  const fetchCategories = reactExports.useCallback(async () => {
+    try {
+      const result = await window.api.serviceCategories.getAll();
+      if (result.success && result.data) {
+        setCategories(result.data);
+      }
+    } catch (error) {
+      console.error("Failed to fetch service categories:", error);
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    fetchServices();
+    fetchCategories();
+  }, [fetchServices, fetchCategories]);
+  const debouncedSearch = reactExports.useCallback(
+    debounce((query) => {
+      setSearchQuery(query);
+      setPage(1);
+    }, 300),
+    []
+  );
+  const handleNewService = () => {
+    setEditingService(null);
+    setServiceFormData({
+      code: "",
+      name: "",
+      description: "",
+      categoryId: "",
+      price: "",
+      pricingType: "flat",
+      estimatedDuration: "60",
+      isTaxable: true,
+      taxRate: "0"
+    });
+    setShowServiceDialog(true);
+  };
+  const handleEditService = (service) => {
+    setEditingService(service);
+    setServiceFormData({
+      code: service.code,
+      name: service.name,
+      description: service.description || "",
+      categoryId: service.categoryId?.toString() || "",
+      price: service.price.toString(),
+      pricingType: service.pricingType,
+      estimatedDuration: service.estimatedDuration?.toString() || "60",
+      isTaxable: service.isTaxable,
+      taxRate: service.taxRate.toString()
+    });
+    setShowServiceDialog(true);
+  };
+  const handleSaveService = async () => {
+    setIsSaving(true);
+    try {
+      const serviceData = {
+        code: serviceFormData.code,
+        name: serviceFormData.name,
+        description: serviceFormData.description || null,
+        categoryId: serviceFormData.categoryId ? parseInt(serviceFormData.categoryId) : null,
+        price: parseFloat(serviceFormData.price),
+        pricingType: serviceFormData.pricingType,
+        estimatedDuration: parseInt(serviceFormData.estimatedDuration),
+        isTaxable: serviceFormData.isTaxable,
+        taxRate: parseFloat(serviceFormData.taxRate)
+      };
+      let result;
+      if (editingService) {
+        result = await window.api.services.update(editingService.id, serviceData);
+      } else {
+        result = await window.api.services.create(serviceData);
+      }
+      if (result.success) {
+        setShowServiceDialog(false);
+        fetchServices();
+      } else {
+        alert(result.message || "Failed to save service");
+      }
+    } catch (error) {
+      console.error("Save service error:", error);
+      alert("An error occurred while saving");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  const handleDeleteService = async (service) => {
+    if (!confirm(`Are you sure you want to deactivate "${service.name}"?`)) return;
+    try {
+      const result = await window.api.services.delete(service.id);
+      if (result.success) {
+        fetchServices();
+      } else {
+        alert(result.message || "Failed to delete service");
+      }
+    } catch (error) {
+      console.error("Delete service error:", error);
+    }
+  };
+  const handleNewCategory = () => {
+    setEditingCategory(null);
+    setCategoryFormData({ name: "", description: "" });
+    setShowCategoryDialog(true);
+  };
+  const handleEditCategory = (category) => {
+    setEditingCategory(category);
+    setCategoryFormData({
+      name: category.name,
+      description: category.description || ""
+    });
+    setShowCategoryDialog(true);
+  };
+  const handleSaveCategory = async () => {
+    setIsSaving(true);
+    try {
+      let result;
+      if (editingCategory) {
+        result = await window.api.serviceCategories.update(editingCategory.id, categoryFormData);
+      } else {
+        result = await window.api.serviceCategories.create(categoryFormData);
+      }
+      if (result.success) {
+        setShowCategoryDialog(false);
+        fetchCategories();
+      } else {
+        alert(result.message || "Failed to save category");
+      }
+    } catch (error) {
+      console.error("Save category error:", error);
+      alert("An error occurred while saving");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  const handleDeleteCategory = async (category) => {
+    if (!confirm(`Are you sure you want to deactivate "${category.name}"?`)) return;
+    try {
+      const result = await window.api.serviceCategories.delete(category.id);
+      if (result.success) {
+        fetchCategories();
+      } else {
+        alert(result.message || "Failed to delete category");
+      }
+    } catch (error) {
+      console.error("Delete category error:", error);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-4", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-between", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-3xl font-bold", children: "Services" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-muted-foreground", children: "Manage your service offerings like repairs, maintenance, customization, and testing" })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(Tabs, { defaultValue: "services", className: "space-y-4", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsList, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsTrigger, { value: "services", className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Wrench, { className: "h-4 w-4" }),
+          "Services"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsTrigger, { value: "categories", className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Tag, { className: "h-4 w-4" }),
+          "Categories"
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsContent, { value: "services", className: "space-y-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-4 flex-1", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative flex-1 max-w-md", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(Search, { className: "absolute left-3 top-3 h-4 w-4 text-muted-foreground" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                Input,
+                {
+                  placeholder: "Search services...",
+                  className: "pl-9",
+                  onChange: (e) => debouncedSearch(e.target.value)
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              Select,
+              {
+                value: selectedCategory,
+                onValueChange: (value) => {
+                  setSelectedCategory(value === "all" ? "" : value);
+                  setPage(1);
+                },
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(SelectTrigger, { className: "w-48", children: /* @__PURE__ */ jsxRuntimeExports.jsx(SelectValue, { placeholder: "All Categories" }) }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(SelectContent, { children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(SelectItem, { value: "all", children: "All Categories" }),
+                    categories.filter((c) => c.isActive).map((category) => /* @__PURE__ */ jsxRuntimeExports.jsx(SelectItem, { value: category.id.toString(), children: category.name }, category.id))
+                  ] })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: handleNewService, children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "mr-2 h-4 w-4" }),
+            "Add Service"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Card, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(CardContent, { className: "p-0", children: isLoading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex h-64 items-center justify-center", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" }) }) : services.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-64 flex-col items-center justify-center text-muted-foreground", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Wrench, { className: "mb-2 h-12 w-12" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No services found" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "link", onClick: handleNewService, children: "Add your first service" })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(Table, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(TableHeader, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Code" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Name" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Category" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { className: "text-right", children: "Price" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Pricing Type" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { className: "text-center", children: "Duration" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Tax" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { className: "text-right", children: "Actions" })
+          ] }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(TableBody, { children: services.map((service) => /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { className: "font-mono", children: service.code }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { className: "font-medium", children: service.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: categories.find((c) => c.id === service.categoryId)?.name || "-" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { className: "text-right font-medium", children: [
+              formatCurrency(service.price),
+              service.pricingType === "hourly" && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-muted-foreground", children: "/hr" })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { variant: service.pricingType === "flat" ? "default" : "secondary", children: [
+              service.pricingType === "flat" ? /* @__PURE__ */ jsxRuntimeExports.jsx(DollarSign, { className: "mr-1 h-3 w-3" }) : /* @__PURE__ */ jsxRuntimeExports.jsx(Clock, { className: "mr-1 h-3 w-3" }),
+              service.pricingType
+            ] }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { className: "text-center", children: service.estimatedDuration ? `${service.estimatedDuration} min` : "-" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: service.isTaxable ? /* @__PURE__ */ jsxRuntimeExports.jsxs(Badge, { variant: "outline", children: [
+              service.taxRate,
+              "%"
+            ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-muted-foreground", children: "N/A" }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { className: "text-right", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                Button,
+                {
+                  variant: "ghost",
+                  size: "icon",
+                  onClick: () => handleEditService(service),
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(SquarePen, { className: "h-4 w-4" })
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                Button,
+                {
+                  variant: "ghost",
+                  size: "icon",
+                  onClick: () => handleDeleteService(service),
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, { className: "h-4 w-4 text-destructive" })
+                }
+              )
+            ] })
+          ] }, service.id)) })
+        ] }) }) }),
+        totalPages > 1 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Button,
+            {
+              variant: "outline",
+              size: "sm",
+              disabled: page === 1,
+              onClick: () => setPage((p) => p - 1),
+              children: "Previous"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-muted-foreground", children: [
+            "Page ",
+            page,
+            " of ",
+            totalPages
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Button,
+            {
+              variant: "outline",
+              size: "sm",
+              disabled: page === totalPages,
+              onClick: () => setPage((p) => p + 1),
+              children: "Next"
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(TabsContent, { value: "categories", className: "space-y-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-end", children: /* @__PURE__ */ jsxRuntimeExports.jsxs(Button, { onClick: handleNewCategory, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Plus, { className: "mr-2 h-4 w-4" }),
+          "Add Category"
+        ] }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Card, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(CardContent, { className: "p-0", children: categories.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-64 flex-col items-center justify-center text-muted-foreground", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Tag, { className: "mb-2 h-12 w-12" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { children: "No categories found" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "link", onClick: handleNewCategory, children: "Add your first category" })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(Table, { children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(TableHeader, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Name" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Description" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { children: "Status" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableHead, { className: "text-right", children: "Actions" })
+          ] }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(TableBody, { children: categories.map((category) => /* @__PURE__ */ jsxRuntimeExports.jsxs(TableRow, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { className: "font-medium", children: category.name }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { className: "text-muted-foreground", children: category.description || "-" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(TableCell, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(Badge, { variant: category.isActive ? "default" : "secondary", children: category.isActive ? "Active" : "Inactive" }) }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(TableCell, { className: "text-right", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                Button,
+                {
+                  variant: "ghost",
+                  size: "icon",
+                  onClick: () => handleEditCategory(category),
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(SquarePen, { className: "h-4 w-4" })
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                Button,
+                {
+                  variant: "ghost",
+                  size: "icon",
+                  onClick: () => handleDeleteCategory(category),
+                  disabled: !category.isActive,
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx(Trash2, { className: "h-4 w-4 text-destructive" })
+                }
+              )
+            ] })
+          ] }, category.id)) })
+        ] }) }) })
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: showServiceDialog, onOpenChange: setShowServiceDialog, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { className: "max-w-2xl", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { children: editingService ? "Edit Service" : "New Service" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription, { children: editingService ? "Update service information" : "Add a new service to your catalog" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-4 py-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-4", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "code", children: "Service Code *" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Input,
+              {
+                id: "code",
+                value: serviceFormData.code,
+                onChange: (e) => setServiceFormData({ ...serviceFormData, code: e.target.value }),
+                placeholder: "SRV-001"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "category", children: "Category" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              Select,
+              {
+                value: serviceFormData.categoryId,
+                onValueChange: (value) => setServiceFormData({ ...serviceFormData, categoryId: value }),
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(SelectTrigger, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(SelectValue, { placeholder: "Select category" }) }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(SelectContent, { children: categories.filter((c) => c.isActive).map((category) => /* @__PURE__ */ jsxRuntimeExports.jsx(SelectItem, { value: category.id.toString(), children: category.name }, category.id)) })
+                ]
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "name", children: "Service Name *" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Input,
+            {
+              id: "name",
+              value: serviceFormData.name,
+              onChange: (e) => setServiceFormData({ ...serviceFormData, name: e.target.value }),
+              placeholder: "e.g., Weapon Repair, Part Replacement"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "description", children: "Description" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Textarea,
+            {
+              id: "description",
+              value: serviceFormData.description,
+              onChange: (e) => setServiceFormData({ ...serviceFormData, description: e.target.value }),
+              placeholder: "Describe the service...",
+              rows: 3
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-3 gap-4", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "price", children: "Price *" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Input,
+              {
+                id: "price",
+                type: "number",
+                step: "0.01",
+                value: serviceFormData.price,
+                onChange: (e) => setServiceFormData({ ...serviceFormData, price: e.target.value }),
+                placeholder: "0.00"
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "pricingType", children: "Pricing Type" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              Select,
+              {
+                value: serviceFormData.pricingType,
+                onValueChange: (value) => setServiceFormData({ ...serviceFormData, pricingType: value }),
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx(SelectTrigger, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(SelectValue, {}) }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs(SelectContent, { children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(SelectItem, { value: "flat", children: "Flat Rate" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(SelectItem, { value: "hourly", children: "Hourly Rate" })
+                  ] })
+                ]
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "estimatedDuration", children: "Est. Duration (min)" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Input,
+              {
+                id: "estimatedDuration",
+                type: "number",
+                value: serviceFormData.estimatedDuration,
+                onChange: (e) => setServiceFormData({ ...serviceFormData, estimatedDuration: e.target.value }),
+                placeholder: "60"
+              }
+            )
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-4", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "input",
+              {
+                type: "checkbox",
+                id: "isTaxable",
+                checked: serviceFormData.isTaxable,
+                onChange: (e) => setServiceFormData({ ...serviceFormData, isTaxable: e.target.checked }),
+                className: "h-4 w-4 rounded border-gray-300"
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "isTaxable", children: "Taxable" })
+          ] }),
+          serviceFormData.isTaxable && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "taxRate", children: "Tax Rate (%)" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              Input,
+              {
+                id: "taxRate",
+                type: "number",
+                step: "0.01",
+                value: serviceFormData.taxRate,
+                onChange: (e) => setServiceFormData({ ...serviceFormData, taxRate: e.target.value }),
+                placeholder: "0"
+              }
+            )
+          ] })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogFooter, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", onClick: () => setShowServiceDialog(false), children: "Cancel" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Button,
+          {
+            onClick: handleSaveService,
+            disabled: isSaving || !serviceFormData.code || !serviceFormData.name || !serviceFormData.price,
+            children: isSaving ? "Saving..." : editingService ? "Update Service" : "Create Service"
+          }
+        )
+      ] })
+    ] }) }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(Dialog, { open: showCategoryDialog, onOpenChange: setShowCategoryDialog, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogContent, { children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogHeader, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(DialogTitle, { children: editingCategory ? "Edit Category" : "New Category" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(DialogDescription, { children: editingCategory ? "Update category information" : "Add a new service category" })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-4 py-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "categoryName", children: "Category Name *" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Input,
+            {
+              id: "categoryName",
+              value: categoryFormData.name,
+              onChange: (e) => setCategoryFormData({ ...categoryFormData, name: e.target.value }),
+              placeholder: "e.g., Repair, Maintenance"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(Label, { htmlFor: "categoryDescription", children: "Description" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Textarea,
+            {
+              id: "categoryDescription",
+              value: categoryFormData.description,
+              onChange: (e) => setCategoryFormData({ ...categoryFormData, description: e.target.value }),
+              placeholder: "Describe this category...",
+              rows: 3
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(DialogFooter, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Button, { variant: "outline", onClick: () => setShowCategoryDialog(false), children: "Cancel" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Button,
+          {
+            onClick: handleSaveCategory,
+            disabled: isSaving || !categoryFormData.name,
+            children: isSaving ? "Saving..." : editingCategory ? "Update Category" : "Create Category"
+          }
+        )
+      ] })
+    ] }) })
+  ] });
+}
+export {
+  ServicesScreen
+};
