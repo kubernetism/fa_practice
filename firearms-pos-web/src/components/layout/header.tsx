@@ -1,13 +1,38 @@
 'use client'
 
-import { Bell, Search } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Bell, Search, Globe, Check, X } from 'lucide-react'
 import { SidebarTrigger } from '@/components/ui/sidebar'
 import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+
+function useOnlineStatus() {
+  const [isOnline, setIsOnline] = useState(true)
+
+  useEffect(() => {
+    setIsOnline(navigator.onLine)
+
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  return isOnline
+}
 
 export function Header() {
+  const isOnline = useOnlineStatus()
+
   return (
     <header className="flex items-center gap-3 h-14 px-4 border-b border-border bg-card/50 backdrop-blur-sm">
       <SidebarTrigger className="-ml-1" />
@@ -28,11 +53,29 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-2 ml-auto">
-        {/* Branch indicator */}
-        <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border">
-          <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-          <span className="text-xs font-medium text-muted-foreground">Main Branch</span>
-        </div>
+        {/* Connection status */}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-muted/50 border border-border">
+                <div className="relative">
+                  <Globe className="w-4 h-4 text-muted-foreground" />
+                  {isOnline ? (
+                    <Check className="absolute -bottom-1 -right-1 w-2.5 h-2.5 text-success stroke-[3]" />
+                  ) : (
+                    <X className="absolute -bottom-1 -right-1 w-2.5 h-2.5 text-destructive stroke-[3]" />
+                  )}
+                </div>
+                <span className={`text-xs font-medium ${isOnline ? 'text-success' : 'text-destructive'}`}>
+                  {isOnline ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{isOnline ? 'Internet connection active' : 'No internet connection'}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         {/* Notifications */}
         <Button variant="ghost" size="icon" className="relative">
