@@ -2,6 +2,72 @@ import { ipcMain } from 'electron'
 import { getRawDatabase } from '../db'
 
 export function registerManualMigrationHandlers(): void {
+  // Handler to check if vouchers table exists
+  ipcMain.handle('migration:check-vouchers-table', async () => {
+    try {
+      const db = getRawDatabase()
+      const tableCheck = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='vouchers'`
+      ).get()
+
+      return {
+        success: true,
+        exists: !!tableCheck,
+        message: tableCheck ? 'Vouchers table exists' : 'Vouchers table does NOT exist'
+      }
+    } catch (error) {
+      return { success: false, message: `Check failed: ${error}` }
+    }
+  })
+
+  ipcMain.handle('migration:create-vouchers-table', async () => {
+    try {
+      const db = getRawDatabase()
+
+      // Check if table already exists
+      const tableCheck = db.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='vouchers'`
+      ).get()
+
+      if (tableCheck) {
+        return { success: true, message: 'Vouchers table already exists' }
+      }
+
+      // Create the vouchers table
+      const migrationSQL = `
+        CREATE TABLE IF NOT EXISTS "vouchers" (
+          "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+          "code" text NOT NULL UNIQUE,
+          "description" text,
+          "discount_amount" real NOT NULL,
+          "expires_at" text,
+          "is_used" integer DEFAULT false NOT NULL,
+          "used_at" text,
+          "used_in_sale_id" integer,
+          "created_by" integer,
+          "is_active" integer DEFAULT true NOT NULL,
+          "created_at" text NOT NULL,
+          "updated_at" text NOT NULL,
+          FOREIGN KEY ("used_in_sale_id") REFERENCES "sales"("id") ON UPDATE no action ON DELETE no action,
+          FOREIGN KEY ("created_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+        );
+
+        CREATE INDEX IF NOT EXISTS "vouchers_code_idx" ON "vouchers" ("code");
+        CREATE INDEX IF NOT EXISTS "vouchers_is_active_idx" ON "vouchers" ("is_active");
+        CREATE INDEX IF NOT EXISTS "vouchers_is_used_idx" ON "vouchers" ("is_used");
+      `
+
+      db.exec(migrationSQL)
+
+      console.log('Vouchers table created successfully via manual migration')
+
+      return { success: true, message: 'Vouchers table created successfully' }
+    } catch (error) {
+      console.error('Manual migration error:', error)
+      return { success: false, message: `Migration failed: ${error}` }
+    }
+  })
+
   // Debug handler to check if todos table exists
   ipcMain.handle('migration:check-todos-table', async () => {
     try {

@@ -72,7 +72,7 @@ export function registerDashboardHandlers(): void {
           )
         )
 
-      // Get commission total for the period
+      // Get PAID commission total for the period (only paid commissions affect profit)
       const commissionResult = await db
         .select({
           total: sql<number>`COALESCE(SUM(${commissions.commissionAmount}), 0)`,
@@ -82,6 +82,7 @@ export function registerDashboardHandlers(): void {
         .where(
           and(
             eq(commissions.branchId, branchId),
+            eq(commissions.status, 'paid'),
             between(sales.saleDate, dateRange.start, dateRange.end),
             eq(sales.isVoided, false)
           )

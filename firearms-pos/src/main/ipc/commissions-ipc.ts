@@ -148,26 +148,15 @@ export function registerCommissionHandlers(): void {
       const session = getCurrentSession()
       const branchId = session?.branchId
 
-      // Get sale IDs that already have a commission for this referral person
-      let existingSaleIds: number[] = []
-      if (referralPersonId) {
-        const existingCommissions = await db
-          .select({ saleId: commissions.saleId })
-          .from(commissions)
-          .where(eq(commissions.referralPersonId, referralPersonId))
-        existingSaleIds = existingCommissions.map((c) => c.saleId)
-      }
-
-      const conditions: any[] = [eq(sales.status, 'completed')]
-      if (branchId) conditions.push(eq(sales.branchId, branchId))
-      if (existingSaleIds.length > 0) {
-        conditions.push(sql`${sales.id} NOT IN (${sql.join(existingSaleIds.map(id => sql`${id}`), sql`, `)})`)
-      }
+      // Get ALL non-voided invoices (no filtering by existing commissions)
+      const whereClause = branchId
+        ? and(eq(sales.isVoided, false), eq(sales.branchId, branchId))
+        : eq(sales.isVoided, false)
 
       const data = await db
         .select()
         .from(sales)
-        .where(and(...conditions))
+        .where(whereClause)
         .orderBy(desc(sales.saleDate))
         .limit(100)
 

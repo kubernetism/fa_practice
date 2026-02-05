@@ -334,7 +334,9 @@ const api = {
   // Manual Migration
   migration: {
     createTodosTable: () => electron.ipcRenderer.invoke("migration:create-todos-table"),
-    checkTodosTable: () => electron.ipcRenderer.invoke("migration:check-todos-table")
+    checkTodosTable: () => electron.ipcRenderer.invoke("migration:check-todos-table"),
+    createVouchersTable: () => electron.ipcRenderer.invoke("migration:create-vouchers-table"),
+    checkVouchersTable: () => electron.ipcRenderer.invoke("migration:check-vouchers-table")
   },
   // Messages
   messages: {

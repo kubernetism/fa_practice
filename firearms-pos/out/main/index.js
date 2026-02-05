@@ -5386,20 +5386,6 @@ function registerSalesHandlers() {
             }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, data.branchId)));
           }
         }
-        if (session?.userId) {
-          const commissionRate = 2;
-          const commissionAmount = subtotal * (commissionRate / 100);
-          await txDb.insert(commissions).values({
-            saleId: sale.id,
-            userId: session.userId,
-            branchId: data.branchId,
-            commissionType: "sale",
-            baseAmount: subtotal,
-            rate: commissionRate,
-            commissionAmount,
-            status: "pending"
-          });
-        }
         if (outstandingAmount > 0 && data.customerId) {
           await txDb.insert(accountReceivables).values({
             customerId: data.customerId,
@@ -6313,18 +6299,6 @@ COD Charges: ${codCharges}`;
           }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId)));
         }
       }
-      const commissionRate = 2;
-      const commissionAmount = subtotal * (commissionRate / 100);
-      await db2.insert(commissions).values({
-        saleId: sale.id,
-        userId: session.userId,
-        branchId: tab.branchId,
-        commissionType: "sale",
-        baseAmount: subtotal,
-        rate: commissionRate,
-        commissionAmount,
-        status: "pending"
-      });
       if (checkoutData.paymentMethod === "receivable" && tab.customerId) {
         await db2.insert(accountReceivables).values({
           customerId: tab.customerId,
@@ -7808,17 +7782,8 @@ function registerCommissionHandlers() {
     try {
       const session = getCurrentSession();
       const branchId = session?.branchId;
-      let existingSaleIds = [];
-      if (referralPersonId) {
-        const existingCommissions = await db2.select({ saleId: commissions.saleId }).from(commissions).where(drizzleOrm.eq(commissions.referralPersonId, referralPersonId));
-        existingSaleIds = existingCommissions.map((c) => c.saleId);
-      }
-      const conditions = [drizzleOrm.eq(sales.status, "completed")];
-      if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
-      if (existingSaleIds.length > 0) {
-        conditions.push(drizzleOrm.sql`${sales.id} NOT IN (${drizzleOrm.sql.join(existingSaleIds.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`);
-      }
-      const data = await db2.select().from(sales).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(100);
+      const whereClause = branchId ? drizzleOrm.and(drizzleOrm.eq(sales.isVoided, false), drizzleOrm.eq(sales.branchId, branchId)) : drizzleOrm.eq(sales.isVoided, false);
+      const data = await db2.select().from(sales).where(whereClause).orderBy(drizzleOrm.desc(sales.saleDate)).limit(100);
       return { success: true, data };
     } catch (error) {
       console.error("Get available invoices error:", error);
@@ -16213,6 +16178,60 @@ function registerTodosHandlers() {
   });
 }
 function registerManualMigrationHandlers() {
+  electron.ipcMain.handle("migration:check-vouchers-table", async () => {
+    try {
+      const db2 = getRawDatabase();
+      const tableCheck = db2.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='vouchers'`
+      ).get();
+      return {
+        success: true,
+        exists: !!tableCheck,
+        message: tableCheck ? "Vouchers table exists" : "Vouchers table does NOT exist"
+      };
+    } catch (error) {
+      return { success: false, message: `Check failed: ${error}` };
+    }
+  });
+  electron.ipcMain.handle("migration:create-vouchers-table", async () => {
+    try {
+      const db2 = getRawDatabase();
+      const tableCheck = db2.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name='vouchers'`
+      ).get();
+      if (tableCheck) {
+        return { success: true, message: "Vouchers table already exists" };
+      }
+      const migrationSQL = `
+        CREATE TABLE IF NOT EXISTS "vouchers" (
+          "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+          "code" text NOT NULL UNIQUE,
+          "description" text,
+          "discount_amount" real NOT NULL,
+          "expires_at" text,
+          "is_used" integer DEFAULT false NOT NULL,
+          "used_at" text,
+          "used_in_sale_id" integer,
+          "created_by" integer,
+          "is_active" integer DEFAULT true NOT NULL,
+          "created_at" text NOT NULL,
+          "updated_at" text NOT NULL,
+          FOREIGN KEY ("used_in_sale_id") REFERENCES "sales"("id") ON UPDATE no action ON DELETE no action,
+          FOREIGN KEY ("created_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+        );
+
+        CREATE INDEX IF NOT EXISTS "vouchers_code_idx" ON "vouchers" ("code");
+        CREATE INDEX IF NOT EXISTS "vouchers_is_active_idx" ON "vouchers" ("is_active");
+        CREATE INDEX IF NOT EXISTS "vouchers_is_used_idx" ON "vouchers" ("is_used");
+      `;
+      db2.exec(migrationSQL);
+      console.log("Vouchers table created successfully via manual migration");
+      return { success: true, message: "Vouchers table created successfully" };
+    } catch (error) {
+      console.error("Manual migration error:", error);
+      return { success: false, message: `Migration failed: ${error}` };
+    }
+  });
   electron.ipcMain.handle("migration:check-todos-table", async () => {
     try {
       const db2 = getRawDatabase();
@@ -16559,6 +16578,7 @@ function registerDashboardHandlers() {
       }).from(commissions).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(
         drizzleOrm.and(
           drizzleOrm.eq(commissions.branchId, branchId),
+          drizzleOrm.eq(commissions.status, "paid"),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
           drizzleOrm.eq(sales.isVoided, false)
         )
@@ -19167,6 +19187,41 @@ function registerServicesHandlers() {
     }
   });
 }
+function ensureVouchersTable() {
+  try {
+    const rawDb = getRawDatabase();
+    const tableCheck = rawDb.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='vouchers'`
+    ).get();
+    if (!tableCheck) {
+      console.log("Creating vouchers table...");
+      rawDb.prepare(`
+        CREATE TABLE IF NOT EXISTS "vouchers" (
+          "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+          "code" text NOT NULL UNIQUE,
+          "description" text,
+          "discount_amount" real NOT NULL,
+          "expires_at" text,
+          "is_used" integer DEFAULT false NOT NULL,
+          "used_at" text,
+          "used_in_sale_id" integer,
+          "created_by" integer,
+          "is_active" integer DEFAULT true NOT NULL,
+          "created_at" text NOT NULL,
+          "updated_at" text NOT NULL,
+          FOREIGN KEY ("used_in_sale_id") REFERENCES "sales"("id") ON UPDATE no action ON DELETE no action,
+          FOREIGN KEY ("created_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+        )
+      `).run();
+      rawDb.prepare(`CREATE INDEX IF NOT EXISTS "vouchers_code_idx" ON "vouchers" ("code")`).run();
+      rawDb.prepare(`CREATE INDEX IF NOT EXISTS "vouchers_is_active_idx" ON "vouchers" ("is_active")`).run();
+      rawDb.prepare(`CREATE INDEX IF NOT EXISTS "vouchers_is_used_idx" ON "vouchers" ("is_used")`).run();
+      console.log("Vouchers table created successfully");
+    }
+  } catch (error) {
+    console.error("Failed to ensure vouchers table:", error);
+  }
+}
 function generateVoucherCode() {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let code = "";
@@ -19176,6 +19231,7 @@ function generateVoucherCode() {
   return code;
 }
 function registerVoucherHandlers() {
+  ensureVouchersTable();
   const db2 = getDatabase();
   electron.ipcMain.handle(
     "vouchers:get-all",

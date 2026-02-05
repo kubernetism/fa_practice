@@ -470,6 +470,8 @@ const api = {
   migration: {
     createTodosTable: () => ipcRenderer.invoke('migration:create-todos-table'),
     checkTodosTable: () => ipcRenderer.invoke('migration:check-todos-table'),
+    createVouchersTable: () => ipcRenderer.invoke('migration:create-vouchers-table'),
+    checkVouchersTable: () => ipcRenderer.invoke('migration:check-vouchers-table'),
   },
 
   // Messages

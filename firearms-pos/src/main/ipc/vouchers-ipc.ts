@@ -1,8 +1,46 @@
 import { ipcMain } from 'electron'
 import { eq, like, and, or, desc, sql, lte } from 'drizzle-orm'
-import { getDatabase } from '../db'
+import { getDatabase, getRawDatabase } from '../db'
 import { vouchers, type NewVoucher } from '../db/schema'
 import { getCurrentSession } from './auth-ipc'
+
+// Auto-create vouchers table if it doesn't exist
+function ensureVouchersTable(): void {
+  try {
+    const rawDb = getRawDatabase()
+    const tableCheck = rawDb.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='vouchers'`
+    ).get()
+
+    if (!tableCheck) {
+      console.log('Creating vouchers table...')
+      rawDb.prepare(`
+        CREATE TABLE IF NOT EXISTS "vouchers" (
+          "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+          "code" text NOT NULL UNIQUE,
+          "description" text,
+          "discount_amount" real NOT NULL,
+          "expires_at" text,
+          "is_used" integer DEFAULT false NOT NULL,
+          "used_at" text,
+          "used_in_sale_id" integer,
+          "created_by" integer,
+          "is_active" integer DEFAULT true NOT NULL,
+          "created_at" text NOT NULL,
+          "updated_at" text NOT NULL,
+          FOREIGN KEY ("used_in_sale_id") REFERENCES "sales"("id") ON UPDATE no action ON DELETE no action,
+          FOREIGN KEY ("created_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action
+        )
+      `).run()
+      rawDb.prepare(`CREATE INDEX IF NOT EXISTS "vouchers_code_idx" ON "vouchers" ("code")`).run()
+      rawDb.prepare(`CREATE INDEX IF NOT EXISTS "vouchers_is_active_idx" ON "vouchers" ("is_active")`).run()
+      rawDb.prepare(`CREATE INDEX IF NOT EXISTS "vouchers_is_used_idx" ON "vouchers" ("is_used")`).run()
+      console.log('Vouchers table created successfully')
+    }
+  } catch (error) {
+    console.error('Failed to ensure vouchers table:', error)
+  }
+}
 
 function generateVoucherCode(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -14,6 +52,9 @@ function generateVoucherCode(): string {
 }
 
 export function registerVoucherHandlers(): void {
+  // Ensure vouchers table exists before registering handlers
+  ensureVouchersTable()
+
   const db = getDatabase()
 
   ipcMain.handle(

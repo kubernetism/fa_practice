@@ -308,22 +308,8 @@ export function registerSalesHandlers(): void {
           }
         }
 
-        // 4. Create commission if applicable (2% of subtotal)
-        if (session?.userId) {
-          const commissionRate = 2
-          const commissionAmount = subtotal * (commissionRate / 100)
-
-          await txDb.insert(commissions).values({
-            saleId: sale.id,
-            userId: session.userId,
-            branchId: data.branchId,
-            commissionType: 'sale',
-            baseAmount: subtotal,
-            rate: commissionRate,
-            commissionAmount,
-            status: 'pending',
-          })
-        }
+        // 4. Commission is now created manually from Commission Management screen
+        // (Auto-generation removed as per user request)
 
         // 5. Create account receivable if there's an outstanding balance
         if (outstandingAmount > 0 && data.customerId) {

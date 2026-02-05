@@ -820,20 +820,8 @@ export function registerSalesTabsHandlers(): void {
         }
       }
 
-      // Create commission
-      const commissionRate = 2 // 2%
-      const commissionAmount = subtotal * (commissionRate / 100)
-
-      await db.insert(commissions).values({
-        saleId: sale.id,
-        userId: session.userId,
-        branchId: tab.branchId,
-        commissionType: 'sale',
-        baseAmount: subtotal,
-        rate: commissionRate,
-        commissionAmount,
-        status: 'pending',
-      })
+      // Commission is now created manually from Commission Management screen
+      // (Auto-generation removed as per user request)
 
       // Create account receivable entry if payment method is receivable
       if (checkoutData.paymentMethod === 'receivable' && tab.customerId) {

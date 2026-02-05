@@ -212,12 +212,8 @@ export default function CommissionsScreen() {
       })
     }
 
-    // Fetch available invoices for new commission
-    if (!commission && mode === 'referral') {
-      fetchAvailableInvoices()
-    } else {
-      setAvailableInvoices([])
-    }
+    // Fetch ALL available invoices when opening dialog
+    fetchAvailableInvoices()
 
     setIsDialogOpen(true)
   }
@@ -236,12 +232,7 @@ export default function CommissionsScreen() {
 
   const handleReferralPersonChange = async (referralPersonId: string) => {
     setFormData({ ...formData, referralPersonId })
-    // Fetch available invoices for this referral person
-    if (referralPersonId) {
-      fetchAvailableInvoices(parseInt(referralPersonId))
-    } else {
-      setAvailableInvoices([])
-    }
+    // Invoices are already loaded - no need to refetch
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -674,14 +665,9 @@ export default function CommissionsScreen() {
                     <Select
                       value={formData.saleId}
                       onValueChange={(v) => setFormData({ ...formData, saleId: v })}
-                      disabled={!formData.referralPersonId}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder={
-                          !formData.referralPersonId
-                            ? 'Select referral person first'
-                            : 'Select invoice'
-                        } />
+                        <SelectValue placeholder="Select invoice" />
                       </SelectTrigger>
                       <SelectContent>
                         {availableInvoices.map((sale) => (
@@ -694,9 +680,9 @@ export default function CommissionsScreen() {
                             </div>
                           </SelectItem>
                         ))}
-                        {availableInvoices.length === 0 && formData.referralPersonId && (
+                        {availableInvoices.length === 0 && (
                           <div className="p-2 text-sm text-muted-foreground text-center">
-                            No unpaid invoices available for this referral person
+                            No completed invoices available
                           </div>
                         )}
                       </SelectContent>
@@ -802,14 +788,14 @@ export default function CommissionsScreen() {
                   <div className="space-y-2">
                     <Label htmlFor="userId">Employee</Label>
                     <Select
-                      value={formData.userId}
-                      onValueChange={(v) => setFormData({ ...formData, userId: v })}
+                      value={formData.userId || "none"}
+                      onValueChange={(v) => setFormData({ ...formData, userId: v === "none" ? "" : v })}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select employee (optional)" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">No employee selected</SelectItem>
+                        <SelectItem value="none">No employee selected</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
