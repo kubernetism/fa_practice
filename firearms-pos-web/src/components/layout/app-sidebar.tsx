@@ -25,6 +25,13 @@ import {
   Percent,
   UserPlus,
   Ticket,
+  BookOpen,
+  FileText,
+  ShoppingBag,
+  Wrench,
+  Shield,
+  ListTodo,
+  MessageSquare,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -66,8 +73,18 @@ const financialNav = [
   { title: 'Vouchers', href: '/vouchers', icon: Ticket },
 ]
 
-const managementNav = [
+const accountingNav = [
+  { title: 'Chart of Accounts', href: '/chart-of-accounts', icon: BookOpen },
+  { title: 'Journal Entries', href: '/journal-entries', icon: FileText },
+  { title: 'Purchases', href: '/purchases', icon: ShoppingBag },
+  { title: 'Services', href: '/services', icon: Wrench },
   { title: 'Reports', href: '/reports', icon: BarChart3 },
+]
+
+const managementNav = [
+  { title: 'Tasks', href: '/todos', icon: ListTodo },
+  { title: 'Messages', href: '/messages', icon: MessageSquare },
+  { title: 'Audit Logs', href: '/audit-logs', icon: Shield },
   { title: 'Users', href: '/users', icon: UserCog },
   { title: 'Branches', href: '/branches', icon: Building2 },
   { title: 'Settings', href: '/settings', icon: Settings },
