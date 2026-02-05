@@ -17,3 +17,10 @@ coverage
 /firearms-pos/release
 /md
 .claude
+/firearms-pos-web/node_modules
+/firearms-pos-web/dist
+/firearms-pos-web/.env
+/firearms-pos-web/.DS_Store
+/firearms-pos-web/.vscode
+/firearms-pos-web/.idea
+/firearms-pos-web/.next
