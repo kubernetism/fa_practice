@@ -8,8 +8,10 @@ export const users = pgTable('users', {
     .notNull()
     .references(() => tenants.id),
   username: text('username').notNull(),
-  password: text('password').notNull(),
+  password: text('password'),
   email: text('email').notNull(),
+  image: text('image'),
+  provider: text('provider').default('credentials'),
   fullName: text('full_name').notNull(),
   phone: text('phone'),
   role: text('role', { enum: ['admin', 'manager', 'cashier'] })
