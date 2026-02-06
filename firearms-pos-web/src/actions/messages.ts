@@ -103,7 +103,7 @@ export async function getTeamMembers() {
     })
     .from(users)
     .where(eq(users.tenantId, tenantId))
-    .orderBy(users.firstName)
+    .orderBy(users.fullName)
 
   return { success: true, data }
 }
