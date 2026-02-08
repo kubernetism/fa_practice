@@ -32,6 +32,8 @@ import {
   Shield,
   ListTodo,
   MessageSquare,
+  RotateCcw,
+  Truck,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -61,6 +63,8 @@ const mainNav = [
   { title: 'Inventory', href: '/inventory', icon: Warehouse },
   { title: 'Sales', href: '/sales', icon: Receipt },
   { title: 'Customers', href: '/customers', icon: Users },
+  { title: 'Returns', href: '/returns', icon: RotateCcw },
+  { title: 'Suppliers', href: '/suppliers', icon: Truck },
 ]
 
 const financialNav = [
