@@ -34,6 +34,7 @@ import {
   MessageSquare,
   RotateCcw,
   Truck,
+  Headphones,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -93,6 +94,8 @@ const managementNav = [
   { title: 'Branches', href: '/branches', icon: Building2 },
   { title: 'Settings', href: '/settings', icon: Settings },
   { title: 'Billing', href: '/billing', icon: CreditCard },
+  { title: 'Support', href: '/support', icon: Headphones },
+  { title: 'How-To Guide', href: '/guide', icon: BookOpen },
 ]
 
 export function AppSidebar() {

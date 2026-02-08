@@ -16,6 +16,7 @@ import {
   Check,
   Trash2,
   Hash,
+  ChevronsUpDown,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 
 type Product = {
   id: number
@@ -87,6 +101,7 @@ export default function POSPage() {
   const [notes, setNotes] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null)
   const [amountTendered, setAmountTendered] = useState('')
+  const [customerOpen, setCustomerOpen] = useState(false)
   const [serialDialogOpen, setSerialDialogOpen] = useState(false)
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null)
   const [serialInput, setSerialInput] = useState('')
@@ -173,14 +188,14 @@ export default function POSPage() {
         </div>
 
         {/* Category Chips */}
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-2 shrink-0">
           {categories.map((cat) => (
             <Button
               key={cat}
               variant={selectedCategory === cat ? 'default' : 'outline'}
               size="sm"
               onClick={() => setSelectedCategory(cat)}
-              className={`shrink-0 text-xs ${selectedCategory === cat ? 'brass-glow' : ''}`}
+              className={`shrink-0 text-xs h-8 ${selectedCategory === cat ? 'brass-glow' : ''}`}
             >
               {cat}
             </Button>
@@ -189,7 +204,7 @@ export default function POSPage() {
 
         {/* Product Grid */}
         <ScrollArea className="flex-1">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 pr-2">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 p-1">
             {filteredProducts.map((product) => (
               <Card
                 key={product.id}
@@ -237,18 +252,40 @@ export default function POSPage() {
         </div>
 
         {/* Customer */}
-        <div className="flex items-center gap-2 mb-3 p-2 rounded-md bg-muted/30 border">
-          <User className="w-4 h-4 text-muted-foreground shrink-0" />
-          <select
-            value={selectedCustomer.id}
-            onChange={(e) => setSelectedCustomer(mockCustomers.find((c) => c.id === Number(e.target.value)) || mockCustomers[0])}
-            className="flex-1 bg-transparent text-sm outline-none"
-          >
-            {mockCustomers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
-          </select>
-        </div>
+        <Popover open={customerOpen} onOpenChange={setCustomerOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" className="mb-3 h-9 w-full justify-between font-normal">
+              <div className="flex items-center gap-2 truncate">
+                <User className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="truncate">{selectedCustomer.name}</span>
+              </div>
+              <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[340px] p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Search customers..." />
+              <CommandList>
+                <CommandEmpty>No customer found.</CommandEmpty>
+                <CommandGroup>
+                  {mockCustomers.map((c) => (
+                    <CommandItem
+                      key={c.id}
+                      value={c.name}
+                      onSelect={() => {
+                        setSelectedCustomer(c)
+                        setCustomerOpen(false)
+                      }}
+                    >
+                      <Check className={`w-4 h-4 mr-2 ${selectedCustomer.id === c.id ? 'opacity-100' : 'opacity-0'}`} />
+                      {c.name}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
 
         {/* Cart Items */}
         <ScrollArea className="flex-1 mb-3">
