@@ -175,3 +175,59 @@ export async function deleteUser(id: number) {
 
   return { success: true }
 }
+
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+  const tenantId = await getTenantId()
+
+  const [user] = await db
+    .select()
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
+
+  if (!user) return { success: false, message: 'User not found' }
+
+  const isValid = await bcrypt.compare(currentPassword, user.password!)
+  if (!isValid) return { success: false, message: 'Current password is incorrect' }
+
+  const hashed = await bcrypt.hash(newPassword, 10)
+  await db
+    .update(users)
+    .set({ password: hashed, updatedAt: new Date() })
+    .where(eq(users.id, userId))
+
+  return { success: true }
+}
+
+export async function updatePermissions(userId: number, permissions: string[]) {
+  const tenantId = await getTenantId()
+
+  const [user] = await db
+    .update(users)
+    .set({ permissions, updatedAt: new Date() })
+    .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
+    .returning()
+
+  if (!user) return { success: false, message: 'User not found' }
+
+  return { success: true, data: user }
+}
+
+export async function checkPermission(permission: string): Promise<boolean> {
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+  const tenantId = (session as any)?.tenantId
+  if (!tenantId) return false
+
+  const [user] = await db
+    .select({ role: users.role, permissions: users.permissions })
+    .from(users)
+    .where(and(eq(users.id, userId), eq(users.tenantId, tenantId)))
+
+  if (!user) return false
+  if (user.role === 'admin') return true
+
+  const perms = (user.permissions as string[]) || []
+  return perms.includes(permission)
+}

@@ -207,6 +207,91 @@ export async function createReturn(input: {
   return { success: true, data: ret }
 }
 
+export async function approveReturn(id: number) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  const [ret] = await db
+    .select()
+    .from(returns)
+    .where(and(eq(returns.id, id), eq(returns.tenantId, tenantId)))
+
+  if (!ret) return { success: false, message: 'Return not found' }
+
+  // Mark as approved via notes
+  const approvalNote = `[APPROVED by user ${userId} on ${new Date().toISOString()}]`
+  const updatedNotes = ret.notes ? `${ret.notes}\n${approvalNote}` : approvalNote
+
+  const [updated] = await db
+    .update(returns)
+    .set({ notes: updatedNotes, updatedAt: new Date() })
+    .where(eq(returns.id, id))
+    .returning()
+
+  // Post to GL if not already posted
+  try {
+    const [originalSale] = await db
+      .select()
+      .from(sales)
+      .where(eq(sales.id, ret.originalSaleId))
+
+    const taxRatio = originalSale
+      ? Number(originalSale.taxAmount) / Math.max(Number(originalSale.totalAmount), 1)
+      : 0
+    const returnTaxAmount = Number(ret.totalAmount) * taxRatio
+
+    const items = await db
+      .select()
+      .from(returnItems)
+      .where(eq(returnItems.returnId, id))
+
+    const costOfGoods = items
+      .filter((i) => i.restockable)
+      .reduce((s, i) => s + Number(i.totalPrice), 0)
+
+    await postReturnToGL({
+      tenantId,
+      returnId: id,
+      originalSaleId: ret.originalSaleId,
+      branchId: ret.branchId,
+      userId,
+      refundAmount: Number(ret.refundAmount),
+      taxAmount: returnTaxAmount,
+      costOfGoods,
+      refundMethod: ret.refundMethod || ret.returnType,
+    })
+  } catch (e) {
+    console.error('GL posting failed for approved return:', e)
+  }
+
+  return { success: true, data: updated }
+}
+
+export async function rejectReturn(id: number, reason?: string) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  const [ret] = await db
+    .select()
+    .from(returns)
+    .where(and(eq(returns.id, id), eq(returns.tenantId, tenantId)))
+
+  if (!ret) return { success: false, message: 'Return not found' }
+
+  const rejectionNote = `[REJECTED by user ${userId} on ${new Date().toISOString()}]${reason ? ` Reason: ${reason}` : ''}`
+  const updatedNotes = ret.notes ? `${ret.notes}\n${rejectionNote}` : rejectionNote
+
+  const [updated] = await db
+    .update(returns)
+    .set({ notes: updatedNotes, updatedAt: new Date() })
+    .where(eq(returns.id, id))
+    .returning()
+
+  return { success: true, data: updated }
+}
+
 export async function deleteReturn(id: number) {
   const tenantId = await getTenantId()
 

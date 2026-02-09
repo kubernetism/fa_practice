@@ -216,6 +216,68 @@ export async function searchProducts(query: string) {
   return { success: true, data }
 }
 
+export async function importProducts(
+  items: {
+    code: string
+    name: string
+    description?: string
+    categoryId?: number
+    brand?: string
+    costPrice: number
+    sellingPrice: number
+    reorderLevel?: number
+    unit?: string
+    isSerialTracked?: boolean
+    isTaxable?: boolean
+    taxRate?: number
+    barcode?: string
+  }[]
+) {
+  const tenantId = await getTenantId()
+
+  let importedCount = 0
+  let skippedCount = 0
+  const errors: { code: string; message: string }[] = []
+
+  for (const item of items) {
+    try {
+      const existing = await db
+        .select({ id: products.id })
+        .from(products)
+        .where(and(eq(products.tenantId, tenantId), eq(products.code, item.code)))
+
+      if (existing.length > 0) {
+        skippedCount++
+        errors.push({ code: item.code, message: 'Product code already exists' })
+        continue
+      }
+
+      await db.insert(products).values({
+        tenantId,
+        code: item.code,
+        name: item.name,
+        description: item.description || null,
+        categoryId: item.categoryId || null,
+        brand: item.brand || null,
+        costPrice: String(item.costPrice),
+        sellingPrice: String(item.sellingPrice),
+        reorderLevel: item.reorderLevel ?? 10,
+        unit: item.unit ?? 'pcs',
+        isSerialTracked: item.isSerialTracked ?? false,
+        isTaxable: item.isTaxable ?? true,
+        taxRate: String(item.taxRate ?? 0),
+        barcode: item.barcode || null,
+      })
+      importedCount++
+    } catch (e: any) {
+      skippedCount++
+      errors.push({ code: item.code, message: e.message || 'Unknown error' })
+    }
+  }
+
+  return { success: true, data: { importedCount, skippedCount, errors } }
+}
+
 export async function getCategories() {
   const tenantId = await getTenantId()
 

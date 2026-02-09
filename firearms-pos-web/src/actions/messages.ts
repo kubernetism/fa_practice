@@ -92,6 +92,43 @@ export async function markAsRead(messageId: number) {
   return { success: true }
 }
 
+export async function markAllAsRead() {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  await db
+    .update(messages)
+    .set({ isRead: true })
+    .where(
+      and(
+        eq(messages.tenantId, tenantId),
+        eq(messages.recipientId, userId),
+        eq(messages.isRead, false)
+      )
+    )
+
+  return { success: true }
+}
+
+export async function deleteMessage(messageId: number) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  await db
+    .delete(messages)
+    .where(
+      and(
+        eq(messages.id, messageId),
+        eq(messages.tenantId, tenantId),
+        or(eq(messages.senderId, userId), eq(messages.recipientId, userId))
+      )
+    )
+
+  return { success: true }
+}
+
 export async function getTeamMembers() {
   const tenantId = await getTenantId()
 

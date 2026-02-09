@@ -1,8 +1,8 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { referralPersons } from '@/lib/db/schema'
-import { eq, and, desc } from 'drizzle-orm'
+import { referralPersons, commissions, sales } from '@/lib/db/schema'
+import { eq, and, desc, sql } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
 
 async function getTenantId() {
@@ -77,6 +77,69 @@ export async function updateReferralPerson(
     .where(and(eq(referralPersons.id, id), eq(referralPersons.tenantId, tenantId)))
 
   return { success: true }
+}
+
+export async function getReferralPersonById(id: number) {
+  const tenantId = await getTenantId()
+
+  const [person] = await db
+    .select()
+    .from(referralPersons)
+    .where(and(eq(referralPersons.id, id), eq(referralPersons.tenantId, tenantId)))
+
+  if (!person) return { success: false, message: 'Referral person not found' }
+  return { success: true, data: person }
+}
+
+export async function getReferralPersonsForSelect() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      id: referralPersons.id,
+      name: referralPersons.name,
+      commissionRate: referralPersons.commissionRate,
+    })
+    .from(referralPersons)
+    .where(and(eq(referralPersons.tenantId, tenantId), eq(referralPersons.isActive, true)))
+    .orderBy(referralPersons.name)
+
+  return { success: true, data }
+}
+
+export async function updateReferralCommission(id: number, commissionRate: string) {
+  const tenantId = await getTenantId()
+
+  const [person] = await db
+    .update(referralPersons)
+    .set({ commissionRate, updatedAt: new Date() })
+    .where(and(eq(referralPersons.id, id), eq(referralPersons.tenantId, tenantId)))
+    .returning()
+
+  if (!person) return { success: false, message: 'Referral person not found' }
+  return { success: true, data: person }
+}
+
+export async function getCommissionHistory(referralPersonId: number) {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      commission: commissions,
+      invoiceNumber: sales.invoiceNumber,
+      saleTotal: sales.totalAmount,
+    })
+    .from(commissions)
+    .leftJoin(sales, eq(commissions.saleId, sales.id))
+    .where(
+      and(
+        eq(commissions.tenantId, tenantId),
+        eq(commissions.referralPersonId, referralPersonId)
+      )
+    )
+    .orderBy(desc(commissions.createdAt))
+
+  return { success: true, data }
 }
 
 export async function deleteReferralPerson(id: number) {

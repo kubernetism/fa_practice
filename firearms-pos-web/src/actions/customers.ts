@@ -160,6 +160,59 @@ export async function deleteCustomer(id: number) {
   return { success: true }
 }
 
+export async function checkCustomerLicense(id: number) {
+  const tenantId = await getTenantId()
+
+  const [customer] = await db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.id, id), eq(customers.tenantId, tenantId)))
+
+  if (!customer) return { success: false, message: 'Customer not found' }
+
+  const hasLicense = !!customer.firearmLicenseNumber
+  const isExpired = customer.licenseExpiryDate
+    ? new Date(customer.licenseExpiryDate) < new Date()
+    : false
+  const daysUntilExpiry = customer.licenseExpiryDate
+    ? Math.ceil((new Date(customer.licenseExpiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    : null
+
+  return {
+    success: true,
+    data: {
+      customerId: customer.id,
+      customerName: `${customer.firstName} ${customer.lastName}`,
+      hasLicense,
+      licenseNumber: customer.firearmLicenseNumber,
+      expiryDate: customer.licenseExpiryDate,
+      isExpired,
+      daysUntilExpiry,
+      isValid: hasLicense && !isExpired,
+    },
+  }
+}
+
+export async function getExpiringLicenses(daysAhead: number = 30) {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select()
+    .from(customers)
+    .where(
+      and(
+        eq(customers.tenantId, tenantId),
+        eq(customers.isActive, true),
+        sql`${customers.firearmLicenseNumber} IS NOT NULL AND ${customers.firearmLicenseNumber} != ''`,
+        sql`${customers.licenseExpiryDate}::date <= CURRENT_DATE + INTERVAL '${sql.raw(String(daysAhead))} days'`,
+        sql`${customers.licenseExpiryDate}::date >= CURRENT_DATE`
+      )
+    )
+    .orderBy(sql`${customers.licenseExpiryDate}::date ASC`)
+
+  return { success: true, data }
+}
+
 export async function searchCustomers(query: string) {
   const tenantId = await getTenantId()
 

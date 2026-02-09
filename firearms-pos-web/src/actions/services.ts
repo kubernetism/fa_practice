@@ -2,7 +2,7 @@
 
 import { db } from '@/lib/db'
 import { services, serviceCategories } from '@/lib/db/schema'
-import { eq, and, desc, count } from 'drizzle-orm'
+import { eq, and, desc, count, ilike, or } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
 
 async function getTenantId() {
@@ -126,6 +126,103 @@ export async function updateService(
   if (!service) return { success: false, message: 'Service not found' }
 
   return { success: true, data: service }
+}
+
+export async function getActiveServices() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      service: services,
+      categoryName: serviceCategories.name,
+    })
+    .from(services)
+    .leftJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+    .where(and(eq(services.tenantId, tenantId), eq(services.isActive, true)))
+    .orderBy(services.name)
+
+  return { success: true, data }
+}
+
+export async function getServiceById(id: number) {
+  const tenantId = await getTenantId()
+
+  const [service] = await db
+    .select({
+      service: services,
+      categoryName: serviceCategories.name,
+    })
+    .from(services)
+    .leftJoin(serviceCategories, eq(services.categoryId, serviceCategories.id))
+    .where(and(eq(services.id, id), eq(services.tenantId, tenantId)))
+
+  if (!service) return { success: false, message: 'Service not found' }
+  return { success: true, data: service }
+}
+
+export async function getServiceByCode(code: string) {
+  const tenantId = await getTenantId()
+
+  const [service] = await db
+    .select()
+    .from(services)
+    .where(and(eq(services.tenantId, tenantId), eq(services.code, code)))
+
+  if (!service) return { success: false, message: 'Service not found' }
+  return { success: true, data: service }
+}
+
+export async function searchServices(query: string) {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select()
+    .from(services)
+    .where(
+      and(
+        eq(services.tenantId, tenantId),
+        eq(services.isActive, true),
+        or(
+          ilike(services.name, `%${query}%`),
+          ilike(services.code, `%${query}%`)
+        )
+      )
+    )
+    .limit(20)
+
+  return { success: true, data }
+}
+
+export async function deleteServiceCategory(id: number) {
+  const tenantId = await getTenantId()
+
+  // Check if category has services
+  const serviceCount = await db
+    .select({ count: count() })
+    .from(services)
+    .where(and(eq(services.tenantId, tenantId), eq(services.categoryId, id)))
+
+  if (Number(serviceCount[0].count) > 0) {
+    return { success: false, message: 'Cannot delete category with associated services' }
+  }
+
+  await db
+    .delete(serviceCategories)
+    .where(and(eq(serviceCategories.id, id), eq(serviceCategories.tenantId, tenantId)))
+
+  return { success: true }
+}
+
+export async function getActiveServiceCategories() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select()
+    .from(serviceCategories)
+    .where(and(eq(serviceCategories.tenantId, tenantId), eq(serviceCategories.isActive, true)))
+    .orderBy(serviceCategories.name)
+
+  return { success: true, data }
 }
 
 export async function deleteService(id: number) {

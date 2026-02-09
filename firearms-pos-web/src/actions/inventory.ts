@@ -177,6 +177,89 @@ export async function adjustStock(input: {
   return { success: true, data: adjustment }
 }
 
+export async function reverseStockAdjustment(adjustmentId: number) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  const [adjustment] = await db
+    .select()
+    .from(stockAdjustments)
+    .where(and(eq(stockAdjustments.id, adjustmentId), eq(stockAdjustments.tenantId, tenantId)))
+
+  if (!adjustment) return { success: false, message: 'Adjustment not found' }
+
+  // Reverse the inventory change
+  const isAddition = adjustment.adjustmentType === 'add'
+  const reverseQuantity = isAddition ? -adjustment.quantityChange : adjustment.quantityChange
+
+  const [inv] = await db
+    .select()
+    .from(inventory)
+    .where(
+      and(
+        eq(inventory.tenantId, tenantId),
+        eq(inventory.productId, adjustment.productId),
+        eq(inventory.branchId, adjustment.branchId)
+      )
+    )
+
+  if (!inv) return { success: false, message: 'Inventory record not found' }
+
+  const newQuantity = inv.quantity + reverseQuantity
+  if (newQuantity < 0) {
+    return { success: false, message: 'Cannot reverse: would result in negative stock' }
+  }
+
+  await db
+    .update(inventory)
+    .set({ quantity: newQuantity, updatedAt: new Date() })
+    .where(eq(inventory.id, inv.id))
+
+  // Create a reversal adjustment record
+  const [reversal] = await db
+    .insert(stockAdjustments)
+    .values({
+      tenantId,
+      productId: adjustment.productId,
+      branchId: adjustment.branchId,
+      userId,
+      adjustmentType: isAddition ? 'remove' : 'add',
+      quantityBefore: inv.quantity,
+      quantityChange: adjustment.quantityChange,
+      quantityAfter: newQuantity,
+      reason: `Reversal of adjustment #${adjustmentId}`,
+      reference: `REV-${adjustmentId}`,
+    })
+    .returning()
+
+  // Reverse GL posting
+  try {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(eq(products.id, adjustment.productId))
+
+    const unitCost = product ? Number(product.costPrice) : 0
+    const adjustmentAmount = unitCost * adjustment.quantityChange
+
+    if (adjustmentAmount > 0) {
+      await postStockAdjustmentToGL({
+        tenantId,
+        adjustmentId: reversal.id,
+        branchId: adjustment.branchId,
+        userId,
+        amount: adjustmentAmount,
+        isAddition: !isAddition,
+      })
+    }
+  } catch (e) {
+    console.error('GL posting failed for reversed stock adjustment:', e)
+  }
+
+  return { success: true, data: reversal }
+}
+
 export async function getStockAdjustments(params?: { productId?: number; branchId?: number }) {
   const tenantId = await getTenantId()
 

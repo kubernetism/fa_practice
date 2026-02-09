@@ -202,78 +202,78 @@
 ## Phase 3: Moderate — Management & Administrative
 
 ### 3.1 Vouchers — Missing Actions
-- [ ] Add `getVoucherById` to `vouchers.ts`
-- [ ] Add `updateVoucher` to `vouchers.ts`
-- [ ] Add `generateVoucherCode` to `vouchers.ts`
-- [ ] Add `validateVoucher` to `vouchers.ts`
-- [ ] Add `redeemVoucher` — use voucher in sale
+- [x] Add `getVoucherById` to `vouchers.ts`
+- [x] Add `updateVoucher` to `vouchers.ts`
+- [x] Add `generateVoucherCode` to `vouchers.ts`
+- [x] Add `validateVoucher` to `vouchers.ts`
+- [x] Add `redeemVoucher` — use voucher in sale
 - [ ] Integrate voucher redemption into POS/createSale
 
 ### 3.2 Users — Missing Actions
-- [ ] Add `changePassword` action (current password + new password)
-- [ ] Add `updatePermissions` action
-- [ ] Add `checkPermission` utility
+- [x] Add `changePassword` action (current password + new password)
+- [x] Add `updatePermissions` action
+- [x] Add `checkPermission` utility
 - [ ] Add password change UI to `/users` or `/settings`
 
 ### 3.3 Returns — Missing Actions
-- [ ] Add `approveReturn` action (post to GL)
-- [ ] Add `rejectReturn` action
+- [x] Add `approveReturn` action (post to GL)
+- [x] Add `rejectReturn` action
 - [ ] Add approval workflow UI to `/returns` page
 
 ### 3.4 Stock Adjustments — Missing Actions
-- [ ] Add `reverseStockAdjustment` action
+- [x] Add `reverseStockAdjustment` action
 - [ ] Add reverse UI to `/inventory` page
 
 ### 3.5 Products — Missing Actions
-- [ ] Add `importProducts` — bulk CSV/Excel import
+- [x] Add `importProducts` — bulk CSV/Excel import
 - [ ] Add import UI to `/products` page
 
 ### 3.6 Customers — Missing Actions
-- [ ] Add `checkCustomerLicense` — verify license status/expiry
-- [ ] Add `getExpiringLicenses` — customers with expiring licenses
+- [x] Add `checkCustomerLicense` — verify license status/expiry
+- [x] Add `getExpiringLicenses` — customers with expiring licenses
 - [ ] Add license compliance alerts to dashboard
 
 ### 3.7 Referral Persons — Missing Actions
-- [ ] Add `getReferralPersonById` to `referral-persons.ts`
-- [ ] Add `getReferralPersonsForSelect` — dropdown data
-- [ ] Add `updateReferralCommission` — update commission amount
-- [ ] Add `getCommissionHistory` — history per referral person
+- [x] Add `getReferralPersonById` to `referral-persons.ts`
+- [x] Add `getReferralPersonsForSelect` — dropdown data
+- [x] Add `updateReferralCommission` — update commission amount
+- [x] Add `getCommissionHistory` — history per referral person
 
 ### 3.8 Services — Missing Actions
-- [ ] Add `getActiveServices` to `services.ts`
-- [ ] Add `getServiceById` to `services.ts`
-- [ ] Add `getServiceByCode` to `services.ts`
-- [ ] Add `searchServices` to `services.ts`
-- [ ] Add `deleteServiceCategory` to `services.ts`
-- [ ] Add `getActiveServiceCategories` to `services.ts`
-- [ ] Create `src/actions/sale-services.ts` — selling services in POS
+- [x] Add `getActiveServices` to `services.ts`
+- [x] Add `getServiceById` to `services.ts`
+- [x] Add `getServiceByCode` to `services.ts`
+- [x] Add `searchServices` to `services.ts`
+- [x] Add `deleteServiceCategory` to `services.ts`
+- [x] Add `getActiveServiceCategories` to `services.ts`
+- [x] Create `src/actions/sale-services.ts` — selling services in POS
 
 ### 3.9 Branches — Missing Actions
-- [ ] Add `getActiveBranches` to `branches.ts`
+- [x] Add `getActiveBranches` to `branches.ts`
 
 ### 3.10 Messages — Missing Actions
-- [ ] Add `markAllAsRead` to `messages.ts`
-- [ ] Add `deleteMessage` to `messages.ts`
+- [x] Add `markAllAsRead` to `messages.ts`
+- [x] Add `deleteMessage` to `messages.ts`
 
 ### 3.11 Settings — Missing Actions
-- [ ] Add `getSettingsByCategory` to `settings.ts`
-- [ ] Add `updateBulkSettings` to `settings.ts`
-- [ ] Add `syncBranchSettings` — sync across branches
-- [ ] Add `exportSettings` — export to JSON
-- [ ] Add `importSettings` — import from JSON
-- [ ] Add `getBusinessSettingsByBranch` — branch-level overrides
+- [x] Add `getSettingsByCategory` to `settings.ts`
+- [x] Add `updateBulkSettings` to `settings.ts`
+- [x] Add `syncBranchSettings` — sync across branches
+- [x] Add `exportSettings` — export to JSON
+- [x] Add `importSettings` — import from JSON
+- [x] Add `getBusinessSettingsByBranch` — branch-level overrides
 
 ### 3.12 Audit Logs — Missing Actions
-- [ ] Add `getAuditLogsByUser` to `audit-logs.ts`
-- [ ] Add `getAuditLogsByEntity` to `audit-logs.ts`
-- [ ] Add `getAuditLogsByDateRange` to `audit-logs.ts`
-- [ ] Add `exportAuditLogs` — export
+- [x] Add `getAuditLogsByUser` to `audit-logs.ts`
+- [x] Add `getAuditLogsByEntity` to `audit-logs.ts`
+- [x] Add `getAuditLogsByDateRange` to `audit-logs.ts`
+- [x] Add `exportAuditLogs` — export
 
 ### 3.13 Todos — Missing Actions
-- [ ] Add `getTodoById` to `todos.ts`
-- [ ] Add `updateTodo` (full update, not just status)
-- [ ] Add `getTodoCounts` — counts by status
-- [ ] Add `getAssignableUsers` — users available for assignment
+- [x] Add `getTodoById` to `todos.ts`
+- [x] Add `updateTodo` (full update, not just status)
+- [x] Add `getTodoCounts` — counts by status
+- [x] Add `getAssignableUsers` — users available for assignment
 
 ---
 
@@ -366,10 +366,10 @@ These desktop features are intentionally excluded from the web app:
 |---|---|---|---|
 | Phase 1: Critical | 79 | 67 | 85% |
 | Phase 2: Important | 69 | 59 | 86% |
-| Phase 3: Moderate | 38 | 0 | 0% |
+| Phase 3: Moderate | 48 | 42 | 88% |
 | Phase 4: Security | 14 | 0 | 0% |
 | Phase 5: UI Pages | 18 | 0 | 0% |
-| **Total** | **218** | **126** | **58%** |
+| **Total** | **228** | **168** | **74%** |
 
 ---
 

@@ -125,6 +125,23 @@ export async function updateBranch(
   return { success: true, data: branch }
 }
 
+export async function getActiveBranches() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      id: branches.id,
+      name: branches.name,
+      code: branches.code,
+      isMain: branches.isMain,
+    })
+    .from(branches)
+    .where(and(eq(branches.tenantId, tenantId), eq(branches.isActive, true)))
+    .orderBy(branches.name)
+
+  return { success: true, data }
+}
+
 export async function deleteBranch(id: number) {
   const tenantId = await getTenantId()
 
