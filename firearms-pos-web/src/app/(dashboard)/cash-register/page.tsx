@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Landmark,
   Plus,
@@ -39,25 +39,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-
-const mockSession = {
-  id: 1,
-  sessionDate: '2026-02-05',
-  openingBalance: '25000',
-  status: 'open',
-  openedBy: 'Admin',
-  openedAt: '09:00 AM',
-}
-
-const mockTransactions = [
-  { id: 1, type: 'sale', amount: '85000', description: 'INV-0024 - Ahmad Khan', time: '10:15 AM' },
-  { id: 2, type: 'sale', amount: '12500', description: 'INV-0023 - Walk-in', time: '10:45 AM' },
-  { id: 3, type: 'expense', amount: '-3200', description: 'Cleaning supplies', time: '11:30 AM' },
-  { id: 4, type: 'petty_cash_out', amount: '-1500', description: 'Tea & refreshments', time: '12:00 PM' },
-  { id: 5, type: 'sale', amount: '35000', description: 'INV-0022 - Ali Raza', time: '01:30 PM' },
-  { id: 6, type: 'ar_collection', amount: '50000', description: 'Collection from Fazal Corp', time: '02:00 PM' },
-  { id: 7, type: 'refund', amount: '-4500', description: 'Return - Walk-in customer', time: '03:15 PM' },
-]
+import {
+  getActiveSession,
+  openSession,
+  closeSession,
+  getSessionTransactions,
+  addCashTransaction,
+} from '@/actions/cash-register'
+import { toast } from 'sonner'
 
 const txTypeLabels: Record<string, { label: string; color: string }> = {
   sale: { label: 'Sale', color: 'text-success' },
@@ -73,15 +62,128 @@ const txTypeLabels: Record<string, { label: string; color: string }> = {
 }
 
 export default function CashRegisterPage() {
-  const [sessionActive] = useState(true)
+  const [loading, setLoading] = useState(true)
+  const [session, setSession] = useState<any>(null)
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [openDialogOpen, setOpenDialogOpen] = useState(false)
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false)
+  const [txDialogOpen, setTxDialogOpen] = useState(false)
+  const [openingBalance, setOpeningBalance] = useState('')
+  const [actualBalance, setActualBalance] = useState('')
+  const [closeNotes, setCloseNotes] = useState('')
+  const [txType, setTxType] = useState('')
+  const [txAmount, setTxAmount] = useState('')
+  const [txDescription, setTxDescription] = useState('')
 
-  const totalIn = mockTransactions
+  const branchId = 1 // TODO: Get from session/context
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  async function loadData() {
+    try {
+      setLoading(true)
+      const sessionRes = await getActiveSession(branchId)
+      if (sessionRes.success && sessionRes.data) {
+        setSession(sessionRes.data)
+        const txRes = await getSessionTransactions(sessionRes.data.id)
+        if (txRes.success) {
+          setTransactions(txRes.data)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load cash register data:', error)
+      toast.error('Failed to load cash register data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleOpenSession(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      const res = await openSession({ branchId, openingBalance })
+      if (res.success) {
+        toast.success('Cash register session opened')
+        setOpenDialogOpen(false)
+        setOpeningBalance('')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to open session:', error)
+      toast.error('Failed to open session')
+    }
+  }
+
+  async function handleCloseSession(e: React.FormEvent) {
+    e.preventDefault()
+    if (!session) return
+    try {
+      const res = await closeSession({
+        sessionId: session.id,
+        actualBalance,
+        notes: closeNotes,
+      })
+      if (res.success) {
+        toast.success('Cash register session closed')
+        setCloseDialogOpen(false)
+        setActualBalance('')
+        setCloseNotes('')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to close session:', error)
+      toast.error('Failed to close session')
+    }
+  }
+
+  async function handleAddTransaction(e: React.FormEvent) {
+    e.preventDefault()
+    if (!session) return
+    try {
+      const res = await addCashTransaction({
+        sessionId: session.id,
+        branchId,
+        transactionType: txType,
+        amount: txAmount,
+        description: txDescription,
+      })
+      if (res.success) {
+        toast.success('Transaction recorded')
+        setTxDialogOpen(false)
+        setTxType('')
+        setTxAmount('')
+        setTxDescription('')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to add transaction:', error)
+      toast.error('Failed to add transaction')
+    }
+  }
+
+  const sessionActive = session?.status === 'open'
+  const totalIn = transactions
     .filter((t) => Number(t.amount) > 0)
     .reduce((sum, t) => sum + Number(t.amount), 0)
-  const totalOut = mockTransactions
+  const totalOut = transactions
     .filter((t) => Number(t.amount) < 0)
     .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0)
-  const currentBalance = Number(mockSession.openingBalance) + totalIn - totalOut
+  const currentBalance = Number(session?.openingBalance || 0) + totalIn - totalOut
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Cash Register</h1>
+            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -91,9 +193,9 @@ export default function CashRegisterPage() {
           <p className="text-sm text-muted-foreground mt-1">Manage daily cash sessions and reconciliation</p>
         </div>
         <div className="flex gap-2">
-          <Dialog>
+          <Dialog open={txDialogOpen} onOpenChange={setTxDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline">
+              <Button variant="outline" disabled={!sessionActive}>
                 <Plus className="w-4 h-4 mr-2" />
                 Add Transaction
               </Button>
@@ -102,10 +204,10 @@ export default function CashRegisterPage() {
               <DialogHeader>
                 <DialogTitle>Record Cash Transaction</DialogTitle>
               </DialogHeader>
-              <form className="space-y-4 mt-4">
+              <form onSubmit={handleAddTransaction} className="space-y-4 mt-4">
                 <div className="space-y-2">
                   <Label>Transaction Type</Label>
-                  <Select>
+                  <Select value={txType} onValueChange={setTxType} required>
                     <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="petty_cash_in">Cash In</SelectItem>
@@ -118,18 +220,18 @@ export default function CashRegisterPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Amount (Rs.)</Label>
-                  <Input type="number" placeholder="0.00" />
+                  <Input type="number" placeholder="0.00" value={txAmount} onChange={(e) => setTxAmount(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
                   <Label>Description</Label>
-                  <Input placeholder="What is this transaction for?" />
+                  <Input placeholder="What is this transaction for?" value={txDescription} onChange={(e) => setTxDescription(e.target.value)} />
                 </div>
                 <Button type="submit" className="w-full brass-glow">Record Transaction</Button>
               </form>
             </DialogContent>
           </Dialog>
           {sessionActive ? (
-            <Dialog>
+            <Dialog open={closeDialogOpen} onOpenChange={setCloseDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="destructive">
                   <Lock className="w-4 h-4 mr-2" />
@@ -140,7 +242,7 @@ export default function CashRegisterPage() {
                 <DialogHeader>
                   <DialogTitle>Close Cash Register Session</DialogTitle>
                 </DialogHeader>
-                <form className="space-y-4 mt-4">
+                <form onSubmit={handleCloseSession} className="space-y-4 mt-4">
                   <div className="p-4 rounded-lg bg-muted/50 border border-border space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Expected Balance:</span>
@@ -149,21 +251,37 @@ export default function CashRegisterPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>Actual Cash Count (Rs.)</Label>
-                    <Input type="number" placeholder="Count the actual cash" />
+                    <Input type="number" placeholder="Count the actual cash" value={actualBalance} onChange={(e) => setActualBalance(e.target.value)} required />
                   </div>
                   <div className="space-y-2">
                     <Label>Notes</Label>
-                    <Input placeholder="Any discrepancies or notes" />
+                    <Input placeholder="Any discrepancies or notes" value={closeNotes} onChange={(e) => setCloseNotes(e.target.value)} />
                   </div>
                   <Button type="submit" variant="destructive" className="w-full">Close & Reconcile</Button>
                 </form>
               </DialogContent>
             </Dialog>
           ) : (
-            <Button className="brass-glow">
-              <Unlock className="w-4 h-4 mr-2" />
-              Open Session
-            </Button>
+            <Dialog open={openDialogOpen} onOpenChange={setOpenDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="brass-glow">
+                  <Unlock className="w-4 h-4 mr-2" />
+                  Open Session
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="sm:max-w-[420px]">
+                <DialogHeader>
+                  <DialogTitle>Open Cash Register Session</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleOpenSession} className="space-y-4 mt-4">
+                  <div className="space-y-2">
+                    <Label>Opening Balance (Rs.)</Label>
+                    <Input type="number" placeholder="0.00" value={openingBalance} onChange={(e) => setOpeningBalance(e.target.value)} required />
+                  </div>
+                  <Button type="submit" className="w-full brass-glow">Open Session</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
           )}
         </div>
       </div>
@@ -175,7 +293,7 @@ export default function CashRegisterPage() {
             <div className="flex items-start justify-between">
               <div className="space-y-2">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Opening Balance</p>
-                <p className="text-2xl font-bold tracking-tight">Rs. {Number(mockSession.openingBalance).toLocaleString()}</p>
+                <p className="text-2xl font-bold tracking-tight">Rs. {Number(session?.openingBalance || 0).toLocaleString()}</p>
               </div>
               <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
                 <Landmark className="w-5 h-5 text-primary" />
@@ -225,22 +343,24 @@ export default function CashRegisterPage() {
       </div>
 
       {/* Session Info */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <Badge variant="outline" className="bg-success/10 text-success border-success/20 text-xs">
-                <Activity className="w-3 h-3 mr-1" />
-                Session Active
-              </Badge>
-              <span className="text-sm text-muted-foreground">
-                Opened by <span className="font-medium text-foreground">{mockSession.openedBy}</span> at {mockSession.openedAt}
-              </span>
+      {session && (
+        <Card>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Badge variant="outline" className={`text-xs ${sessionActive ? 'bg-success/10 text-success border-success/20' : 'bg-muted text-muted-foreground'}`}>
+                  <Activity className="w-3 h-3 mr-1" />
+                  {sessionActive ? 'Session Active' : 'Session Closed'}
+                </Badge>
+                <span className="text-sm text-muted-foreground">
+                  Opened at {new Date(session.openedAt).toLocaleTimeString()}
+                </span>
+              </div>
+              <span className="text-sm text-muted-foreground">{session.sessionDate}</span>
             </div>
-            <span className="text-sm text-muted-foreground">{mockSession.sessionDate}</span>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Transactions */}
       <Card>
@@ -258,22 +378,31 @@ export default function CashRegisterPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {mockTransactions.map((tx) => {
+              {transactions.map((tx) => {
                 const isNegative = Number(tx.amount) < 0
-                const typeInfo = txTypeLabels[tx.type] || { label: tx.type, color: 'text-foreground' }
+                const typeInfo = txTypeLabels[tx.transactionType] || { label: tx.transactionType, color: 'text-foreground' }
                 return (
                   <TableRow key={tx.id}>
-                    <TableCell className="text-sm text-muted-foreground">{tx.time}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(tx.transactionDate).toLocaleTimeString()}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="text-[10px]">{typeInfo.label}</Badge>
                     </TableCell>
-                    <TableCell className="text-sm">{tx.description}</TableCell>
+                    <TableCell className="text-sm">{tx.description || '-'}</TableCell>
                     <TableCell className={`text-right text-sm font-semibold ${isNegative ? 'text-destructive' : 'text-success'}`}>
                       {isNegative ? '-' : '+'}Rs. {Math.abs(Number(tx.amount)).toLocaleString()}
                     </TableCell>
                   </TableRow>
                 )
               })}
+              {transactions.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                    No transactions recorded
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

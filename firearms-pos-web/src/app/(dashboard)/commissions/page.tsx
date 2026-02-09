@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Percent,
   Filter,
@@ -28,21 +28,34 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  getCommissions,
+  getCommissionSummary,
+  approveCommission,
+  payCommission,
+} from '@/actions/commissions'
 
-const mockCommissions = [
-  { id: 1, saleId: 24, userName: 'Kashif Ali', referralName: null, commissionType: 'sale', baseAmount: '85000', rate: '2.50', commissionAmount: '2125', status: 'pending', createdAt: '2026-02-05' },
-  { id: 2, saleId: 22, userName: null, referralName: 'Hasan Malik', commissionType: 'referral', baseAmount: '35000', rate: '5.00', commissionAmount: '1750', status: 'approved', createdAt: '2026-02-04' },
-  { id: 3, saleId: 20, userName: 'Fahad Ahmed', referralName: null, commissionType: 'sale', baseAmount: '120000', rate: '2.50', commissionAmount: '3000', status: 'paid', createdAt: '2026-02-03' },
-  { id: 4, saleId: 18, userName: null, referralName: 'Imran Shah', commissionType: 'referral', baseAmount: '250000', rate: '3.00', commissionAmount: '7500', status: 'pending', createdAt: '2026-02-02' },
-  { id: 5, saleId: 15, userName: 'Kashif Ali', referralName: null, commissionType: 'bonus', baseAmount: '500000', rate: '1.00', commissionAmount: '5000', status: 'paid', createdAt: '2026-02-01' },
-]
+type Commission = {
+  commission: {
+    id: number
+    saleId: number
+    commissionType: string
+    baseAmount: string
+    rate: string
+    commissionAmount: string
+    status: string
+    createdAt: Date
+  }
+  userName: string | null
+  referralName: string | null
+}
 
-const summaryCards = [
-  { title: 'Total Earned', value: 'Rs. 19,375', icon: DollarSign, accent: 'text-primary' },
-  { title: 'Pending', value: 'Rs. 11,375', icon: Clock, accent: 'text-warning' },
-  { title: 'Paid Out', value: 'Rs. 8,000', icon: Banknote, accent: 'text-success' },
-  { title: 'Avg Rate', value: '2.80%', icon: Percent, accent: 'text-muted-foreground' },
-]
+type Summary = {
+  totalEarned: string
+  totalPending: string
+  totalPaid: string
+  totalCount: number
+}
 
 const statusColors: Record<string, string> = {
   pending: 'bg-warning/10 text-warning border-warning/20',
@@ -60,18 +73,98 @@ const typeColors: Record<string, string> = {
 export default function CommissionsPage() {
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterType, setFilterType] = useState('all')
+  const [commissions, setCommissions] = useState<Commission[]>([])
+  const [summary, setSummary] = useState<Summary | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const filtered = mockCommissions.filter((c) => {
-    if (filterStatus !== 'all' && c.status !== filterStatus) return false
-    if (filterType !== 'all' && c.commissionType !== filterType) return false
-    return true
-  })
+  useEffect(() => {
+    loadData()
+  }, [filterStatus, filterType])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [commissionsRes, summaryRes] = await Promise.all([
+        getCommissions({
+          status: filterStatus !== 'all' ? filterStatus : undefined,
+          type: filterType !== 'all' ? filterType : undefined,
+        }),
+        getCommissionSummary(),
+      ])
+
+      if (commissionsRes.success) {
+        setCommissions(commissionsRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load commissions:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleApprove(id: number) {
+    try {
+      await approveCommission(id)
+      loadData()
+    } catch (error) {
+      console.error('Failed to approve commission:', error)
+    }
+  }
+
+  async function handlePay(id: number) {
+    try {
+      await payCommission(id)
+      loadData()
+    } catch (error) {
+      console.error('Failed to pay commission:', error)
+    }
+  }
+
+  const avgRate =
+    commissions.length > 0
+      ? (
+          commissions.reduce((sum, c) => sum + Number(c.commission.rate), 0) /
+          commissions.length
+        ).toFixed(2)
+      : '0.00'
+
+  const summaryCards = [
+    {
+      title: 'Total Earned',
+      value: `Rs. ${Number(summary?.totalEarned || 0).toLocaleString()}`,
+      icon: DollarSign,
+      accent: 'text-primary',
+    },
+    {
+      title: 'Pending',
+      value: `Rs. ${Number(summary?.totalPending || 0).toLocaleString()}`,
+      icon: Clock,
+      accent: 'text-warning',
+    },
+    {
+      title: 'Paid Out',
+      value: `Rs. ${Number(summary?.totalPaid || 0).toLocaleString()}`,
+      icon: Banknote,
+      accent: 'text-success',
+    },
+    {
+      title: 'Avg Rate',
+      value: `${avgRate}%`,
+      icon: Percent,
+      accent: 'text-muted-foreground',
+    },
+  ]
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Commissions</h1>
-        <p className="text-sm text-muted-foreground mt-1">Track employee and referral commissions</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          Track employee and referral commissions
+        </p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -80,7 +173,9 @@ export default function CommissionsPage() {
             <CardContent className="p-5">
               <div className="flex items-start justify-between">
                 <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{card.title}</p>
+                  <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    {card.title}
+                  </p>
                   <p className="text-2xl font-bold tracking-tight">{card.value}</p>
                 </div>
                 <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -97,7 +192,9 @@ export default function CommissionsPage() {
           <div className="flex items-center gap-3">
             <Filter className="w-4 h-4 text-muted-foreground" />
             <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="pending">Pending</SelectItem>
@@ -106,7 +203,9 @@ export default function CommissionsPage() {
               </SelectContent>
             </Select>
             <Select value={filterType} onValueChange={setFilterType}>
-              <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Types</SelectItem>
                 <SelectItem value="sale">Sale</SelectItem>
@@ -120,68 +219,103 @@ export default function CommissionsPage() {
 
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Sale #</TableHead>
-                <TableHead>Earned By</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead className="text-right">Base Amount</TableHead>
-                <TableHead className="text-right">Rate</TableHead>
-                <TableHead className="text-right">Commission</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[100px]"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell className="text-sm text-muted-foreground">{c.createdAt}</TableCell>
-                  <TableCell className="text-sm font-mono">#{c.saleId}</TableCell>
-                  <TableCell className="text-sm font-medium">
-                    {c.userName || c.referralName}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={`text-[10px] capitalize ${typeColors[c.commissionType]}`}>
-                      {c.commissionType}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">
-                    Rs. {Number(c.baseAmount).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-right text-sm">{c.rate}%</TableCell>
-                  <TableCell className="text-right text-sm font-semibold">
-                    Rs. {Number(c.commissionAmount).toLocaleString()}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={`text-[10px] ${statusColors[c.status]}`}>
-                      {c.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      {c.status === 'pending' && (
-                        <Button variant="outline" size="sm" className="h-7 text-xs">
-                          <Check className="w-3 h-3 mr-1" />
-                          Approve
-                        </Button>
-                      )}
-                      {c.status === 'approved' && (
-                        <Button variant="outline" size="sm" className="h-7 text-xs">
-                          <Banknote className="w-3 h-3 mr-1" />
-                          Pay
-                        </Button>
-                      )}
-                      {c.status === 'paid' && (
-                        <CheckCircle2 className="w-4 h-4 text-success" />
-                      )}
-                    </div>
-                  </TableCell>
+          {loading ? (
+            <div className="text-center py-8 text-muted-foreground">Loading...</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Sale #</TableHead>
+                  <TableHead>Earned By</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead className="text-right">Base Amount</TableHead>
+                  <TableHead className="text-right">Rate</TableHead>
+                  <TableHead className="text-right">Commission</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[100px]"></TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {commissions.map((c) => (
+                  <TableRow key={c.commission.id}>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(c.commission.createdAt).toLocaleDateString('en-PK')}
+                    </TableCell>
+                    <TableCell className="text-sm font-mono">
+                      #{c.commission.saleId}
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">
+                      {c.userName || c.referralName}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] capitalize ${
+                          typeColors[c.commission.commissionType]
+                        }`}
+                      >
+                        {c.commission.commissionType}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">
+                      Rs. {Number(c.commission.baseAmount).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {c.commission.rate}%
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(c.commission.commissionAmount).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${statusColors[c.commission.status]}`}
+                      >
+                        {c.commission.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        {c.commission.status === 'pending' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => handleApprove(c.commission.id)}
+                          >
+                            <Check className="w-3 h-3 mr-1" />
+                            Approve
+                          </Button>
+                        )}
+                        {c.commission.status === 'approved' && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => handlePay(c.commission.id)}
+                          >
+                            <Banknote className="w-3 h-3 mr-1" />
+                            Pay
+                          </Button>
+                        )}
+                        {c.commission.status === 'paid' && (
+                          <CheckCircle2 className="w-4 h-4 text-success" />
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {commissions.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                      No commissions found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

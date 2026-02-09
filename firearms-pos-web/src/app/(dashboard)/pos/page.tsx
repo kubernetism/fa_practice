@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   ShoppingCart,
   Search,
@@ -47,56 +47,44 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
+import { getProducts, getCategories } from '@/actions/products'
+import { getCustomers } from '@/actions/customers'
+import { createSale } from '@/actions/sales'
 
 type Product = {
   id: number
   code: string
   name: string
-  category: string
-  sellingPrice: number
+  categoryName: string | null
+  sellingPrice: string
+  costPrice: string
   isSerialTracked: boolean
-  taxRate: number
-  inStock: boolean
+  taxRate: string
+  isActive: boolean
 }
 
 type CartItem = {
   productId: number
   name: string
   code: string
+  costPrice: number
   qty: number
   unitPrice: number
   serialNumber?: string
   taxRate: number
 }
 
-const mockProducts: Product[] = [
-  { id: 1, code: 'P-001', name: 'Glock 19 Gen5', category: 'Pistols', sellingPrice: 120000, isSerialTracked: true, taxRate: 16, inStock: true },
-  { id: 2, code: 'P-002', name: 'Beretta 92FS', category: 'Pistols', sellingPrice: 110000, isSerialTracked: true, taxRate: 16, inStock: true },
-  { id: 3, code: 'P-003', name: 'SIG P320', category: 'Pistols', sellingPrice: 135000, isSerialTracked: true, taxRate: 16, inStock: true },
-  { id: 4, code: 'R-001', name: 'AR-15 Standard', category: 'Rifles', sellingPrice: 195000, isSerialTracked: true, taxRate: 16, inStock: false },
-  { id: 5, code: 'R-002', name: 'AK-47 Semi', category: 'Rifles', sellingPrice: 175000, isSerialTracked: true, taxRate: 16, inStock: true },
-  { id: 6, code: 'S-001', name: 'Benelli M4', category: 'Shotguns', sellingPrice: 245000, isSerialTracked: true, taxRate: 16, inStock: true },
-  { id: 7, code: 'A-001', name: '9mm FMJ (50rds)', category: 'Ammunition', sellingPrice: 3500, isSerialTracked: false, taxRate: 16, inStock: true },
-  { id: 8, code: 'A-002', name: '.45 ACP HP (25rds)', category: 'Ammunition', sellingPrice: 5200, isSerialTracked: false, taxRate: 16, inStock: true },
-  { id: 9, code: 'A-003', name: '5.56 NATO (20rds)', category: 'Ammunition', sellingPrice: 4800, isSerialTracked: false, taxRate: 16, inStock: true },
-  { id: 10, code: 'ACC-001', name: 'Red Dot Sight', category: 'Accessories', sellingPrice: 35000, isSerialTracked: false, taxRate: 16, inStock: true },
-  { id: 11, code: 'ACC-002', name: 'Gun Cleaning Kit', category: 'Accessories', sellingPrice: 2500, isSerialTracked: false, taxRate: 16, inStock: true },
-  { id: 12, code: 'ACC-003', name: 'Tactical Holster', category: 'Accessories', sellingPrice: 4500, isSerialTracked: false, taxRate: 16, inStock: true },
-]
-
-const categories = ['All', 'Pistols', 'Rifles', 'Shotguns', 'Ammunition', 'Accessories']
-const mockCustomers = [
-  { id: 0, name: 'Walk-in Customer' },
-  { id: 1, name: 'Ahmed Khan' },
-  { id: 2, name: 'Fatima Malik' },
-  { id: 3, name: 'Hassan Raza' },
-]
+type Customer = {
+  id: number
+  name: string
+}
 
 export default function POSPage() {
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [cart, setCart] = useState<CartItem[]>([])
-  const [selectedCustomer, setSelectedCustomer] = useState(mockCustomers[0])
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer>({ id: 0, name: 'Walk-in Customer' })
   const [discount, setDiscount] = useState(0)
   const [notes, setNotes] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<string | null>(null)
@@ -105,9 +93,46 @@ export default function POSPage() {
   const [serialDialogOpen, setSerialDialogOpen] = useState(false)
   const [pendingProduct, setPendingProduct] = useState<Product | null>(null)
   const [serialInput, setSerialInput] = useState('')
+  const [allProducts, setAllProducts] = useState<Product[]>([])
+  const [categories, setCategories] = useState<string[]>(['All'])
+  const [loading, setLoading] = useState(true)
+  const [completing, setCompleting] = useState(false)
 
-  const filteredProducts = mockProducts.filter((p) => {
-    if (selectedCategory !== 'All' && p.category !== selectedCategory) return false
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true)
+      const [productsResult, categoriesResult, customersResult] = await Promise.all([
+        getProducts({ isActive: true }),
+        getCategories(),
+        getCustomers({ isActive: true }),
+      ])
+
+      if (productsResult.success) {
+        setAllProducts(
+          productsResult.data.map((d: any) => ({
+            ...d.product,
+            categoryName: d.categoryName,
+          }))
+        )
+      }
+      if (categoriesResult.success) {
+        const catNames = (categoriesResult.data as any[]).map((c: any) => c.name)
+        setCategories(['All', ...catNames])
+      }
+      if (customersResult.success) {
+        const custs = (customersResult.data as any[]).map((c: any) => ({
+          id: c.id,
+          name: `${c.firstName} ${c.lastName}`.trim(),
+        }))
+        setCustomers([{ id: 0, name: 'Walk-in Customer' }, ...custs])
+      }
+      setLoading(false)
+    }
+    loadData()
+  }, [])
+
+  const filteredProducts = allProducts.filter((p) => {
+    if (selectedCategory !== 'All' && p.categoryName !== selectedCategory) return false
     if (search) {
       const q = search.toLowerCase()
       if (!p.name.toLowerCase().includes(q) && !p.code.toLowerCase().includes(q)) return false
@@ -116,7 +141,6 @@ export default function POSPage() {
   })
 
   const addToCart = (product: Product) => {
-    if (!product.inStock) return
     if (product.isSerialTracked) {
       setPendingProduct(product)
       setSerialInput('')
@@ -127,7 +151,11 @@ export default function POSPage() {
     if (existing) {
       setCart(cart.map((c) => c === existing ? { ...c, qty: c.qty + 1 } : c))
     } else {
-      setCart([...cart, { productId: product.id, name: product.name, code: product.code, qty: 1, unitPrice: product.sellingPrice, taxRate: product.taxRate }])
+      setCart([...cart, {
+        productId: product.id, name: product.name, code: product.code,
+        costPrice: Number(product.costPrice), qty: 1, unitPrice: Number(product.sellingPrice),
+        taxRate: Number(product.taxRate),
+      }])
     }
   }
 
@@ -135,7 +163,8 @@ export default function POSPage() {
     if (!pendingProduct || !serialInput.trim()) return
     setCart([...cart, {
       productId: pendingProduct.id, name: pendingProduct.name, code: pendingProduct.code,
-      qty: 1, unitPrice: pendingProduct.sellingPrice, serialNumber: serialInput.trim(), taxRate: pendingProduct.taxRate,
+      costPrice: Number(pendingProduct.costPrice), qty: 1, unitPrice: Number(pendingProduct.sellingPrice),
+      serialNumber: serialInput.trim(), taxRate: Number(pendingProduct.taxRate),
     }])
     setSerialDialogOpen(false)
     setPendingProduct(null)
@@ -166,6 +195,47 @@ export default function POSPage() {
   const taxAmount = cart.reduce((sum, item) => sum + (item.unitPrice * item.qty * item.taxRate / 100), 0)
   const total = subtotal + taxAmount - discount
   const change = amountTendered ? Math.max(0, Number(amountTendered) - total) : 0
+
+  const handleCompleteSale = async () => {
+    if (cart.length === 0 || !paymentMethod) return
+    setCompleting(true)
+
+    const amountPaid = paymentMethod === 'cash'
+      ? Number(amountTendered) || total
+      : paymentMethod === 'credit'
+        ? 0
+        : total
+
+    const result = await createSale({
+      customerId: selectedCustomer.id || null,
+      branchId: 1, // Default branch — will be replaced with session branch
+      items: cart.map((item) => ({
+        productId: item.productId,
+        quantity: item.qty,
+        unitPrice: item.unitPrice,
+        costPrice: item.costPrice,
+        serialNumber: item.serialNumber,
+        taxAmount: item.unitPrice * item.qty * item.taxRate / 100,
+      })),
+      paymentMethod,
+      payments: amountPaid > 0
+        ? [{ paymentMethod, amount: amountPaid }]
+        : [],
+      subtotal,
+      taxAmount: Math.round(taxAmount),
+      discountAmount: discount,
+      totalAmount: Math.round(total),
+      amountPaid,
+      changeGiven: Math.round(change),
+      notes: notes || undefined,
+    })
+
+    setCompleting(false)
+    if (result.success) {
+      clearCart()
+      setSelectedCustomer({ id: 0, name: 'Walk-in Customer' })
+    }
+  }
 
   return (
     <div className="flex gap-4 h-[calc(100vh-5rem)]">
@@ -204,37 +274,36 @@ export default function POSPage() {
 
         {/* Product Grid */}
         <ScrollArea className="flex-1">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 p-1">
-            {filteredProducts.map((product) => (
-              <Card
-                key={product.id}
-                className={`cursor-pointer transition-all hover:ring-1 hover:ring-primary/50 ${
-                  !product.inStock ? 'opacity-40 cursor-not-allowed' : ''
-                }`}
-                onClick={() => addToCart(product)}
-              >
-                <CardContent className="p-3">
-                  <div className="flex items-start justify-between mb-2">
-                    <Badge variant="outline" className="text-[9px]">{product.category}</Badge>
-                    {product.isSerialTracked && (
-                      <Hash className="w-3 h-3 text-blue-400" />
-                    )}
-                  </div>
-                  <p className="text-sm font-medium leading-tight mb-1 line-clamp-2">{product.name}</p>
-                  <p className="text-[10px] font-mono text-muted-foreground mb-2">{product.code}</p>
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-primary">Rs. {product.sellingPrice.toLocaleString()}</span>
-                    {!product.inStock && (
-                      <Badge variant="outline" className="text-[9px] bg-destructive/10 text-destructive border-destructive/20">Out</Badge>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-            {filteredProducts.length === 0 && (
-              <div className="col-span-full text-center py-12 text-muted-foreground">No products found</div>
-            )}
-          </div>
+          {loading ? (
+            <div className="text-center py-12 text-muted-foreground">Loading products...</div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 p-1">
+              {filteredProducts.map((product) => (
+                <Card
+                  key={product.id}
+                  className="cursor-pointer transition-all hover:ring-1 hover:ring-primary/50"
+                  onClick={() => addToCart(product)}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex items-start justify-between mb-2">
+                      <Badge variant="outline" className="text-[9px]">{product.categoryName || 'N/A'}</Badge>
+                      {product.isSerialTracked && (
+                        <Hash className="w-3 h-3 text-blue-400" />
+                      )}
+                    </div>
+                    <p className="text-sm font-medium leading-tight mb-1 line-clamp-2">{product.name}</p>
+                    <p className="text-[10px] font-mono text-muted-foreground mb-2">{product.code}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-bold text-primary">Rs. {Number(product.sellingPrice).toLocaleString()}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+              {filteredProducts.length === 0 && (
+                <div className="col-span-full text-center py-12 text-muted-foreground">No products found</div>
+              )}
+            </div>
+          )}
         </ScrollArea>
       </div>
 
@@ -268,7 +337,7 @@ export default function POSPage() {
               <CommandList>
                 <CommandEmpty>No customer found.</CommandEmpty>
                 <CommandGroup>
-                  {mockCustomers.map((c) => (
+                  {customers.map((c) => (
                     <CommandItem
                       key={c.id}
                       value={c.name}
@@ -424,9 +493,13 @@ export default function POSPage() {
             <Pause className="w-4 h-4 mr-1" />
             Hold
           </Button>
-          <Button className="flex-[2] brass-glow" disabled={cart.length === 0 || !paymentMethod}>
+          <Button
+            className="flex-[2] brass-glow"
+            disabled={cart.length === 0 || !paymentMethod || completing}
+            onClick={handleCompleteSale}
+          >
             <Check className="w-4 h-4 mr-1" />
-            Complete Sale
+            {completing ? 'Processing...' : 'Complete Sale'}
           </Button>
         </div>
       </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   BarChart3,
   TrendingUp,
@@ -33,47 +33,93 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-
-const mockPnL = {
-  revenue: '3200000',
-  costOfGoods: '1800000',
-  grossProfit: '1400000',
-  expenses: '450000',
-  netProfit: '950000',
-}
-
-const mockBalanceSheet = {
-  assets: '1835000',
-  liabilities: '120000',
-  equity: '1715000',
-}
-
-const mockSalesReport = {
-  totalSales: '3200000',
-  totalDiscount: '95000',
-  totalTax: '280000',
-  saleCount: 142,
-  avgSale: '22535',
-}
-
-const mockTopProducts = [
-  { name: 'Glock 19 Gen5', code: 'GLK-19G5', sellingPrice: '185000', costPrice: '145000' },
-  { name: '9mm Luger 50rd', code: 'AMM-9MM50', sellingPrice: '4500', costPrice: '3200' },
-  { name: 'AR-15 Complete Upper', code: 'AR15-UPR', sellingPrice: '120000', costPrice: '85000' },
-  { name: 'Cleaning Kit Pro', code: 'CLN-PRO', sellingPrice: '3500', costPrice: '1800' },
-  { name: 'Tactical Holster', code: 'HOL-TAC', sellingPrice: '8500', costPrice: '4200' },
-]
-
-const summaryCards = [
-  { title: 'Revenue', value: 'Rs. 3.2M', icon: TrendingUp, accent: 'text-success', trend: '+12%' },
-  { title: 'Net Profit', value: 'Rs. 950K', icon: DollarSign, accent: 'text-primary', trend: '+8%' },
-  { title: 'Expenses', value: 'Rs. 450K', icon: TrendingDown, accent: 'text-orange-400', trend: '-3%' },
-  { title: 'Sales Count', value: '142', icon: Activity, accent: 'text-blue-400', trend: '+15%' },
-]
+import {
+  getProfitAndLoss,
+  getBalanceSheet,
+  getSalesReport,
+  getTopProducts,
+  getTaxReport,
+} from '@/actions/reports'
 
 export default function ReportsPage() {
   const [dateFrom, setDateFrom] = useState('2026-02-01')
   const [dateTo, setDateTo] = useState('2026-02-28')
+  const [loading, setLoading] = useState(true)
+  const [pnlData, setPnlData] = useState<any>(null)
+  const [balanceData, setBalanceData] = useState<any>(null)
+  const [salesData, setSalesData] = useState<any>(null)
+  const [topProducts, setTopProducts] = useState<any[]>([])
+  const [taxData, setTaxData] = useState<any>(null)
+
+  useEffect(() => {
+    loadReports()
+  }, [])
+
+  async function loadReports() {
+    setLoading(true)
+    try {
+      const [pnl, balance, sales, products, tax] = await Promise.all([
+        getProfitAndLoss(dateFrom, dateTo),
+        getBalanceSheet(),
+        getSalesReport(dateFrom, dateTo),
+        getTopProducts(5),
+        getTaxReport(dateFrom, dateTo),
+      ])
+
+      if (pnl.success) setPnlData(pnl.data)
+      if (balance.success) setBalanceData(balance.data)
+      if (sales.success) setSalesData(sales.data)
+      if (products.success) setTopProducts(products.data)
+      if (tax.success) setTaxData(tax.data)
+    } catch (error) {
+      console.error('Failed to load reports:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleApply() {
+    loadReports()
+  }
+
+  const summaryCards = [
+    {
+      title: 'Revenue',
+      value: `Rs. ${salesData ? (Number(salesData.totalSales) / 1000000).toFixed(1) : 0}M`,
+      icon: TrendingUp,
+      accent: 'text-success',
+      trend: '+12%',
+    },
+    {
+      title: 'Net Profit',
+      value: `Rs. ${pnlData ? (Number(pnlData.netProfit) / 1000).toFixed(0) : 0}K`,
+      icon: DollarSign,
+      accent: 'text-primary',
+      trend: '+8%',
+    },
+    {
+      title: 'Expenses',
+      value: `Rs. ${pnlData ? (Number(pnlData.expenses) / 1000).toFixed(0) : 0}K`,
+      icon: TrendingDown,
+      accent: 'text-orange-400',
+      trend: '-3%',
+    },
+    {
+      title: 'Sales Count',
+      value: String(salesData?.saleCount || 0),
+      icon: Activity,
+      accent: 'text-blue-400',
+      trend: '+15%',
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <p className="text-muted-foreground">Loading reports...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -100,7 +146,7 @@ export default function ReportsPage() {
               <Label className="text-sm">To</Label>
               <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-[160px]" />
             </div>
-            <Button variant="outline" size="sm">Apply</Button>
+            <Button variant="outline" size="sm" onClick={handleApply}>Apply</Button>
           </div>
         </CardContent>
       </Card>
@@ -148,23 +194,33 @@ export default function ReportsPage() {
                 <TableBody>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Revenue</TableCell>
-                    <TableCell className="text-right text-sm font-semibold text-success">Rs. {Number(mockPnL.revenue).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold text-success">
+                      Rs. {Number(pnlData?.revenue || 0).toLocaleString()}
+                    </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Cost of Goods Sold</TableCell>
-                    <TableCell className="text-right text-sm font-semibold text-red-400">(Rs. {Number(mockPnL.costOfGoods).toLocaleString()})</TableCell>
+                    <TableCell className="text-right text-sm font-semibold text-red-400">
+                      (Rs. {Number(pnlData?.costOfGoods || 0).toLocaleString()})
+                    </TableCell>
                   </TableRow>
                   <TableRow className="bg-muted/30">
                     <TableCell className="text-sm font-bold">Gross Profit</TableCell>
-                    <TableCell className="text-right text-sm font-bold">Rs. {Number(mockPnL.grossProfit).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-bold">
+                      Rs. {(Number(pnlData?.revenue || 0) - Number(pnlData?.costOfGoods || 0)).toLocaleString()}
+                    </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Operating Expenses</TableCell>
-                    <TableCell className="text-right text-sm font-semibold text-red-400">(Rs. {Number(mockPnL.expenses).toLocaleString()})</TableCell>
+                    <TableCell className="text-right text-sm font-semibold text-red-400">
+                      (Rs. {Number(pnlData?.expenses || 0).toLocaleString()})
+                    </TableCell>
                   </TableRow>
                   <TableRow className="bg-primary/5 border-t-2 border-primary/20">
                     <TableCell className="text-sm font-bold text-primary">Net Profit</TableCell>
-                    <TableCell className="text-right text-sm font-bold text-primary">Rs. {Number(mockPnL.netProfit).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-bold text-primary">
+                      Rs. {Number(pnlData?.netProfit || 0).toLocaleString()}
+                    </TableCell>
                   </TableRow>
                 </TableBody>
               </Table>
@@ -184,21 +240,21 @@ export default function ReportsPage() {
               <div className="grid grid-cols-3 gap-6">
                 <div className="text-center p-6 rounded-lg bg-blue-500/5 border border-blue-500/20">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Total Assets</p>
-                  <p className="text-2xl font-bold text-blue-400">Rs. {Number(mockBalanceSheet.assets).toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-blue-400">Rs. {Number(balanceData?.assets || 0).toLocaleString()}</p>
                 </div>
                 <div className="text-center p-6 rounded-lg bg-red-500/5 border border-red-500/20">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Total Liabilities</p>
-                  <p className="text-2xl font-bold text-red-400">Rs. {Number(mockBalanceSheet.liabilities).toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-red-400">Rs. {Number(balanceData?.liabilities || 0).toLocaleString()}</p>
                 </div>
                 <div className="text-center p-6 rounded-lg bg-green-500/5 border border-green-500/20">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Owner&apos;s Equity</p>
-                  <p className="text-2xl font-bold text-green-400">Rs. {Number(mockBalanceSheet.equity).toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-green-400">Rs. {Number(balanceData?.equity || 0).toLocaleString()}</p>
                 </div>
               </div>
               <div className="mt-4 p-3 rounded-lg bg-muted/30 text-center">
                 <p className="text-xs text-muted-foreground">
-                  Assets ({Number(mockBalanceSheet.assets).toLocaleString()}) = Liabilities ({Number(mockBalanceSheet.liabilities).toLocaleString()}) + Equity ({Number(mockBalanceSheet.equity).toLocaleString()})
-                  {Number(mockBalanceSheet.assets) === Number(mockBalanceSheet.liabilities) + Number(mockBalanceSheet.equity)
+                  Assets ({Number(balanceData?.assets || 0).toLocaleString()}) = Liabilities ({Number(balanceData?.liabilities || 0).toLocaleString()}) + Equity ({Number(balanceData?.equity || 0).toLocaleString()})
+                  {Number(balanceData?.assets || 0) === Number(balanceData?.liabilities || 0) + Number(balanceData?.equity || 0)
                     ? <Badge className="ml-2 text-[10px] bg-success/10 text-success border-success/20" variant="outline">Balanced</Badge>
                     : <Badge className="ml-2 text-[10px] bg-red-500/10 text-red-400 border-red-500/20" variant="outline">Imbalanced</Badge>
                   }
@@ -221,23 +277,31 @@ export default function ReportsPage() {
                 <TableBody>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Total Sales</TableCell>
-                    <TableCell className="text-right text-sm font-semibold">Rs. {Number(mockSalesReport.totalSales).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(salesData?.totalSales || 0).toLocaleString()}
+                    </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Total Discounts</TableCell>
-                    <TableCell className="text-right text-sm font-semibold text-orange-400">(Rs. {Number(mockSalesReport.totalDiscount).toLocaleString()})</TableCell>
+                    <TableCell className="text-right text-sm font-semibold text-orange-400">
+                      (Rs. {Number(salesData?.totalDiscount || 0).toLocaleString()})
+                    </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Total Tax Collected</TableCell>
-                    <TableCell className="text-right text-sm font-semibold">Rs. {Number(mockSalesReport.totalTax).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(salesData?.totalTax || 0).toLocaleString()}
+                    </TableCell>
                   </TableRow>
                   <TableRow>
                     <TableCell className="text-sm font-medium">Number of Sales</TableCell>
-                    <TableCell className="text-right text-sm font-semibold">{mockSalesReport.saleCount}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">{salesData?.saleCount || 0}</TableCell>
                   </TableRow>
                   <TableRow className="bg-primary/5">
                     <TableCell className="text-sm font-bold text-primary">Average Sale Value</TableCell>
-                    <TableCell className="text-right text-sm font-bold text-primary">Rs. {Number(mockSalesReport.avgSale).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-bold text-primary">
+                      Rs. {Number(salesData?.avgSale || 0).toLocaleString()}
+                    </TableCell>
                   </TableRow>
                 </TableBody>
               </Table>
@@ -266,7 +330,7 @@ export default function ReportsPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {mockTopProducts.map((p, i) => {
+                  {topProducts.map((p, i) => {
                     const margin = ((Number(p.sellingPrice) - Number(p.costPrice)) / Number(p.sellingPrice) * 100).toFixed(1)
                     return (
                       <TableRow key={p.code}>
@@ -285,6 +349,11 @@ export default function ReportsPage() {
                       </TableRow>
                     )
                   })}
+                  {topProducts.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No products found</TableCell>
+                    </TableRow>
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -303,11 +372,11 @@ export default function ReportsPage() {
               <div className="grid grid-cols-2 gap-6">
                 <div className="p-6 rounded-lg bg-primary/5 border border-primary/20">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Taxable Revenue</p>
-                  <p className="text-2xl font-bold">Rs. {Number(mockSalesReport.totalSales).toLocaleString()}</p>
+                  <p className="text-2xl font-bold">Rs. {Number(taxData?.taxableRevenue || 0).toLocaleString()}</p>
                 </div>
                 <div className="p-6 rounded-lg bg-primary/5 border border-primary/20">
                   <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-2">Sales Tax Collected</p>
-                  <p className="text-2xl font-bold text-primary">Rs. {Number(mockSalesReport.totalTax).toLocaleString()}</p>
+                  <p className="text-2xl font-bold text-primary">Rs. {Number(taxData?.salesTax || 0).toLocaleString()}</p>
                 </div>
               </div>
             </CardContent>

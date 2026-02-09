@@ -1,6 +1,6 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react'
 import {
   RotateCcw,
   Search,
@@ -10,11 +10,10 @@ import {
   TrendingDown,
   Banknote,
   RefreshCw,
-  CreditCard,
   CheckCircle2,
   AlertCircle,
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -23,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from '@/components/ui/dialog';
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -31,295 +30,334 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table';
+} from '@/components/ui/table'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Textarea } from '@/components/ui/textarea';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+} from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Textarea } from '@/components/ui/textarea'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { getReturns, getReturnSummary, createReturn, deleteReturn } from '@/actions/returns'
+import { getSaleById } from '@/actions/sales'
 
-type ReturnType = 'refund' | 'exchange' | 'store_credit';
-type ReturnCondition = 'new' | 'good' | 'fair' | 'damaged';
-type RefundMethod = 'cash' | 'card' | 'store_credit';
+type ReturnType = 'refund' | 'exchange' | 'store_credit'
+type ReturnCondition = 'new' | 'good' | 'fair' | 'damaged'
+type RefundMethod = 'cash' | 'card' | 'store_credit'
 
 interface Return {
-  id: string;
-  returnNumber: string;
-  date: string;
-  originalInvoice: string;
-  customer: string;
-  type: ReturnType;
-  itemsCount: number;
-  refundMethod: RefundMethod | null;
-  refundAmount: number;
+  return: {
+    id: number
+    returnNumber: string
+    originalSaleId: number
+    returnType: string
+    refundMethod: string | null
+    refundAmount: string
+    returnDate: Date
+  }
+  customerName: string | null
 }
 
 interface SaleItem {
-  id: string;
-  name: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
+  item: {
+    id: number
+    saleId: number
+    productId: number
+    serialNumber: string | null
+    quantity: number
+    unitPrice: string
+    costPrice: string
+    discountPercent: string
+    discountAmount: string
+    taxAmount: string
+    totalPrice: string
+    createdAt: Date
+  }
+  productName: string | null
+  productCode: string | null
 }
 
 interface ReturnItem extends SaleItem {
-  selected: boolean;
-  returnQuantity: number;
-  condition: ReturnCondition;
-  restockable: boolean;
+  selected: boolean
+  returnQuantity: number
+  condition: ReturnCondition
+  restockable: boolean
+}
+
+interface Summary {
+  totalReturns: number
+  totalRefunded: string
+  refundCount: number
+  exchangeCount: number
+  storeCreditCount: number
 }
 
 export default function ReturnsPage() {
-  const [filterType, setFilterType] = useState<string>('all');
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogStep, setDialogStep] = useState<'lookup' | 'items' | 'details' | 'confirm'>('lookup');
+  const [filterType, setFilterType] = useState<string>('all')
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [dialogStep, setDialogStep] = useState<'lookup' | 'items' | 'details' | 'confirm'>('lookup')
+  const [loading, setLoading] = useState(true)
+  const [returns, setReturns] = useState<Return[]>([])
+  const [summary, setSummary] = useState<Summary | null>(null)
 
   // Dialog state
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [saleFound, setSaleFound] = useState(false);
-  const [returnItems, setReturnItems] = useState<ReturnItem[]>([]);
-  const [returnType, setReturnType] = useState<ReturnType>('refund');
-  const [refundMethod, setRefundMethod] = useState<RefundMethod>('cash');
-  const [returnReason, setReturnReason] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('')
+  const [lookingSale, setLookingSale] = useState(false)
+  const [saleFound, setSaleFound] = useState(false)
+  const [saleId, setSaleId] = useState<number | null>(null)
+  const [customerId, setCustomerId] = useState<number | null>(null)
+  const [branchId, setBranchId] = useState<number>(1)
+  const [returnItems, setReturnItems] = useState<ReturnItem[]>([])
+  const [returnType, setReturnType] = useState<ReturnType>('refund')
+  const [refundMethod, setRefundMethod] = useState<RefundMethod>('cash')
+  const [returnReason, setReturnReason] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
-  // Mock data
-  const returns: Return[] = [
-    {
-      id: '1',
-      returnNumber: 'RTN-001',
-      date: '2026-02-05',
-      originalInvoice: 'INV-1245',
-      customer: 'Ahmed Hassan',
-      type: 'refund',
-      itemsCount: 2,
-      refundMethod: 'cash',
-      refundAmount: 15500,
-    },
-    {
-      id: '2',
-      returnNumber: 'RTN-002',
-      date: '2026-02-04',
-      originalInvoice: 'INV-1238',
-      customer: 'Fatima Khan',
-      type: 'exchange',
-      itemsCount: 1,
-      refundMethod: null,
-      refundAmount: 0,
-    },
-    {
-      id: '3',
-      returnNumber: 'RTN-003',
-      date: '2026-02-03',
-      originalInvoice: 'INV-1229',
-      customer: 'Muhammad Ali',
-      type: 'store_credit',
-      itemsCount: 3,
-      refundMethod: 'store_credit',
-      refundAmount: 28000,
-    },
-    {
-      id: '4',
-      returnNumber: 'RTN-004',
-      date: '2026-02-02',
-      originalInvoice: 'INV-1220',
-      customer: 'Ayesha Malik',
-      type: 'refund',
-      itemsCount: 1,
-      refundMethod: 'card',
-      refundAmount: 8500,
-    },
-    {
-      id: '5',
-      returnNumber: 'RTN-005',
-      date: '2026-02-01',
-      originalInvoice: 'INV-1215',
-      customer: 'Usman Sheikh',
-      type: 'refund',
-      itemsCount: 2,
-      refundMethod: 'cash',
-      refundAmount: 12000,
-    },
-  ];
+  useEffect(() => {
+    loadData()
+  }, [filterType])
 
-  const mockSaleItems: SaleItem[] = [
-    {
-      id: '1',
-      name: '9mm Luger Ammunition (Box of 50)',
-      quantity: 2,
-      unitPrice: 4500,
-      total: 9000,
-    },
-    {
-      id: '2',
-      name: 'Glock 19 Gen5 Magazine (15 rounds)',
-      quantity: 3,
-      unitPrice: 2500,
-      total: 7500,
-    },
-    {
-      id: '3',
-      name: 'Gun Cleaning Kit - Universal',
-      quantity: 1,
-      unitPrice: 3200,
-      total: 3200,
-    },
-  ];
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [returnsRes, summaryRes] = await Promise.all([
+        getReturns({
+          returnType: filterType !== 'all' ? filterType : undefined,
+        }),
+        getReturnSummary(),
+      ])
 
-  const filteredReturns = returns.filter((ret) => {
-    if (filterType === 'all') return true;
-    return ret.type === filterType;
-  });
+      if (returnsRes.success) {
+        setReturns(returnsRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load returns:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const filteredReturns = returns
 
   // Calculate summary stats
-  const totalReturns = returns.length;
-  const totalRefunded = returns.reduce((sum, ret) => sum + ret.refundAmount, 0);
-  const refundsCount = returns.filter((r) => r.type === 'refund').length;
-  const exchangesCount = returns.filter((r) => r.type === 'exchange').length;
+  const totalReturns = summary?.totalReturns || 0
+  const totalRefunded = Number(summary?.totalRefunded || 0)
+  const refundsCount = summary?.refundCount || 0
+  const exchangesCount = summary?.exchangeCount || 0
 
-  const getReturnTypeBadge = (type: ReturnType) => {
+  const getReturnTypeBadge = (type: string) => {
     switch (type) {
       case 'refund':
-        return <Badge variant="outline" className="text-[10px] border-blue-500/30 bg-blue-500/10 text-blue-400">Refund</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-blue-500/30 bg-blue-500/10 text-blue-400">Refund</Badge>
       case 'exchange':
-        return <Badge variant="outline" className="text-[10px] border-purple-500/30 bg-purple-500/10 text-purple-400">Exchange</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-purple-500/30 bg-purple-500/10 text-purple-400">Exchange</Badge>
       case 'store_credit':
-        return <Badge variant="outline" className="text-[10px] border-amber-500/30 bg-amber-500/10 text-amber-400">Store Credit</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-amber-500/30 bg-amber-500/10 text-amber-400">Store Credit</Badge>
     }
-  };
+  }
 
   const getConditionBadge = (condition: ReturnCondition) => {
     switch (condition) {
       case 'new':
-        return <Badge variant="outline" className="text-[10px] border-green-500/30 bg-green-500/10 text-green-400">New</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-green-500/30 bg-green-500/10 text-green-400">New</Badge>
       case 'good':
-        return <Badge variant="outline" className="text-[10px] border-blue-500/30 bg-blue-500/10 text-blue-400">Good</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-blue-500/30 bg-blue-500/10 text-blue-400">Good</Badge>
       case 'fair':
-        return <Badge variant="outline" className="text-[10px] border-yellow-500/30 bg-yellow-500/10 text-yellow-400">Fair</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-yellow-500/30 bg-yellow-500/10 text-yellow-400">Fair</Badge>
       case 'damaged':
-        return <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/10 text-red-400">Damaged</Badge>;
+        return <Badge variant="outline" className="text-[10px] border-red-500/30 bg-red-500/10 text-red-400">Damaged</Badge>
     }
-  };
+  }
 
-  const getRefundMethodLabel = (method: RefundMethod | null) => {
-    if (!method) return '-';
+  const getRefundMethodLabel = (method: string | null) => {
+    if (!method) return '-'
     switch (method) {
       case 'cash':
-        return 'Cash';
+        return 'Cash'
       case 'card':
-        return 'Card';
+        return 'Card'
       case 'store_credit':
-        return 'Store Credit';
+        return 'Store Credit'
+      default:
+        return method
     }
-  };
+  }
 
-  const handleLookupSale = () => {
-    if (invoiceNumber.trim()) {
-      // Mock: simulate finding the sale
-      setSaleFound(true);
-      setReturnItems(
-        mockSaleItems.map((item) => ({
-          ...item,
-          selected: false,
-          returnQuantity: 1,
-          condition: 'good' as ReturnCondition,
-          restockable: true,
-        }))
-      );
-      setDialogStep('items');
+  const handleLookupSale = async () => {
+    if (!invoiceNumber.trim()) return
+
+    setLookingSale(true)
+    try {
+      // First, search for the sale by invoice number
+      // We'll use getSales with search parameter - need to get sale ID from returned data
+      // For now, let's assume the invoice is like "INV-2026-02-05-001" and we extract the ID
+      // In production, you'd want getSaleByInvoiceNumber in actions
+
+      // Mock implementation: try to find sale by searching
+      // You may need to add a getSaleByInvoiceNumber action
+      const saleIdMatch = invoiceNumber.match(/\d+$/)
+      if (!saleIdMatch) {
+        alert('Sale not found')
+        return
+      }
+
+      const possibleSaleId = parseInt(saleIdMatch[0])
+      const saleRes = await getSaleById(possibleSaleId)
+
+      if (saleRes.success && saleRes.data) {
+        setSaleFound(true)
+        setSaleId(saleRes.data.sale.id)
+        setCustomerId(saleRes.data.sale.customerId || null)
+        setBranchId(saleRes.data.sale.branchId)
+
+        // Map items for return
+        setReturnItems(
+          saleRes.data.items.map((item: SaleItem) => ({
+            ...item,
+            selected: false,
+            returnQuantity: 1,
+            condition: 'good' as ReturnCondition,
+            restockable: true,
+          }))
+        )
+        setDialogStep('items')
+      } else {
+        alert('Sale not found. Please check the invoice number.')
+      }
+    } catch (error) {
+      console.error('Failed to lookup sale:', error)
+      alert('Failed to lookup sale')
+    } finally {
+      setLookingSale(false)
     }
-  };
+  }
 
-  const handleItemSelection = (itemId: string, checked: boolean) => {
+  const handleItemSelection = (itemId: number, checked: boolean) => {
     setReturnItems((prev) =>
       prev.map((item) =>
-        item.id === itemId ? { ...item, selected: checked } : item
+        item.item.id === itemId ? { ...item, selected: checked } : item
       )
-    );
-  };
+    )
+  }
 
-  const handleReturnQuantityChange = (itemId: string, quantity: number) => {
+  const handleReturnQuantityChange = (itemId: number, quantity: number) => {
     setReturnItems((prev) =>
       prev.map((item) =>
-        item.id === itemId
-          ? { ...item, returnQuantity: Math.min(quantity, item.quantity) }
+        item.item.id === itemId
+          ? { ...item, returnQuantity: Math.min(quantity, item.item.quantity) }
           : item
       )
-    );
-  };
+    )
+  }
 
-  const handleConditionChange = (itemId: string, condition: ReturnCondition) => {
+  const handleConditionChange = (itemId: number, condition: ReturnCondition) => {
     setReturnItems((prev) =>
       prev.map((item) =>
-        item.id === itemId ? { ...item, condition } : item
+        item.item.id === itemId ? { ...item, condition } : item
       )
-    );
-  };
+    )
+  }
 
-  const handleRestockableChange = (itemId: string, restockable: boolean) => {
+  const handleRestockableChange = (itemId: number, restockable: boolean) => {
     setReturnItems((prev) =>
       prev.map((item) =>
-        item.id === itemId ? { ...item, restockable } : item
+        item.item.id === itemId ? { ...item, restockable } : item
       )
-    );
-  };
+    )
+  }
 
   const calculateRefundAmount = () => {
     return returnItems
       .filter((item) => item.selected)
-      .reduce((sum, item) => sum + item.unitPrice * item.returnQuantity, 0);
-  };
+      .reduce((sum, item) => sum + Number(item.item.unitPrice) * item.returnQuantity, 0)
+  }
 
   const handleProceedToDetails = () => {
-    const hasSelectedItems = returnItems.some((item) => item.selected);
+    const hasSelectedItems = returnItems.some((item) => item.selected)
     if (hasSelectedItems) {
-      setDialogStep('details');
+      setDialogStep('details')
     }
-  };
+  }
 
   const handleProceedToConfirm = () => {
     if (returnReason.trim()) {
-      setDialogStep('confirm');
+      setDialogStep('confirm')
     }
-  };
+  }
 
-  const handleProcessReturn = () => {
-    // Here you would call your API to process the return
-    console.log('Processing return:', {
-      invoiceNumber,
-      returnItems: returnItems.filter((item) => item.selected),
-      returnType,
-      refundMethod,
-      returnReason,
-      refundAmount: calculateRefundAmount(),
-    });
+  const handleProcessReturn = async () => {
+    if (!saleId) return
 
-    // Reset and close dialog
-    setDialogOpen(false);
-    resetDialog();
-  };
+    setSubmitting(true)
+    try {
+      const selectedItems = returnItems.filter((item) => item.selected)
+
+      const result = await createReturn({
+        originalSaleId: saleId,
+        customerId: customerId || undefined,
+        branchId,
+        returnType,
+        refundMethod: returnType === 'refund' ? refundMethod : undefined,
+        reason: returnReason,
+        items: selectedItems.map((item) => ({
+          saleItemId: item.item.id,
+          productId: item.item.productId,
+          quantity: item.returnQuantity,
+          unitPrice: Number(item.item.unitPrice),
+          condition: item.condition,
+          restockable: item.restockable,
+        })),
+      })
+
+      if (result.success) {
+        setDialogOpen(false)
+        resetDialog()
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to process return:', error)
+      alert('Failed to process return')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const resetDialog = () => {
-    setDialogStep('lookup');
-    setInvoiceNumber('');
-    setSaleFound(false);
-    setReturnItems([]);
-    setReturnType('refund');
-    setRefundMethod('cash');
-    setReturnReason('');
-  };
+    setDialogStep('lookup')
+    setInvoiceNumber('')
+    setSaleFound(false)
+    setSaleId(null)
+    setCustomerId(null)
+    setReturnItems([])
+    setReturnType('refund')
+    setRefundMethod('cash')
+    setReturnReason('')
+  }
 
   const handleDialogClose = () => {
-    setDialogOpen(false);
-    resetDialog();
-  };
+    setDialogOpen(false)
+    resetDialog()
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('Are you sure you want to delete this return?')) return
+
+    try {
+      await deleteReturn(id)
+      loadData()
+    } catch (error) {
+      console.error('Failed to delete return:', error)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -361,11 +399,11 @@ export default function ReturnsPage() {
                       value={invoiceNumber}
                       onChange={(e) => setInvoiceNumber(e.target.value)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') handleLookupSale();
+                        if (e.key === 'Enter') handleLookupSale()
                       }}
                     />
-                    <Button onClick={handleLookupSale}>
-                      <Search className="h-4 w-4" />
+                    <Button onClick={handleLookupSale} disabled={lookingSale}>
+                      {lookingSale ? '...' : <Search className="h-4 w-4" />}
                     </Button>
                   </div>
                 </div>
@@ -389,22 +427,22 @@ export default function ReturnsPage() {
                   <div className="space-y-3">
                     {returnItems.map((item) => (
                       <div
-                        key={item.id}
+                        key={item.item.id}
                         className="rounded-lg border border-neutral-800 bg-neutral-900/50 p-3 space-y-3"
                       >
                         <div className="flex items-start gap-3">
                           <Checkbox
                             checked={item.selected}
                             onCheckedChange={(checked) =>
-                              handleItemSelection(item.id, checked as boolean)
+                              handleItemSelection(item.item.id, checked as boolean)
                             }
                             className="mt-1"
                           />
                           <div className="flex-1 space-y-2">
                             <div>
-                              <p className="font-medium text-sm">{item.name}</p>
+                              <p className="font-medium text-sm">{item.productName}</p>
                               <p className="text-xs text-neutral-400">
-                                Original Qty: {item.quantity} × Rs. {item.unitPrice.toLocaleString()}
+                                Original Qty: {item.item.quantity} × Rs. {Number(item.item.unitPrice).toLocaleString()}
                               </p>
                             </div>
 
@@ -415,11 +453,11 @@ export default function ReturnsPage() {
                                   <Input
                                     type="number"
                                     min="1"
-                                    max={item.quantity}
+                                    max={item.item.quantity}
                                     value={item.returnQuantity}
                                     onChange={(e) =>
                                       handleReturnQuantityChange(
-                                        item.id,
+                                        item.item.id,
                                         parseInt(e.target.value) || 1
                                       )
                                     }
@@ -431,7 +469,7 @@ export default function ReturnsPage() {
                                   <Select
                                     value={item.condition}
                                     onValueChange={(value) =>
-                                      handleConditionChange(item.id, value as ReturnCondition)
+                                      handleConditionChange(item.item.id, value as ReturnCondition)
                                     }
                                   >
                                     <SelectTrigger className="h-8">
@@ -451,7 +489,7 @@ export default function ReturnsPage() {
                                     <Checkbox
                                       checked={item.restockable}
                                       onCheckedChange={(checked) =>
-                                        handleRestockableChange(item.id, checked as boolean)
+                                        handleRestockableChange(item.item.id, checked as boolean)
                                       }
                                     />
                                     <span className="ml-2 text-xs">Yes</span>
@@ -580,11 +618,11 @@ export default function ReturnsPage() {
                         .filter((item) => item.selected)
                         .map((item) => (
                           <div
-                            key={item.id}
+                            key={item.item.id}
                             className="flex items-start justify-between text-sm py-2"
                           >
                             <div className="flex-1">
-                              <p className="font-medium">{item.name}</p>
+                              <p className="font-medium">{item.productName}</p>
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-xs text-neutral-400">
                                   Qty: {item.returnQuantity}
@@ -599,7 +637,7 @@ export default function ReturnsPage() {
                               </div>
                             </div>
                             <span className="font-medium">
-                              Rs. {(item.unitPrice * item.returnQuantity).toLocaleString()}
+                              Rs. {(Number(item.item.unitPrice) * item.returnQuantity).toLocaleString()}
                             </span>
                           </div>
                         ))}
@@ -630,8 +668,8 @@ export default function ReturnsPage() {
                   <Button variant="outline" onClick={() => setDialogStep('details')}>
                     Back
                   </Button>
-                  <Button onClick={handleProcessReturn} className="brass-glow">
-                    Process Return
+                  <Button onClick={handleProcessReturn} className="brass-glow" disabled={submitting}>
+                    {submitting ? 'Processing...' : 'Process Return'}
                   </Button>
                 </DialogFooter>
               </div>
@@ -713,65 +751,74 @@ export default function ReturnsPage() {
 
       {/* Returns Table */}
       <div className="card-tactical overflow-hidden">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent border-neutral-800">
-              <TableHead className="text-neutral-400">Return #</TableHead>
-              <TableHead className="text-neutral-400">Date</TableHead>
-              <TableHead className="text-neutral-400">Original Invoice</TableHead>
-              <TableHead className="text-neutral-400">Customer</TableHead>
-              <TableHead className="text-neutral-400">Type</TableHead>
-              <TableHead className="text-neutral-400">Items Count</TableHead>
-              <TableHead className="text-neutral-400">Refund Method</TableHead>
-              <TableHead className="text-neutral-400 text-right">Refund Amount</TableHead>
-              <TableHead className="text-neutral-400 text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredReturns.map((ret) => (
-              <TableRow key={ret.id} className="border-neutral-800">
-                <TableCell className="font-medium">{ret.returnNumber}</TableCell>
-                <TableCell className="text-neutral-400">
-                  {new Date(ret.date).toLocaleDateString('en-PK', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                  })}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline" className="text-[10px] font-mono">
-                    {ret.originalInvoice}
-                  </Badge>
-                </TableCell>
-                <TableCell>{ret.customer}</TableCell>
-                <TableCell>{getReturnTypeBadge(ret.type)}</TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-1 text-neutral-400">
-                    <Package className="h-3 w-3" />
-                    <span>{ret.itemsCount}</span>
-                  </div>
-                </TableCell>
-                <TableCell className="text-neutral-400">
-                  {getRefundMethodLabel(ret.refundMethod)}
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {ret.refundAmount > 0 ? `Rs. ${ret.refundAmount.toLocaleString()}` : '-'}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-300">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
+        {loading ? (
+          <div className="text-center py-8 text-muted-foreground">Loading...</div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent border-neutral-800">
+                <TableHead className="text-neutral-400">Return #</TableHead>
+                <TableHead className="text-neutral-400">Date</TableHead>
+                <TableHead className="text-neutral-400">Original Invoice</TableHead>
+                <TableHead className="text-neutral-400">Customer</TableHead>
+                <TableHead className="text-neutral-400">Type</TableHead>
+                <TableHead className="text-neutral-400">Refund Method</TableHead>
+                <TableHead className="text-neutral-400 text-right">Refund Amount</TableHead>
+                <TableHead className="text-neutral-400 text-right">Actions</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+            </TableHeader>
+            <TableBody>
+              {filteredReturns.map((ret) => (
+                <TableRow key={ret.return.id} className="border-neutral-800">
+                  <TableCell className="font-medium">{ret.return.returnNumber}</TableCell>
+                  <TableCell className="text-neutral-400">
+                    {new Date(ret.return.returnDate).toLocaleDateString('en-PK', {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      Sale #{ret.return.originalSaleId}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{ret.customerName || '-'}</TableCell>
+                  <TableCell>{getReturnTypeBadge(ret.return.returnType)}</TableCell>
+                  <TableCell className="text-neutral-400">
+                    {getRefundMethodLabel(ret.return.refundMethod)}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {Number(ret.return.refundAmount) > 0 ? `Rs. ${Number(ret.return.refundAmount).toLocaleString()}` : '-'}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                        <Eye className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-red-400 hover:text-red-300"
+                        onClick={() => handleDelete(ret.return.id)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {filteredReturns.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    No returns found
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        )}
       </div>
     </div>
-  );
+  )
 }

@@ -9,61 +9,76 @@ import {
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { getDashboardStats, getRecentSales, getLowStockItems } from '@/actions/dashboard'
 
-const stats = [
-  {
-    title: "Today's Sales",
-    value: 'Rs. 145,200',
-    change: '+12.5%',
-    trend: 'up' as const,
-    icon: DollarSign,
-    description: '24 transactions',
-  },
-  {
-    title: 'Orders',
-    value: '24',
-    change: '+8.2%',
-    trend: 'up' as const,
-    icon: ShoppingCart,
-    description: 'vs 22 yesterday',
-  },
-  {
-    title: 'Products',
-    value: '342',
-    change: '-2',
-    trend: 'down' as const,
-    icon: Package,
-    description: '5 low stock',
-  },
-  {
-    title: 'Revenue (MTD)',
-    value: 'Rs. 2.4M',
-    change: '+18.3%',
-    trend: 'up' as const,
-    icon: TrendingUp,
-    description: 'vs last month',
-  },
-]
+function formatCurrency(value: string | number) {
+  return `Rs. ${Number(value).toLocaleString()}`
+}
 
-const lowStockItems = [
-  { name: 'Glock 19 Gen5', code: 'FIR-G19G5', stock: 2, min: 5 },
-  { name: '9mm Ammo Box (50)', code: 'AMM-9MM50', stock: 8, min: 20 },
-  { name: 'AR-15 Magazine 30rd', code: 'ACC-AR15M30', stock: 3, min: 10 },
-  { name: 'Cleaning Kit Universal', code: 'CLN-UNIV', stock: 1, min: 5 },
-]
+function timeAgo(date: Date) {
+  const now = new Date()
+  const diffMs = now.getTime() - new Date(date).getTime()
+  const diffMin = Math.floor(diffMs / 60000)
+  if (diffMin < 1) return 'Just now'
+  if (diffMin < 60) return `${diffMin} min ago`
+  const diffHr = Math.floor(diffMin / 60)
+  if (diffHr < 24) return `${diffHr} hr${diffHr > 1 ? 's' : ''} ago`
+  const diffDay = Math.floor(diffHr / 24)
+  return `${diffDay} day${diffDay > 1 ? 's' : ''} ago`
+}
 
-const recentSales = [
-  { invoice: 'INV-0024', customer: 'Ahmad Khan', amount: 'Rs. 85,000', time: '10 min ago', method: 'Cash' },
-  { invoice: 'INV-0023', customer: 'Walk-in', amount: 'Rs. 12,500', time: '25 min ago', method: 'Card' },
-  { invoice: 'INV-0022', customer: 'Ali Raza', amount: 'Rs. 35,000', time: '1 hr ago', method: 'Cash' },
-  { invoice: 'INV-0021', customer: 'Fahad Ahmed', amount: 'Rs. 8,200', time: '2 hrs ago', method: 'Mobile' },
-  { invoice: 'INV-0020', customer: 'Walk-in', amount: 'Rs. 4,500', time: '3 hrs ago', method: 'Cash' },
-]
+export default async function DashboardPage() {
+  const [statsResult, recentResult, lowStockResult] = await Promise.all([
+    getDashboardStats(),
+    getRecentSales(5),
+    getLowStockItems(5),
+  ])
 
-export default function DashboardPage() {
+  const s = statsResult.data!
+  const recentSales = recentResult.data ?? []
+  const lowStockItems = lowStockResult.data ?? []
+
+  const monthRev = Number(s.monthRevenue)
+  const lastMonthRev = Number(s.lastMonthRevenue)
+  const revChange = lastMonthRev > 0 ? ((monthRev - lastMonthRev) / lastMonthRev * 100).toFixed(1) : '0'
+
+  const stats = [
+    {
+      title: "Today's Sales",
+      value: formatCurrency(s.todayRevenue),
+      change: s.yesterdaySales > 0 ? `${s.todaySales > s.yesterdaySales ? '+' : ''}${s.todaySales - s.yesterdaySales}` : `${s.todaySales}`,
+      trend: s.todaySales >= s.yesterdaySales ? ('up' as const) : ('down' as const),
+      icon: DollarSign,
+      description: `${s.todaySales} transactions`,
+    },
+    {
+      title: 'Orders Today',
+      value: String(s.todaySales),
+      change: s.yesterdaySales > 0 ? `${((s.todaySales - s.yesterdaySales) / s.yesterdaySales * 100).toFixed(0)}%` : '0%',
+      trend: s.todaySales >= s.yesterdaySales ? ('up' as const) : ('down' as const),
+      icon: ShoppingCart,
+      description: `vs ${s.yesterdaySales} yesterday`,
+    },
+    {
+      title: 'Products',
+      value: String(s.totalProducts),
+      change: s.lowStockCount > 0 ? `-${s.lowStockCount}` : '0',
+      trend: s.lowStockCount > 0 ? ('down' as const) : ('up' as const),
+      icon: Package,
+      description: `${s.lowStockCount} low stock`,
+    },
+    {
+      title: 'Revenue (MTD)',
+      value: formatCurrency(monthRev),
+      change: `${Number(revChange) >= 0 ? '+' : ''}${revChange}%`,
+      trend: Number(revChange) >= 0 ? ('up' as const) : ('down' as const),
+      icon: TrendingUp,
+      description: 'vs last month',
+    },
+  ]
+
   return (
     <div className="space-y-6">
-      {/* Page header */}
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -118,32 +133,36 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {recentSales.map((sale) => (
-                <div
-                  key={sale.invoice}
-                  className="flex items-center justify-between py-3 px-3 -mx-3 rounded-lg hover:bg-accent/50 transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                      <span className="text-[10px] font-bold text-muted-foreground">
-                        {sale.customer.charAt(0)}
-                      </span>
+              {recentSales.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No sales yet</p>
+              ) : (
+                recentSales.map((sale) => (
+                  <div
+                    key={sale.id}
+                    className="flex items-center justify-between py-3 px-3 -mx-3 rounded-lg hover:bg-accent/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                        <span className="text-[10px] font-bold text-muted-foreground">
+                          {sale.customerName.charAt(0)}
+                        </span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">{sale.customerName}</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {sale.invoiceNumber} &middot; {timeAgo(sale.saleDate)}
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium">{sale.customer}</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {sale.invoice} &middot; {sale.time}
-                      </p>
+                    <div className="text-right">
+                      <p className="text-sm font-semibold">{formatCurrency(sale.totalAmount)}</p>
+                      <Badge variant="outline" className="text-[10px] mt-0.5 capitalize">
+                        {sale.paymentMethod}
+                      </Badge>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold">{sale.amount}</p>
-                    <Badge variant="outline" className="text-[10px] mt-0.5">
-                      {sale.method}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
@@ -158,30 +177,34 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {lowStockItems.map((item) => (
-                <div
-                  key={item.code}
-                  className="flex items-center justify-between py-3 px-3 -mx-3 rounded-lg hover:bg-accent/50 transition-colors"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{item.name}</p>
-                    <p className="text-[11px] text-muted-foreground font-mono">{item.code}</p>
+              {lowStockItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">All stock levels healthy</p>
+              ) : (
+                lowStockItems.map((item) => (
+                  <div
+                    key={item.productCode}
+                    className="flex items-center justify-between py-3 px-3 -mx-3 rounded-lg hover:bg-accent/50 transition-colors"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{item.productName}</p>
+                      <p className="text-[11px] text-muted-foreground font-mono">{item.productCode}</p>
+                    </div>
+                    <div className="text-right">
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] font-bold ${
+                          item.quantity <= 2
+                            ? 'border-destructive/50 text-destructive bg-destructive/5'
+                            : 'border-warning/50 text-warning bg-warning/5'
+                        }`}
+                      >
+                        {item.quantity} left
+                      </Badge>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">min: {item.reorderLevel}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] font-bold ${
-                        item.stock <= 2
-                          ? 'border-destructive/50 text-destructive bg-destructive/5'
-                          : 'border-warning/50 text-warning bg-warning/5'
-                      }`}
-                    >
-                      {item.stock} left
-                    </Badge>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">min: {item.min}</p>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ArrowDownToLine,
   Plus,
@@ -38,20 +38,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Progress } from '@/components/ui/progress'
-
-const mockReceivables = [
-  { id: 1, customerName: 'Ahmad Khan', invoiceNumber: 'INV-0018', totalAmount: '185000', paidAmount: '100000', remainingAmount: '85000', status: 'partial', dueDate: '2026-02-20' },
-  { id: 2, customerName: 'Fazal Corp', invoiceNumber: 'INV-0015', totalAmount: '320000', paidAmount: '0', remainingAmount: '320000', status: 'pending', dueDate: '2026-03-01' },
-  { id: 3, customerName: 'Ali Raza', invoiceNumber: 'INV-0012', totalAmount: '45000', paidAmount: '45000', remainingAmount: '0', status: 'paid', dueDate: '2026-02-10' },
-  { id: 4, customerName: 'Pakistan Arms Dealers', invoiceNumber: 'INV-0009', totalAmount: '250000', paidAmount: '50000', remainingAmount: '200000', status: 'overdue', dueDate: '2026-01-20' },
-]
-
-const summaryCards = [
-  { title: 'Total Outstanding', value: 'Rs. 605,000', icon: DollarSign, accent: 'text-primary' },
-  { title: 'Total Collected', value: 'Rs. 195,000', icon: Wallet, accent: 'text-success' },
-  { title: 'Pending', value: '2', icon: Clock, accent: 'text-warning' },
-  { title: 'Overdue', value: '1', icon: AlertTriangle, accent: 'text-destructive' },
-]
+import { getReceivables, getReceivableSummary, createReceivable } from '@/actions/receivables'
+import { getCustomers } from '@/actions/customers'
+import { getBranches } from '@/actions/branches'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-warning/10 text-warning border-warning/20',
@@ -62,11 +51,123 @@ const statusColors: Record<string, string> = {
 
 export default function ReceivablesPage() {
   const [filterStatus, setFilterStatus] = useState('all')
-
-  const filtered = mockReceivables.filter((r) => {
-    if (filterStatus !== 'all' && r.status !== filterStatus) return false
-    return true
+  const [receivables, setReceivables] = useState<any[]>([])
+  const [summary, setSummary] = useState<any>(null)
+  const [customers, setCustomers] = useState<any[]>([])
+  const [branches, setBranches] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    customerId: '',
+    branchId: '',
+    invoiceNumber: '',
+    totalAmount: '',
+    dueDate: '',
+    notes: '',
   })
+
+  useEffect(() => {
+    loadData()
+  }, [filterStatus])
+
+  async function loadData() {
+    try {
+      setLoading(true)
+      const [receivablesRes, summaryRes, customersRes, branchesRes] = await Promise.all([
+        getReceivables({ status: filterStatus }),
+        getReceivableSummary(),
+        getCustomers({ isActive: true }),
+        getBranches({ isActive: true }),
+      ])
+
+      if (receivablesRes.success) {
+        setReceivables(receivablesRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+      if (customersRes.success) {
+        setCustomers(customersRes.data)
+      }
+      if (branchesRes.success) {
+        setBranches(branchesRes.data.map((b: any) => b.branch))
+      }
+    } catch (error) {
+      console.error('Failed to load receivables:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleCreateReceivable(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      const result = await createReceivable({
+        customerId: Number(formData.customerId),
+        branchId: Number(formData.branchId),
+        invoiceNumber: formData.invoiceNumber,
+        totalAmount: formData.totalAmount,
+        dueDate: formData.dueDate || undefined,
+        notes: formData.notes || undefined,
+      })
+
+      if (result.success) {
+        setIsDialogOpen(false)
+        setFormData({
+          customerId: '',
+          branchId: '',
+          invoiceNumber: '',
+          totalAmount: '',
+          dueDate: '',
+          notes: '',
+        })
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to create receivable:', error)
+    }
+  }
+
+  const summaryCards = [
+    {
+      title: 'Total Outstanding',
+      value: `Rs. ${Number(summary?.totalOutstanding || 0).toLocaleString()}`,
+      icon: DollarSign,
+      accent: 'text-primary'
+    },
+    {
+      title: 'Total Collected',
+      value: `Rs. ${Number(summary?.totalCollected || 0).toLocaleString()}`,
+      icon: Wallet,
+      accent: 'text-success'
+    },
+    {
+      title: 'Pending',
+      value: String(summary?.pendingCount || 0),
+      icon: Clock,
+      accent: 'text-warning'
+    },
+    {
+      title: 'Overdue',
+      value: String(summary?.overdueCount || 0),
+      icon: AlertTriangle,
+      accent: 'text-destructive'
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Account Receivables</h1>
+            <p className="text-sm text-muted-foreground mt-1">Track credit sales and customer collections</p>
+          </div>
+        </div>
+        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -75,7 +176,7 @@ export default function ReceivablesPage() {
           <h1 className="text-2xl font-bold tracking-tight">Account Receivables</h1>
           <p className="text-sm text-muted-foreground mt-1">Track credit sales and customer collections</p>
         </div>
-        <Dialog>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="brass-glow">
               <Plus className="w-4 h-4 mr-2" />
@@ -86,36 +187,78 @@ export default function ReceivablesPage() {
             <DialogHeader>
               <DialogTitle>Create Account Receivable</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form className="space-y-4 mt-4" onSubmit={handleCreateReceivable}>
               <div className="space-y-2">
                 <Label>Customer</Label>
-                <Select>
+                <Select
+                  value={formData.customerId}
+                  onValueChange={(value) => setFormData({ ...formData, customerId: value })}
+                  required
+                >
                   <SelectTrigger><SelectValue placeholder="Select customer" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">Ahmad Khan</SelectItem>
-                    <SelectItem value="2">Fazal Corp</SelectItem>
-                    <SelectItem value="3">Ali Raza</SelectItem>
+                    {customers.map((customer) => (
+                      <SelectItem key={customer.id} value={String(customer.id)}>
+                        {customer.firstName} {customer.lastName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Branch</Label>
+                <Select
+                  value={formData.branchId}
+                  onValueChange={(value) => setFormData({ ...formData, branchId: value })}
+                  required
+                >
+                  <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                  <SelectContent>
+                    {branches.map((branch) => (
+                      <SelectItem key={branch.id} value={String(branch.id)}>
+                        {branch.name}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Invoice Number</Label>
-                  <Input placeholder="INV-XXX" />
+                  <Input
+                    placeholder="INV-XXX"
+                    value={formData.invoiceNumber}
+                    onChange={(e) => setFormData({ ...formData, invoiceNumber: e.target.value })}
+                    required
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Total Amount (Rs.)</Label>
-                  <Input type="number" placeholder="0.00" />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={formData.totalAmount}
+                    onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
+                    required
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Due Date</Label>
-                  <Input type="date" />
+                  <Input
+                    type="date"
+                    value={formData.dueDate}
+                    onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Notes</Label>
-                  <Input placeholder="Optional notes" />
+                  <Input
+                    placeholder="Optional notes"
+                    value={formData.notes}
+                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                  />
                 </div>
               </div>
               <Button type="submit" className="w-full brass-glow">Create Receivable</Button>
@@ -176,13 +319,16 @@ export default function ReceivablesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((r) => {
+              {receivables.map((item) => {
+                const r = item.receivable
                 const progress = (Number(r.paidAmount) / Number(r.totalAmount)) * 100
                 return (
                   <TableRow key={r.id}>
-                    <TableCell className="text-sm font-medium">{r.customerName}</TableCell>
+                    <TableCell className="text-sm font-medium">{item.customerName || 'N/A'}</TableCell>
                     <TableCell className="text-sm font-mono text-muted-foreground">{r.invoiceNumber}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{r.dueDate}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {r.dueDate ? new Date(r.dueDate).toLocaleDateString() : 'N/A'}
+                    </TableCell>
                     <TableCell className="text-right text-sm">Rs. {Number(r.totalAmount).toLocaleString()}</TableCell>
                     <TableCell className="w-[120px]">
                       <div className="space-y-1">
@@ -207,6 +353,13 @@ export default function ReceivablesPage() {
                   </TableRow>
                 )
               })}
+              {receivables.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                    No receivables found
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

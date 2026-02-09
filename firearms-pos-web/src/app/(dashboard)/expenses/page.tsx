@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Receipt,
   Plus,
@@ -38,34 +38,138 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { getExpenses, getExpenseSummary, createExpense, deleteExpense } from '@/actions/expenses'
 
 const categories = ['rent', 'utilities', 'salaries', 'supplies', 'maintenance', 'marketing', 'other']
 const paymentMethods = ['cash', 'card', 'check', 'transfer']
 
-const mockExpenses = [
-  { id: 1, category: 'rent', amount: '45000', description: 'Shop rent - February', paymentMethod: 'transfer', paymentStatus: 'paid', expenseDate: '2026-02-01', reference: 'TRF-001' },
-  { id: 2, category: 'utilities', amount: '8500', description: 'Electricity bill', paymentMethod: 'cash', paymentStatus: 'paid', expenseDate: '2026-02-03', reference: '' },
-  { id: 3, category: 'salaries', amount: '120000', description: 'Staff salaries - January', paymentMethod: 'transfer', paymentStatus: 'unpaid', expenseDate: '2026-02-05', reference: '' },
-  { id: 4, category: 'supplies', amount: '3200', description: 'Cleaning supplies', paymentMethod: 'cash', paymentStatus: 'paid', expenseDate: '2026-02-04', reference: 'CSH-044' },
-  { id: 5, category: 'maintenance', amount: '15000', description: 'AC repair', paymentMethod: 'cash', paymentStatus: 'paid', expenseDate: '2026-02-02', reference: '' },
-]
+type Expense = {
+  id: number
+  category: string
+  amount: string
+  description: string | null
+  paymentMethod: string
+  paymentStatus: string
+  expenseDate: Date
+  reference: string | null
+}
 
-const summaryCards = [
-  { title: 'Total Expenses', value: 'Rs. 191,700', icon: DollarSign, accent: 'text-primary' },
-  { title: 'Paid', value: 'Rs. 71,700', icon: CheckCircle2, accent: 'text-success' },
-  { title: 'Unpaid', value: 'Rs. 120,000', icon: AlertCircle, accent: 'text-warning' },
-  { title: 'This Month', value: '5 entries', icon: Clock, accent: 'text-muted-foreground' },
-]
+type Summary = {
+  totalExpenses: string
+  paidCount: number
+  unpaidCount: number
+  totalCount: number
+}
 
 export default function ExpensesPage() {
   const [filterCategory, setFilterCategory] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [expenses, setExpenses] = useState<Expense[]>([])
+  const [summary, setSummary] = useState<Summary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
 
-  const filtered = mockExpenses.filter((e) => {
-    if (filterCategory !== 'all' && e.category !== filterCategory) return false
-    if (filterStatus !== 'all' && e.paymentStatus !== filterStatus) return false
-    return true
+  // Form state
+  const [formData, setFormData] = useState({
+    category: '',
+    amount: '',
+    description: '',
+    paymentMethod: '',
+    paymentStatus: '',
+    expenseDate: '',
+    reference: '',
   })
+
+  useEffect(() => {
+    loadData()
+  }, [filterCategory, filterStatus])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [expensesRes, summaryRes] = await Promise.all([
+        getExpenses({
+          category: filterCategory !== 'all' ? filterCategory : undefined,
+          paymentStatus: filterStatus !== 'all' ? filterStatus : undefined,
+        }),
+        getExpenseSummary(),
+      ])
+
+      if (expensesRes.success) {
+        setExpenses(expensesRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load expenses:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+
+    try {
+      const result = await createExpense({
+        branchId: 1, // TODO: Get from context
+        category: formData.category,
+        amount: formData.amount,
+        description: formData.description || undefined,
+        paymentMethod: formData.paymentMethod,
+        reference: formData.reference || undefined,
+        paymentStatus: formData.paymentStatus,
+        expenseDate: formData.expenseDate || undefined,
+      })
+
+      if (result.success) {
+        setDialogOpen(false)
+        setFormData({
+          category: '',
+          amount: '',
+          description: '',
+          paymentMethod: '',
+          paymentStatus: '',
+          expenseDate: '',
+          reference: '',
+        })
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to create expense:', error)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('Are you sure you want to delete this expense?')) return
+
+    try {
+      await deleteExpense(id)
+      loadData()
+    } catch (error) {
+      console.error('Failed to delete expense:', error)
+    }
+  }
+
+  const paidAmount = expenses
+    .filter((e) => e.paymentStatus === 'paid')
+    .reduce((sum, e) => sum + Number(e.amount), 0)
+
+  const unpaidAmount = expenses
+    .filter((e) => e.paymentStatus === 'unpaid')
+    .reduce((sum, e) => sum + Number(e.amount), 0)
+
+  const summaryCards = [
+    { title: 'Total Expenses', value: `Rs. ${Number(summary?.totalExpenses || 0).toLocaleString()}`, icon: DollarSign, accent: 'text-primary' },
+    { title: 'Paid', value: `Rs. ${paidAmount.toLocaleString()}`, icon: CheckCircle2, accent: 'text-success' },
+    { title: 'Unpaid', value: `Rs. ${unpaidAmount.toLocaleString()}`, icon: AlertCircle, accent: 'text-warning' },
+    { title: 'This Month', value: `${summary?.totalCount || 0} entries`, icon: Clock, accent: 'text-muted-foreground' },
+  ]
 
   return (
     <div className="space-y-6">
@@ -74,7 +178,7 @@ export default function ExpensesPage() {
           <h1 className="text-2xl font-bold tracking-tight">Expenses</h1>
           <p className="text-sm text-muted-foreground mt-1">Track and manage business expenses</p>
         </div>
-        <Dialog>
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button className="brass-glow">
               <Plus className="w-4 h-4 mr-2" />
@@ -85,11 +189,14 @@ export default function ExpensesPage() {
             <DialogHeader>
               <DialogTitle>Record New Expense</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form onSubmit={handleSubmit} className="space-y-4 mt-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Category</Label>
-                  <Select>
+                  <Select
+                    value={formData.category}
+                    onValueChange={(value) => setFormData({ ...formData, category: value })}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>
                       {categories.map((c) => (
@@ -100,17 +207,30 @@ export default function ExpensesPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Amount (Rs.)</Label>
-                  <Input type="number" placeholder="0.00" />
+                  <Input
+                    type="number"
+                    placeholder="0.00"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    required
+                  />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Description</Label>
-                <Input placeholder="What was this expense for?" />
+                <Input
+                  placeholder="What was this expense for?"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Payment Method</Label>
-                  <Select>
+                  <Select
+                    value={formData.paymentMethod}
+                    onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>
                       {paymentMethods.map((m) => (
@@ -121,7 +241,10 @@ export default function ExpensesPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Status</Label>
-                  <Select>
+                  <Select
+                    value={formData.paymentStatus}
+                    onValueChange={(value) => setFormData({ ...formData, paymentStatus: value })}
+                  >
                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="paid">Paid</SelectItem>
@@ -133,14 +256,24 @@ export default function ExpensesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Date</Label>
-                  <Input type="date" />
+                  <Input
+                    type="date"
+                    value={formData.expenseDate}
+                    onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Reference</Label>
-                  <Input placeholder="Optional reference" />
+                  <Input
+                    placeholder="Optional reference"
+                    value={formData.reference}
+                    onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+                  />
                 </div>
               </div>
-              <Button type="submit" className="w-full brass-glow">Save Expense</Button>
+              <Button type="submit" className="w-full brass-glow" disabled={submitting}>
+                {submitting ? 'Saving...' : 'Save Expense'}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -194,56 +327,67 @@ export default function ExpensesPage() {
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead>Method</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-[60px]"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((expense) => (
-                <TableRow key={expense.id}>
-                  <TableCell className="text-sm text-muted-foreground">{expense.expenseDate}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="capitalize text-[10px]">{expense.category}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm font-medium">{expense.description}</TableCell>
-                  <TableCell className="text-sm capitalize text-muted-foreground">{expense.paymentMethod}</TableCell>
-                  <TableCell className="text-right text-sm font-semibold">Rs. {Number(expense.amount).toLocaleString()}</TableCell>
-                  <TableCell>
-                    <Badge
-                      className={`text-[10px] ${
-                        expense.paymentStatus === 'paid'
-                          ? 'bg-success/10 text-success border-success/20'
-                          : 'bg-warning/10 text-warning border-warning/20'
-                      }`}
-                      variant="outline"
-                    >
-                      {expense.paymentStatus}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-              {filtered.length === 0 && (
+          {loading ? (
+            <div className="text-center py-8 text-muted-foreground">Loading...</div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
-                    No expenses found
-                  </TableCell>
+                  <TableHead>Date</TableHead>
+                  <TableHead>Category</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Method</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-[60px]"></TableHead>
                 </TableRow>
-              )}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {expenses.map((expense) => (
+                  <TableRow key={expense.id}>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {new Date(expense.expenseDate).toLocaleDateString('en-PK')}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="capitalize text-[10px]">{expense.category}</Badge>
+                    </TableCell>
+                    <TableCell className="text-sm font-medium">{expense.description}</TableCell>
+                    <TableCell className="text-sm capitalize text-muted-foreground">{expense.paymentMethod}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">Rs. {Number(expense.amount).toLocaleString()}</TableCell>
+                    <TableCell>
+                      <Badge
+                        className={`text-[10px] ${
+                          expense.paymentStatus === 'paid'
+                            ? 'bg-success/10 text-success border-success/20'
+                            : 'bg-warning/10 text-warning border-warning/20'
+                        }`}
+                        variant="outline"
+                      >
+                        {expense.paymentStatus}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(expense.id)}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {expenses.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No expenses found
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>

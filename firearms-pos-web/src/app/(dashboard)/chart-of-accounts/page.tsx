@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   BookOpen,
   Plus,
@@ -40,20 +40,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { getAccounts, getAccountsSummary, createAccount, deleteAccount } from '@/actions/chart-of-accounts'
 
 const accountTypes = ['asset', 'liability', 'equity', 'revenue', 'expense']
-
-const mockAccounts = [
-  { id: 1, accountCode: '1000', accountName: 'Cash', accountType: 'asset', normalBalance: 'debit', currentBalance: '250000', isActive: true, isSystemAccount: true },
-  { id: 2, accountCode: '1100', accountName: 'Accounts Receivable', accountType: 'asset', normalBalance: 'debit', currentBalance: '85000', isActive: true, isSystemAccount: true },
-  { id: 3, accountCode: '1200', accountName: 'Inventory', accountType: 'asset', normalBalance: 'debit', currentBalance: '1500000', isActive: true, isSystemAccount: true },
-  { id: 4, accountCode: '2000', accountName: 'Accounts Payable', accountType: 'liability', normalBalance: 'credit', currentBalance: '120000', isActive: true, isSystemAccount: true },
-  { id: 5, accountCode: '3000', accountName: 'Owner Equity', accountType: 'equity', normalBalance: 'credit', currentBalance: '500000', isActive: true, isSystemAccount: true },
-  { id: 6, accountCode: '4000', accountName: 'Sales Revenue', accountType: 'revenue', normalBalance: 'credit', currentBalance: '3200000', isActive: true, isSystemAccount: true },
-  { id: 7, accountCode: '5000', accountName: 'Cost of Goods Sold', accountType: 'expense', normalBalance: 'debit', currentBalance: '1800000', isActive: true, isSystemAccount: false },
-  { id: 8, accountCode: '5100', accountName: 'Operating Expenses', accountType: 'expense', normalBalance: 'debit', currentBalance: '450000', isActive: true, isSystemAccount: false },
-  { id: 9, accountCode: '5200', accountName: 'Utilities', accountType: 'expense', normalBalance: 'debit', currentBalance: '35000', isActive: false, isSystemAccount: false },
-]
 
 const typeIcons: Record<string, typeof TrendingUp> = {
   asset: TrendingUp,
@@ -71,20 +60,131 @@ const typeColors: Record<string, string> = {
   expense: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
 }
 
-const summaryCards = [
-  { title: 'Total Accounts', value: String(mockAccounts.length), icon: BookOpen, accent: 'text-primary' },
-  { title: 'Assets', value: String(mockAccounts.filter((a) => a.accountType === 'asset').length), icon: TrendingUp, accent: 'text-blue-400' },
-  { title: 'Revenue', value: String(mockAccounts.filter((a) => a.accountType === 'revenue').length), icon: Landmark, accent: 'text-green-400' },
-  { title: 'Expenses', value: String(mockAccounts.filter((a) => a.accountType === 'expense').length), icon: Wallet, accent: 'text-orange-400' },
-]
-
 export default function ChartOfAccountsPage() {
   const [filterType, setFilterType] = useState('all')
-
-  const filtered = mockAccounts.filter((a) => {
-    if (filterType !== 'all' && a.accountType !== filterType) return false
-    return true
+  const [accounts, setAccounts] = useState<any[]>([])
+  const [summary, setSummary] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+  const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    accountCode: '',
+    accountName: '',
+    accountType: '',
+    accountSubType: '',
+    description: '',
+    normalBalance: '',
   })
+
+  useEffect(() => {
+    loadData()
+  }, [filterType])
+
+  async function loadData() {
+    try {
+      setLoading(true)
+      const [accountsRes, summaryRes] = await Promise.all([
+        getAccounts({ type: filterType }),
+        getAccountsSummary(),
+      ])
+
+      if (accountsRes.success) {
+        setAccounts(accountsRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load accounts:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleCreateAccount(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      const result = await createAccount({
+        accountCode: formData.accountCode,
+        accountName: formData.accountName,
+        accountType: formData.accountType,
+        accountSubType: formData.accountSubType || undefined,
+        description: formData.description || undefined,
+        normalBalance: formData.normalBalance,
+      })
+
+      if (result.success) {
+        setIsDialogOpen(false)
+        setFormData({
+          accountCode: '',
+          accountName: '',
+          accountType: '',
+          accountSubType: '',
+          description: '',
+          normalBalance: '',
+        })
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to create account:', error)
+    }
+  }
+
+  async function handleDeleteAccount(id: number) {
+    if (!confirm('Are you sure you want to delete this account?')) return
+
+    try {
+      const result = await deleteAccount(id)
+      if (result.success) {
+        loadData()
+      } else {
+        alert(result.message || 'Failed to delete account')
+      }
+    } catch (error) {
+      console.error('Failed to delete account:', error)
+      alert('Failed to delete account')
+    }
+  }
+
+  const summaryCards = [
+    {
+      title: 'Total Accounts',
+      value: String(summary?.totalAccounts || 0),
+      icon: BookOpen,
+      accent: 'text-primary'
+    },
+    {
+      title: 'Assets',
+      value: String(summary?.assetCount || 0),
+      icon: TrendingUp,
+      accent: 'text-blue-400'
+    },
+    {
+      title: 'Revenue',
+      value: String(summary?.revenueCount || 0),
+      icon: Landmark,
+      accent: 'text-green-400'
+    },
+    {
+      title: 'Expenses',
+      value: String(summary?.expenseCount || 0),
+      icon: Wallet,
+      accent: 'text-orange-400'
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Chart of Accounts</h1>
+            <p className="text-sm text-muted-foreground mt-1">Manage your general ledger account structure</p>
+          </div>
+        </div>
+        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -93,7 +193,7 @@ export default function ChartOfAccountsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Chart of Accounts</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage your general ledger account structure</p>
         </div>
-        <Dialog>
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
             <Button className="brass-glow">
               <Plus className="w-4 h-4 mr-2" />
@@ -104,21 +204,35 @@ export default function ChartOfAccountsPage() {
             <DialogHeader>
               <DialogTitle>Create GL Account</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form className="space-y-4 mt-4" onSubmit={handleCreateAccount}>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Account Code</Label>
-                  <Input placeholder="e.g., 1000" />
+                  <Input
+                    placeholder="e.g., 1000"
+                    value={formData.accountCode}
+                    onChange={(e) => setFormData({ ...formData, accountCode: e.target.value })}
+                    required
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Account Name</Label>
-                  <Input placeholder="e.g., Cash" />
+                  <Input
+                    placeholder="e.g., Cash"
+                    value={formData.accountName}
+                    onChange={(e) => setFormData({ ...formData, accountName: e.target.value })}
+                    required
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Account Type</Label>
-                  <Select>
+                  <Select
+                    value={formData.accountType}
+                    onValueChange={(value) => setFormData({ ...formData, accountType: value })}
+                    required
+                  >
                     <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
                     <SelectContent>
                       {accountTypes.map((t) => (
@@ -129,7 +243,11 @@ export default function ChartOfAccountsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Normal Balance</Label>
-                  <Select>
+                  <Select
+                    value={formData.normalBalance}
+                    onValueChange={(value) => setFormData({ ...formData, normalBalance: value })}
+                    required
+                  >
                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="debit">Debit</SelectItem>
@@ -140,11 +258,19 @@ export default function ChartOfAccountsPage() {
               </div>
               <div className="space-y-2">
                 <Label>Sub-Type (Optional)</Label>
-                <Input placeholder="e.g., Current Assets" />
+                <Input
+                  placeholder="e.g., Current Assets"
+                  value={formData.accountSubType}
+                  onChange={(e) => setFormData({ ...formData, accountSubType: e.target.value })}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Description</Label>
-                <Input placeholder="Brief description of this account" />
+                <Input
+                  placeholder="Brief description of this account"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                />
               </div>
               <Button type="submit" className="w-full brass-glow">Create Account</Button>
             </form>
@@ -202,7 +328,7 @@ export default function ChartOfAccountsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((account) => (
+              {accounts.map((account) => (
                 <TableRow key={account.id} className={!account.isActive ? 'opacity-50' : ''}>
                   <TableCell>
                     <code className="text-sm font-bold font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">
@@ -222,7 +348,7 @@ export default function ChartOfAccountsPage() {
                   </TableCell>
                   <TableCell className="text-sm capitalize text-muted-foreground">{account.normalBalance}</TableCell>
                   <TableCell className="text-right text-sm font-semibold">
-                    Rs. {Number(account.currentBalance).toLocaleString()}
+                    Rs. {Number(account.currentBalance || 0).toLocaleString()}
                   </TableCell>
                   <TableCell>
                     {account.isActive ? (
@@ -237,7 +363,12 @@ export default function ChartOfAccountsPage() {
                         <Edit className="w-3.5 h-3.5" />
                       </Button>
                       {!account.isSystemAccount && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDeleteAccount(account.id)}
+                        >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       )}
@@ -245,7 +376,7 @@ export default function ChartOfAccountsPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
+              {accounts.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                     No accounts found

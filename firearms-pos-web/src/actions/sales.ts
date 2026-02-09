@@ -107,6 +107,112 @@ export async function getSaleById(saleId: number) {
   return { success: true, data: { ...sale, items, payments } }
 }
 
+export async function createSale(input: {
+  customerId?: number | null
+  branchId: number
+  items: {
+    productId: number
+    quantity: number
+    unitPrice: number
+    costPrice: number
+    serialNumber?: string
+    discountPercent?: number
+    discountAmount?: number
+    taxAmount?: number
+  }[]
+  paymentMethod: string
+  payments: {
+    paymentMethod: string
+    amount: number
+    referenceNumber?: string
+  }[]
+  subtotal: number
+  taxAmount: number
+  discountAmount: number
+  totalAmount: number
+  amountPaid: number
+  changeGiven: number
+  notes?: string
+}) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session!.user.id)
+
+  // Generate invoice number
+  const today = new Date()
+  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '')
+  const [countResult] = await db
+    .select({ c: count() })
+    .from(sales)
+    .where(
+      and(
+        eq(sales.tenantId, tenantId),
+        sql`${sales.saleDate}::date = CURRENT_DATE`
+      )
+    )
+  const seq = String((countResult.c || 0) + 1).padStart(3, '0')
+  const invoiceNumber = `INV-${dateStr}-${seq}`
+
+  const paymentStatus =
+    Number(input.amountPaid) >= Number(input.totalAmount)
+      ? 'paid'
+      : Number(input.amountPaid) > 0
+        ? 'partial'
+        : 'pending'
+
+  const [sale] = await db
+    .insert(sales)
+    .values({
+      tenantId,
+      invoiceNumber,
+      customerId: input.customerId || null,
+      branchId: input.branchId,
+      userId,
+      subtotal: String(input.subtotal),
+      taxAmount: String(input.taxAmount),
+      discountAmount: String(input.discountAmount),
+      totalAmount: String(input.totalAmount),
+      paymentMethod: input.paymentMethod as any,
+      paymentStatus: paymentStatus as any,
+      amountPaid: String(input.amountPaid),
+      changeGiven: String(input.changeGiven),
+      notes: input.notes || null,
+    })
+    .returning()
+
+  // Insert sale items
+  if (input.items.length > 0) {
+    await db.insert(saleItems).values(
+      input.items.map((item) => ({
+        saleId: sale.id,
+        productId: item.productId,
+        serialNumber: item.serialNumber || null,
+        quantity: item.quantity,
+        unitPrice: String(item.unitPrice),
+        costPrice: String(item.costPrice),
+        discountPercent: String(item.discountPercent ?? 0),
+        discountAmount: String(item.discountAmount ?? 0),
+        taxAmount: String(item.taxAmount ?? 0),
+        totalPrice: String(item.unitPrice * item.quantity),
+      }))
+    )
+  }
+
+  // Insert payments
+  if (input.payments.length > 0) {
+    await db.insert(salePayments).values(
+      input.payments.map((p) => ({
+        saleId: sale.id,
+        paymentMethod: p.paymentMethod as any,
+        amount: String(p.amount),
+        referenceNumber: p.referenceNumber || null,
+      }))
+    )
+  }
+
+  return { success: true, data: sale }
+}
+
 export async function voidSale(id: number, reason: string) {
   const tenantId = await getTenantId()
 

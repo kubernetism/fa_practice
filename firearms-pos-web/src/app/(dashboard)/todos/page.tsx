@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ListTodo,
   Plus,
@@ -38,15 +38,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-
-const mockTodos = [
-  { id: 1, title: 'Restock 9mm ammunition', description: 'Low inventory alert', status: 'pending', priority: 'high', assignedToName: 'Admin User', dueDate: '2026-02-07', createdAt: '2026-02-05' },
-  { id: 2, title: 'Process pending customer refund', description: 'Customer #15 refund request', status: 'in_progress', priority: 'urgent', assignedToName: 'Manager Khan', dueDate: '2026-02-06', createdAt: '2026-02-04' },
-  { id: 3, title: 'Update product catalog photos', description: 'New products added last week need photos', status: 'pending', priority: 'medium', assignedToName: 'Cashier Ali', dueDate: '2026-02-10', createdAt: '2026-02-03' },
-  { id: 4, title: 'Monthly inventory audit', description: 'Complete physical count for February', status: 'pending', priority: 'high', assignedToName: 'Admin User', dueDate: '2026-02-28', createdAt: '2026-02-01' },
-  { id: 5, title: 'Submit tax documents', description: 'Q4 2025 filing', status: 'completed', priority: 'urgent', assignedToName: 'Admin User', dueDate: '2026-02-01', createdAt: '2026-01-25' },
-  { id: 6, title: 'Clean display cases', description: 'Weekly cleaning schedule', status: 'completed', priority: 'low', assignedToName: 'Cashier Ali', dueDate: '2026-02-03', createdAt: '2026-02-02' },
-]
+import {
+  getTodos,
+  getTodoSummary,
+  createTodo,
+  updateTodoStatus,
+  deleteTodo,
+} from '@/actions/todos'
+import { toast } from 'sonner'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-muted text-muted-foreground',
@@ -69,22 +68,126 @@ const statusLabels: Record<string, string> = {
   cancelled: 'Cancelled',
 }
 
-const summaryCards = [
-  { title: 'Total Tasks', value: String(mockTodos.length), icon: ListTodo, accent: 'text-primary' },
-  { title: 'Pending', value: String(mockTodos.filter((t) => t.status === 'pending').length), icon: Clock, accent: 'text-muted-foreground' },
-  { title: 'In Progress', value: String(mockTodos.filter((t) => t.status === 'in_progress').length), icon: Loader2, accent: 'text-blue-400' },
-  { title: 'Urgent', value: String(mockTodos.filter((t) => t.priority === 'urgent' && t.status !== 'completed').length), icon: AlertTriangle, accent: 'text-red-400' },
-]
-
 export default function TodosPage() {
+  const [loading, setLoading] = useState(true)
+  const [todos, setTodos] = useState<any[]>([])
+  const [summary, setSummary] = useState<any>(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterPriority, setFilterPriority] = useState('all')
-
-  const filtered = mockTodos.filter((t) => {
-    if (filterStatus !== 'all' && t.status !== filterStatus) return false
-    if (filterPriority !== 'all' && t.priority !== filterPriority) return false
-    return true
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [formData, setFormData] = useState({
+    title: '',
+    description: '',
+    priority: 'medium',
+    assignedTo: '1',
+    assignedToRole: 'admin',
+    dueDate: '',
   })
+
+  useEffect(() => {
+    loadData()
+  }, [filterStatus, filterPriority])
+
+  async function loadData() {
+    try {
+      setLoading(true)
+      const [todosRes, summaryRes] = await Promise.all([
+        getTodos({
+          status: filterStatus !== 'all' ? filterStatus : undefined,
+          priority: filterPriority !== 'all' ? filterPriority : undefined,
+        }),
+        getTodoSummary(),
+      ])
+      if (todosRes.success) {
+        setTodos(todosRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load todos:', error)
+      toast.error('Failed to load todos')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      const res = await createTodo({
+        title: formData.title,
+        description: formData.description,
+        priority: formData.priority,
+        assignedTo: Number(formData.assignedTo),
+        assignedToRole: formData.assignedToRole,
+        dueDate: formData.dueDate,
+      })
+      if (res.success) {
+        toast.success('Task created successfully')
+        setDialogOpen(false)
+        setFormData({
+          title: '',
+          description: '',
+          priority: 'medium',
+          assignedTo: '1',
+          assignedToRole: 'admin',
+          dueDate: '',
+        })
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to create task:', error)
+      toast.error('Failed to create task')
+    }
+  }
+
+  async function handleStatusChange(id: number, status: string) {
+    try {
+      const res = await updateTodoStatus(id, status)
+      if (res.success) {
+        toast.success('Task updated')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to update task:', error)
+      toast.error('Failed to update task')
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('Are you sure you want to delete this task?')) return
+    try {
+      const res = await deleteTodo(id)
+      if (res.success) {
+        toast.success('Task deleted')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to delete task:', error)
+      toast.error('Failed to delete task')
+    }
+  }
+
+  const summaryCards = [
+    { title: 'Total Tasks', value: String(summary?.totalTodos || 0), icon: ListTodo, accent: 'text-primary' },
+    { title: 'Pending', value: String(summary?.pendingCount || 0), icon: Clock, accent: 'text-muted-foreground' },
+    { title: 'In Progress', value: String(summary?.inProgressCount || 0), icon: Loader2, accent: 'text-blue-400' },
+    { title: 'Urgent', value: String(summary?.urgentCount || 0), icon: AlertTriangle, accent: 'text-red-400' },
+  ]
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
+            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -93,7 +196,7 @@ export default function TodosPage() {
           <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
           <p className="text-sm text-muted-foreground mt-1">Assign and track team tasks</p>
         </div>
-        <Dialog>
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button className="brass-glow">
               <Plus className="w-4 h-4 mr-2" />
@@ -104,19 +207,19 @@ export default function TodosPage() {
             <DialogHeader>
               <DialogTitle>Create New Task</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form onSubmit={handleSubmit} className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Title</Label>
-                <Input placeholder="What needs to be done?" />
+                <Input placeholder="What needs to be done?" value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} required />
               </div>
               <div className="space-y-2">
                 <Label>Description</Label>
-                <Input placeholder="Additional details" />
+                <Input placeholder="Additional details" value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})} />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Priority</Label>
-                  <Select>
+                  <Select value={formData.priority} onValueChange={(v) => setFormData({...formData, priority: v})}>
                     <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="low">Low</SelectItem>
@@ -128,13 +231,13 @@ export default function TodosPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Due Date</Label>
-                  <Input type="date" />
+                  <Input type="date" value={formData.dueDate} onChange={(e) => setFormData({...formData, dueDate: e.target.value})} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Assign To</Label>
-                  <Select>
+                  <Select value={formData.assignedTo} onValueChange={(v) => setFormData({...formData, assignedTo: v})}>
                     <SelectTrigger><SelectValue placeholder="Select member" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="1">Admin User</SelectItem>
@@ -145,7 +248,7 @@ export default function TodosPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Role</Label>
-                  <Select>
+                  <Select value={formData.assignedToRole} onValueChange={(v) => setFormData({...formData, assignedToRole: v})}>
                     <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>
@@ -220,48 +323,50 @@ export default function TodosPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((todo) => (
-                <TableRow key={todo.id} className={todo.status === 'completed' ? 'opacity-50' : ''}>
+              {todos.map((todo) => (
+                <TableRow key={todo.todo.id} className={todo.todo.status === 'completed' ? 'opacity-50' : ''}>
                   <TableCell>
                     <div>
-                      <p className="text-sm font-medium">{todo.title}</p>
-                      {todo.description && (
-                        <p className="text-[11px] text-muted-foreground mt-0.5">{todo.description}</p>
+                      <p className="text-sm font-medium">{todo.todo.title}</p>
+                      {todo.todo.description && (
+                        <p className="text-[11px] text-muted-foreground mt-0.5">{todo.todo.description}</p>
                       )}
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={`text-[10px] capitalize ${priorityColors[todo.priority]}`}>
-                      {todo.priority}
+                    <Badge variant="outline" className={`text-[10px] capitalize ${priorityColors[todo.todo.priority]}`}>
+                      {todo.todo.priority}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{todo.assignedToName}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{todo.dueDate}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{todo.assignedToName || 'Unassigned'}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {todo.todo.dueDate ? new Date(todo.todo.dueDate).toLocaleDateString() : '-'}
+                  </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={`text-[10px] ${statusColors[todo.status]}`}>
-                      {statusLabels[todo.status]}
+                    <Badge variant="outline" className={`text-[10px] ${statusColors[todo.todo.status]}`}>
+                      {statusLabels[todo.todo.status]}
                     </Badge>
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      {todo.status === 'pending' && (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs">
+                      {todo.todo.status === 'pending' && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => handleStatusChange(todo.todo.id, 'in_progress')}>
                           Start
                         </Button>
                       )}
-                      {todo.status === 'in_progress' && (
-                        <Button variant="ghost" size="sm" className="h-7 text-xs text-success">
+                      {todo.todo.status === 'in_progress' && (
+                        <Button variant="ghost" size="sm" className="h-7 text-xs text-success" onClick={() => handleStatusChange(todo.todo.id, 'completed')}>
                           Complete
                         </Button>
                       )}
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive">
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(todo.todo.id)}>
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
                     </div>
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
+              {todos.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
                     No tasks found

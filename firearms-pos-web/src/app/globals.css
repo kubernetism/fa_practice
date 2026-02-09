@@ -148,6 +148,26 @@
   box-shadow: 0 0 20px oklch(0.78 0.145 75 / 15%);
 }
 
+/* Platform Admin — Cyan accent theme override */
+.platform-theme {
+  --primary: oklch(0.72 0.15 200);
+  --primary-foreground: oklch(0.15 0.02 200);
+  --ring: oklch(0.72 0.15 200);
+  --sidebar-primary: oklch(0.72 0.15 200);
+  --sidebar-primary-foreground: oklch(0.15 0.02 200);
+  --sidebar-ring: oklch(0.72 0.15 200);
+  --amber: oklch(0.72 0.15 200);
+  --amber-foreground: oklch(0.15 0.02 200);
+  --chart-1: oklch(0.72 0.15 200);
+}
+
+.platform-glow {
+  transition: box-shadow 0.3s ease;
+}
+.platform-glow:hover {
+  box-shadow: 0 0 20px oklch(0.72 0.15 200 / 15%);
+}
+
 /* Subtle gradient border for cards */
 .card-tactical {
   position: relative;

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   MessageSquare,
   Send,
@@ -31,30 +31,96 @@ import {
 } from '@/components/ui/dialog'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
-
-const teamMembers = [
-  { id: 1, name: 'Admin User', role: 'admin' },
-  { id: 2, name: 'Manager Khan', role: 'manager' },
-  { id: 3, name: 'Cashier Ali', role: 'cashier' },
-]
-
-const mockMessages = [
-  { id: 1, senderName: 'Manager Khan', senderId: 2, content: 'Inventory count done for section A. Numbers are matching.', isRead: true, createdAt: '2026-02-05 14:30', isMine: false },
-  { id: 2, senderName: 'Admin User', senderId: 1, content: 'Great work! Please proceed with section B by end of day.', isRead: true, createdAt: '2026-02-05 14:32', isMine: true },
-  { id: 3, senderName: 'Cashier Ali', senderId: 3, content: 'Customer asking about the special order Glock 19. Any update?', isRead: false, createdAt: '2026-02-05 15:10', isMine: false },
-  { id: 4, senderName: 'Manager Khan', senderId: 2, content: 'Section B has a discrepancy of 3 items. Need to recount.', isRead: false, createdAt: '2026-02-05 15:45', isMine: false },
-  { id: 5, senderName: 'Admin User', senderId: 1, content: 'The Glock 19 order is arriving tomorrow. Let the customer know.', isRead: true, createdAt: '2026-02-05 15:15', isMine: true },
-]
-
-const summaryCards = [
-  { title: 'Total Messages', value: String(mockMessages.length), icon: MessageSquare, accent: 'text-primary' },
-  { title: 'Unread', value: String(mockMessages.filter((m) => !m.isRead && !m.isMine).length), icon: Inbox, accent: 'text-red-400' },
-  { title: 'Sent', value: String(mockMessages.filter((m) => m.isMine).length), icon: SendHorizontal, accent: 'text-blue-400' },
-  { title: 'Team Members', value: String(teamMembers.length), icon: Users, accent: 'text-muted-foreground' },
-]
+import {
+  getMessages,
+  getUnreadCount,
+  sendMessage,
+  getTeamMembers,
+} from '@/actions/messages'
+import { toast } from 'sonner'
 
 export default function MessagesPage() {
+  const [loading, setLoading] = useState(true)
+  const [messages, setMessages] = useState<any[]>([])
+  const [teamMembers, setTeamMembers] = useState<any[]>([])
+  const [unreadCount, setUnreadCount] = useState(0)
   const [newMessage, setNewMessage] = useState('')
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [recipientId, setRecipientId] = useState('')
+  const [dialogMessage, setDialogMessage] = useState('')
+  const currentUserId = 1 // TODO: Get from session
+
+  useEffect(() => {
+    loadData()
+    const interval = setInterval(loadData, 10000) // Refresh every 10 seconds
+    return () => clearInterval(interval)
+  }, [])
+
+  async function loadData() {
+    try {
+      setLoading(true)
+      const [messagesRes, unreadRes, teamRes] = await Promise.all([
+        getMessages(),
+        getUnreadCount(),
+        getTeamMembers(),
+      ])
+      if (messagesRes.success) {
+        setMessages(messagesRes.data)
+      }
+      if (unreadRes.success) {
+        setUnreadCount(unreadRes.data.unread)
+      }
+      if (teamRes.success) {
+        setTeamMembers(teamRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load messages:', error)
+      toast.error('Failed to load messages')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault()
+    if (!recipientId || !dialogMessage) return
+    try {
+      const res = await sendMessage({
+        recipientId: Number(recipientId),
+        content: dialogMessage,
+      })
+      if (res.success) {
+        toast.success('Message sent')
+        setDialogOpen(false)
+        setRecipientId('')
+        setDialogMessage('')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error)
+      toast.error('Failed to send message')
+    }
+  }
+
+  const summaryCards = [
+    { title: 'Total Messages', value: String(messages.length), icon: MessageSquare, accent: 'text-primary' },
+    { title: 'Unread', value: String(unreadCount), icon: Inbox, accent: 'text-red-400' },
+    { title: 'Sent', value: String(messages.filter((m) => m.message.senderId === currentUserId).length), icon: SendHorizontal, accent: 'text-blue-400' },
+    { title: 'Team Members', value: String(teamMembers.length), icon: Users, accent: 'text-muted-foreground' },
+  ]
+
+  if (loading && messages.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
+            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -63,7 +129,7 @@ export default function MessagesPage() {
           <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
           <p className="text-sm text-muted-foreground mt-1">Internal team communication</p>
         </div>
-        <Dialog>
+        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>
             <Button className="brass-glow">
               <Send className="w-4 h-4 mr-2" />
@@ -74,10 +140,10 @@ export default function MessagesPage() {
             <DialogHeader>
               <DialogTitle>Send Message</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form onSubmit={handleSend} className="space-y-4 mt-4">
               <div className="space-y-2">
                 <Label>Recipient</Label>
-                <Select>
+                <Select value={recipientId} onValueChange={setRecipientId}>
                   <SelectTrigger><SelectValue placeholder="Select team member" /></SelectTrigger>
                   <SelectContent>
                     {teamMembers.map((m) => (
@@ -90,7 +156,7 @@ export default function MessagesPage() {
               </div>
               <div className="space-y-2">
                 <Label>Message</Label>
-                <Input placeholder="Type your message..." />
+                <Input placeholder="Type your message..." value={dialogMessage} onChange={(e) => setDialogMessage(e.target.value)} />
               </div>
               <Button type="submit" className="w-full brass-glow">Send Message</Button>
             </form>
@@ -120,39 +186,49 @@ export default function MessagesPage() {
         <CardContent className="p-0">
           <ScrollArea className="h-[500px]">
             <div className="p-4 space-y-4">
-              {mockMessages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex gap-3 ${msg.isMine ? 'flex-row-reverse' : ''}`}
-                >
-                  <Avatar className="w-8 h-8 border border-sidebar-border shrink-0">
-                    <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
-                      {msg.senderName.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className={`max-w-[70%] ${msg.isMine ? 'items-end' : ''}`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium">{msg.senderName}</span>
-                      <span className="text-[10px] text-muted-foreground">{msg.createdAt}</span>
-                      {!msg.isMine && !msg.isRead && (
-                        <Circle className="w-2 h-2 fill-primary text-primary" />
-                      )}
-                      {msg.isMine && msg.isRead && (
-                        <CheckCheck className="w-3 h-3 text-primary" />
-                      )}
-                    </div>
-                    <div
-                      className={`rounded-lg px-3 py-2 text-sm ${
-                        msg.isMine
-                          ? 'bg-primary/10 text-foreground border border-primary/20'
-                          : 'bg-muted border border-border'
-                      }`}
-                    >
-                      {msg.content}
+              {messages.map((msg) => {
+                const isMine = msg.message.senderId === currentUserId
+                return (
+                  <div
+                    key={msg.message.id}
+                    className={`flex gap-3 ${isMine ? 'flex-row-reverse' : ''}`}
+                  >
+                    <Avatar className="w-8 h-8 border border-sidebar-border shrink-0">
+                      <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
+                        {msg.senderName?.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className={`max-w-[70%] ${isMine ? 'items-end' : ''}`}>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium">{msg.senderName}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(msg.message.createdAt).toLocaleString()}
+                        </span>
+                        {!isMine && !msg.message.isRead && (
+                          <Circle className="w-2 h-2 fill-primary text-primary" />
+                        )}
+                        {isMine && msg.message.isRead && (
+                          <CheckCheck className="w-3 h-3 text-primary" />
+                        )}
+                      </div>
+                      <div
+                        className={`rounded-lg px-3 py-2 text-sm ${
+                          isMine
+                            ? 'bg-primary/10 text-foreground border border-primary/20'
+                            : 'bg-muted border border-border'
+                        }`}
+                      >
+                        {msg.message.content}
+                      </div>
                     </div>
                   </div>
+                )
+              })}
+              {messages.length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  No messages yet
                 </div>
-              ))}
+              )}
             </div>
           </ScrollArea>
           <div className="border-t p-4">

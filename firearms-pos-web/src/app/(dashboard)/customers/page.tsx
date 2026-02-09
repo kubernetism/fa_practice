@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -40,191 +40,49 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
+import {
+  getCustomers,
+  getCustomerSummary,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+} from '@/actions/customers';
 
 // Types
 interface Customer {
-  id: string;
+  id: number;
   firstName: string;
   lastName: string;
-  email: string;
-  phone: string;
-  address: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  governmentIdType: 'cnic' | 'passport' | 'driving_license';
-  governmentIdNumber: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+  governmentIdType: 'cnic' | 'passport' | 'driving_license' | null;
+  governmentIdNumber: string | null;
   firearmLicenseNumber: string | null;
   licenseExpiryDate: string | null;
-  dateOfBirth: string;
-  notes: string;
+  dateOfBirth: string | null;
+  notes: string | null;
   isActive: boolean;
-  createdAt: string;
+  createdAt: Date;
 }
 
-// Mock data with Pakistani customers
-const MOCK_CUSTOMERS: Customer[] = [
-  {
-    id: '1',
-    firstName: 'Ahmed',
-    lastName: 'Khan',
-    email: 'ahmed.khan@example.pk',
-    phone: '+92-300-1234567',
-    address: 'House 23, Street 5, F-7',
-    city: 'Islamabad',
-    state: 'Federal',
-    zipCode: '44000',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '35201-1234567-1',
-    firearmLicenseNumber: 'FL-ISB-2024-001',
-    licenseExpiryDate: '2026-06-15',
-    dateOfBirth: '1985-03-12',
-    notes: 'Regular customer, competitive shooter',
-    isActive: true,
-    createdAt: '2024-01-15',
-  },
-  {
-    id: '2',
-    firstName: 'Fatima',
-    lastName: 'Malik',
-    email: 'fatima.malik@example.pk',
-    phone: '+92-321-9876543',
-    address: 'Flat 12, Gulberg III',
-    city: 'Lahore',
-    state: 'Punjab',
-    zipCode: '54000',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '35202-9876543-2',
-    firearmLicenseNumber: 'FL-LHR-2023-045',
-    licenseExpiryDate: '2026-02-28',
-    dateOfBirth: '1990-07-22',
-    notes: 'Licensed for personal protection',
-    isActive: true,
-    createdAt: '2023-11-20',
-  },
-  {
-    id: '3',
-    firstName: 'Imran',
-    lastName: 'Sheikh',
-    email: 'imran.sheikh@example.pk',
-    phone: '+92-333-5551234',
-    address: 'Plot 45, DHA Phase 6',
-    city: 'Karachi',
-    state: 'Sindh',
-    zipCode: '75500',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '42101-5551234-5',
-    firearmLicenseNumber: 'FL-KHI-2024-089',
-    licenseExpiryDate: '2024-01-10',
-    dateOfBirth: '1982-11-05',
-    notes: 'License expired, renewal pending',
-    isActive: false,
-    createdAt: '2023-05-10',
-  },
-  {
-    id: '4',
-    firstName: 'Zainab',
-    lastName: 'Ali',
-    email: 'zainab.ali@example.pk',
-    phone: '+92-345-7778888',
-    address: 'House 67, Cantt Area',
-    city: 'Rawalpindi',
-    state: 'Punjab',
-    zipCode: '46000',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '37405-7778888-4',
-    firearmLicenseNumber: null,
-    licenseExpiryDate: null,
-    dateOfBirth: '1995-02-18',
-    notes: 'New customer, license application in progress',
-    isActive: true,
-    createdAt: '2025-12-01',
-  },
-  {
-    id: '5',
-    firstName: 'Hassan',
-    lastName: 'Raza',
-    email: 'hassan.raza@example.pk',
-    phone: '+92-300-4445566',
-    address: 'Street 12, Satellite Town',
-    city: 'Quetta',
-    state: 'Balochistan',
-    zipCode: '87300',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '54201-4445566-3',
-    firearmLicenseNumber: 'FL-QTA-2025-012',
-    licenseExpiryDate: '2026-03-10',
-    dateOfBirth: '1988-09-30',
-    notes: 'Sport shooting enthusiast',
-    isActive: true,
-    createdAt: '2025-01-05',
-  },
-  {
-    id: '6',
-    firstName: 'Ayesha',
-    lastName: 'Hussain',
-    email: 'ayesha.hussain@example.pk',
-    phone: '+92-331-2223344',
-    address: 'Block C, Johar Town',
-    city: 'Lahore',
-    state: 'Punjab',
-    zipCode: '54782',
-    governmentIdType: 'passport',
-    governmentIdNumber: 'AB1234567',
-    firearmLicenseNumber: 'FL-LHR-2024-156',
-    licenseExpiryDate: '2027-08-20',
-    dateOfBirth: '1992-05-14',
-    notes: 'VIP member, multiple firearms registered',
-    isActive: true,
-    createdAt: '2024-03-22',
-  },
-  {
-    id: '7',
-    firstName: 'Bilal',
-    lastName: 'Ahmed',
-    email: 'bilal.ahmed@example.pk',
-    phone: '+92-322-9998877',
-    address: 'House 89, Model Town',
-    city: 'Peshawar',
-    state: 'KPK',
-    zipCode: '25000',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '17101-9998877-6',
-    firearmLicenseNumber: 'FL-PSH-2024-078',
-    licenseExpiryDate: '2026-02-15',
-    dateOfBirth: '1987-12-08',
-    notes: 'Security professional',
-    isActive: true,
-    createdAt: '2024-02-10',
-  },
-  {
-    id: '8',
-    firstName: 'Sana',
-    lastName: 'Tariq',
-    email: 'sana.tariq@example.pk',
-    phone: '+92-346-1112233',
-    address: 'Flat 5, Clifton Block 2',
-    city: 'Karachi',
-    state: 'Sindh',
-    zipCode: '75600',
-    governmentIdType: 'cnic',
-    governmentIdNumber: '42201-1112233-8',
-    firearmLicenseNumber: 'FL-KHI-2025-203',
-    licenseExpiryDate: '2026-11-30',
-    dateOfBirth: '1993-08-25',
-    notes: 'First-time buyer',
-    isActive: true,
-    createdAt: '2025-01-20',
-  },
-];
-
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>(MOCK_CUSTOMERS);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+
+  // Summary stats
+  const [totalCustomers, setTotalCustomers] = useState(0);
+  const [activeCustomers, setActiveCustomers] = useState(0);
+  const [customersWithLicense, setCustomersWithLicense] = useState(0);
+  const [expiredLicenses, setExpiredLicenses] = useState(0);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -244,30 +102,48 @@ export default function CustomersPage() {
     notes: '',
   });
 
-  // Calculate summary statistics
-  const totalCustomers = customers.length;
-  const activeCustomers = customers.filter((c) => c.isActive).length;
-  const customersWithLicense = customers.filter((c) => c.firearmLicenseNumber).length;
-  const expiredLicenses = customers.filter((c) => {
-    if (!c.licenseExpiryDate) return false;
-    return new Date(c.licenseExpiryDate) < new Date();
-  }).length;
+  // Load customers and summary
+  useEffect(() => {
+    loadData();
+  }, [statusFilter]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const isActiveFilter = statusFilter === 'all' ? undefined : statusFilter === 'active';
+      const [customersResult, summaryResult] = await Promise.all([
+        getCustomers({ search: searchTerm || undefined, isActive: isActiveFilter }),
+        getCustomerSummary(),
+      ]);
+
+      if (customersResult.success) {
+        setCustomers(customersResult.data as Customer[]);
+      }
+
+      if (summaryResult.success) {
+        const summary = summaryResult.data;
+        setTotalCustomers(Number(summary.totalCustomers) || 0);
+        setActiveCustomers(Number(summary.activeCount) || 0);
+        setCustomersWithLicense(Number(summary.withLicense) || 0);
+        setExpiredLicenses(Number(summary.expiredLicense) || 0);
+      }
+    } catch (error) {
+      console.error('Failed to load customers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Filter customers
   const filteredCustomers = customers.filter((customer) => {
     const matchesSearch =
       customer.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       customer.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      customer.phone.includes(searchTerm) ||
-      customer.governmentIdNumber.includes(searchTerm);
+      customer.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      customer.phone?.includes(searchTerm) ||
+      customer.governmentIdNumber?.includes(searchTerm);
 
-    const matchesStatus =
-      statusFilter === 'all' ||
-      (statusFilter === 'active' && customer.isActive) ||
-      (statusFilter === 'inactive' && !customer.isActive);
-
-    return matchesSearch && matchesStatus;
+    return matchesSearch;
   });
 
   // License expiry badge logic
@@ -327,45 +203,44 @@ export default function CustomersPage() {
   };
 
   // Handle add customer
-  const handleAddCustomer = () => {
-    const newCustomer: Customer = {
-      id: Date.now().toString(),
-      ...formData,
-      firearmLicenseNumber: formData.firearmLicenseNumber || null,
-      licenseExpiryDate: formData.licenseExpiryDate || null,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-    };
-
-    setCustomers([...customers, newCustomer]);
-    setIsAddDialogOpen(false);
-    resetForm();
+  const handleAddCustomer = async () => {
+    try {
+      const result = await createCustomer(formData);
+      if (result.success) {
+        setIsAddDialogOpen(false);
+        resetForm();
+        loadData();
+      }
+    } catch (error) {
+      console.error('Failed to create customer:', error);
+    }
   };
 
   // Handle edit customer
-  const handleEditCustomer = () => {
+  const handleEditCustomer = async () => {
     if (!selectedCustomer) return;
 
-    setCustomers(
-      customers.map((c) =>
-        c.id === selectedCustomer.id
-          ? {
-              ...c,
-              ...formData,
-              firearmLicenseNumber: formData.firearmLicenseNumber || null,
-              licenseExpiryDate: formData.licenseExpiryDate || null,
-            }
-          : c
-      )
-    );
-    setIsEditDialogOpen(false);
-    resetForm();
+    try {
+      const result = await updateCustomer(selectedCustomer.id, formData);
+      if (result.success) {
+        setIsEditDialogOpen(false);
+        resetForm();
+        loadData();
+      }
+    } catch (error) {
+      console.error('Failed to update customer:', error);
+    }
   };
 
   // Handle delete customer
-  const handleDeleteCustomer = (id: string) => {
+  const handleDeleteCustomer = async (id: number) => {
     if (confirm('Are you sure you want to delete this customer?')) {
-      setCustomers(customers.filter((c) => c.id !== id));
+      try {
+        await deleteCustomer(id);
+        loadData();
+      } catch (error) {
+        console.error('Failed to delete customer:', error);
+      }
     }
   };
 
@@ -375,18 +250,18 @@ export default function CustomersPage() {
     setFormData({
       firstName: customer.firstName,
       lastName: customer.lastName,
-      email: customer.email,
-      phone: customer.phone,
-      address: customer.address,
-      city: customer.city,
-      state: customer.state,
-      zipCode: customer.zipCode,
-      governmentIdType: customer.governmentIdType,
-      governmentIdNumber: customer.governmentIdNumber,
+      email: customer.email || '',
+      phone: customer.phone || '',
+      address: customer.address || '',
+      city: customer.city || '',
+      state: customer.state || '',
+      zipCode: customer.zipCode || '',
+      governmentIdType: customer.governmentIdType || 'cnic',
+      governmentIdNumber: customer.governmentIdNumber || '',
       firearmLicenseNumber: customer.firearmLicenseNumber || '',
       licenseExpiryDate: customer.licenseExpiryDate || '',
-      dateOfBirth: customer.dateOfBirth,
-      notes: customer.notes,
+      dateOfBirth: customer.dateOfBirth || '',
+      notes: customer.notes || '',
     });
     setIsEditDialogOpen(true);
   };
@@ -639,97 +514,101 @@ export default function CustomersPage() {
       {/* Customers Table */}
       <Card className="card-tactical">
         <CardContent className="p-6">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Email</TableHead>
-                <TableHead>Phone</TableHead>
-                <TableHead>Govt ID</TableHead>
-                <TableHead>Firearm License</TableHead>
-                <TableHead>License Expiry</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredCustomers.length === 0 ? (
+          {loading ? (
+            <div className="text-center text-gray-400 py-8">Loading...</div>
+          ) : (
+            <Table>
+              <TableHeader>
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-gray-400 py-8">
-                    No customers found
-                  </TableCell>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Email</TableHead>
+                  <TableHead>Phone</TableHead>
+                  <TableHead>Govt ID</TableHead>
+                  <TableHead>Firearm License</TableHead>
+                  <TableHead>License Expiry</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ) : (
-                filteredCustomers.map((customer) => (
-                  <TableRow key={customer.id}>
-                    <TableCell className="font-medium text-sm">
-                      {customer.firstName} {customer.lastName}
-                    </TableCell>
-                    <TableCell className="text-sm text-gray-400">{customer.email}</TableCell>
-                    <TableCell className="text-sm text-gray-400">{customer.phone}</TableCell>
-                    <TableCell className="text-xs text-gray-400">
-                      <div className="space-y-1">
-                        <Badge variant="outline" className="text-[10px]">
-                          {customer.governmentIdType.toUpperCase()}
-                        </Badge>
-                        <div>{customer.governmentIdNumber}</div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-xs text-gray-400">
-                      {customer.firearmLicenseNumber || (
-                        <span className="text-gray-500 italic">N/A</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-xs">
-                      <div className="space-y-1">
-                        {customer.licenseExpiryDate ? (
-                          <>
-                            <div className="text-gray-400">
-                              {new Date(customer.licenseExpiryDate).toLocaleDateString('en-PK')}
-                            </div>
-                            {getLicenseExpiryBadge(customer.licenseExpiryDate)}
-                          </>
-                        ) : (
-                          getLicenseExpiryBadge(null)
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] ${
-                          customer.isActive
-                            ? 'border-green-500 text-green-400 bg-green-950/20'
-                            : 'border-gray-600 text-gray-400'
-                        }`}
-                      >
-                        {customer.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openEditDialog(customer)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteCustomer(customer.id)}
-                          className="text-red-400 hover:text-red-300 hover:bg-red-950/20"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
+              </TableHeader>
+              <TableBody>
+                {filteredCustomers.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-gray-400 py-8">
+                      No customers found
                     </TableCell>
                   </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
+                ) : (
+                  filteredCustomers.map((customer) => (
+                    <TableRow key={customer.id}>
+                      <TableCell className="font-medium text-sm">
+                        {customer.firstName} {customer.lastName}
+                      </TableCell>
+                      <TableCell className="text-sm text-gray-400">{customer.email || 'N/A'}</TableCell>
+                      <TableCell className="text-sm text-gray-400">{customer.phone || 'N/A'}</TableCell>
+                      <TableCell className="text-xs text-gray-400">
+                        <div className="space-y-1">
+                          <Badge variant="outline" className="text-[10px]">
+                            {customer.governmentIdType?.toUpperCase() || 'N/A'}
+                          </Badge>
+                          <div>{customer.governmentIdNumber || 'N/A'}</div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-xs text-gray-400">
+                        {customer.firearmLicenseNumber || (
+                          <span className="text-gray-500 italic">N/A</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <div className="space-y-1">
+                          {customer.licenseExpiryDate ? (
+                            <>
+                              <div className="text-gray-400">
+                                {new Date(customer.licenseExpiryDate).toLocaleDateString('en-PK')}
+                              </div>
+                              {getLicenseExpiryBadge(customer.licenseExpiryDate)}
+                            </>
+                          ) : (
+                            getLicenseExpiryBadge(null)
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            customer.isActive
+                              ? 'border-green-500 text-green-400 bg-green-950/20'
+                              : 'border-gray-600 text-gray-400'
+                          }`}
+                        >
+                          {customer.isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(customer)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteCustomer(customer.id)}
+                            className="text-red-400 hover:text-red-300 hover:bg-red-950/20"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
 

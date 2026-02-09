@@ -1,12 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Warehouse,
   Package,
   ArrowRightLeft,
   AlertTriangle,
-  TrendingUp,
   TrendingDown,
   Plus,
   Search,
@@ -42,234 +41,90 @@ import {
 } from '@/components/ui/table';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  getInventory,
+  getInventorySummary,
+  getStockAdjustments,
+  getStockTransfers,
+  adjustStock,
+} from '@/actions/inventory';
 
 // Types
 type StockItem = {
-  id: string;
+  inventory: {
+    id: number;
+    tenantId: number;
+    productId: number;
+    branchId: number;
+    quantity: number;
+    minQuantity: number;
+    maxQuantity: number;
+    lastRestockDate: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+  };
   productName: string;
   productCode: string;
-  branch: string;
-  quantity: number;
-  minQuantity: number;
-  reorderLevel: number;
-  unitCost: number;
+  productUnit: string | null;
+  isSerialTracked: boolean;
+  branchName: string | null;
 };
 
 type AdjustmentType = 'add' | 'remove' | 'damage' | 'theft' | 'correction' | 'expired';
 
 type Adjustment = {
-  id: string;
-  date: string;
+  adjustment: {
+    id: number;
+    productId: number;
+    branchId: number | null;
+    userId: number;
+    adjustmentType: string;
+    quantityBefore: number;
+    quantityChange: number;
+    quantityAfter: number;
+    reason: string;
+    serialNumber: string | null;
+    reference: string | null;
+    createdAt: Date;
+  };
   productName: string;
-  type: AdjustmentType;
-  qtyBefore: number;
-  change: number;
-  qtyAfter: number;
-  reason: string;
-  user: string;
-  branch: string;
+  productCode: string | null;
 };
 
-type TransferStatus = 'pending' | 'in_transit' | 'completed' | 'cancelled';
-
 type Transfer = {
-  id: string;
-  date: string;
+  transfer: {
+    id: number;
+    productId: number;
+    fromBranchId: number;
+    toBranchId: number;
+    quantity: number;
+    status: string;
+    notes: string | null;
+    createdAt: Date;
+  };
   productName: string;
-  fromBranch: string;
-  toBranch: string;
-  quantity: number;
-  status: TransferStatus;
-  notes?: string;
 };
 
 type Tab = 'stock' | 'adjustments' | 'transfers';
 
-// Mock data
-const branches = ['All Branches', 'Islamabad HQ', 'Rawalpindi Branch', 'Lahore Branch'];
-
-const mockStockData: StockItem[] = [
-  {
-    id: '1',
-    productName: 'Glock 19 Gen5',
-    productCode: 'GLK-19-G5',
-    branch: 'Islamabad HQ',
-    quantity: 12,
-    minQuantity: 5,
-    reorderLevel: 10,
-    unitCost: 185000,
-  },
-  {
-    id: '2',
-    productName: 'Beretta 92FS',
-    productCode: 'BRT-92FS',
-    branch: 'Islamabad HQ',
-    quantity: 3,
-    minQuantity: 5,
-    reorderLevel: 8,
-    unitCost: 195000,
-  },
-  {
-    id: '3',
-    productName: 'AR-15 Rifle',
-    productCode: 'AR15-STD',
-    branch: 'Rawalpindi Branch',
-    quantity: 0,
-    minQuantity: 3,
-    reorderLevel: 5,
-    unitCost: 425000,
-  },
-  {
-    id: '4',
-    productName: '9mm Ammunition (Box of 50)',
-    productCode: '9MM-50',
-    branch: 'Islamabad HQ',
-    quantity: 250,
-    minQuantity: 100,
-    reorderLevel: 200,
-    unitCost: 3500,
-  },
-  {
-    id: '5',
-    productName: '.45 ACP Ammunition (Box of 50)',
-    productCode: '45ACP-50',
-    branch: 'Lahore Branch',
-    quantity: 85,
-    minQuantity: 100,
-    reorderLevel: 150,
-    unitCost: 4200,
-  },
-  {
-    id: '6',
-    productName: 'Red Dot Sight - Holosun',
-    productCode: 'RDS-HS507',
-    branch: 'Rawalpindi Branch',
-    quantity: 8,
-    minQuantity: 5,
-    reorderLevel: 10,
-    unitCost: 42000,
-  },
-  {
-    id: '7',
-    productName: 'Glock 19 Gen5',
-    productCode: 'GLK-19-G5',
-    branch: 'Lahore Branch',
-    quantity: 5,
-    minQuantity: 5,
-    reorderLevel: 10,
-    unitCost: 185000,
-  },
-  {
-    id: '8',
-    productName: '9mm Ammunition (Box of 50)',
-    productCode: '9MM-50',
-    branch: 'Rawalpindi Branch',
-    quantity: 175,
-    minQuantity: 100,
-    reorderLevel: 200,
-    unitCost: 3500,
-  },
-];
-
-const mockAdjustments: Adjustment[] = [
-  {
-    id: '1',
-    date: '2026-02-05 14:30',
-    productName: 'Glock 19 Gen5',
-    type: 'add',
-    qtyBefore: 10,
-    change: 2,
-    qtyAfter: 12,
-    reason: 'Stock replenishment from supplier',
-    user: 'Ahmad Khan',
-    branch: 'Islamabad HQ',
-  },
-  {
-    id: '2',
-    date: '2026-02-04 11:15',
-    productName: 'AR-15 Rifle',
-    type: 'remove',
-    qtyBefore: 2,
-    change: -2,
-    qtyAfter: 0,
-    reason: 'Transferred to customer order',
-    user: 'Sana Ahmed',
-    branch: 'Rawalpindi Branch',
-  },
-  {
-    id: '3',
-    date: '2026-02-03 16:45',
-    productName: '.45 ACP Ammunition',
-    type: 'damage',
-    qtyBefore: 90,
-    change: -5,
-    qtyAfter: 85,
-    reason: 'Water damage in storage area',
-    user: 'Hassan Ali',
-    branch: 'Lahore Branch',
-  },
-  {
-    id: '4',
-    date: '2026-02-02 09:20',
-    productName: 'Red Dot Sight - Holosun',
-    type: 'correction',
-    qtyBefore: 6,
-    change: 2,
-    qtyAfter: 8,
-    reason: 'Physical count correction',
-    user: 'Fatima Noor',
-    branch: 'Rawalpindi Branch',
-  },
-];
-
-const mockTransfers: Transfer[] = [
-  {
-    id: '1',
-    date: '2026-02-05 10:00',
-    productName: 'Glock 19 Gen5',
-    fromBranch: 'Islamabad HQ',
-    toBranch: 'Rawalpindi Branch',
-    quantity: 3,
-    status: 'in_transit',
-    notes: 'Urgent transfer for customer order',
-  },
-  {
-    id: '2',
-    date: '2026-02-04 15:30',
-    productName: '9mm Ammunition',
-    fromBranch: 'Islamabad HQ',
-    toBranch: 'Lahore Branch',
-    quantity: 50,
-    status: 'completed',
-    notes: 'Monthly stock redistribution',
-  },
-  {
-    id: '3',
-    date: '2026-02-03 13:00',
-    productName: 'Beretta 92FS',
-    fromBranch: 'Rawalpindi Branch',
-    toBranch: 'Islamabad HQ',
-    quantity: 2,
-    status: 'completed',
-  },
-  {
-    id: '4',
-    date: '2026-02-02 11:45',
-    productName: 'Red Dot Sight - Holosun',
-    fromBranch: 'Lahore Branch',
-    toBranch: 'Rawalpindi Branch',
-    quantity: 5,
-    status: 'pending',
-    notes: 'Awaiting approval',
-  },
-];
-
 export default function InventoryPage() {
   const [activeTab, setActiveTab] = useState<Tab>('stock');
+  const [loading, setLoading] = useState(true);
   const [selectedBranch, setSelectedBranch] = useState('All Branches');
   const [searchQuery, setSearchQuery] = useState('');
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+
+  // Data states
+  const [stockData, setStockData] = useState<StockItem[]>([]);
+  const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
+  const [transfers, setTransfers] = useState<Transfer[]>([]);
+
+  // Summary stats
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalQuantity, setTotalQuantity] = useState(0);
+  const [lowStockItems, setLowStockItems] = useState(0);
+  const [outOfStockItems, setOutOfStockItems] = useState(0);
 
   // Adjustment form state
   const [adjustmentForm, setAdjustmentForm] = useState({
@@ -282,7 +137,7 @@ export default function InventoryPage() {
     reference: '',
   });
 
-  // Transfer form state
+  // Transfer form state (keeping for UI compatibility)
   const [transferForm, setTransferForm] = useState({
     product: '',
     fromBranch: '',
@@ -291,18 +146,60 @@ export default function InventoryPage() {
     notes: '',
   });
 
-  // Calculate summary statistics
-  const filteredStock =
-    selectedBranch === 'All Branches'
-      ? mockStockData
-      : mockStockData.filter((item) => item.branch === selectedBranch);
+  // Load data
+  useEffect(() => {
+    loadData();
+  }, [activeTab]);
 
-  const totalItems = filteredStock.length;
-  const totalQuantity = filteredStock.reduce((sum, item) => sum + item.quantity, 0);
-  const lowStockItems = filteredStock.filter(
-    (item) => item.quantity <= item.minQuantity && item.quantity > 0
-  ).length;
-  const outOfStockItems = filteredStock.filter((item) => item.quantity === 0).length;
+  const loadData = async () => {
+    try {
+      setLoading(true);
+
+      if (activeTab === 'stock') {
+        const [inventoryResult, summaryResult] = await Promise.all([
+          getInventory(),
+          getInventorySummary(),
+        ]);
+
+        if (inventoryResult.success) {
+          setStockData(inventoryResult.data as StockItem[]);
+        }
+
+        if (summaryResult.success) {
+          const summary = summaryResult.data;
+          setTotalItems(Number(summary.totalItems) || 0);
+          setTotalQuantity(Number(summary.totalQuantity) || 0);
+          setLowStockItems(Number(summary.lowStockCount) || 0);
+          setOutOfStockItems(Number(summary.outOfStockCount) || 0);
+        }
+      } else if (activeTab === 'adjustments') {
+        const result = await getStockAdjustments();
+        if (result.success) {
+          setAdjustments(result.data as Adjustment[]);
+        }
+      } else if (activeTab === 'transfers') {
+        const result = await getStockTransfers();
+        if (result.success) {
+          setTransfers(result.data as Transfer[]);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load inventory data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Calculate filtered stock
+  const filteredStock = stockData.filter((item) => {
+    const matchesBranch =
+      selectedBranch === 'All Branches' || item.branchName === selectedBranch;
+    const matchesSearch =
+      searchQuery === '' ||
+      item.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      item.productCode.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchesBranch && matchesSearch;
+  });
 
   // Get stock status
   const getStockStatus = (quantity: number, minQuantity: number) => {
@@ -312,23 +209,39 @@ export default function InventoryPage() {
   };
 
   // Handle adjustment submission
-  const handleAdjustmentSubmit = (e: React.FormEvent) => {
+  const handleAdjustmentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('Adjustment submitted:', adjustmentForm);
-    setAdjustmentDialogOpen(false);
-    // Reset form
-    setAdjustmentForm({
-      product: '',
-      branch: '',
-      type: 'add',
-      quantity: '',
-      reason: '',
-      serialNumber: '',
-      reference: '',
-    });
+
+    try {
+      const result = await adjustStock({
+        productId: Number(adjustmentForm.product),
+        branchId: Number(adjustmentForm.branch),
+        adjustmentType: adjustmentForm.type,
+        quantityChange: Number(adjustmentForm.quantity),
+        reason: adjustmentForm.reason,
+        serialNumber: adjustmentForm.serialNumber || undefined,
+        reference: adjustmentForm.reference || undefined,
+      });
+
+      if (result.success) {
+        setAdjustmentDialogOpen(false);
+        setAdjustmentForm({
+          product: '',
+          branch: '',
+          type: 'add',
+          quantity: '',
+          reason: '',
+          serialNumber: '',
+          reference: '',
+        });
+        loadData();
+      }
+    } catch (error) {
+      console.error('Failed to record adjustment:', error);
+    }
   };
 
-  // Handle transfer submission
+  // Handle transfer submission (placeholder - would need a createStockTransfer action)
   const handleTransferSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     console.log('Transfer submitted:', transferForm);
@@ -342,6 +255,9 @@ export default function InventoryPage() {
       notes: '',
     });
   };
+
+  // Get unique branch names
+  const branches = ['All Branches', ...Array.from(new Set(stockData.map(item => item.branchName).filter((b): b is string => b !== null)))];
 
   return (
     <div className="space-y-6">
@@ -458,43 +374,30 @@ export default function InventoryPage() {
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="adj-product">Product</Label>
-                          <Select
+                          <Label htmlFor="adj-product">Product ID</Label>
+                          <Input
+                            id="adj-product"
+                            type="number"
                             value={adjustmentForm.product}
-                            onValueChange={(value) =>
-                              setAdjustmentForm({ ...adjustmentForm, product: value })
+                            onChange={(e) =>
+                              setAdjustmentForm({ ...adjustmentForm, product: e.target.value })
                             }
-                          >
-                            <SelectTrigger id="adj-product">
-                              <SelectValue placeholder="Select product" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="glock19">Glock 19 Gen5</SelectItem>
-                              <SelectItem value="beretta92">Beretta 92FS</SelectItem>
-                              <SelectItem value="ar15">AR-15 Rifle</SelectItem>
-                              <SelectItem value="9mm">9mm Ammunition</SelectItem>
-                              <SelectItem value="45acp">.45 ACP Ammunition</SelectItem>
-                              <SelectItem value="reddot">Red Dot Sight - Holosun</SelectItem>
-                            </SelectContent>
-                          </Select>
+                            placeholder="Enter product ID"
+                            required
+                          />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="adj-branch">Branch</Label>
-                          <Select
+                          <Label htmlFor="adj-branch">Branch ID</Label>
+                          <Input
+                            id="adj-branch"
+                            type="number"
                             value={adjustmentForm.branch}
-                            onValueChange={(value) =>
-                              setAdjustmentForm({ ...adjustmentForm, branch: value })
+                            onChange={(e) =>
+                              setAdjustmentForm({ ...adjustmentForm, branch: e.target.value })
                             }
-                          >
-                            <SelectTrigger id="adj-branch">
-                              <SelectValue placeholder="Select branch" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="islamabad">Islamabad HQ</SelectItem>
-                              <SelectItem value="rawalpindi">Rawalpindi Branch</SelectItem>
-                              <SelectItem value="lahore">Lahore Branch</SelectItem>
-                            </SelectContent>
-                          </Select>
+                            placeholder="Enter branch ID"
+                            required
+                          />
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
@@ -612,62 +515,44 @@ export default function InventoryPage() {
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="space-y-2">
-                        <Label htmlFor="transfer-product">Product</Label>
-                        <Select
+                        <Label htmlFor="transfer-product">Product ID</Label>
+                        <Input
+                          id="transfer-product"
+                          type="number"
                           value={transferForm.product}
-                          onValueChange={(value) =>
-                            setTransferForm({ ...transferForm, product: value })
+                          onChange={(e) =>
+                            setTransferForm({ ...transferForm, product: e.target.value })
                           }
-                        >
-                          <SelectTrigger id="transfer-product">
-                            <SelectValue placeholder="Select product" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="glock19">Glock 19 Gen5</SelectItem>
-                            <SelectItem value="beretta92">Beretta 92FS</SelectItem>
-                            <SelectItem value="ar15">AR-15 Rifle</SelectItem>
-                            <SelectItem value="9mm">9mm Ammunition</SelectItem>
-                            <SelectItem value="45acp">.45 ACP Ammunition</SelectItem>
-                            <SelectItem value="reddot">Red Dot Sight - Holosun</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          placeholder="Enter product ID"
+                          required
+                        />
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="transfer-from">From Branch</Label>
-                          <Select
+                          <Label htmlFor="transfer-from">From Branch ID</Label>
+                          <Input
+                            id="transfer-from"
+                            type="number"
                             value={transferForm.fromBranch}
-                            onValueChange={(value) =>
-                              setTransferForm({ ...transferForm, fromBranch: value })
+                            onChange={(e) =>
+                              setTransferForm({ ...transferForm, fromBranch: e.target.value })
                             }
-                          >
-                            <SelectTrigger id="transfer-from">
-                              <SelectValue placeholder="Select branch" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="islamabad">Islamabad HQ</SelectItem>
-                              <SelectItem value="rawalpindi">Rawalpindi Branch</SelectItem>
-                              <SelectItem value="lahore">Lahore Branch</SelectItem>
-                            </SelectContent>
-                          </Select>
+                            placeholder="From branch ID"
+                            required
+                          />
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="transfer-to">To Branch</Label>
-                          <Select
+                          <Label htmlFor="transfer-to">To Branch ID</Label>
+                          <Input
+                            id="transfer-to"
+                            type="number"
                             value={transferForm.toBranch}
-                            onValueChange={(value) =>
-                              setTransferForm({ ...transferForm, toBranch: value })
+                            onChange={(e) =>
+                              setTransferForm({ ...transferForm, toBranch: e.target.value })
                             }
-                          >
-                            <SelectTrigger id="transfer-to">
-                              <SelectValue placeholder="Select branch" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="islamabad">Islamabad HQ</SelectItem>
-                              <SelectItem value="rawalpindi">Rawalpindi Branch</SelectItem>
-                              <SelectItem value="lahore">Lahore Branch</SelectItem>
-                            </SelectContent>
-                          </Select>
+                            placeholder="To branch ID"
+                            required
+                          />
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -717,249 +602,274 @@ export default function InventoryPage() {
 
         {/* Tab Content */}
         <div className="p-4">
-          {activeTab === 'stock' && (
-            <div className="space-y-4">
-              {/* Filters */}
-              <div className="flex items-center gap-4">
-                <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search products..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-                <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                  <SelectTrigger className="w-[200px]">
-                    <Filter className="h-4 w-4 mr-2" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {branches.map((branch) => (
-                      <SelectItem key={branch} value={branch}>
-                        {branch}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+          {loading ? (
+            <div className="text-center text-muted-foreground py-8">Loading...</div>
+          ) : (
+            <>
+              {activeTab === 'stock' && (
+                <div className="space-y-4">
+                  {/* Filters */}
+                  <div className="flex items-center gap-4">
+                    <div className="flex-1 relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search products..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-10"
+                      />
+                    </div>
+                    <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+                      <SelectTrigger className="w-[200px]">
+                        <Filter className="h-4 w-4 mr-2" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {branches.map((branch) => (
+                          <SelectItem key={branch} value={branch}>
+                            {branch}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-              {/* Stock Table */}
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent border-border">
-                      <TableHead>Product</TableHead>
-                      <TableHead>Branch</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead className="text-right">Min Qty</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Reorder Level</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filteredStock
-                      .filter((item) =>
-                        searchQuery
-                          ? item.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            item.productCode.toLowerCase().includes(searchQuery.toLowerCase())
-                          : true
-                      )
-                      .map((item) => {
-                        const status = getStockStatus(item.quantity, item.minQuantity);
-                        return (
-                          <TableRow key={item.id} className="border-border">
-                            <TableCell>
-                              <div>
-                                <div className="font-medium text-white">{item.productName}</div>
-                                <div className="text-sm text-muted-foreground">
-                                  {item.productCode}
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell>{item.branch}</TableCell>
-                            <TableCell className="text-right font-medium">
-                              {item.quantity}
-                            </TableCell>
-                            <TableCell className="text-right">{item.minQuantity}</TableCell>
-                            <TableCell>
-                              {status === 'ok' && (
-                                <Badge
-                                  variant="outline"
-                                  className="bg-green-500/10 text-green-500 border-green-500/20"
-                                >
-                                  In Stock
-                                </Badge>
-                              )}
-                              {status === 'low' && (
-                                <Badge
-                                  variant="outline"
-                                  className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
-                                >
-                                  Low Stock
-                                </Badge>
-                              )}
-                              {status === 'out' && (
-                                <Badge
-                                  variant="outline"
-                                  className="bg-red-500/10 text-red-500 border-red-500/20"
-                                >
-                                  Out of Stock
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right">{item.reorderLevel}</TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setAdjustmentDialogOpen(true)}
-                              >
-                                Adjust
-                              </Button>
+                  {/* Stock Table */}
+                  <div className="rounded-md border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent border-border">
+                          <TableHead>Product</TableHead>
+                          <TableHead>Branch</TableHead>
+                          <TableHead className="text-right">Quantity</TableHead>
+                          <TableHead className="text-right">Min Qty</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Reorder Level</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {filteredStock.length === 0 ? (
+                          <TableRow className="border-border">
+                            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                              No inventory items found
                             </TableCell>
                           </TableRow>
-                        );
-                      })}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
+                        ) : (
+                          filteredStock.map((item) => {
+                            const status = getStockStatus(item.inventory.quantity, item.inventory.minQuantity);
+                            return (
+                              <TableRow key={item.inventory.id} className="border-border">
+                                <TableCell>
+                                  <div>
+                                    <div className="font-medium text-white">{item.productName}</div>
+                                    <div className="text-sm text-muted-foreground">
+                                      {item.productCode}
+                                    </div>
+                                  </div>
+                                </TableCell>
+                                <TableCell>{item.branchName || 'N/A'}</TableCell>
+                                <TableCell className="text-right font-medium">
+                                  {item.inventory.quantity}
+                                </TableCell>
+                                <TableCell className="text-right">{item.inventory.minQuantity}</TableCell>
+                                <TableCell>
+                                  {status === 'ok' && (
+                                    <Badge
+                                      variant="outline"
+                                      className="bg-green-500/10 text-green-500 border-green-500/20"
+                                    >
+                                      In Stock
+                                    </Badge>
+                                  )}
+                                  {status === 'low' && (
+                                    <Badge
+                                      variant="outline"
+                                      className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                                    >
+                                      Low Stock
+                                    </Badge>
+                                  )}
+                                  {status === 'out' && (
+                                    <Badge
+                                      variant="outline"
+                                      className="bg-red-500/10 text-red-500 border-red-500/20"
+                                    >
+                                      Out of Stock
+                                    </Badge>
+                                  )}
+                                </TableCell>
+                                <TableCell className="text-right">{item.inventory.minQuantity}</TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setAdjustmentDialogOpen(true)}
+                                  >
+                                    Adjust
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
 
-          {activeTab === 'adjustments' && (
-            <div className="space-y-4">
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent border-border">
-                      <TableHead>Date</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead className="text-right">Qty Before</TableHead>
-                      <TableHead className="text-right">Change</TableHead>
-                      <TableHead className="text-right">Qty After</TableHead>
-                      <TableHead>Reason</TableHead>
-                      <TableHead>User</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {mockAdjustments.map((adj) => (
-                      <TableRow key={adj.id} className="border-border">
-                        <TableCell className="text-muted-foreground">{adj.date}</TableCell>
-                        <TableCell className="font-medium text-white">
-                          {adj.productName}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="outline"
-                            className={
-                              adj.type === 'add'
-                                ? 'bg-green-500/10 text-green-500 border-green-500/20'
-                                : adj.type === 'remove'
-                                  ? 'bg-blue-500/10 text-blue-500 border-blue-500/20'
-                                  : adj.type === 'damage' || adj.type === 'theft'
-                                    ? 'bg-red-500/10 text-red-500 border-red-500/20'
-                                    : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
-                            }
-                          >
-                            {adj.type.charAt(0).toUpperCase() + adj.type.slice(1)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">{adj.qtyBefore}</TableCell>
-                        <TableCell className="text-right">
-                          <span
-                            className={adj.change > 0 ? 'text-green-500' : 'text-red-500'}
-                          >
-                            {adj.change > 0 ? '+' : ''}
-                            {adj.change}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {adj.qtyAfter}
-                        </TableCell>
-                        <TableCell className="max-w-xs truncate">{adj.reason}</TableCell>
-                        <TableCell>{adj.user}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
+              {activeTab === 'adjustments' && (
+                <div className="space-y-4">
+                  <div className="rounded-md border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent border-border">
+                          <TableHead>Date</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead className="text-right">Qty Before</TableHead>
+                          <TableHead className="text-right">Change</TableHead>
+                          <TableHead className="text-right">Qty After</TableHead>
+                          <TableHead>Reason</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {adjustments.length === 0 ? (
+                          <TableRow className="border-border">
+                            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                              No adjustments found
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          adjustments.map((adj) => (
+                            <TableRow key={adj.adjustment.id} className="border-border">
+                              <TableCell className="text-muted-foreground">
+                                {new Date(adj.adjustment.createdAt).toLocaleString('en-PK')}
+                              </TableCell>
+                              <TableCell className="font-medium text-white">
+                                {adj.productName}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    adj.adjustment.adjustmentType === 'add'
+                                      ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                                      : adj.adjustment.adjustmentType === 'remove'
+                                        ? 'bg-blue-500/10 text-blue-500 border-blue-500/20'
+                                        : adj.adjustment.adjustmentType === 'damage' || adj.adjustment.adjustmentType === 'theft'
+                                          ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                          : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                                  }
+                                >
+                                  {adj.adjustment.adjustmentType.charAt(0).toUpperCase() + adj.adjustment.adjustmentType.slice(1)}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right">{adj.adjustment.quantityBefore}</TableCell>
+                              <TableCell className="text-right">
+                                <span
+                                  className={adj.adjustment.quantityChange > 0 ? 'text-green-500' : 'text-red-500'}
+                                >
+                                  {adj.adjustment.quantityChange > 0 ? '+' : ''}
+                                  {adj.adjustment.quantityChange}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right font-medium">
+                                {adj.adjustment.quantityAfter}
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate">{adj.adjustment.reason}</TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
 
-          {activeTab === 'transfers' && (
-            <div className="space-y-4">
-              <div className="rounded-md border border-border">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent border-border">
-                      <TableHead>Date</TableHead>
-                      <TableHead>Product</TableHead>
-                      <TableHead>From Branch</TableHead>
-                      <TableHead>To Branch</TableHead>
-                      <TableHead className="text-right">Quantity</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Notes</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {mockTransfers.map((transfer) => (
-                      <TableRow key={transfer.id} className="border-border">
-                        <TableCell className="text-muted-foreground">{transfer.date}</TableCell>
-                        <TableCell className="font-medium text-white">
-                          {transfer.productName}
-                        </TableCell>
-                        <TableCell>{transfer.fromBranch}</TableCell>
-                        <TableCell>{transfer.toBranch}</TableCell>
-                        <TableCell className="text-right font-medium">
-                          {transfer.quantity}
-                        </TableCell>
-                        <TableCell>
-                          {transfer.status === 'pending' && (
-                            <Badge
-                              variant="outline"
-                              className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
-                            >
-                              Pending
-                            </Badge>
-                          )}
-                          {transfer.status === 'in_transit' && (
-                            <Badge
-                              variant="outline"
-                              className="bg-blue-500/10 text-blue-500 border-blue-500/20"
-                            >
-                              In Transit
-                            </Badge>
-                          )}
-                          {transfer.status === 'completed' && (
-                            <Badge
-                              variant="outline"
-                              className="bg-green-500/10 text-green-500 border-green-500/20"
-                            >
-                              Completed
-                            </Badge>
-                          )}
-                          {transfer.status === 'cancelled' && (
-                            <Badge
-                              variant="outline"
-                              className="bg-red-500/10 text-red-500 border-red-500/20"
-                            >
-                              Cancelled
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="max-w-xs truncate">
-                          {transfer.notes || '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
+              {activeTab === 'transfers' && (
+                <div className="space-y-4">
+                  <div className="rounded-md border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent border-border">
+                          <TableHead>Date</TableHead>
+                          <TableHead>Product</TableHead>
+                          <TableHead>From Branch</TableHead>
+                          <TableHead>To Branch</TableHead>
+                          <TableHead className="text-right">Quantity</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Notes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {transfers.length === 0 ? (
+                          <TableRow className="border-border">
+                            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                              No transfers found
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          transfers.map((transfer) => (
+                            <TableRow key={transfer.transfer.id} className="border-border">
+                              <TableCell className="text-muted-foreground">
+                                {new Date(transfer.transfer.createdAt).toLocaleString('en-PK')}
+                              </TableCell>
+                              <TableCell className="font-medium text-white">
+                                {transfer.productName}
+                              </TableCell>
+                              <TableCell>{transfer.transfer.fromBranchId}</TableCell>
+                              <TableCell>{transfer.transfer.toBranchId}</TableCell>
+                              <TableCell className="text-right font-medium">
+                                {transfer.transfer.quantity}
+                              </TableCell>
+                              <TableCell>
+                                {transfer.transfer.status === 'pending' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                                  >
+                                    Pending
+                                  </Badge>
+                                )}
+                                {transfer.transfer.status === 'in_transit' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-blue-500/10 text-blue-500 border-blue-500/20"
+                                  >
+                                    In Transit
+                                  </Badge>
+                                )}
+                                {transfer.transfer.status === 'completed' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-green-500/10 text-green-500 border-green-500/20"
+                                  >
+                                    Completed
+                                  </Badge>
+                                )}
+                                {transfer.transfer.status === 'cancelled' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-red-500/10 text-red-500 border-red-500/20"
+                                  >
+                                    Cancelled
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate">
+                                {transfer.transfer.notes || '—'}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>

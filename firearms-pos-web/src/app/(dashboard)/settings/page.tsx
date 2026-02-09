@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Settings,
   Building2,
@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { getBusinessSettings, updateBusinessSettings, upsertSetting } from '@/actions/settings'
 
 type SettingsSection = 'business' | 'tax' | 'receipt' | 'notifications' | 'security'
 
@@ -41,6 +42,60 @@ const sections: { id: SettingsSection; label: string; icon: typeof Settings }[] 
 
 export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSection>('business')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [settings, setSettings] = useState<any>(null)
+
+  useEffect(() => {
+    loadSettings()
+  }, [])
+
+  async function loadSettings() {
+    setLoading(true)
+    try {
+      const result = await getBusinessSettings()
+      if (result.success && result.data) {
+        setSettings(result.data)
+      } else {
+        setSettings({})
+      }
+    } catch (error) {
+      console.error('Failed to load settings:', error)
+      setSettings({})
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const result = await updateBusinessSettings(settings)
+      if (result.success) {
+        alert('Settings saved successfully')
+        loadSettings()
+      } else {
+        alert('Failed to save settings')
+      }
+    } catch (error) {
+      console.error('Failed to save settings:', error)
+      alert('Failed to save settings')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function updateField(field: string, value: any) {
+    setSettings({ ...settings, [field]: value })
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <p className="text-muted-foreground">Loading settings...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -49,9 +104,9 @@ export default function SettingsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
           <p className="text-sm text-muted-foreground mt-1">Configure your business preferences</p>
         </div>
-        <Button className="brass-glow">
+        <Button className="brass-glow" onClick={handleSave} disabled={saving}>
           <Save className="w-4 h-4 mr-2" />
-          Save Changes
+          {saving ? 'Saving...' : 'Save Changes'}
         </Button>
       </div>
 
@@ -90,43 +145,63 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Business Name</Label>
-                      <Input defaultValue="Firearms Trading Co." />
+                      <Input
+                        value={settings?.businessName || ''}
+                        onChange={(e) => updateField('businessName', e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Trading Name</Label>
-                      <Input defaultValue="FTC Arms & Ammunition" />
+                      <Input
+                        value={settings?.businessType || ''}
+                        onChange={(e) => updateField('businessType', e.target.value)}
+                      />
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>NTN (National Tax Number)</Label>
-                      <Input defaultValue="1234567-8" />
+                      <Input
+                        value={settings?.taxId || ''}
+                        onChange={(e) => updateField('taxId', e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
-                      <Label>STRN (Sales Tax Reg.)</Label>
-                      <Input defaultValue="17-00-1234-567-89" />
+                      <Label>Business Registration No.</Label>
+                      <Input
+                        value={settings?.businessRegistrationNo || ''}
+                        onChange={(e) => updateField('businessRegistrationNo', e.target.value)}
+                      />
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Dealer License Number</Label>
-                    <Input defaultValue="DL-ISB-2024-001" />
                   </div>
                   <div className="space-y-2">
                     <Label>Address</Label>
-                    <Input defaultValue="Plot 45, Blue Area, Jinnah Avenue, Islamabad" />
+                    <Input
+                      value={settings?.businessAddress || ''}
+                      onChange={(e) => updateField('businessAddress', e.target.value)}
+                    />
                   </div>
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Phone</Label>
-                      <Input defaultValue="+92-51-2345678" />
+                      <Input
+                        value={settings?.businessPhone || ''}
+                        onChange={(e) => updateField('businessPhone', e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Email</Label>
-                      <Input defaultValue="info@firearms.pk" />
+                      <Input
+                        value={settings?.businessEmail || ''}
+                        onChange={(e) => updateField('businessEmail', e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Website</Label>
-                      <Input defaultValue="www.firearms.pk" />
+                      <Input
+                        value={settings?.businessWebsite || ''}
+                        onChange={(e) => updateField('businessWebsite', e.target.value)}
+                      />
                     </div>
                   </div>
                 </CardContent>
@@ -143,7 +218,7 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Country</Label>
-                      <Select defaultValue="pk">
+                      <Select value={settings?.businessCountry || 'pk'} onValueChange={(value) => updateField('businessCountry', value)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="pk">Pakistan</SelectItem>
@@ -154,23 +229,23 @@ export default function SettingsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label>Timezone</Label>
-                      <Select defaultValue="pkt">
+                      <Select value={settings?.timezone || 'UTC'} onValueChange={(value) => updateField('timezone', value)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="pkt">PKT (UTC+5)</SelectItem>
-                          <SelectItem value="gst">GST (UTC+4)</SelectItem>
-                          <SelectItem value="ast">AST (UTC+3)</SelectItem>
+                          <SelectItem value="UTC">PKT (UTC+5)</SelectItem>
+                          <SelectItem value="GST">GST (UTC+4)</SelectItem>
+                          <SelectItem value="AST">AST (UTC+3)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
                       <Label>Date Format</Label>
-                      <Select defaultValue="dmy">
+                      <Select value={settings?.dateFormat || 'DD/MM/YYYY'} onValueChange={(value) => updateField('dateFormat', value)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="dmy">DD/MM/YYYY</SelectItem>
-                          <SelectItem value="mdy">MM/DD/YYYY</SelectItem>
-                          <SelectItem value="ymd">YYYY-MM-DD</SelectItem>
+                          <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
+                          <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
+                          <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -193,22 +268,25 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Currency</Label>
-                      <Select defaultValue="pkr">
+                      <Select value={settings?.currencyCode || 'PKR'} onValueChange={(value) => updateField('currencyCode', value)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="pkr">PKR - Pakistani Rupee</SelectItem>
-                          <SelectItem value="usd">USD - US Dollar</SelectItem>
-                          <SelectItem value="aed">AED - UAE Dirham</SelectItem>
+                          <SelectItem value="PKR">PKR - Pakistani Rupee</SelectItem>
+                          <SelectItem value="USD">USD - US Dollar</SelectItem>
+                          <SelectItem value="AED">AED - UAE Dirham</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
                       <Label>Currency Symbol</Label>
-                      <Input defaultValue="Rs." />
+                      <Input
+                        value={settings?.currencySymbol || 'Rs.'}
+                        onChange={(e) => updateField('currencySymbol', e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Decimal Places</Label>
-                      <Select defaultValue="2">
+                      <Select value={String(settings?.decimalPlaces || 2)} onValueChange={(value) => updateField('decimalPlaces', Number(value))}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="0">0</SelectItem>
@@ -229,21 +307,21 @@ export default function SettingsPage() {
                   <CardDescription>Default tax rates applied to sales</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
-                    <div>
-                      <p className="text-sm font-medium">Enable Sales Tax</p>
-                      <p className="text-xs text-muted-foreground">Apply tax on all taxable products</p>
-                    </div>
-                    <Switch defaultChecked />
-                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Default Tax Rate (%)</Label>
-                      <Input type="number" defaultValue="17" />
+                      <Input
+                        type="number"
+                        value={settings?.taxRate || '17'}
+                        onChange={(e) => updateField('taxRate', e.target.value)}
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label>Tax Label</Label>
-                      <Input defaultValue="Sales Tax" />
+                      <Input
+                        value={settings?.taxName || 'Sales Tax'}
+                        onChange={(e) => updateField('taxName', e.target.value)}
+                      />
                     </div>
                   </div>
                   <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
@@ -251,14 +329,20 @@ export default function SettingsPage() {
                       <p className="text-sm font-medium">Tax Inclusive Pricing</p>
                       <p className="text-xs text-muted-foreground">Product prices already include tax</p>
                     </div>
-                    <Switch />
+                    <Switch
+                      checked={settings?.isTaxInclusive || false}
+                      onCheckedChange={(checked) => updateField('isTaxInclusive', checked)}
+                    />
                   </div>
                   <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
                     <div>
                       <p className="text-sm font-medium">Show Tax Breakdown</p>
                       <p className="text-xs text-muted-foreground">Display tax amount separately on receipts</p>
                     </div>
-                    <Switch defaultChecked />
+                    <Switch
+                      checked={settings?.showTaxOnReceipt ?? true}
+                      onCheckedChange={(checked) => updateField('showTaxOnReceipt', checked)}
+                    />
                   </div>
                 </CardContent>
               </Card>
@@ -278,44 +362,55 @@ export default function SettingsPage() {
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Receipt Width</Label>
-                      <Select defaultValue="80">
+                      <Label>Receipt Format</Label>
+                      <Select value={settings?.receiptFormat || 'pdf'} onValueChange={(value) => updateField('receiptFormat', value)}>
                         <SelectTrigger><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="58">58mm (Small)</SelectItem>
                           <SelectItem value="80">80mm (Standard)</SelectItem>
-                          <SelectItem value="a4">A4 (Full Page)</SelectItem>
+                          <SelectItem value="pdf">A4 (Full Page)</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
                       <Label>Invoice Prefix</Label>
-                      <Input defaultValue="INV-" />
+                      <Input
+                        value={settings?.invoicePrefix || 'INV-'}
+                        onChange={(e) => updateField('invoicePrefix', e.target.value)}
+                      />
                     </div>
                   </div>
                   <div className="space-y-2">
                     <Label>Receipt Header Text</Label>
-                    <Input defaultValue="FTC Arms & Ammunition - Licensed Dealer" />
+                    <Input
+                      value={settings?.receiptHeader || ''}
+                      onChange={(e) => updateField('receiptHeader', e.target.value)}
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>Receipt Footer Text</Label>
-                    <Input defaultValue="Thank you for your business. All sales subject to applicable laws." />
+                    <Input
+                      value={settings?.receiptFooter || ''}
+                      onChange={(e) => updateField('receiptFooter', e.target.value)}
+                    />
                   </div>
                   <div className="space-y-3">
                     <Label className="text-xs uppercase tracking-wider text-muted-foreground">Display Options</Label>
                     {[
-                      { label: 'Show Business Logo', desc: 'Print company logo on receipt header', checked: true },
-                      { label: 'Show Customer Info', desc: 'Include customer name and contact', checked: true },
-                      { label: 'Show Serial Numbers', desc: 'Print serial numbers for tracked items', checked: true },
-                      { label: 'Show Dealer License', desc: 'Display license number on receipt', checked: true },
-                      { label: 'Show Barcode', desc: 'Print barcode for sale reference', checked: false },
+                      { field: 'receiptShowBusinessLogo', label: 'Show Business Logo', desc: 'Print company logo on receipt header' },
+                      { field: 'showTaxOnReceipt', label: 'Show Tax Breakdown', desc: 'Include tax details on receipt' },
+                      { field: 'showQRCodeOnReceipt', label: 'Show QR Code', desc: 'Print QR code for sale reference' },
+                      { field: 'receiptAutoDownload', label: 'Auto Download Receipt', desc: 'Automatically download after sale' },
                     ].map((opt) => (
-                      <div key={opt.label} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
+                      <div key={opt.field} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
                         <div>
                           <p className="text-sm font-medium">{opt.label}</p>
                           <p className="text-xs text-muted-foreground">{opt.desc}</p>
                         </div>
-                        <Switch defaultChecked={opt.checked} />
+                        <Switch
+                          checked={settings?.[opt.field] ?? true}
+                          onCheckedChange={(checked) => updateField(opt.field, checked)}
+                        />
                       </div>
                     ))}
                   </div>
@@ -336,19 +431,19 @@ export default function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {[
-                    { label: 'Low Stock Alerts', desc: 'Notify when product stock falls below minimum', checked: true },
-                    { label: 'License Expiry Reminders', desc: 'Alert 30 days before customer license expires', checked: true },
-                    { label: 'Daily Sales Summary', desc: 'Send end-of-day sales report via email', checked: false },
-                    { label: 'New User Registration', desc: 'Notify admins when staff accounts are created', checked: true },
-                    { label: 'Failed Login Attempts', desc: 'Alert on 3+ consecutive failed logins', checked: true },
-                    { label: 'Return Processing', desc: 'Notify when a return is submitted', checked: false },
+                    { field: 'lowStockNotifications', label: 'Low Stock Alerts', desc: 'Notify when product stock falls below minimum' },
+                    { field: 'enableEmailNotifications', label: 'Email Notifications', desc: 'Send notifications via email' },
+                    { field: 'dailySalesReport', label: 'Daily Sales Summary', desc: 'Send end-of-day sales report via email' },
                   ].map((notif) => (
-                    <div key={notif.label} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
+                    <div key={notif.field} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
                       <div>
                         <p className="text-sm font-medium">{notif.label}</p>
                         <p className="text-xs text-muted-foreground">{notif.desc}</p>
                       </div>
-                      <Switch defaultChecked={notif.checked} />
+                      <Switch
+                        checked={settings?.[notif.field] ?? true}
+                        onCheckedChange={(checked) => updateField(notif.field, checked)}
+                      />
                     </div>
                   ))}
                 </CardContent>
@@ -365,11 +460,19 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Default Minimum Stock</Label>
-                      <Input type="number" defaultValue="5" />
+                      <Input
+                        type="number"
+                        value={settings?.lowStockThreshold || 5}
+                        onChange={(e) => updateField('lowStockThreshold', Number(e.target.value))}
+                      />
                     </div>
                     <div className="space-y-2">
-                      <Label>Alert Lead Days</Label>
-                      <Input type="number" defaultValue="7" />
+                      <Label>Notification Email</Label>
+                      <Input
+                        type="email"
+                        value={settings?.notificationEmail || ''}
+                        onChange={(e) => updateField('notificationEmail', e.target.value)}
+                      />
                     </div>
                   </div>
                 </CardContent>
@@ -388,17 +491,18 @@ export default function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {[
-                    { label: 'Require Strong Passwords', desc: 'Minimum 8 characters with mixed case and numbers', checked: true },
-                    { label: 'Two-Factor Authentication', desc: 'Require 2FA for admin accounts', checked: false },
-                    { label: 'Auto Logout on Idle', desc: 'Automatically log out after period of inactivity', checked: true },
-                    { label: 'Login IP Restriction', desc: 'Only allow login from whitelisted IP addresses', checked: false },
+                    { field: 'requirePasswordChange', label: 'Require Password Change', desc: 'Force periodic password updates' },
+                    { field: 'enableAuditLogs', label: 'Enable Audit Trail', desc: 'Log all user actions for compliance review' },
                   ].map((sec) => (
-                    <div key={sec.label} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
+                    <div key={sec.field} className="flex items-center justify-between p-3 rounded-lg border border-border/50">
                       <div>
                         <p className="text-sm font-medium">{sec.label}</p>
                         <p className="text-xs text-muted-foreground">{sec.desc}</p>
                       </div>
-                      <Switch defaultChecked={sec.checked} />
+                      <Switch
+                        checked={settings?.[sec.field] ?? true}
+                        onCheckedChange={(checked) => updateField(sec.field, checked)}
+                      />
                     </div>
                   ))}
                 </CardContent>
@@ -408,33 +512,27 @@ export default function SettingsPage() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
                     <FileText className="w-4 h-4 text-primary" />
-                    Audit & Compliance
+                    Session & Compliance
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Session Timeout (minutes)</Label>
-                      <Input type="number" defaultValue="30" />
+                      <Input
+                        type="number"
+                        value={settings?.sessionTimeoutMinutes || 60}
+                        onChange={(e) => updateField('sessionTimeoutMinutes', Number(e.target.value))}
+                      />
                     </div>
                     <div className="space-y-2">
-                      <Label>Max Login Attempts</Label>
-                      <Input type="number" defaultValue="5" />
+                      <Label>Password Change Days</Label>
+                      <Input
+                        type="number"
+                        value={settings?.passwordChangeIntervalDays || 90}
+                        onChange={(e) => updateField('passwordChangeIntervalDays', Number(e.target.value))}
+                      />
                     </div>
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
-                    <div>
-                      <p className="text-sm font-medium">Enable Audit Trail</p>
-                      <p className="text-xs text-muted-foreground">Log all user actions for compliance review</p>
-                    </div>
-                    <Switch defaultChecked />
-                  </div>
-                  <div className="flex items-center justify-between p-3 rounded-lg border border-border/50">
-                    <div>
-                      <p className="text-sm font-medium">Require Sale Void Reason</p>
-                      <p className="text-xs text-muted-foreground">Force staff to enter a reason when voiding sales</p>
-                    </div>
-                    <Switch defaultChecked />
                   </div>
                 </CardContent>
               </Card>

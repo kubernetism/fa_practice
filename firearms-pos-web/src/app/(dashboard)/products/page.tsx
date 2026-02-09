@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Package,
   Plus,
@@ -10,7 +10,6 @@ import {
   Trash2,
   Barcode,
   Tag,
-  ToggleLeft,
   ToggleRight,
   ShieldCheck,
 } from 'lucide-react'
@@ -43,47 +42,121 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { getProducts, getProductSummary, getCategories, createProduct } from '@/actions/products'
 
-const mockCategories = [
-  { id: 1, name: 'Pistols' },
-  { id: 2, name: 'Rifles' },
-  { id: 3, name: 'Shotguns' },
-  { id: 4, name: 'Ammunition' },
-  { id: 5, name: 'Accessories' },
-]
+type Product = {
+  id: number
+  code: string
+  name: string
+  categoryName: string | null
+  brand: string | null
+  costPrice: string
+  sellingPrice: string
+  reorderLevel: number
+  unit: string
+  isSerialTracked: boolean
+  isTaxable: boolean
+  taxRate: string
+  barcode: string | null
+  isActive: boolean
+}
 
-const mockProducts = [
-  { id: 1, code: 'P-001', name: 'Glock 19 Gen5', categoryName: 'Pistols', brand: 'Glock', costPrice: '85000', sellingPrice: '120000', reorderLevel: 5, unit: 'pcs', isSerialTracked: true, isTaxable: true, taxRate: '16', barcode: '8901234567890', isActive: true },
-  { id: 2, code: 'P-002', name: 'Beretta 92FS', categoryName: 'Pistols', brand: 'Beretta', costPrice: '78000', sellingPrice: '110000', reorderLevel: 3, unit: 'pcs', isSerialTracked: true, isTaxable: true, taxRate: '16', barcode: '8901234567891', isActive: true },
-  { id: 3, code: 'R-001', name: 'AR-15 Standard', categoryName: 'Rifles', brand: 'Colt', costPrice: '145000', sellingPrice: '195000', reorderLevel: 2, unit: 'pcs', isSerialTracked: true, isTaxable: true, taxRate: '16', barcode: '', isActive: true },
-  { id: 4, code: 'A-001', name: '9mm FMJ Box (50rds)', categoryName: 'Ammunition', brand: 'Federal', costPrice: '2500', sellingPrice: '3500', reorderLevel: 100, unit: 'box', isSerialTracked: false, isTaxable: true, taxRate: '16', barcode: '8901234567892', isActive: true },
-  { id: 5, code: 'A-002', name: '.45 ACP Hollow Point (25rds)', categoryName: 'Ammunition', brand: 'Hornady', costPrice: '3800', sellingPrice: '5200', reorderLevel: 50, unit: 'box', isSerialTracked: false, isTaxable: true, taxRate: '16', barcode: '', isActive: true },
-  { id: 6, code: 'ACC-001', name: 'Red Dot Sight', categoryName: 'Accessories', brand: 'Vortex', costPrice: '25000', sellingPrice: '35000', reorderLevel: 10, unit: 'pcs', isSerialTracked: false, isTaxable: true, taxRate: '16', barcode: '', isActive: false },
-]
-
-const summaryCards = [
-  { title: 'Total Products', value: '6', icon: Package, accent: 'text-primary' },
-  { title: 'Active', value: '5', icon: ToggleRight, accent: 'text-success' },
-  { title: 'Serial Tracked', value: '3', icon: ShieldCheck, accent: 'text-blue-400' },
-  { title: 'Categories', value: '5', icon: Tag, accent: 'text-muted-foreground' },
-]
+type Category = {
+  id: number
+  name: string
+}
 
 export default function ProductsPage() {
   const [search, setSearch] = useState('')
   const [filterCategory, setFilterCategory] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [products, setProducts] = useState<Product[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
+  const [summary, setSummary] = useState({ totalProducts: 0, activeCount: 0, serialTrackedCount: 0 })
+  const [loading, setLoading] = useState(true)
 
-  const filtered = mockProducts.filter((p) => {
+  // Form state
+  const [formCode, setFormCode] = useState('')
+  const [formName, setFormName] = useState('')
+  const [formBarcode, setFormBarcode] = useState('')
+  const [formCategoryId, setFormCategoryId] = useState('')
+  const [formBrand, setFormBrand] = useState('')
+  const [formCostPrice, setFormCostPrice] = useState('')
+  const [formSellingPrice, setFormSellingPrice] = useState('')
+  const [formReorderLevel, setFormReorderLevel] = useState('10')
+  const [formUnit, setFormUnit] = useState('pcs')
+  const [formTaxRate, setFormTaxRate] = useState('16')
+  const [formDescription, setFormDescription] = useState('')
+  const [formSerialTracked, setFormSerialTracked] = useState(false)
+  const [formTaxable, setFormTaxable] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    const [productsResult, summaryResult, categoriesResult] = await Promise.all([
+      getProducts({ search: search || undefined }),
+      getProductSummary(),
+      getCategories(),
+    ])
+
+    if (productsResult.success) {
+      setProducts(
+        productsResult.data.map((d: any) => ({
+          ...d.product,
+          categoryName: d.categoryName,
+        }))
+      )
+    }
+    if (summaryResult.success) setSummary(summaryResult.data as any)
+    if (categoriesResult.success) setCategories(categoriesResult.data as any)
+    setLoading(false)
+  }, [search])
+
+  useEffect(() => {
+    loadData()
+  }, [loadData])
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSaving(true)
+    const result = await createProduct({
+      code: formCode,
+      name: formName,
+      barcode: formBarcode || undefined,
+      categoryId: formCategoryId ? Number(formCategoryId) : undefined,
+      brand: formBrand || undefined,
+      costPrice: Number(formCostPrice),
+      sellingPrice: Number(formSellingPrice),
+      reorderLevel: Number(formReorderLevel) || 10,
+      unit: formUnit,
+      taxRate: Number(formTaxRate) || 0,
+      isSerialTracked: formSerialTracked,
+      isTaxable: formTaxable,
+    })
+    setSaving(false)
+    if (result.success) {
+      setDialogOpen(false)
+      setFormCode(''); setFormName(''); setFormBarcode(''); setFormCategoryId(''); setFormBrand('')
+      setFormCostPrice(''); setFormSellingPrice(''); setFormReorderLevel('10'); setFormUnit('pcs')
+      setFormTaxRate('16'); setFormDescription(''); setFormSerialTracked(false); setFormTaxable(true)
+      loadData()
+    }
+  }
+
+  const filtered = products.filter((p) => {
     if (filterCategory !== 'all' && p.categoryName !== filterCategory) return false
     if (filterStatus === 'active' && !p.isActive) return false
     if (filterStatus === 'inactive' && p.isActive) return false
-    if (search) {
-      const q = search.toLowerCase()
-      if (!p.name.toLowerCase().includes(q) && !p.code.toLowerCase().includes(q) && !p.barcode.includes(q)) return false
-    }
     return true
   })
+
+  const summaryCards = [
+    { title: 'Total Products', value: String(summary.totalProducts), icon: Package, accent: 'text-primary' },
+    { title: 'Active', value: String(summary.activeCount), icon: ToggleRight, accent: 'text-success' },
+    { title: 'Serial Tracked', value: String(summary.serialTrackedCount), icon: ShieldCheck, accent: 'text-blue-400' },
+    { title: 'Categories', value: String(categories.length), icon: Tag, accent: 'text-muted-foreground' },
+  ]
 
   return (
     <div className="space-y-6">
@@ -103,28 +176,28 @@ export default function ProductsPage() {
             <DialogHeader>
               <DialogTitle>Add New Product</DialogTitle>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form className="space-y-4 mt-4" onSubmit={handleSubmit}>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Product Code *</Label>
-                  <Input placeholder="e.g. P-001" />
+                  <Input placeholder="e.g. P-001" value={formCode} onChange={(e) => setFormCode(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
                   <Label>Barcode</Label>
-                  <Input placeholder="Scan or enter barcode" />
+                  <Input placeholder="Scan or enter barcode" value={formBarcode} onChange={(e) => setFormBarcode(e.target.value)} />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Product Name *</Label>
-                <Input placeholder="Product name" />
+                <Input placeholder="Product name" value={formName} onChange={(e) => setFormName(e.target.value)} required />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Category</Label>
-                  <Select>
+                  <Select value={formCategoryId} onValueChange={setFormCategoryId}>
                     <SelectTrigger><SelectValue placeholder="Select category" /></SelectTrigger>
                     <SelectContent>
-                      {mockCategories.map((c) => (
+                      {categories.map((c) => (
                         <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>
                       ))}
                     </SelectContent>
@@ -132,27 +205,27 @@ export default function ProductsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Brand</Label>
-                  <Input placeholder="Brand name" />
+                  <Input placeholder="Brand name" value={formBrand} onChange={(e) => setFormBrand(e.target.value)} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Cost Price (Rs.) *</Label>
-                  <Input type="number" placeholder="0.00" />
+                  <Input type="number" placeholder="0.00" value={formCostPrice} onChange={(e) => setFormCostPrice(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
                   <Label>Selling Price (Rs.) *</Label>
-                  <Input type="number" placeholder="0.00" />
+                  <Input type="number" placeholder="0.00" value={formSellingPrice} onChange={(e) => setFormSellingPrice(e.target.value)} required />
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Reorder Level</Label>
-                  <Input type="number" placeholder="10" />
+                  <Input type="number" placeholder="10" value={formReorderLevel} onChange={(e) => setFormReorderLevel(e.target.value)} />
                 </div>
                 <div className="space-y-2">
                   <Label>Unit</Label>
-                  <Select>
+                  <Select value={formUnit} onValueChange={setFormUnit}>
                     <SelectTrigger><SelectValue placeholder="pcs" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="pcs">Pieces</SelectItem>
@@ -164,24 +237,26 @@ export default function ProductsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Tax Rate (%)</Label>
-                  <Input type="number" placeholder="16" />
+                  <Input type="number" placeholder="16" value={formTaxRate} onChange={(e) => setFormTaxRate(e.target.value)} />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Description</Label>
-                <Textarea placeholder="Optional description" rows={2} />
+                <Textarea placeholder="Optional description" rows={2} value={formDescription} onChange={(e) => setFormDescription(e.target.value)} />
               </div>
               <div className="flex items-center gap-6">
                 <div className="flex items-center gap-2">
-                  <Switch id="serial-tracked" />
+                  <Switch id="serial-tracked" checked={formSerialTracked} onCheckedChange={setFormSerialTracked} />
                   <Label htmlFor="serial-tracked" className="text-sm">Serial Tracked</Label>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Switch id="taxable" defaultChecked />
+                  <Switch id="taxable" checked={formTaxable} onCheckedChange={setFormTaxable} />
                   <Label htmlFor="taxable" className="text-sm">Taxable</Label>
                 </div>
               </div>
-              <Button type="submit" className="w-full brass-glow">Save Product</Button>
+              <Button type="submit" className="w-full brass-glow" disabled={saving}>
+                {saving ? 'Saving...' : 'Save Product'}
+              </Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -224,7 +299,7 @@ export default function ProductsPage() {
               <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Categories</SelectItem>
-                {mockCategories.map((c) => (
+                {categories.map((c) => (
                   <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
                 ))}
               </SelectContent>
@@ -260,71 +335,76 @@ export default function ProductsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((product) => (
-                <TableRow key={product.id}>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{product.code}</TableCell>
-                  <TableCell>
-                    <div>
-                      <p className="text-sm font-medium">{product.name}</p>
-                      {product.barcode && (
-                        <div className="flex items-center gap-1 mt-0.5">
-                          <Barcode className="w-3 h-3 text-muted-foreground" />
-                          <span className="text-[10px] text-muted-foreground font-mono">{product.barcode}</span>
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className="text-[10px]">{product.categoryName}</Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{product.brand}</TableCell>
-                  <TableCell className="text-right text-sm text-muted-foreground">
-                    Rs. {Number(product.costPrice).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-right text-sm font-semibold">
-                    Rs. {Number(product.sellingPrice).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground capitalize">{product.unit}</TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      {product.isSerialTracked && (
-                        <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-400 border-blue-500/20">Serial</Badge>
-                      )}
-                      {product.isTaxable && (
-                        <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-400 border-purple-500/20">{product.taxRate}%</Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={`text-[10px] ${
-                        product.isActive
-                          ? 'bg-success/10 text-success border-success/20'
-                          : 'bg-destructive/10 text-destructive border-destructive/20'
-                      }`}
-                    >
-                      {product.isActive ? 'Active' : 'Inactive'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary">
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  </TableCell>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Loading...</TableCell>
                 </TableRow>
-              ))}
-              {filtered.length === 0 && (
+              ) : filtered.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
                     No products found
                   </TableCell>
                 </TableRow>
+              ) : (
+                filtered.map((product) => (
+                  <TableRow key={product.id}>
+                    <TableCell className="font-mono text-xs text-muted-foreground">{product.code}</TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="text-sm font-medium">{product.name}</p>
+                        {product.barcode && (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <Barcode className="w-3 h-3 text-muted-foreground" />
+                            <span className="text-[10px] text-muted-foreground font-mono">{product.barcode}</span>
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-[10px]">{product.categoryName || 'N/A'}</Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{product.brand || '-'}</TableCell>
+                    <TableCell className="text-right text-sm text-muted-foreground">
+                      Rs. {Number(product.costPrice).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(product.sellingPrice).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground capitalize">{product.unit}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        {product.isSerialTracked && (
+                          <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-400 border-blue-500/20">Serial</Badge>
+                        )}
+                        {product.isTaxable && (
+                          <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-400 border-purple-500/20">{product.taxRate}%</Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${
+                          product.isActive
+                            ? 'bg-success/10 text-success border-success/20'
+                            : 'bg-destructive/10 text-destructive border-destructive/20'
+                        }`}
+                      >
+                        {product.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary">
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
               )}
             </TableBody>
           </Table>

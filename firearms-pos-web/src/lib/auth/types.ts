@@ -11,6 +11,11 @@ declare module 'next-auth' {
     role: 'admin' | 'manager' | 'cashier'
     branchId: number | null
     permissions: string[]
+    subscriptionStatus: string
+    trialEndsAt: string | null
+    isPlatformAdmin?: boolean
+    isImpersonating?: boolean
+    impersonatedTenantName?: string
   }
 }
 
@@ -20,5 +25,10 @@ declare module 'next-auth/jwt' {
     role: 'admin' | 'manager' | 'cashier'
     branchId: number | null
     permissions: string[]
+    subscriptionStatus: string
+    trialEndsAt: string | null
+    isPlatformAdmin?: boolean
+    isImpersonating?: boolean
+    impersonatedTenantName?: string
   }
 }

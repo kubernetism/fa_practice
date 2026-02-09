@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   ShoppingBag,
   Plus,
@@ -39,14 +39,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-
-const mockPurchases = [
-  { id: 1, purchaseOrderNumber: 'PO-001', supplierName: 'Arms Corp', status: 'received', paymentStatus: 'paid', totalAmount: '250000', itemCount: 5, createdAt: '2026-02-01' },
-  { id: 2, purchaseOrderNumber: 'PO-002', supplierName: 'Ammo Direct', status: 'ordered', paymentStatus: 'pending', totalAmount: '180000', itemCount: 3, createdAt: '2026-02-03' },
-  { id: 3, purchaseOrderNumber: 'PO-003', supplierName: 'Tactical Gear Co', status: 'partial', paymentStatus: 'partial', totalAmount: '95000', itemCount: 8, createdAt: '2026-02-04' },
-  { id: 4, purchaseOrderNumber: 'PO-004', supplierName: 'Arms Corp', status: 'draft', paymentStatus: 'pending', totalAmount: '320000', itemCount: 2, createdAt: '2026-02-05' },
-  { id: 5, purchaseOrderNumber: 'PO-005', supplierName: 'Gun Parts Ltd', status: 'cancelled', paymentStatus: 'pending', totalAmount: '45000', itemCount: 1, createdAt: '2026-01-28' },
-]
+import {
+  getPurchases,
+  getPurchaseSummary,
+  updatePurchaseStatus,
+} from '@/actions/purchases'
+import { toast } from 'sonner'
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -62,22 +60,74 @@ const paymentColors: Record<string, string> = {
   pending: 'bg-muted text-muted-foreground',
 }
 
-const summaryCards = [
-  { title: 'Total Purchases', value: 'Rs. 890,000', icon: DollarSign, accent: 'text-primary' },
-  { title: 'Total Orders', value: String(mockPurchases.length), icon: ShoppingBag, accent: 'text-blue-400' },
-  { title: 'Pending', value: String(mockPurchases.filter((p) => p.status === 'ordered' || p.status === 'draft').length), icon: Clock, accent: 'text-yellow-400' },
-  { title: 'Received', value: String(mockPurchases.filter((p) => p.status === 'received').length), icon: CheckCircle2, accent: 'text-success' },
-]
-
 export default function PurchasesPage() {
+  const [loading, setLoading] = useState(true)
+  const [purchases, setPurchases] = useState<any[]>([])
+  const [summary, setSummary] = useState<any>(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterPayment, setFilterPayment] = useState('all')
 
-  const filtered = mockPurchases.filter((p) => {
-    if (filterStatus !== 'all' && p.status !== filterStatus) return false
-    if (filterPayment !== 'all' && p.paymentStatus !== filterPayment) return false
-    return true
-  })
+  useEffect(() => {
+    loadData()
+  }, [filterStatus, filterPayment])
+
+  async function loadData() {
+    try {
+      setLoading(true)
+      const [purchasesRes, summaryRes] = await Promise.all([
+        getPurchases({
+          status: filterStatus !== 'all' ? filterStatus : undefined,
+          paymentStatus: filterPayment !== 'all' ? filterPayment : undefined,
+        }),
+        getPurchaseSummary(),
+      ])
+      if (purchasesRes.success) {
+        setPurchases(purchasesRes.data)
+      }
+      if (summaryRes.success) {
+        setSummary(summaryRes.data)
+      }
+    } catch (error) {
+      console.error('Failed to load purchases:', error)
+      toast.error('Failed to load purchases')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleMarkReceived(id: number) {
+    if (!confirm('Mark this purchase as received?')) return
+    try {
+      const res = await updatePurchaseStatus(id, 'received')
+      if (res.success) {
+        toast.success('Purchase marked as received')
+        loadData()
+      }
+    } catch (error) {
+      console.error('Failed to update purchase:', error)
+      toast.error('Failed to update purchase')
+    }
+  }
+
+  const summaryCards = [
+    { title: 'Total Purchases', value: 'Rs. ' + Number(summary?.totalPurchases || 0).toLocaleString(), icon: DollarSign, accent: 'text-primary' },
+    { title: 'Total Orders', value: String(summary?.totalCount || 0), icon: ShoppingBag, accent: 'text-blue-400' },
+    { title: 'Pending', value: String(summary?.pendingCount || 0), icon: Clock, accent: 'text-yellow-400' },
+    { title: 'Received', value: String(summary?.receivedCount || 0), icon: CheckCircle2, accent: 'text-success' },
+  ]
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Purchases</h1>
+            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -218,39 +268,41 @@ export default function PurchasesPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((po) => (
-                <TableRow key={po.id} className={po.status === 'cancelled' ? 'opacity-50' : ''}>
+              {purchases.map((po) => (
+                <TableRow key={po.purchase.id} className={po.purchase.status === 'cancelled' ? 'opacity-50' : ''}>
                   <TableCell>
                     <code className="text-sm font-bold font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">
-                      {po.purchaseOrderNumber}
+                      {po.purchase.purchaseOrderNumber}
                     </code>
                   </TableCell>
-                  <TableCell className="text-sm font-medium">{po.supplierName}</TableCell>
+                  <TableCell className="text-sm font-medium">{po.supplierName || 'Unknown'}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1 text-sm text-muted-foreground">
                       <Package className="w-3 h-3" />
-                      {po.itemCount}
+                      Items
                     </div>
                   </TableCell>
-                  <TableCell className="text-right text-sm font-semibold">Rs. {Number(po.totalAmount).toLocaleString()}</TableCell>
+                  <TableCell className="text-right text-sm font-semibold">Rs. {Number(po.purchase.totalAmount).toLocaleString()}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={`text-[10px] capitalize ${statusColors[po.status]}`}>
-                      {po.status}
+                    <Badge variant="outline" className={`text-[10px] capitalize ${statusColors[po.purchase.status]}`}>
+                      {po.purchase.status}
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={`text-[10px] capitalize ${paymentColors[po.paymentStatus]}`}>
-                      {po.paymentStatus}
+                    <Badge variant="outline" className={`text-[10px] capitalize ${paymentColors[po.purchase.paymentStatus]}`}>
+                      {po.purchase.paymentStatus}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{po.createdAt}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {new Date(po.purchase.createdAt).toLocaleDateString()}
+                  </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
                       <Button variant="ghost" size="icon" className="h-7 w-7" title="View details">
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
-                      {po.status === 'ordered' && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-success" title="Mark received">
+                      {po.purchase.status === 'ordered' && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-success" title="Mark received" onClick={() => handleMarkReceived(po.purchase.id)}>
                           <Truck className="w-3.5 h-3.5" />
                         </Button>
                       )}
@@ -258,7 +310,7 @@ export default function PurchasesPage() {
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && (
+              {purchases.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
                     No purchase orders found

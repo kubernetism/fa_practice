@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   UserCog,
   Plus,
@@ -41,30 +41,32 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { getUsers, getUsersSummary, createUser, deleteUser } from '@/actions/users'
+import { getBranches } from '@/actions/branches'
 
-type User = {
+type UserData = {
   id: number
-  fullName: string
+  tenantId: number
   username: string
+  password: string | null
   email: string
-  phone: string
+  image: string | null
+  provider: string | null
+  fullName: string
+  phone: string | null
   role: 'admin' | 'manager' | 'cashier'
-  branchName: string
+  permissions: unknown
   isActive: boolean
-  lastLogin: string | null
-  provider: string
+  lastLogin: Date | null
+  branchId: number | null
+  createdAt: Date
+  updatedAt: Date
 }
 
-const mockUsers: User[] = [
-  { id: 1, fullName: 'Safdar Ali Shah', username: 'safdar', email: 'safdar@firearms.pk', phone: '+92-300-1112233', role: 'admin', branchName: 'Islamabad HQ', isActive: true, lastLogin: '2026-02-08 09:15', provider: 'credentials' },
-  { id: 2, fullName: 'Ahmad Khan', username: 'ahmad.khan', email: 'ahmad@firearms.pk', phone: '+92-321-4445566', role: 'manager', branchName: 'Islamabad HQ', isActive: true, lastLogin: '2026-02-07 18:30', provider: 'credentials' },
-  { id: 3, fullName: 'Sana Ahmed', username: 'sana.ahmed', email: 'sana@firearms.pk', phone: '+92-333-7778899', role: 'cashier', branchName: 'Rawalpindi Branch', isActive: true, lastLogin: '2026-02-08 08:45', provider: 'credentials' },
-  { id: 4, fullName: 'Hassan Ali', username: 'hassan.ali', email: 'hassan@firearms.pk', phone: '+92-345-1234567', role: 'cashier', branchName: 'Lahore Branch', isActive: true, lastLogin: '2026-02-06 17:00', provider: 'credentials' },
-  { id: 5, fullName: 'Fatima Noor', username: 'fatima.noor', email: 'fatima@firearms.pk', phone: '+92-300-9998877', role: 'manager', branchName: 'Rawalpindi Branch', isActive: false, lastLogin: '2026-01-15 12:00', provider: 'google' },
-  { id: 6, fullName: 'Bilal Raza', username: 'bilal.raza', email: 'bilal@firearms.pk', phone: '+92-312-5556677', role: 'cashier', branchName: 'Islamabad HQ', isActive: true, lastLogin: null, provider: 'credentials' },
-]
-
-const branches = ['Islamabad HQ', 'Rawalpindi Branch', 'Lahore Branch']
+type UserWithBranch = {
+  user: UserData
+  branchName: string | null
+}
 
 const roleBadgeStyles: Record<string, string> = {
   admin: 'bg-primary/10 text-primary border-primary/20',
@@ -83,8 +85,91 @@ export default function UsersPage() {
   const [filterRole, setFilterRole] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [users, setUsers] = useState<UserWithBranch[]>([])
+  const [branches, setBranches] = useState<Array<{ id: number; name: string }>>([])
+  const [loading, setLoading] = useState(true)
+  const [summary, setSummary] = useState({
+    totalUsers: 0,
+    adminCount: 0,
+    managerCount: 0,
+    cashierCount: 0,
+  })
+  const [formData, setFormData] = useState({
+    username: '',
+    email: '',
+    password: '',
+    fullName: '',
+    phone: '',
+    role: 'cashier' as 'admin' | 'manager' | 'cashier',
+    branchId: undefined as number | undefined,
+  })
 
-  const filtered = mockUsers.filter((u) => {
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [usersResult, summaryResult, branchesResult] = await Promise.all([
+        getUsers(),
+        getUsersSummary(),
+        getBranches(),
+      ])
+
+      if (usersResult.success) {
+        setUsers(usersResult.data)
+      }
+      if (summaryResult.success) {
+        setSummary(summaryResult.data)
+      }
+      if (branchesResult.success) {
+        setBranches(branchesResult.data.map(item => ({ id: item.branch.id, name: item.branch.name })))
+      }
+    } catch (error) {
+      console.error('Failed to load data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      const result = await createUser(formData)
+      if (result.success) {
+        setDialogOpen(false)
+        setFormData({
+          username: '',
+          email: '',
+          password: '',
+          fullName: '',
+          phone: '',
+          role: 'cashier',
+          branchId: undefined,
+        })
+        loadData()
+      } else {
+        alert(result.message || 'Failed to create user')
+      }
+    } catch (error) {
+      console.error('Failed to create user:', error)
+      alert('Failed to create user')
+    }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('Are you sure you want to deactivate this user?')) return
+    try {
+      await deleteUser(id)
+      loadData()
+    } catch (error) {
+      console.error('Failed to delete user:', error)
+    }
+  }
+
+  const filtered = users.filter((item) => {
+    const u = item.user
     if (filterRole !== 'all' && u.role !== filterRole) return false
     if (filterStatus === 'active' && !u.isActive) return false
     if (filterStatus === 'inactive' && u.isActive) return false
@@ -96,11 +181,19 @@ export default function UsersPage() {
   })
 
   const summaryCards = [
-    { title: 'Total Users', value: String(mockUsers.length), icon: UserCog, accent: 'text-primary' },
-    { title: 'Admins', value: String(mockUsers.filter(u => u.role === 'admin').length), icon: ShieldCheck, accent: 'text-primary' },
-    { title: 'Managers', value: String(mockUsers.filter(u => u.role === 'manager').length), icon: ShieldAlert, accent: 'text-blue-400' },
-    { title: 'Cashiers', value: String(mockUsers.filter(u => u.role === 'cashier').length), icon: Shield, accent: 'text-muted-foreground' },
+    { title: 'Total Users', value: String(summary.totalUsers), icon: UserCog, accent: 'text-primary' },
+    { title: 'Admins', value: String(summary.adminCount), icon: ShieldCheck, accent: 'text-primary' },
+    { title: 'Managers', value: String(summary.managerCount), icon: ShieldAlert, accent: 'text-blue-400' },
+    { title: 'Cashiers', value: String(summary.cashierCount), icon: Shield, accent: 'text-muted-foreground' },
   ]
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <p className="text-muted-foreground">Loading users...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
@@ -121,35 +214,61 @@ export default function UsersPage() {
               <DialogTitle>Add New User</DialogTitle>
               <DialogDescription>Create a staff account with role-based access</DialogDescription>
             </DialogHeader>
-            <form className="space-y-4 mt-4">
+            <form className="space-y-4 mt-4" onSubmit={handleSubmit}>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Full Name *</Label>
-                  <Input placeholder="Full name" />
+                  <Input
+                    placeholder="Full name"
+                    value={formData.fullName}
+                    onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                    required
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Username *</Label>
-                  <Input placeholder="username" />
+                  <Input
+                    placeholder="username"
+                    value={formData.username}
+                    onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                    required
+                  />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Email *</Label>
-                  <Input type="email" placeholder="user@example.pk" />
+                  <Input
+                    type="email"
+                    placeholder="user@example.pk"
+                    value={formData.email}
+                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    required
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Phone</Label>
-                  <Input placeholder="+92-3xx-xxxxxxx" />
+                  <Input
+                    placeholder="+92-3xx-xxxxxxx"
+                    value={formData.phone}
+                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                  />
                 </div>
               </div>
               <div className="space-y-2">
                 <Label>Password *</Label>
-                <Input type="password" placeholder="Minimum 8 characters" />
+                <Input
+                  type="password"
+                  placeholder="Minimum 8 characters"
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  required
+                />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Role *</Label>
-                  <Select>
+                  <Select value={formData.role} onValueChange={(value) => setFormData({ ...formData, role: value as any })}>
                     <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="admin">Admin</SelectItem>
@@ -159,12 +278,12 @@ export default function UsersPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Branch *</Label>
-                  <Select>
+                  <Label>Branch</Label>
+                  <Select value={formData.branchId?.toString()} onValueChange={(value) => setFormData({ ...formData, branchId: Number(value) })}>
                     <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
                     <SelectContent>
                       {branches.map((b) => (
-                        <SelectItem key={b} value={b}>{b}</SelectItem>
+                        <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -240,7 +359,8 @@ export default function UsersPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((user) => {
+              {filtered.map((item) => {
+                const user = item.user
                 const RoleIcon = roleIcons[user.role]
                 return (
                   <TableRow key={user.id}>
@@ -256,13 +376,13 @@ export default function UsersPage() {
                         {user.role}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{user.branchName}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{user.phone}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{item.branchName || 'No branch'}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{user.phone || 'N/A'}</TableCell>
                     <TableCell>
                       {user.lastLogin ? (
                         <div className="flex items-center gap-1 text-xs text-muted-foreground">
                           <Clock className="w-3 h-3" />
-                          {user.lastLogin}
+                          {new Date(user.lastLogin).toLocaleString()}
                         </div>
                       ) : (
                         <span className="text-xs text-muted-foreground italic">Never</span>
@@ -278,7 +398,12 @@ export default function UsersPage() {
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary">
                           <Edit2 className="w-3.5 h-3.5" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(user.id)}
+                        >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>

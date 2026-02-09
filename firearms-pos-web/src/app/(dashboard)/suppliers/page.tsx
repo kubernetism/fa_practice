@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Truck,
   Plus,
@@ -11,16 +11,12 @@ import {
   Building2,
   CheckCircle2,
   XCircle,
-  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from '@/components/ui/card';
 import {
   Table,
@@ -49,118 +45,31 @@ import {
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  getSuppliers,
+  getSupplierSummary,
+  createSupplier,
+  updateSupplier,
+  deleteSupplier,
+} from '@/actions/suppliers';
 
 interface Supplier {
-  id: string;
+  id: number;
   name: string;
-  contactPerson: string;
-  email: string;
-  phone: string;
-  address: string;
-  city: string;
-  state: string;
-  zipCode: string;
-  taxId: string;
-  paymentTerms: 'net_15' | 'net_30' | 'net_45' | 'net_60' | 'cod' | 'advance';
-  notes: string;
-  status: 'active' | 'inactive';
+  contactPerson: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zipCode: string | null;
+  taxId: string | null;
+  paymentTerms: string | null;
+  notes: string | null;
+  isActive: boolean;
 }
 
-// Mock data with Pakistani firearms/ammunition suppliers
-const mockSuppliers: Supplier[] = [
-  {
-    id: '1',
-    name: 'Pakistan Ordnance Factories',
-    contactPerson: 'Col. Ahmed Hassan',
-    email: 'procurement@pof.gov.pk',
-    phone: '+92-51-9314501',
-    address: 'Wah Cantt Industrial Area',
-    city: 'Wah Cantt',
-    state: 'Punjab',
-    zipCode: '47040',
-    taxId: 'NTN-1234567-8',
-    paymentTerms: 'net_30',
-    notes: 'Government-owned defense manufacturer. Primary supplier for military-grade firearms.',
-    status: 'active',
-  },
-  {
-    id: '2',
-    name: 'Arms Corporation of Pakistan',
-    contactPerson: 'Muhammad Tariq',
-    email: 'sales@armscorp.pk',
-    phone: '+92-42-37654321',
-    address: 'Defence Industrial Estate, Kot Lakhpat',
-    city: 'Lahore',
-    state: 'Punjab',
-    zipCode: '54000',
-    taxId: 'NTN-2345678-9',
-    paymentTerms: 'net_45',
-    notes: 'Licensed commercial arms manufacturer. Specializes in civilian firearms and sporting rifles.',
-    status: 'active',
-  },
-  {
-    id: '3',
-    name: 'National Defense Industries',
-    contactPerson: 'Brig. (R) Saeed Khan',
-    email: 'info@ndi.com.pk',
-    phone: '+92-21-32456789',
-    address: 'SITE Industrial Area, Block 18',
-    city: 'Karachi',
-    state: 'Sindh',
-    zipCode: '75700',
-    taxId: 'NTN-3456789-0',
-    paymentTerms: 'net_60',
-    notes: 'Ammunition and explosives manufacturer. Bulk orders require 45-day lead time.',
-    status: 'active',
-  },
-  {
-    id: '4',
-    name: 'Frontier Arms & Ammunition',
-    contactPerson: 'Malik Iftikhar',
-    email: 'orders@frontierarms.pk',
-    phone: '+92-91-5276543',
-    address: 'Bara Road, Hayatabad Industrial Estate',
-    city: 'Peshawar',
-    state: 'Khyber Pakhtunkhwa',
-    zipCode: '25120',
-    taxId: 'NTN-4567890-1',
-    paymentTerms: 'cod',
-    notes: 'Traditional gunsmith collective. Cash on delivery only. Specializes in hunting rifles.',
-    status: 'active',
-  },
-  {
-    id: '5',
-    name: 'Strategic Defense Solutions',
-    contactPerson: 'Shahid Mehmood',
-    email: 'contact@sds.pk',
-    phone: '+92-51-8765432',
-    address: 'I-9 Industrial Area',
-    city: 'Islamabad',
-    state: 'Islamabad Capital Territory',
-    zipCode: '44000',
-    taxId: 'NTN-5678901-2',
-    paymentTerms: 'advance',
-    notes: 'High-end tactical equipment and accessories. Requires 50% advance payment.',
-    status: 'inactive',
-  },
-  {
-    id: '6',
-    name: 'Punjab Ammunition Works',
-    contactPerson: 'Rashid Mahmood',
-    email: 'sales@paw.com.pk',
-    phone: '+92-61-4567890',
-    address: 'Sargodha Road Industrial Zone',
-    city: 'Multan',
-    state: 'Punjab',
-    zipCode: '60000',
-    taxId: 'NTN-6789012-3',
-    paymentTerms: 'net_15',
-    notes: 'Domestic ammunition manufacturer. Fast turnaround for standard calibers.',
-    status: 'active',
-  },
-];
-
-const paymentTermsLabels: Record<Supplier['paymentTerms'], string> = {
+const paymentTermsLabels: Record<string, string> = {
   net_15: 'Net 15 Days',
   net_30: 'Net 30 Days',
   net_45: 'Net 45 Days',
@@ -170,11 +79,18 @@ const paymentTermsLabels: Record<Supplier['paymentTerms'], string> = {
 };
 
 export default function SuppliersPage() {
-  const [suppliers, setSuppliers] = useState<Supplier[]>(mockSuppliers);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
+
+  // Summary stats
+  const [totalSuppliers, setTotalSuppliers] = useState(0);
+  const [activeSuppliers, setActiveSuppliers] = useState(0);
+  const [inactiveSuppliers, setInactiveSuppliers] = useState(0);
+
   const [formData, setFormData] = useState<Partial<Supplier>>({
     name: '',
     contactPerson: '',
@@ -187,76 +103,87 @@ export default function SuppliersPage() {
     taxId: '',
     paymentTerms: 'net_30',
     notes: '',
-    status: 'active',
+    isActive: true,
   });
+
+  // Load suppliers and summary
+  useEffect(() => {
+    loadData();
+  }, [statusFilter]);
+
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const isActiveFilter = statusFilter === 'all' ? undefined : statusFilter === 'active';
+      const [suppliersResult, summaryResult] = await Promise.all([
+        getSuppliers({ search: searchQuery || undefined, isActive: isActiveFilter }),
+        getSupplierSummary(),
+      ]);
+
+      if (suppliersResult.success) {
+        setSuppliers(suppliersResult.data as Supplier[]);
+      }
+
+      if (summaryResult.success) {
+        const summary = summaryResult.data;
+        setTotalSuppliers(Number(summary.totalSuppliers) || 0);
+        setActiveSuppliers(Number(summary.activeCount) || 0);
+        setInactiveSuppliers(Number(summary.inactiveCount) || 0);
+      }
+    } catch (error) {
+      console.error('Failed to load suppliers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Filter suppliers
   const filteredSuppliers = suppliers.filter((supplier) => {
     const matchesSearch =
       searchQuery === '' ||
       supplier.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      supplier.contactPerson.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      supplier.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      supplier.email.toLowerCase().includes(searchQuery.toLowerCase());
+      supplier.contactPerson?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      supplier.city?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      supplier.email?.toLowerCase().includes(searchQuery.toLowerCase());
 
-    const matchesStatus = statusFilter === 'all' || supplier.status === statusFilter;
-
-    return matchesSearch && matchesStatus;
+    return matchesSearch;
   });
 
-  // Calculate summary stats
-  const totalSuppliers = suppliers.length;
-  const activeSuppliers = suppliers.filter((s) => s.status === 'active').length;
-  const inactiveSuppliers = suppliers.filter((s) => s.status === 'inactive').length;
-
   // Handle form submission
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (editingSupplier) {
-      // Update existing supplier
-      setSuppliers(
-        suppliers.map((s) =>
-          s.id === editingSupplier.id ? { ...editingSupplier, ...formData } : s
-        )
-      );
-    } else {
-      // Add new supplier
-      const newSupplier: Supplier = {
-        id: (suppliers.length + 1).toString(),
-        name: formData.name || '',
-        contactPerson: formData.contactPerson || '',
-        email: formData.email || '',
-        phone: formData.phone || '',
-        address: formData.address || '',
-        city: formData.city || '',
-        state: formData.state || '',
-        zipCode: formData.zipCode || '',
-        taxId: formData.taxId || '',
-        paymentTerms: formData.paymentTerms || 'net_30',
-        notes: formData.notes || '',
-        status: formData.status || 'active',
-      };
-      setSuppliers([...suppliers, newSupplier]);
+    try {
+      if (editingSupplier) {
+        const result = await updateSupplier(editingSupplier.id, formData as any);
+        if (result.success) {
+          setIsAddDialogOpen(false);
+          handleDialogClose();
+          loadData();
+        }
+      } else {
+        const result = await createSupplier({
+          name: formData.name!,
+          contactPerson: formData.contactPerson || undefined,
+          email: formData.email || undefined,
+          phone: formData.phone || undefined,
+          address: formData.address || undefined,
+          city: formData.city || undefined,
+          state: formData.state || undefined,
+          zipCode: formData.zipCode || undefined,
+          taxId: formData.taxId || undefined,
+          paymentTerms: formData.paymentTerms || undefined,
+          notes: formData.notes || undefined,
+        });
+        if (result.success) {
+          setIsAddDialogOpen(false);
+          handleDialogClose();
+          loadData();
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save supplier:', error);
     }
-
-    // Reset form
-    setFormData({
-      name: '',
-      contactPerson: '',
-      email: '',
-      phone: '',
-      address: '',
-      city: '',
-      state: '',
-      zipCode: '',
-      taxId: '',
-      paymentTerms: 'net_30',
-      notes: '',
-      status: 'active',
-    });
-    setEditingSupplier(null);
-    setIsAddDialogOpen(false);
   };
 
   // Handle edit
@@ -267,9 +194,14 @@ export default function SuppliersPage() {
   };
 
   // Handle delete
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: number) => {
     if (confirm('Are you sure you want to delete this supplier?')) {
-      setSuppliers(suppliers.filter((s) => s.id !== id));
+      try {
+        await deleteSupplier(id);
+        loadData();
+      } catch (error) {
+        console.error('Failed to delete supplier:', error);
+      }
     }
   };
 
@@ -289,7 +221,7 @@ export default function SuppliersPage() {
       taxId: '',
       paymentTerms: 'net_30',
       notes: '',
-      status: 'active',
+      isActive: true,
     });
   };
 
@@ -342,7 +274,7 @@ export default function SuppliersPage() {
                   <Label htmlFor="contactPerson">Contact Person</Label>
                   <Input
                     id="contactPerson"
-                    value={formData.contactPerson}
+                    value={formData.contactPerson || ''}
                     onChange={(e) =>
                       setFormData({ ...formData, contactPerson: e.target.value })
                     }
@@ -357,7 +289,7 @@ export default function SuppliersPage() {
                     <Input
                       id="email"
                       type="email"
-                      value={formData.email}
+                      value={formData.email || ''}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       placeholder="sales@supplier.pk"
                     />
@@ -366,7 +298,7 @@ export default function SuppliersPage() {
                     <Label htmlFor="phone">Phone</Label>
                     <Input
                       id="phone"
-                      value={formData.phone}
+                      value={formData.phone || ''}
                       onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                       placeholder="+92-51-1234567"
                     />
@@ -378,7 +310,7 @@ export default function SuppliersPage() {
                   <Label htmlFor="address">Address</Label>
                   <Input
                     id="address"
-                    value={formData.address}
+                    value={formData.address || ''}
                     onChange={(e) => setFormData({ ...formData, address: e.target.value })}
                     placeholder="Industrial Area, Sector I-9"
                   />
@@ -390,7 +322,7 @@ export default function SuppliersPage() {
                     <Label htmlFor="city">City</Label>
                     <Input
                       id="city"
-                      value={formData.city}
+                      value={formData.city || ''}
                       onChange={(e) => setFormData({ ...formData, city: e.target.value })}
                       placeholder="Islamabad"
                     />
@@ -399,7 +331,7 @@ export default function SuppliersPage() {
                     <Label htmlFor="state">State</Label>
                     <Input
                       id="state"
-                      value={formData.state}
+                      value={formData.state || ''}
                       onChange={(e) => setFormData({ ...formData, state: e.target.value })}
                       placeholder="Punjab"
                     />
@@ -408,7 +340,7 @@ export default function SuppliersPage() {
                     <Label htmlFor="zipCode">Zip Code</Label>
                     <Input
                       id="zipCode"
-                      value={formData.zipCode}
+                      value={formData.zipCode || ''}
                       onChange={(e) => setFormData({ ...formData, zipCode: e.target.value })}
                       placeholder="44000"
                     />
@@ -420,7 +352,7 @@ export default function SuppliersPage() {
                   <Label htmlFor="taxId">Tax ID (NTN)</Label>
                   <Input
                     id="taxId"
-                    value={formData.taxId}
+                    value={formData.taxId || ''}
                     onChange={(e) => setFormData({ ...formData, taxId: e.target.value })}
                     placeholder="NTN-1234567-8"
                   />
@@ -431,8 +363,8 @@ export default function SuppliersPage() {
                   <div className="grid gap-2">
                     <Label htmlFor="paymentTerms">Payment Terms</Label>
                     <Select
-                      value={formData.paymentTerms}
-                      onValueChange={(value: Supplier['paymentTerms']) =>
+                      value={formData.paymentTerms || 'net_30'}
+                      onValueChange={(value) =>
                         setFormData({ ...formData, paymentTerms: value })
                       }
                     >
@@ -452,9 +384,9 @@ export default function SuppliersPage() {
                   <div className="grid gap-2">
                     <Label htmlFor="status">Status</Label>
                     <Select
-                      value={formData.status}
+                      value={formData.isActive ? 'active' : 'inactive'}
                       onValueChange={(value: 'active' | 'inactive') =>
-                        setFormData({ ...formData, status: value })
+                        setFormData({ ...formData, isActive: value === 'active' })
                       }
                     >
                       <SelectTrigger id="status">
@@ -473,7 +405,7 @@ export default function SuppliersPage() {
                   <Label htmlFor="notes">Notes</Label>
                   <Textarea
                     id="notes"
-                    value={formData.notes}
+                    value={formData.notes || ''}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="Additional notes about this supplier..."
                     rows={3}
@@ -565,83 +497,87 @@ export default function SuppliersPage() {
       {/* Suppliers Table */}
       <Card className="card-tactical">
         <CardContent className="pt-6">
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Contact Person</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Phone</TableHead>
-                  <TableHead>City</TableHead>
-                  <TableHead>Tax ID</TableHead>
-                  <TableHead>Payment Terms</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredSuppliers.length === 0 ? (
+          {loading ? (
+            <div className="text-center text-muted-foreground py-8">Loading...</div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
                   <TableRow>
-                    <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
-                      No suppliers found. Add your first supplier to get started.
-                    </TableCell>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Contact Person</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Phone</TableHead>
+                    <TableHead>City</TableHead>
+                    <TableHead>Tax ID</TableHead>
+                    <TableHead>Payment Terms</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
-                ) : (
-                  filteredSuppliers.map((supplier) => (
-                    <TableRow key={supplier.id}>
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <Truck className="h-4 w-4 text-amber-500/70" />
-                          {supplier.name}
-                        </div>
-                      </TableCell>
-                      <TableCell>{supplier.contactPerson}</TableCell>
-                      <TableCell className="text-muted-foreground">{supplier.email}</TableCell>
-                      <TableCell className="text-muted-foreground">{supplier.phone}</TableCell>
-                      <TableCell>{supplier.city}</TableCell>
-                      <TableCell className="text-muted-foreground">{supplier.taxId}</TableCell>
-                      <TableCell>
-                        <Badge variant="outline" className="text-[10px] font-medium">
-                          {paymentTermsLabels[supplier.paymentTerms]}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] ${
-                            supplier.status === 'active'
-                              ? 'border-green-500/50 bg-green-500/10 text-green-500'
-                              : 'border-red-500/50 bg-red-500/10 text-red-500'
-                          }`}
-                        >
-                          {supplier.status === 'active' ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEdit(supplier)}
-                          >
-                            <Edit2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDelete(supplier.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-red-500" />
-                          </Button>
-                        </div>
+                </TableHeader>
+                <TableBody>
+                  {filteredSuppliers.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} className="text-center py-8 text-muted-foreground">
+                        No suppliers found. Add your first supplier to get started.
                       </TableCell>
                     </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </div>
+                  ) : (
+                    filteredSuppliers.map((supplier) => (
+                      <TableRow key={supplier.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <Truck className="h-4 w-4 text-amber-500/70" />
+                            {supplier.name}
+                          </div>
+                        </TableCell>
+                        <TableCell>{supplier.contactPerson || 'N/A'}</TableCell>
+                        <TableCell className="text-muted-foreground">{supplier.email || 'N/A'}</TableCell>
+                        <TableCell className="text-muted-foreground">{supplier.phone || 'N/A'}</TableCell>
+                        <TableCell>{supplier.city || 'N/A'}</TableCell>
+                        <TableCell className="text-muted-foreground">{supplier.taxId || 'N/A'}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-[10px] font-medium">
+                            {paymentTermsLabels[supplier.paymentTerms || 'net_30']}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] ${
+                              supplier.isActive
+                                ? 'border-green-500/50 bg-green-500/10 text-green-500'
+                                : 'border-red-500/50 bg-red-500/10 text-red-500'
+                            }`}
+                          >
+                            {supplier.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEdit(supplier)}
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(supplier.id)}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
