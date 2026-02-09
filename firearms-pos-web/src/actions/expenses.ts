@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { expenses } from '@/lib/db/schema'
 import { eq, and, desc, sql, between, count } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { postExpenseToGL } from '@/lib/accounting/gl-posting'
 
 async function getTenantId() {
   const session = await auth()
@@ -93,7 +94,88 @@ export async function createExpense(data: {
     })
     .returning()
 
+  // Auto GL posting
+  try {
+    await postExpenseToGL({
+      tenantId,
+      expenseId: expense.id,
+      branchId: data.branchId,
+      userId,
+      amount: Number(data.amount),
+      category: data.category,
+      paymentMethod: data.paymentMethod,
+    })
+  } catch (e) {
+    console.error('GL posting failed for expense:', e)
+  }
+
   return { success: true, data: expense }
+}
+
+export async function getExpenseById(id: number) {
+  const tenantId = await getTenantId()
+
+  const [expense] = await db
+    .select()
+    .from(expenses)
+    .where(and(eq(expenses.id, id), eq(expenses.tenantId, tenantId)))
+
+  if (!expense) return { success: false, message: 'Expense not found' }
+
+  return { success: true, data: expense }
+}
+
+export async function updateExpense(
+  id: number,
+  data: {
+    category?: string
+    amount?: string
+    description?: string
+    paymentMethod?: string
+    reference?: string
+    paymentStatus?: string
+    expenseDate?: string
+    dueDate?: string
+  }
+) {
+  const tenantId = await getTenantId()
+
+  const updateData: any = { updatedAt: new Date() }
+  if (data.category) updateData.category = data.category
+  if (data.amount) updateData.amount = data.amount
+  if (data.description !== undefined) updateData.description = data.description || null
+  if (data.paymentMethod) updateData.paymentMethod = data.paymentMethod
+  if (data.reference !== undefined) updateData.reference = data.reference || null
+  if (data.paymentStatus) updateData.paymentStatus = data.paymentStatus
+  if (data.expenseDate) updateData.expenseDate = new Date(data.expenseDate)
+  if (data.dueDate !== undefined) updateData.dueDate = data.dueDate ? new Date(data.dueDate) : null
+
+  const [expense] = await db
+    .update(expenses)
+    .set(updateData)
+    .where(and(eq(expenses.id, id), eq(expenses.tenantId, tenantId)))
+    .returning()
+
+  if (!expense) return { success: false, message: 'Expense not found' }
+
+  return { success: true, data: expense }
+}
+
+export async function getExpensesByCategory() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      category: expenses.category,
+      expenseCount: count(),
+      totalAmount: sql<string>`COALESCE(SUM(${expenses.amount}), 0)`,
+    })
+    .from(expenses)
+    .where(eq(expenses.tenantId, tenantId))
+    .groupBy(expenses.category)
+    .orderBy(sql`SUM(${expenses.amount}) DESC`)
+
+  return { success: true, data }
 }
 
 export async function deleteExpense(id: number) {

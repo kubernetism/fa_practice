@@ -2,8 +2,9 @@
 
 import { db } from '@/lib/db'
 import { accountPayables, payablePayments, suppliers } from '@/lib/db/schema'
-import { eq, and, desc, sql, count } from 'drizzle-orm'
+import { eq, and, desc, sql, count, lt } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { postPayablePaymentToGL } from '@/lib/accounting/gl-posting'
 
 async function getTenantId() {
   const session = await auth()
@@ -108,14 +109,14 @@ export async function recordPayablePayment(data: {
   const newStatus = newRemaining <= 0 ? 'paid' : 'partial'
 
   // Record payment
-  await db.insert(payablePayments).values({
+  const [payment] = await db.insert(payablePayments).values({
     payableId: data.payableId,
     amount: data.amount,
     paymentMethod: data.paymentMethod as any,
     referenceNumber: data.referenceNumber || null,
     notes: data.notes || null,
     paidBy: userId,
-  })
+  }).returning()
 
   // Update payable
   await db
@@ -128,5 +129,161 @@ export async function recordPayablePayment(data: {
     })
     .where(eq(accountPayables.id, data.payableId))
 
+  // Auto GL posting
+  try {
+    await postPayablePaymentToGL({
+      tenantId,
+      payableId: data.payableId,
+      paymentId: payment.id,
+      branchId: payable.branchId,
+      userId,
+      amount: Number(data.amount),
+    })
+  } catch (e) {
+    console.error('GL posting failed for payable payment:', e)
+  }
+
   return { success: true }
+}
+
+export async function getPayableById(id: number) {
+  const tenantId = await getTenantId()
+
+  const [payable] = await db
+    .select({
+      payable: accountPayables,
+      supplierName: suppliers.name,
+    })
+    .from(accountPayables)
+    .leftJoin(suppliers, eq(accountPayables.supplierId, suppliers.id))
+    .where(and(eq(accountPayables.id, id), eq(accountPayables.tenantId, tenantId)))
+
+  if (!payable) return { success: false, message: 'Payable not found' }
+
+  return { success: true, data: payable }
+}
+
+export async function getPayablesBySupplier(supplierId: number) {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      payable: accountPayables,
+      supplierName: suppliers.name,
+    })
+    .from(accountPayables)
+    .leftJoin(suppliers, eq(accountPayables.supplierId, suppliers.id))
+    .where(
+      and(eq(accountPayables.tenantId, tenantId), eq(accountPayables.supplierId, supplierId))
+    )
+    .orderBy(desc(accountPayables.createdAt))
+
+  return { success: true, data }
+}
+
+export async function getSupplierBalance(supplierId: number) {
+  const tenantId = await getTenantId()
+
+  const [result] = await db
+    .select({
+      totalOutstanding: sql<string>`COALESCE(SUM(${accountPayables.remainingAmount}), 0)`,
+      totalPaid: sql<string>`COALESCE(SUM(${accountPayables.paidAmount}), 0)`,
+      totalAmount: sql<string>`COALESCE(SUM(${accountPayables.totalAmount}), 0)`,
+      invoiceCount: count(),
+    })
+    .from(accountPayables)
+    .where(
+      and(eq(accountPayables.tenantId, tenantId), eq(accountPayables.supplierId, supplierId))
+    )
+
+  return { success: true, data: result }
+}
+
+export async function getOverduePayables() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      payable: accountPayables,
+      supplierName: suppliers.name,
+      daysOverdue: sql<number>`EXTRACT(DAY FROM NOW() - ${accountPayables.dueDate})`,
+    })
+    .from(accountPayables)
+    .leftJoin(suppliers, eq(accountPayables.supplierId, suppliers.id))
+    .where(
+      and(
+        eq(accountPayables.tenantId, tenantId),
+        sql`${accountPayables.status} IN ('pending', 'partial')`,
+        sql`${accountPayables.dueDate} < NOW()`
+      )
+    )
+    .orderBy(accountPayables.dueDate)
+
+  return { success: true, data }
+}
+
+export async function getPayableAgingReport() {
+  const tenantId = await getTenantId()
+
+  const [result] = await db
+    .select({
+      current: sql<string>`COALESCE(SUM(CASE WHEN ${accountPayables.dueDate} >= NOW() THEN ${accountPayables.remainingAmount} ELSE 0 END), 0)`,
+      days1to30: sql<string>`COALESCE(SUM(CASE WHEN ${accountPayables.dueDate} < NOW() AND ${accountPayables.dueDate} >= NOW() - INTERVAL '30 days' THEN ${accountPayables.remainingAmount} ELSE 0 END), 0)`,
+      days31to60: sql<string>`COALESCE(SUM(CASE WHEN ${accountPayables.dueDate} < NOW() - INTERVAL '30 days' AND ${accountPayables.dueDate} >= NOW() - INTERVAL '60 days' THEN ${accountPayables.remainingAmount} ELSE 0 END), 0)`,
+      days61to90: sql<string>`COALESCE(SUM(CASE WHEN ${accountPayables.dueDate} < NOW() - INTERVAL '60 days' AND ${accountPayables.dueDate} >= NOW() - INTERVAL '90 days' THEN ${accountPayables.remainingAmount} ELSE 0 END), 0)`,
+      over90: sql<string>`COALESCE(SUM(CASE WHEN ${accountPayables.dueDate} < NOW() - INTERVAL '90 days' THEN ${accountPayables.remainingAmount} ELSE 0 END), 0)`,
+      totalOutstanding: sql<string>`COALESCE(SUM(${accountPayables.remainingAmount}), 0)`,
+    })
+    .from(accountPayables)
+    .where(
+      and(
+        eq(accountPayables.tenantId, tenantId),
+        sql`${accountPayables.status} IN ('pending', 'partial', 'overdue')`
+      )
+    )
+
+  return { success: true, data: result }
+}
+
+export async function cancelPayable(id: number, reason?: string) {
+  const tenantId = await getTenantId()
+
+  const [payable] = await db
+    .update(accountPayables)
+    .set({
+      status: 'cancelled',
+      notes: reason ? sql`COALESCE(${accountPayables.notes}, '') || ' [Cancelled: ' || ${reason} || ']'` : accountPayables.notes,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(accountPayables.id, id),
+        eq(accountPayables.tenantId, tenantId),
+        sql`${accountPayables.status} != 'paid'`
+      )
+    )
+    .returning()
+
+  if (!payable) return { success: false, message: 'Payable not found or already paid' }
+
+  return { success: true, data: payable }
+}
+
+export async function getPayablePayments(payableId: number) {
+  const tenantId = await getTenantId()
+
+  const [payable] = await db
+    .select()
+    .from(accountPayables)
+    .where(and(eq(accountPayables.id, payableId), eq(accountPayables.tenantId, tenantId)))
+
+  if (!payable) return { success: false, message: 'Payable not found' }
+
+  const data = await db
+    .select()
+    .from(payablePayments)
+    .where(eq(payablePayments.payableId, payableId))
+    .orderBy(desc(payablePayments.paymentDate))
+
+  return { success: true, data }
 }

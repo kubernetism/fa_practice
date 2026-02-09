@@ -1,9 +1,10 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { inventory, products, branches, stockAdjustments, stockTransfers } from '@/lib/db/schema'
+import { inventory, products, branches, stockAdjustments, stockTransfers, users } from '@/lib/db/schema'
 import { eq, and, lte, desc, sql, count, or } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { postStockAdjustmentToGL } from '@/lib/accounting/gl-posting'
 
 async function getTenantId() {
   const session = await auth()
@@ -148,6 +149,31 @@ export async function adjustStock(input: {
     })
     .returning()
 
+  // Auto GL posting for stock adjustments
+  try {
+    // Get product cost for GL amount estimation
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(eq(products.id, input.productId))
+
+    const unitCost = product ? Number(product.costPrice) : 0
+    const adjustmentAmount = unitCost * input.quantityChange
+
+    if (adjustmentAmount > 0) {
+      await postStockAdjustmentToGL({
+        tenantId,
+        adjustmentId: adjustment.id,
+        branchId: input.branchId,
+        userId,
+        amount: adjustmentAmount,
+        isAddition,
+      })
+    }
+  } catch (e) {
+    console.error('GL posting failed for stock adjustment:', e)
+  }
+
   return { success: true, data: adjustment }
 }
 
@@ -198,4 +224,236 @@ export async function getStockTransfers(branchId?: number) {
     .limit(100)
 
   return { success: true, data }
+}
+
+export async function getProductStock(productId: number, branchId: number) {
+  const tenantId = await getTenantId()
+
+  const [inv] = await db
+    .select({
+      inventory: inventory,
+      productName: products.name,
+      productCode: products.code,
+      branchName: branches.name,
+    })
+    .from(inventory)
+    .innerJoin(products, eq(inventory.productId, products.id))
+    .leftJoin(branches, eq(inventory.branchId, branches.id))
+    .where(
+      and(
+        eq(inventory.tenantId, tenantId),
+        eq(inventory.productId, productId),
+        eq(inventory.branchId, branchId)
+      )
+    )
+
+  return { success: true, data: inv || null }
+}
+
+export async function createStockTransfer(data: {
+  productId: number
+  fromBranchId: number
+  toBranchId: number
+  quantity: number
+  serialNumbers?: string[]
+  notes?: string
+}) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  if (data.fromBranchId === data.toBranchId) {
+    return { success: false, message: 'Source and destination branches must be different' }
+  }
+
+  // Check source inventory
+  const [sourceInv] = await db
+    .select()
+    .from(inventory)
+    .where(
+      and(
+        eq(inventory.tenantId, tenantId),
+        eq(inventory.productId, data.productId),
+        eq(inventory.branchId, data.fromBranchId)
+      )
+    )
+
+  if (!sourceInv || sourceInv.quantity < data.quantity) {
+    return { success: false, message: 'Insufficient stock in source branch' }
+  }
+
+  const transferNumber = `TRF-${Date.now()}`
+
+  // Deduct from source branch
+  await db
+    .update(inventory)
+    .set({
+      quantity: sourceInv.quantity - data.quantity,
+      updatedAt: new Date(),
+    })
+    .where(eq(inventory.id, sourceInv.id))
+
+  // Create transfer record
+  const [transfer] = await db
+    .insert(stockTransfers)
+    .values({
+      tenantId,
+      transferNumber,
+      productId: data.productId,
+      fromBranchId: data.fromBranchId,
+      toBranchId: data.toBranchId,
+      userId,
+      quantity: data.quantity,
+      serialNumbers: data.serialNumbers ? JSON.stringify(data.serialNumbers) : '[]',
+      status: 'in_transit',
+      notes: data.notes || null,
+    })
+    .returning()
+
+  return { success: true, data: transfer }
+}
+
+export async function receiveStockTransfer(transferId: number) {
+  const tenantId = await getTenantId()
+  const session = await auth()
+  const userId = Number(session?.user?.id)
+
+  const [transfer] = await db
+    .select()
+    .from(stockTransfers)
+    .where(
+      and(
+        eq(stockTransfers.id, transferId),
+        eq(stockTransfers.tenantId, tenantId),
+        eq(stockTransfers.status, 'in_transit')
+      )
+    )
+
+  if (!transfer) return { success: false, message: 'Transfer not found or not in transit' }
+
+  // Add to destination branch inventory
+  const [destInv] = await db
+    .select()
+    .from(inventory)
+    .where(
+      and(
+        eq(inventory.tenantId, tenantId),
+        eq(inventory.productId, transfer.productId),
+        eq(inventory.branchId, transfer.toBranchId)
+      )
+    )
+
+  if (destInv) {
+    await db
+      .update(inventory)
+      .set({
+        quantity: destInv.quantity + transfer.quantity,
+        lastRestockDate: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(inventory.id, destInv.id))
+  } else {
+    await db.insert(inventory).values({
+      tenantId,
+      productId: transfer.productId,
+      branchId: transfer.toBranchId,
+      quantity: transfer.quantity,
+      lastRestockDate: new Date(),
+    })
+  }
+
+  // Update transfer status
+  const [updated] = await db
+    .update(stockTransfers)
+    .set({
+      status: 'completed',
+      receivedDate: new Date(),
+      receivedBy: userId,
+      updatedAt: new Date(),
+    })
+    .where(eq(stockTransfers.id, transferId))
+    .returning()
+
+  return { success: true, data: updated }
+}
+
+export async function getPendingTransfers(branchId?: number) {
+  const tenantId = await getTenantId()
+
+  const conditions: any[] = [
+    eq(stockTransfers.tenantId, tenantId),
+    or(eq(stockTransfers.status, 'pending'), eq(stockTransfers.status, 'in_transit'))!,
+  ]
+  if (branchId) {
+    conditions.push(
+      or(
+        eq(stockTransfers.fromBranchId, branchId),
+        eq(stockTransfers.toBranchId, branchId)
+      )!
+    )
+  }
+
+  const data = await db
+    .select({
+      transfer: stockTransfers,
+      productName: products.name,
+      productCode: products.code,
+    })
+    .from(stockTransfers)
+    .leftJoin(products, eq(stockTransfers.productId, products.id))
+    .where(and(...conditions))
+    .orderBy(desc(stockTransfers.createdAt))
+
+  return { success: true, data }
+}
+
+export async function cancelStockTransfer(transferId: number) {
+  const tenantId = await getTenantId()
+
+  const [transfer] = await db
+    .select()
+    .from(stockTransfers)
+    .where(
+      and(
+        eq(stockTransfers.id, transferId),
+        eq(stockTransfers.tenantId, tenantId)
+      )
+    )
+
+  if (!transfer) return { success: false, message: 'Transfer not found' }
+  if (transfer.status === 'completed') {
+    return { success: false, message: 'Cannot cancel a completed transfer' }
+  }
+
+  // If in_transit, restore source inventory
+  if (transfer.status === 'in_transit') {
+    const [sourceInv] = await db
+      .select()
+      .from(inventory)
+      .where(
+        and(
+          eq(inventory.tenantId, tenantId),
+          eq(inventory.productId, transfer.productId),
+          eq(inventory.branchId, transfer.fromBranchId)
+        )
+      )
+
+    if (sourceInv) {
+      await db
+        .update(inventory)
+        .set({
+          quantity: sourceInv.quantity + transfer.quantity,
+          updatedAt: new Date(),
+        })
+        .where(eq(inventory.id, sourceInv.id))
+    }
+  }
+
+  const [updated] = await db
+    .update(stockTransfers)
+    .set({ status: 'cancelled', updatedAt: new Date() })
+    .where(eq(stockTransfers.id, transferId))
+    .returning()
+
+  return { success: true, data: updated }
 }

@@ -1,9 +1,11 @@
 'use server'
 
 import { db } from '@/lib/db'
-import { sales, saleItems, salePayments, customers, products } from '@/lib/db/schema'
-import { eq, and, desc, sql, count, between, ilike, or } from 'drizzle-orm'
+import { sales, saleItems, salePayments, customers, products, accountReceivables, inventory } from '@/lib/db/schema'
+import { eq, and, desc, sql, count, between, ilike, or, sum } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { consumeCostLayers } from '@/lib/accounting/cost-layers'
+import { postSaleToGL } from '@/lib/accounting/gl-posting'
 
 async function getTenantId() {
   const session = await auth()
@@ -210,7 +212,128 @@ export async function createSale(input: {
     )
   }
 
+  // Deduct inventory and consume FIFO cost layers
+  let totalCOGS = 0
+  for (const item of input.items) {
+    // Deduct inventory
+    await db
+      .update(inventory)
+      .set({
+        quantity: sql`${inventory.quantity} - ${item.quantity}`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(inventory.tenantId, tenantId),
+          eq(inventory.productId, item.productId),
+          eq(inventory.branchId, input.branchId)
+        )
+      )
+
+    // Consume FIFO cost layers for COGS
+    try {
+      const { totalCost } = await consumeCostLayers({
+        tenantId,
+        productId: item.productId,
+        branchId: input.branchId,
+        quantity: item.quantity,
+      })
+      totalCOGS += totalCost
+    } catch (e) {
+      // Fall back to item cost price if no cost layers
+      totalCOGS += item.costPrice * item.quantity
+    }
+  }
+
+  // Auto GL posting
+  try {
+    await postSaleToGL({
+      tenantId,
+      saleId: sale.id,
+      branchId: input.branchId,
+      userId,
+      totalAmount: input.totalAmount,
+      taxAmount: input.taxAmount,
+      costOfGoods: totalCOGS,
+      paymentMethod: input.paymentMethod,
+    })
+  } catch (e) {
+    console.error('GL posting failed for sale:', e)
+  }
+
+  // Auto-create AR for credit/receivable sales
+  if (['credit', 'receivable'].includes(input.paymentMethod) && input.customerId) {
+    try {
+      await db.insert(accountReceivables).values({
+        tenantId,
+        customerId: input.customerId,
+        saleId: sale.id,
+        branchId: input.branchId,
+        invoiceNumber,
+        totalAmount: String(input.totalAmount),
+        paidAmount: String(input.amountPaid),
+        remainingAmount: String(input.totalAmount - input.amountPaid),
+        status: input.amountPaid >= input.totalAmount ? 'paid' : input.amountPaid > 0 ? 'partial' : 'pending',
+        createdBy: userId,
+      })
+    } catch (e) {
+      console.error('Auto AR creation failed:', e)
+    }
+  }
+
   return { success: true, data: sale }
+}
+
+export async function updatePaymentStatus(
+  saleId: number,
+  paymentStatus: string,
+  amountPaid?: number
+) {
+  const tenantId = await getTenantId()
+
+  const updateData: any = {
+    paymentStatus: paymentStatus as any,
+    updatedAt: new Date(),
+  }
+  if (amountPaid !== undefined) {
+    updateData.amountPaid = String(amountPaid)
+  }
+
+  const [sale] = await db
+    .update(sales)
+    .set(updateData)
+    .where(and(eq(sales.id, saleId), eq(sales.tenantId, tenantId)))
+    .returning()
+
+  if (!sale) return { success: false, message: 'Sale not found' }
+
+  return { success: true, data: sale }
+}
+
+export async function getSalesRangeSummary(dateFrom: string, dateTo: string) {
+  const tenantId = await getTenantId()
+
+  const result = await db
+    .select({
+      totalSales: count(),
+      totalRevenue: sql<string>`COALESCE(SUM(${sales.totalAmount}), 0)`,
+      totalTax: sql<string>`COALESCE(SUM(${sales.taxAmount}), 0)`,
+      totalDiscount: sql<string>`COALESCE(SUM(${sales.discountAmount}), 0)`,
+      cashSales: sql<number>`COUNT(*) FILTER (WHERE ${sales.paymentMethod} = 'cash')`,
+      cardSales: sql<number>`COUNT(*) FILTER (WHERE ${sales.paymentMethod} = 'card')`,
+      creditSales: sql<number>`COUNT(*) FILTER (WHERE ${sales.paymentMethod} IN ('credit', 'receivable'))`,
+      avgSaleAmount: sql<string>`COALESCE(AVG(${sales.totalAmount}), 0)`,
+    })
+    .from(sales)
+    .where(
+      and(
+        eq(sales.tenantId, tenantId),
+        eq(sales.isVoided, false),
+        between(sales.saleDate, new Date(dateFrom), new Date(dateTo))
+      )
+    )
+
+  return { success: true, data: result[0] }
 }
 
 export async function voidSale(id: number, reason: string) {

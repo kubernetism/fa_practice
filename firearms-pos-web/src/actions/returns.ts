@@ -4,6 +4,8 @@ import { db } from '@/lib/db'
 import { returns, returnItems, sales, customers, products, inventory } from '@/lib/db/schema'
 import { eq, and, desc, sql, count } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { restoreCostLayers } from '@/lib/accounting/cost-layers'
+import { postReturnToGL } from '@/lib/accounting/gl-posting'
 
 async function getTenantId() {
   const session = await auth()
@@ -156,7 +158,50 @@ export async function createReturn(input: {
             eq(inventory.branchId, input.branchId)
           )
         )
+
+      // Restore cost layers for restocked items
+      try {
+        await restoreCostLayers({
+          tenantId,
+          productId: item.productId,
+          branchId: input.branchId,
+          quantity: item.quantity,
+          unitCost: item.unitPrice,
+        })
+      } catch (e) {
+        console.error('Cost layer restore failed:', e)
+      }
     }
+  }
+
+  // Post return to GL
+  try {
+    // Calculate tax portion from original sale
+    const [originalSale] = await db
+      .select()
+      .from(sales)
+      .where(eq(sales.id, input.originalSaleId))
+
+    const taxRatio = originalSale
+      ? Number(originalSale.taxAmount) / Math.max(Number(originalSale.totalAmount), 1)
+      : 0
+    const returnTaxAmount = subtotal * taxRatio
+
+    await postReturnToGL({
+      tenantId,
+      returnId: ret.id,
+      originalSaleId: input.originalSaleId,
+      branchId: input.branchId,
+      userId,
+      refundAmount: subtotal,
+      taxAmount: returnTaxAmount,
+      costOfGoods: input.items
+        .filter((i) => i.restockable)
+        .reduce((s, i) => s + i.quantity * i.unitPrice, 0),
+      refundMethod: input.refundMethod || input.returnType,
+    })
+  } catch (e) {
+    console.error('GL posting failed for return:', e)
   }
 
   return { success: true, data: ret }

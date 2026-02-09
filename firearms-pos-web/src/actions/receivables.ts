@@ -2,8 +2,9 @@
 
 import { db } from '@/lib/db'
 import { accountReceivables, receivablePayments, customers } from '@/lib/db/schema'
-import { eq, and, desc, sql, count, SQL } from 'drizzle-orm'
+import { eq, and, desc, sql, count, SQL, lt, lte } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { postReceivablePaymentToGL } from '@/lib/accounting/gl-posting'
 
 async function getTenantId() {
   const session = await auth()
@@ -106,14 +107,14 @@ export async function recordReceivablePayment(data: {
   const newRemaining = Number(receivable.totalAmount) - newPaidAmount
   const newStatus = newRemaining <= 0 ? 'paid' : 'partial'
 
-  await db.insert(receivablePayments).values({
+  const [payment] = await db.insert(receivablePayments).values({
     receivableId: data.receivableId,
     amount: data.amount,
     paymentMethod: data.paymentMethod as any,
     referenceNumber: data.referenceNumber || null,
     notes: data.notes || null,
     receivedBy: userId,
-  })
+  }).returning()
 
   await db
     .update(accountReceivables)
@@ -125,5 +126,184 @@ export async function recordReceivablePayment(data: {
     })
     .where(eq(accountReceivables.id, data.receivableId))
 
+  // Auto GL posting
+  try {
+    await postReceivablePaymentToGL({
+      tenantId,
+      receivableId: data.receivableId,
+      paymentId: payment.id,
+      branchId: receivable.branchId,
+      userId,
+      amount: Number(data.amount),
+    })
+  } catch (e) {
+    console.error('GL posting failed for receivable payment:', e)
+  }
+
   return { success: true }
+}
+
+export async function getReceivableById(id: number) {
+  const tenantId = await getTenantId()
+
+  const [receivable] = await db
+    .select({
+      receivable: accountReceivables,
+      customerName: sql<string>`${customers.firstName} || ' ' || ${customers.lastName}`,
+    })
+    .from(accountReceivables)
+    .leftJoin(customers, eq(accountReceivables.customerId, customers.id))
+    .where(and(eq(accountReceivables.id, id), eq(accountReceivables.tenantId, tenantId)))
+
+  if (!receivable) return { success: false, message: 'Receivable not found' }
+
+  return { success: true, data: receivable }
+}
+
+export async function getReceivablesByCustomer(customerId: number) {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      receivable: accountReceivables,
+      customerName: sql<string>`${customers.firstName} || ' ' || ${customers.lastName}`,
+    })
+    .from(accountReceivables)
+    .leftJoin(customers, eq(accountReceivables.customerId, customers.id))
+    .where(
+      and(eq(accountReceivables.tenantId, tenantId), eq(accountReceivables.customerId, customerId))
+    )
+    .orderBy(desc(accountReceivables.createdAt))
+
+  return { success: true, data }
+}
+
+export async function getCustomerBalance(customerId: number) {
+  const tenantId = await getTenantId()
+
+  const [result] = await db
+    .select({
+      totalOutstanding: sql<string>`COALESCE(SUM(${accountReceivables.remainingAmount}), 0)`,
+      totalPaid: sql<string>`COALESCE(SUM(${accountReceivables.paidAmount}), 0)`,
+      totalAmount: sql<string>`COALESCE(SUM(${accountReceivables.totalAmount}), 0)`,
+      invoiceCount: count(),
+    })
+    .from(accountReceivables)
+    .where(
+      and(eq(accountReceivables.tenantId, tenantId), eq(accountReceivables.customerId, customerId))
+    )
+
+  return { success: true, data: result }
+}
+
+export async function getOverdueReceivables() {
+  const tenantId = await getTenantId()
+
+  const data = await db
+    .select({
+      receivable: accountReceivables,
+      customerName: sql<string>`${customers.firstName} || ' ' || ${customers.lastName}`,
+      daysOverdue: sql<number>`EXTRACT(DAY FROM NOW() - ${accountReceivables.dueDate})`,
+    })
+    .from(accountReceivables)
+    .leftJoin(customers, eq(accountReceivables.customerId, customers.id))
+    .where(
+      and(
+        eq(accountReceivables.tenantId, tenantId),
+        sql`${accountReceivables.status} IN ('pending', 'partial')`,
+        sql`${accountReceivables.dueDate} < NOW()`
+      )
+    )
+    .orderBy(accountReceivables.dueDate)
+
+  return { success: true, data }
+}
+
+export async function getReceivableAgingReport() {
+  const tenantId = await getTenantId()
+
+  const [result] = await db
+    .select({
+      current: sql<string>`COALESCE(SUM(CASE WHEN ${accountReceivables.dueDate} >= NOW() THEN ${accountReceivables.remainingAmount} ELSE 0 END), 0)`,
+      days1to30: sql<string>`COALESCE(SUM(CASE WHEN ${accountReceivables.dueDate} < NOW() AND ${accountReceivables.dueDate} >= NOW() - INTERVAL '30 days' THEN ${accountReceivables.remainingAmount} ELSE 0 END), 0)`,
+      days31to60: sql<string>`COALESCE(SUM(CASE WHEN ${accountReceivables.dueDate} < NOW() - INTERVAL '30 days' AND ${accountReceivables.dueDate} >= NOW() - INTERVAL '60 days' THEN ${accountReceivables.remainingAmount} ELSE 0 END), 0)`,
+      days61to90: sql<string>`COALESCE(SUM(CASE WHEN ${accountReceivables.dueDate} < NOW() - INTERVAL '60 days' AND ${accountReceivables.dueDate} >= NOW() - INTERVAL '90 days' THEN ${accountReceivables.remainingAmount} ELSE 0 END), 0)`,
+      over90: sql<string>`COALESCE(SUM(CASE WHEN ${accountReceivables.dueDate} < NOW() - INTERVAL '90 days' THEN ${accountReceivables.remainingAmount} ELSE 0 END), 0)`,
+      totalOutstanding: sql<string>`COALESCE(SUM(${accountReceivables.remainingAmount}), 0)`,
+    })
+    .from(accountReceivables)
+    .where(
+      and(
+        eq(accountReceivables.tenantId, tenantId),
+        sql`${accountReceivables.status} IN ('pending', 'partial', 'overdue')`
+      )
+    )
+
+  return { success: true, data: result }
+}
+
+export async function cancelReceivable(id: number, reason?: string) {
+  const tenantId = await getTenantId()
+
+  const [receivable] = await db
+    .update(accountReceivables)
+    .set({
+      status: 'cancelled',
+      notes: reason ? sql`COALESCE(${accountReceivables.notes}, '') || ' [Cancelled: ' || ${reason} || ']'` : accountReceivables.notes,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(accountReceivables.id, id),
+        eq(accountReceivables.tenantId, tenantId),
+        sql`${accountReceivables.status} != 'paid'`
+      )
+    )
+    .returning()
+
+  if (!receivable) return { success: false, message: 'Receivable not found or already paid' }
+
+  return { success: true, data: receivable }
+}
+
+export async function getReceivablePayments(receivableId: number) {
+  const tenantId = await getTenantId()
+
+  // Verify ownership
+  const [receivable] = await db
+    .select()
+    .from(accountReceivables)
+    .where(
+      and(eq(accountReceivables.id, receivableId), eq(accountReceivables.tenantId, tenantId))
+    )
+
+  if (!receivable) return { success: false, message: 'Receivable not found' }
+
+  const data = await db
+    .select()
+    .from(receivablePayments)
+    .where(eq(receivablePayments.receivableId, receivableId))
+    .orderBy(desc(receivablePayments.paymentDate))
+
+  return { success: true, data }
+}
+
+export async function syncReceivablesWithSales() {
+  const tenantId = await getTenantId()
+
+  // Mark overdue receivables
+  const updated = await db
+    .update(accountReceivables)
+    .set({ status: 'overdue', updatedAt: new Date() })
+    .where(
+      and(
+        eq(accountReceivables.tenantId, tenantId),
+        sql`${accountReceivables.status} IN ('pending', 'partial')`,
+        sql`${accountReceivables.dueDate} IS NOT NULL`,
+        sql`${accountReceivables.dueDate} < NOW()`
+      )
+    )
+    .returning()
+
+  return { success: true, data: { updatedCount: updated.length } }
 }
