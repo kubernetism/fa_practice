@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/table'
 import { getAuditLogs, getAuditLogSummary } from '@/actions/audit-logs'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const actions = ['create', 'update', 'delete', 'login', 'logout', 'void', 'refund', 'adjustment', 'transfer', 'export', 'view']
 const entityTypes = ['user', 'branch', 'category', 'product', 'inventory', 'customer', 'supplier', 'sale', 'purchase', 'return', 'expense', 'commission', 'setting', 'auth']
@@ -93,7 +94,7 @@ export default function AuditLogsPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Audit Logs</h1>
-          <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+          <PageLoader />
         </div>
       </div>
     )

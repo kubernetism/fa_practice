@@ -6,6 +6,7 @@ import { eq, and, desc, sql, count, between, ilike, or, sum } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
 import { consumeCostLayers } from '@/lib/accounting/cost-layers'
 import { postSaleToGL } from '@/lib/accounting/gl-posting'
+import { logCreate } from '@/lib/audit/logger'
 
 async function getTenantId() {
   const session = await auth()
@@ -155,6 +156,35 @@ export async function createSale(input: {
   const seq = String((countResult.c || 0) + 1).padStart(3, '0')
   const invoiceNumber = `INV-${dateStr}-${seq}`
 
+  // Validate stock availability before processing sale
+  for (const item of input.items) {
+    const [inv] = await db
+      .select({ quantity: inventory.quantity })
+      .from(inventory)
+      .where(
+        and(
+          eq(inventory.tenantId, tenantId),
+          eq(inventory.productId, item.productId),
+          eq(inventory.branchId, input.branchId)
+        )
+      )
+
+    if (!inv) {
+      const [prod] = await db
+        .select({ name: products.name })
+        .from(products)
+        .where(eq(products.id, item.productId))
+      return { success: false, message: `No inventory record for ${prod?.name || 'unknown product'}` }
+    }
+    if (inv.quantity < item.quantity) {
+      const [prod] = await db
+        .select({ name: products.name })
+        .from(products)
+        .where(eq(products.id, item.productId))
+      return { success: false, message: `Insufficient stock for ${prod?.name || 'unknown product'} (available: ${inv.quantity}, requested: ${item.quantity})` }
+    }
+  }
+
   const paymentStatus =
     Number(input.amountPaid) >= Number(input.totalAmount)
       ? 'paid'
@@ -280,6 +310,8 @@ export async function createSale(input: {
       console.error('Auto AR creation failed:', e)
     }
   }
+
+  logCreate('sale', sale.id, { invoiceNumber: sale.invoiceNumber, totalAmount: input.totalAmount })
 
   return { success: true, data: sale }
 }

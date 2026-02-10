@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { signOut, useSession } from 'next-auth/react'
@@ -35,6 +36,11 @@ import {
   RotateCcw,
   Truck,
   Headphones,
+  ClipboardList,
+  FolderTree,
+  BadgePercent,
+  DollarSign,
+  FileSearch,
 } from 'lucide-react'
 import {
   Sidebar,
@@ -66,6 +72,8 @@ const mainNav = [
   { title: 'Customers', href: '/customers', icon: Users },
   { title: 'Returns', href: '/returns', icon: RotateCcw },
   { title: 'Suppliers', href: '/suppliers', icon: Truck },
+  { title: 'Categories', href: '/categories', icon: FolderTree },
+  { title: 'POS Tabs', href: '/pos-tabs', icon: ClipboardList },
 ]
 
 const financialNav = [
@@ -76,6 +84,8 @@ const financialNav = [
   { title: 'Commissions', href: '/commissions', icon: Percent },
   { title: 'Referrals', href: '/referral-persons', icon: UserPlus },
   { title: 'Vouchers', href: '/vouchers', icon: Ticket },
+  { title: 'Tax Collections', href: '/tax-collections', icon: DollarSign },
+  { title: 'Discounts', href: '/discount-management', icon: BadgePercent },
 ]
 
 const accountingNav = [
@@ -90,6 +100,7 @@ const managementNav = [
   { title: 'Tasks', href: '/todos', icon: ListTodo },
   { title: 'Messages', href: '/messages', icon: MessageSquare },
   { title: 'Audit Logs', href: '/audit-logs', icon: Shield },
+  { title: 'Audit Reports', href: '/audit-reports', icon: FileSearch },
   { title: 'Users', href: '/users', icon: UserCog },
   { title: 'Branches', href: '/branches', icon: Building2 },
   { title: 'Settings', href: '/settings', icon: Settings },
@@ -101,6 +112,12 @@ const managementNav = [
 export function AppSidebar() {
   const pathname = usePathname()
   const { data: session } = useSession()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
   const userName = session?.user?.name || 'User'
   const userEmail = session?.user?.email || ''
   const initials = userName
@@ -227,34 +244,48 @@ export function AppSidebar() {
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="flex items-center gap-3 w-full rounded-lg p-2 hover:bg-sidebar-accent transition-colors text-left">
-              <Avatar className="w-8 h-8 border border-sidebar-border">
-                <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
-                  {initials}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{userName}</p>
-                <p className="text-[11px] text-muted-foreground truncate">{userEmail}</p>
-              </div>
-              <ChevronDown className="w-4 h-4 text-muted-foreground" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Settings</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="text-destructive"
-              onClick={() => signOut({ callbackUrl: '/login' })}
-            >
-              <LogOut className="w-4 h-4 mr-2" />
-              Sign out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {mounted ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-3 w-full rounded-lg p-2 hover:bg-sidebar-accent transition-colors text-left">
+                <Avatar className="w-8 h-8 border border-sidebar-border">
+                  <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
+                    {initials}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{userName}</p>
+                  <p className="text-[11px] text-muted-foreground truncate">{userEmail}</p>
+                </div>
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem>Profile</DropdownMenuItem>
+              <DropdownMenuItem>Settings</DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={() => signOut({ callbackUrl: '/login' })}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : (
+          <div className="flex items-center gap-3 w-full rounded-lg p-2">
+            <Avatar className="w-8 h-8 border border-sidebar-border">
+              <AvatarFallback className="bg-primary/10 text-primary text-xs font-bold">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{userName}</p>
+              <p className="text-[11px] text-muted-foreground truncate">{userEmail}</p>
+            </div>
+          </div>
+        )}
       </SidebarFooter>
     </Sidebar>
   )

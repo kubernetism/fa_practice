@@ -43,8 +43,11 @@ import {
   getPurchases,
   getPurchaseSummary,
   updatePurchaseStatus,
+  receivePurchase,
+  getPurchaseItems,
 } from '@/actions/purchases'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const statusColors: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
@@ -66,6 +69,10 @@ export default function PurchasesPage() {
   const [summary, setSummary] = useState<any>(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterPayment, setFilterPayment] = useState('all')
+  const [receivingDialogOpen, setReceivingDialogOpen] = useState(false)
+  const [selectedPurchase, setSelectedPurchase] = useState<any>(null)
+  const [receivingItems, setReceivingItems] = useState<any[]>([])
+  const [submittingReceive, setSubmittingReceive] = useState(false)
 
   useEffect(() => {
     loadData()
@@ -109,6 +116,72 @@ export default function PurchasesPage() {
     }
   }
 
+  async function handleOpenReceivingDialog(purchaseId: number) {
+    try {
+      const res = await getPurchaseItems(purchaseId)
+      if (res.success && res.data) {
+        setSelectedPurchase(res.data.purchase)
+        setReceivingItems(
+          res.data.items.map((item: any) => ({
+            ...item,
+            receivedQuantity: item.item.quantity - (item.item.receivedQuantity || 0),
+          }))
+        )
+        setReceivingDialogOpen(true)
+      } else {
+        toast.error('Failed to load purchase items')
+      }
+    } catch (error) {
+      console.error('Failed to load purchase items:', error)
+      toast.error('Failed to load purchase items')
+    }
+  }
+
+  function handleUpdateReceivedQty(itemId: number, qty: number) {
+    setReceivingItems((prev) =>
+      prev.map((item) =>
+        item.item.id === itemId
+          ? { ...item, receivedQuantity: Math.max(0, Math.min(qty, item.item.quantity - (item.item.receivedQuantity || 0))) }
+          : item
+      )
+    )
+  }
+
+  async function handleProcessReceiving() {
+    if (!selectedPurchase) return
+
+    const itemsToReceive = receivingItems
+      .filter((item) => item.receivedQuantity > 0)
+      .map((item) => ({
+        purchaseItemId: item.item.id,
+        receivedQuantity: item.receivedQuantity,
+      }))
+
+    if (itemsToReceive.length === 0) {
+      toast.error('Please enter quantities to receive')
+      return
+    }
+
+    setSubmittingReceive(true)
+    try {
+      const res = await receivePurchase(selectedPurchase.id, itemsToReceive)
+      if (res.success) {
+        toast.success('Purchase items received successfully')
+        setReceivingDialogOpen(false)
+        setSelectedPurchase(null)
+        setReceivingItems([])
+        loadData()
+      } else {
+        toast.error(res.message || 'Failed to receive items')
+      }
+    } catch (error) {
+      console.error('Failed to receive items:', error)
+      toast.error('Failed to receive items')
+    } finally {
+      setSubmittingReceive(false)
+    }
+  }
+
   const summaryCards = [
     { title: 'Total Purchases', value: 'Rs. ' + Number(summary?.totalPurchases || 0).toLocaleString(), icon: DollarSign, accent: 'text-primary' },
     { title: 'Total Orders', value: String(summary?.totalCount || 0), icon: ShoppingBag, accent: 'text-blue-400' },
@@ -122,7 +195,7 @@ export default function PurchasesPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Purchases</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>
@@ -301,8 +374,8 @@ export default function PurchasesPage() {
                       <Button variant="ghost" size="icon" className="h-7 w-7" title="View details">
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
-                      {po.purchase.status === 'ordered' && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7 text-success" title="Mark received" onClick={() => handleMarkReceived(po.purchase.id)}>
+                      {(po.purchase.status === 'ordered' || po.purchase.status === 'partial') && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-success" title="Receive items" onClick={() => handleOpenReceivingDialog(po.purchase.id)}>
                           <Truck className="w-3.5 h-3.5" />
                         </Button>
                       )}
@@ -321,6 +394,61 @@ export default function PurchasesPage() {
           </Table>
         </CardContent>
       </Card>
+
+      <Dialog open={receivingDialogOpen} onOpenChange={setReceivingDialogOpen}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle>Receive Purchase Items</DialogTitle>
+          </DialogHeader>
+          {selectedPurchase && (
+            <div className="space-y-4">
+              <div className="rounded-lg bg-muted/50 p-3">
+                <p className="text-sm font-medium">PO #: {selectedPurchase.purchaseOrderNumber}</p>
+                <p className="text-xs text-muted-foreground mt-1">Enter quantities being received</p>
+              </div>
+
+              <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                {receivingItems.map((item) => (
+                  <div key={item.item.id} className="rounded-lg border p-3 space-y-2">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium text-sm">{item.productName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Ordered: {item.item.quantity} | Already Received: {item.item.receivedQuantity || 0}
+                        </p>
+                      </div>
+                      <p className="text-sm text-muted-foreground">Rs. {Number(item.item.unitCost).toLocaleString()}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label className="text-xs min-w-[100px]">Receive Qty:</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max={item.item.quantity - (item.item.receivedQuantity || 0)}
+                        value={item.receivedQuantity}
+                        onChange={(e) => handleUpdateReceivedQty(item.item.id, parseInt(e.target.value) || 0)}
+                        className="h-8"
+                      />
+                      <span className="text-xs text-muted-foreground">
+                        / {item.item.quantity - (item.item.receivedQuantity || 0)} remaining
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex gap-2 justify-end pt-4 border-t">
+                <Button variant="outline" onClick={() => setReceivingDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleProcessReceiving} className="brass-glow" disabled={submittingReceive}>
+                  {submittingReceive ? 'Processing...' : 'Receive Items'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

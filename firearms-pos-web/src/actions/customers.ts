@@ -4,6 +4,9 @@ import { db } from '@/lib/db'
 import { customers } from '@/lib/db/schema'
 import { eq, and, ilike, or, desc, sql, count } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { sanitizeInput } from '@/lib/validation/sanitize'
+import { encryptCustomerData, decryptCustomerData } from '@/lib/security/encryption'
+import { logCreate, logUpdate, logDelete } from '@/lib/audit/logger'
 
 async function getTenantId() {
   const session = await auth()
@@ -68,7 +71,7 @@ export async function getCustomerById(id: number) {
     .where(and(eq(customers.id, id), eq(customers.tenantId, tenantId)))
 
   if (!customer) return { success: false, message: 'Customer not found' }
-  return { success: true, data: customer }
+  return { success: true, data: decryptCustomerData(customer) }
 }
 
 export async function createCustomer(input: {
@@ -89,28 +92,32 @@ export async function createCustomer(input: {
 }) {
   const tenantId = await getTenantId()
 
+  const clean = encryptCustomerData(sanitizeInput(input))
+
   const [customer] = await db
     .insert(customers)
     .values({
       tenantId,
-      firstName: input.firstName,
-      lastName: input.lastName,
-      email: input.email || null,
-      phone: input.phone || null,
-      address: input.address || null,
-      city: input.city || null,
-      state: input.state || null,
-      zipCode: input.zipCode || null,
-      governmentIdType: input.governmentIdType as any || null,
-      governmentIdNumber: input.governmentIdNumber || null,
-      firearmLicenseNumber: input.firearmLicenseNumber || null,
-      licenseExpiryDate: input.licenseExpiryDate || null,
-      dateOfBirth: input.dateOfBirth || null,
-      notes: input.notes || null,
+      firstName: clean.firstName,
+      lastName: clean.lastName,
+      email: clean.email || null,
+      phone: clean.phone || null,
+      address: clean.address || null,
+      city: clean.city || null,
+      state: clean.state || null,
+      zipCode: clean.zipCode || null,
+      governmentIdType: clean.governmentIdType as any || null,
+      governmentIdNumber: clean.governmentIdNumber || null,
+      firearmLicenseNumber: clean.firearmLicenseNumber || null,
+      licenseExpiryDate: clean.licenseExpiryDate || null,
+      dateOfBirth: clean.dateOfBirth || null,
+      notes: clean.notes || null,
     })
     .returning()
 
-  return { success: true, data: customer }
+  logCreate('customer', customer.id, { firstName: clean.firstName, lastName: clean.lastName })
+
+  return { success: true, data: decryptCustomerData(customer) }
 }
 
 export async function updateCustomer(
@@ -135,18 +142,21 @@ export async function updateCustomer(
 ) {
   const tenantId = await getTenantId()
 
+  const clean = encryptCustomerData(sanitizeInput(input))
+
   const [customer] = await db
     .update(customers)
     .set({
-      ...input,
-      governmentIdType: input.governmentIdType as any,
+      ...clean,
+      governmentIdType: clean.governmentIdType as any,
       updatedAt: new Date(),
     })
     .where(and(eq(customers.id, id), eq(customers.tenantId, tenantId)))
     .returning()
 
   if (!customer) return { success: false, message: 'Customer not found' }
-  return { success: true, data: customer }
+  logUpdate('customer', id, undefined, clean)
+  return { success: true, data: decryptCustomerData(customer) }
 }
 
 export async function deleteCustomer(id: number) {
@@ -157,6 +167,7 @@ export async function deleteCustomer(id: number) {
     .set({ isActive: false, updatedAt: new Date() })
     .where(and(eq(customers.id, id), eq(customers.tenantId, tenantId)))
 
+  logDelete('customer', id)
   return { success: true }
 }
 
@@ -170,7 +181,8 @@ export async function checkCustomerLicense(id: number) {
 
   if (!customer) return { success: false, message: 'Customer not found' }
 
-  const hasLicense = !!customer.firearmLicenseNumber
+  const decrypted = decryptCustomerData(customer)
+  const hasLicense = !!decrypted.firearmLicenseNumber
   const isExpired = customer.licenseExpiryDate
     ? new Date(customer.licenseExpiryDate) < new Date()
     : false
@@ -181,11 +193,11 @@ export async function checkCustomerLicense(id: number) {
   return {
     success: true,
     data: {
-      customerId: customer.id,
-      customerName: `${customer.firstName} ${customer.lastName}`,
+      customerId: decrypted.id,
+      customerName: `${decrypted.firstName} ${decrypted.lastName}`,
       hasLicense,
-      licenseNumber: customer.firearmLicenseNumber,
-      expiryDate: customer.licenseExpiryDate,
+      licenseNumber: decrypted.firearmLicenseNumber,
+      expiryDate: decrypted.licenseExpiryDate,
       isExpired,
       daysUntilExpiry,
       isValid: hasLicense && !isExpired,

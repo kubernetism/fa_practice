@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { PageLoader } from '@/components/ui/page-loader'
 import {
   ShoppingCart,
   Search,
@@ -47,9 +48,10 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command'
-import { getProducts, getCategories } from '@/actions/products'
+import { getProductsWithStock, getCategories } from '@/actions/products'
 import { getCustomers } from '@/actions/customers'
 import { createSale } from '@/actions/sales'
+import { toast } from 'sonner'
 
 type Product = {
   id: number
@@ -61,6 +63,7 @@ type Product = {
   isSerialTracked: boolean
   taxRate: string
   isActive: boolean
+  stockQuantity: number
 }
 
 type CartItem = {
@@ -102,7 +105,7 @@ export default function POSPage() {
     async function loadData() {
       setLoading(true)
       const [productsResult, categoriesResult, customersResult] = await Promise.all([
-        getProducts({ isActive: true }),
+        getProductsWithStock({ isActive: true }),
         getCategories(),
         getCustomers({ isActive: true }),
       ])
@@ -112,6 +115,7 @@ export default function POSPage() {
           productsResult.data.map((d: any) => ({
             ...d.product,
             categoryName: d.categoryName,
+            stockQuantity: d.stockQuantity ?? 0,
           }))
         )
       }
@@ -141,6 +145,10 @@ export default function POSPage() {
   })
 
   const addToCart = (product: Product) => {
+    if (product.stockQuantity <= 0) {
+      toast.error(`${product.name} is out of stock`)
+      return
+    }
     if (product.isSerialTracked) {
       setPendingProduct(product)
       setSerialInput('')
@@ -148,6 +156,11 @@ export default function POSPage() {
       return
     }
     const existing = cart.find((c) => c.productId === product.id && !c.serialNumber)
+    const currentQty = existing?.qty ?? 0
+    if (currentQty + 1 > product.stockQuantity) {
+      toast.warning(`Only ${product.stockQuantity} in stock for ${product.name}`)
+      return
+    }
     if (existing) {
       setCart(cart.map((c) => c === existing ? { ...c, qty: c.qty + 1 } : c))
     } else {
@@ -172,10 +185,18 @@ export default function POSPage() {
   }
 
   const updateQty = (index: number, delta: number) => {
-    setCart(cart.map((item, i) => {
-      if (i !== index) return item
-      const newQty = item.qty + delta
-      return newQty > 0 ? { ...item, qty: newQty } : item
+    const item = cart[index]
+    if (delta > 0) {
+      const product = allProducts.find((p) => p.id === item.productId)
+      if (product && item.qty + delta > product.stockQuantity) {
+        toast.warning(`Only ${product.stockQuantity} in stock for ${product.name}`)
+        return
+      }
+    }
+    setCart(cart.map((ci, i) => {
+      if (i !== index) return ci
+      const newQty = ci.qty + delta
+      return newQty > 0 ? { ...ci, qty: newQty } : ci
     }))
   }
 
@@ -232,8 +253,11 @@ export default function POSPage() {
 
     setCompleting(false)
     if (result.success) {
+      toast.success('Sale completed successfully')
       clearCart()
       setSelectedCustomer({ id: 0, name: 'Walk-in Customer' })
+    } else {
+      toast.error((result as any).message || 'Sale failed')
     }
   }
 
@@ -275,21 +299,30 @@ export default function POSPage() {
         {/* Product Grid */}
         <ScrollArea className="flex-1">
           {loading ? (
-            <div className="text-center py-12 text-muted-foreground">Loading products...</div>
+            <PageLoader />
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 p-1">
               {filteredProducts.map((product) => (
                 <Card
                   key={product.id}
-                  className="cursor-pointer transition-all hover:ring-1 hover:ring-primary/50"
+                  className={`cursor-pointer transition-all hover:ring-1 hover:ring-primary/50 ${product.stockQuantity <= 0 ? 'opacity-50' : ''}`}
                   onClick={() => addToCart(product)}
                 >
                   <CardContent className="p-3">
                     <div className="flex items-start justify-between mb-2">
                       <Badge variant="outline" className="text-[9px]">{product.categoryName || 'N/A'}</Badge>
-                      {product.isSerialTracked && (
-                        <Hash className="w-3 h-3 text-blue-400" />
-                      )}
+                      <div className="flex items-center gap-1">
+                        {product.isSerialTracked && (
+                          <Hash className="w-3 h-3 text-blue-400" />
+                        )}
+                        {product.stockQuantity <= 0 ? (
+                          <Badge variant="destructive" className="text-[9px]">Out of Stock</Badge>
+                        ) : product.stockQuantity <= 5 ? (
+                          <Badge className="text-[9px] bg-amber-500/20 text-amber-400 border-amber-500/30">{product.stockQuantity} left</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[9px] text-muted-foreground">{product.stockQuantity} in stock</Badge>
+                        )}
+                      </div>
                     </div>
                     <p className="text-sm font-medium leading-tight mb-1 line-clamp-2">{product.name}</p>
                     <p className="text-[10px] font-mono text-muted-foreground mb-2">{product.code}</p>

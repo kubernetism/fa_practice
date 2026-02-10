@@ -38,6 +38,7 @@ import {
   getTeamMembers,
 } from '@/actions/messages'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 export default function MessagesPage() {
   const [loading, setLoading] = useState(true)
@@ -115,7 +116,7 @@ export default function MessagesPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>

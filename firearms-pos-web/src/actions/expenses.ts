@@ -5,6 +5,7 @@ import { expenses } from '@/lib/db/schema'
 import { eq, and, desc, sql, between, count } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
 import { postExpenseToGL } from '@/lib/accounting/gl-posting'
+import { logCreate } from '@/lib/audit/logger'
 
 async function getTenantId() {
   const session = await auth()
@@ -108,6 +109,8 @@ export async function createExpense(data: {
   } catch (e) {
     console.error('GL posting failed for expense:', e)
   }
+
+  logCreate('expense', expense.id, { category: data.category, amount: data.amount })
 
   return { success: true, data: expense }
 }

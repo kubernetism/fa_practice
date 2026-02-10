@@ -28,6 +28,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { getBranches, createBranch, updateBranch, deleteBranch } from '@/actions/branches'
+import { PageLoader } from '@/components/ui/page-loader'
 
 type BranchData = {
   id: number
@@ -139,7 +140,7 @@ export default function BranchesPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <p className="text-muted-foreground">Loading branches...</p>
+        <PageLoader />
       </div>
     )
   }

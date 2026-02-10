@@ -39,6 +39,7 @@ import {
   deleteReferralPerson,
 } from '@/actions/referral-persons'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 export default function ReferralPersonsPage() {
   const [loading, setLoading] = useState(true)
@@ -134,7 +135,7 @@ export default function ReferralPersonsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Referral Persons</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>

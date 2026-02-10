@@ -11,6 +11,7 @@ import {
   Download,
   PieChart,
   Activity,
+  Package,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -39,17 +40,28 @@ import {
   getSalesReport,
   getTopProducts,
   getTaxReport,
+  getInventoryValuationReport,
+  getReceivablesReport,
+  getPayablesReport,
+  getExpensesReport,
 } from '@/actions/reports'
+import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 export default function ReportsPage() {
   const [dateFrom, setDateFrom] = useState('2026-02-01')
   const [dateTo, setDateTo] = useState('2026-02-28')
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState('pnl')
   const [pnlData, setPnlData] = useState<any>(null)
   const [balanceData, setBalanceData] = useState<any>(null)
   const [salesData, setSalesData] = useState<any>(null)
   const [topProducts, setTopProducts] = useState<any[]>([])
   const [taxData, setTaxData] = useState<any>(null)
+  const [inventoryValuation, setInventoryValuation] = useState<any>(null)
+  const [receivablesData, setReceivablesData] = useState<any>(null)
+  const [payablesData, setPayablesData] = useState<any>(null)
+  const [expensesData, setExpensesData] = useState<any>(null)
 
   useEffect(() => {
     loadReports()
@@ -58,12 +70,16 @@ export default function ReportsPage() {
   async function loadReports() {
     setLoading(true)
     try {
-      const [pnl, balance, sales, products, tax] = await Promise.all([
+      const [pnl, balance, sales, products, tax, invVal, receivables, payables, expenses] = await Promise.all([
         getProfitAndLoss(dateFrom, dateTo),
         getBalanceSheet(),
         getSalesReport(dateFrom, dateTo),
         getTopProducts(5),
         getTaxReport(dateFrom, dateTo),
+        getInventoryValuationReport(),
+        getReceivablesReport(),
+        getPayablesReport(),
+        getExpensesReport(dateFrom, dateTo),
       ])
 
       if (pnl.success) setPnlData(pnl.data)
@@ -71,6 +87,10 @@ export default function ReportsPage() {
       if (sales.success) setSalesData(sales.data)
       if (products.success) setTopProducts(products.data)
       if (tax.success) setTaxData(tax.data)
+      if (invVal.success) setInventoryValuation(invVal.data)
+      if (receivables.success) setReceivablesData(receivables.data)
+      if (payables.success) setPayablesData(payables.data)
+      if (expenses.success) setExpensesData(expenses.data)
     } catch (error) {
       console.error('Failed to load reports:', error)
     } finally {
@@ -80,6 +100,75 @@ export default function ReportsPage() {
 
   async function handleApply() {
     loadReports()
+  }
+
+  function handleExport() {
+    let dataToExport: any = null
+    let filename = 'report.json'
+
+    switch (activeTab) {
+      case 'pnl':
+        dataToExport = pnlData
+        filename = `profit-and-loss-${dateFrom}-to-${dateTo}.json`
+        break
+      case 'balance':
+        dataToExport = balanceData
+        filename = `balance-sheet-${new Date().toISOString().split('T')[0]}.json`
+        break
+      case 'sales':
+        dataToExport = salesData
+        filename = `sales-report-${dateFrom}-to-${dateTo}.json`
+        break
+      case 'products':
+        dataToExport = topProducts
+        filename = `top-products-${new Date().toISOString().split('T')[0]}.json`
+        break
+      case 'tax':
+        dataToExport = taxData
+        filename = `tax-report-${dateFrom}-to-${dateTo}.json`
+        break
+      case 'inventory':
+        dataToExport = inventoryValuation
+        filename = `inventory-valuation-${new Date().toISOString().split('T')[0]}.json`
+        break
+      case 'receivables':
+        dataToExport = receivablesData
+        filename = `receivables-report-${new Date().toISOString().split('T')[0]}.json`
+        break
+      case 'payables':
+        dataToExport = payablesData
+        filename = `payables-report-${new Date().toISOString().split('T')[0]}.json`
+        break
+      case 'expenses':
+        dataToExport = expensesData
+        filename = `expenses-report-${dateFrom}-to-${dateTo}.json`
+        break
+      default:
+        toast.error('No data to export')
+        return
+    }
+
+    if (!dataToExport) {
+      toast.error('No data available for export')
+      return
+    }
+
+    try {
+      const jsonString = JSON.stringify(dataToExport, null, 2)
+      const blob = new Blob([jsonString], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+      toast.success('Report exported successfully')
+    } catch (error) {
+      console.error('Export failed:', error)
+      toast.error('Failed to export report')
+    }
   }
 
   const summaryCards = [
@@ -116,7 +205,7 @@ export default function ReportsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <p className="text-muted-foreground">Loading reports...</p>
+        <PageLoader />
       </div>
     )
   }
@@ -128,7 +217,7 @@ export default function ReportsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Reports</h1>
           <p className="text-sm text-muted-foreground mt-1">Business analytics, P&L, balance sheet and tax reports</p>
         </div>
-        <Button variant="outline">
+        <Button variant="outline" onClick={handleExport}>
           <Download className="w-4 h-4 mr-2" />
           Export
         </Button>
@@ -172,13 +261,17 @@ export default function ReportsPage() {
         ))}
       </div>
 
-      <Tabs defaultValue="pnl" className="space-y-4">
+      <Tabs defaultValue="pnl" className="space-y-4" value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="pnl">Profit & Loss</TabsTrigger>
           <TabsTrigger value="balance">Balance Sheet</TabsTrigger>
           <TabsTrigger value="sales">Sales Report</TabsTrigger>
           <TabsTrigger value="products">Top Products</TabsTrigger>
           <TabsTrigger value="tax">Tax Report</TabsTrigger>
+          <TabsTrigger value="inventory">Inventory Valuation</TabsTrigger>
+          <TabsTrigger value="receivables">Receivables</TabsTrigger>
+          <TabsTrigger value="payables">Payables</TabsTrigger>
+          <TabsTrigger value="expenses">Expenses</TabsTrigger>
         </TabsList>
 
         <TabsContent value="pnl">
@@ -379,6 +472,209 @@ export default function ReportsPage() {
                   <p className="text-2xl font-bold text-primary">Rs. {Number(taxData?.salesTax || 0).toLocaleString()}</p>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="inventory">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Package className="w-5 h-5 text-primary" />
+                Inventory Valuation
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="text-sm font-medium">Total Inventory Value (Cost)</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(inventoryValuation?.totalCost || 0).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-sm font-medium">Total Inventory Value (Retail)</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(inventoryValuation?.totalRetail || 0).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-sm font-medium">Total Items</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      {inventoryValuation?.totalItems || 0}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow className="bg-primary/5">
+                    <TableCell className="text-sm font-bold text-primary">Potential Margin</TableCell>
+                    <TableCell className="text-right text-sm font-bold text-primary">
+                      Rs. {Number((inventoryValuation?.totalRetail || 0) - (inventoryValuation?.totalCost || 0)).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="receivables">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-primary" />
+                Receivables Report
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Customer</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                    <TableHead>Due Date</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {!receivablesData || (Array.isArray(receivablesData) && receivablesData.length === 0) ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No receivables found</TableCell>
+                    </TableRow>
+                  ) : Array.isArray(receivablesData) ? (
+                    receivablesData.map((item: any, i: number) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-sm font-medium">{item.customerName || 'N/A'}</TableCell>
+                        <TableCell className="text-right text-sm">Rs. {Number(item.amount || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm text-success">Rs. {Number(item.paidAmount || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold">Rs. {Number(item.balance || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {item.dueDate ? new Date(item.dueDate).toLocaleDateString() : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${
+                            item.status === 'paid' ? 'bg-success/10 text-success border-success/20' :
+                            item.status === 'overdue' ? 'bg-destructive/10 text-destructive border-destructive/20' :
+                            'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                          }`}>
+                            {item.status || 'pending'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Invalid data format</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="payables">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-primary" />
+                Payables Report
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead className="text-right">Paid</TableHead>
+                    <TableHead className="text-right">Balance</TableHead>
+                    <TableHead>Due Date</TableHead>
+                    <TableHead>Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {!payablesData || (Array.isArray(payablesData) && payablesData.length === 0) ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">No payables found</TableCell>
+                    </TableRow>
+                  ) : Array.isArray(payablesData) ? (
+                    payablesData.map((item: any, i: number) => (
+                      <TableRow key={i}>
+                        <TableCell className="text-sm font-medium">{item.supplierName || 'N/A'}</TableCell>
+                        <TableCell className="text-right text-sm">Rs. {Number(item.amount || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm text-success">Rs. {Number(item.paidAmount || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right text-sm font-semibold">Rs. {Number(item.balance || 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {item.dueDate ? new Date(item.dueDate).toLocaleDateString() : '—'}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] ${
+                            item.status === 'paid' ? 'bg-success/10 text-success border-success/20' :
+                            item.status === 'overdue' ? 'bg-destructive/10 text-destructive border-destructive/20' :
+                            'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'
+                          }`}>
+                            {item.status || 'pending'}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  ) : (
+                    <TableRow>
+                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">Invalid data format</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="expenses">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <TrendingDown className="w-5 h-5 text-primary" />
+                Expenses Report
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableBody>
+                  <TableRow>
+                    <TableCell className="text-sm font-medium">Total Expenses</TableCell>
+                    <TableCell className="text-right text-sm font-semibold text-destructive">
+                      Rs. {Number(expensesData?.totalExpenses || 0).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-sm font-medium">Number of Transactions</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      {expensesData?.transactionCount || 0}
+                    </TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-sm font-medium">Average Expense</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(expensesData?.avgExpense || 0).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                  {expensesData?.byCategory && Object.keys(expensesData.byCategory).length > 0 && (
+                    <>
+                      <TableRow className="bg-muted/30">
+                        <TableCell colSpan={2} className="text-sm font-bold">By Category</TableCell>
+                      </TableRow>
+                      {Object.entries(expensesData.byCategory).map(([category, amount]: [string, any]) => (
+                        <TableRow key={category}>
+                          <TableCell className="text-sm pl-8">{category}</TableCell>
+                          <TableCell className="text-right text-sm">Rs. {Number(amount).toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))}
+                    </>
+                  )}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         </TabsContent>

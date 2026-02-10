@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Trash2,
+  Pencil,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -38,7 +39,9 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { getExpenses, getExpenseSummary, createExpense, deleteExpense } from '@/actions/expenses'
+import { getExpenses, getExpenseSummary, createExpense, deleteExpense, updateExpense, getExpenseById } from '@/actions/expenses'
+import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const categories = ['rent', 'utilities', 'salaries', 'supplies', 'maintenance', 'marketing', 'other']
 const paymentMethods = ['cash', 'card', 'check', 'transfer']
@@ -68,7 +71,9 @@ export default function ExpensesPage() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [editingExpenseId, setEditingExpenseId] = useState<number | null>(null)
 
   // Form state
   const [formData, setFormData] = useState({
@@ -126,6 +131,7 @@ export default function ExpensesPage() {
       })
 
       if (result.success) {
+        toast.success('Expense created successfully')
         setDialogOpen(false)
         setFormData({
           category: '',
@@ -137,9 +143,77 @@ export default function ExpensesPage() {
           reference: '',
         })
         loadData()
+      } else {
+        toast.error('Failed to create expense')
       }
     } catch (error) {
       console.error('Failed to create expense:', error)
+      toast.error('Failed to create expense')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleEdit(id: number) {
+    try {
+      const res = await getExpenseById(id)
+      if (res.success && res.data) {
+        setEditingExpenseId(id)
+        setFormData({
+          category: res.data.category,
+          amount: res.data.amount,
+          description: res.data.description || '',
+          paymentMethod: res.data.paymentMethod,
+          paymentStatus: res.data.paymentStatus,
+          expenseDate: res.data.expenseDate ? new Date(res.data.expenseDate).toISOString().split('T')[0] : '',
+          reference: res.data.reference || '',
+        })
+        setEditDialogOpen(true)
+      } else {
+        toast.error('Failed to load expense')
+      }
+    } catch (error) {
+      console.error('Failed to load expense:', error)
+      toast.error('Failed to load expense')
+    }
+  }
+
+  async function handleUpdate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingExpenseId) return
+
+    setSubmitting(true)
+    try {
+      const result = await updateExpense(editingExpenseId, {
+        category: formData.category,
+        amount: formData.amount,
+        description: formData.description || undefined,
+        paymentMethod: formData.paymentMethod,
+        reference: formData.reference || undefined,
+        paymentStatus: formData.paymentStatus,
+        expenseDate: formData.expenseDate || undefined,
+      })
+
+      if (result.success) {
+        toast.success('Expense updated successfully')
+        setEditDialogOpen(false)
+        setEditingExpenseId(null)
+        setFormData({
+          category: '',
+          amount: '',
+          description: '',
+          paymentMethod: '',
+          paymentStatus: '',
+          expenseDate: '',
+          reference: '',
+        })
+        loadData()
+      } else {
+        toast.error(result.message || 'Failed to update expense')
+      }
+    } catch (error) {
+      console.error('Failed to update expense:', error)
+      toast.error('Failed to update expense')
     } finally {
       setSubmitting(false)
     }
@@ -149,10 +223,16 @@ export default function ExpensesPage() {
     if (!confirm('Are you sure you want to delete this expense?')) return
 
     try {
-      await deleteExpense(id)
-      loadData()
+      const res = await deleteExpense(id)
+      if (res.success) {
+        toast.success('Expense deleted successfully')
+        loadData()
+      } else {
+        toast.error('Failed to delete expense')
+      }
     } catch (error) {
       console.error('Failed to delete expense:', error)
+      toast.error('Failed to delete expense')
     }
   }
 
@@ -328,7 +408,7 @@ export default function ExpensesPage() {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading...</div>
+            <PageLoader />
           ) : (
             <Table>
               <TableHeader>
@@ -339,7 +419,7 @@ export default function ExpensesPage() {
                   <TableHead>Method</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead className="w-[60px]"></TableHead>
+                  <TableHead className="w-[100px]"></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -367,14 +447,26 @@ export default function ExpensesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleDelete(expense.id)}
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
+                      <div className="flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          onClick={() => handleEdit(expense.id)}
+                          title="Edit expense"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          onClick={() => handleDelete(expense.id)}
+                          title="Delete expense"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -390,6 +482,100 @@ export default function ExpensesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Edit Expense</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleUpdate} className="space-y-4 mt-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Category</Label>
+                <Select
+                  value={formData.category}
+                  onValueChange={(value) => setFormData({ ...formData, category: value })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    {categories.map((c) => (
+                      <SelectItem key={c} value={c} className="capitalize">{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Amount (Rs.)</Label>
+                <Input
+                  type="number"
+                  placeholder="0.00"
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Input
+                placeholder="What was this expense for?"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Payment Method</Label>
+                <Select
+                  value={formData.paymentMethod}
+                  onValueChange={(value) => setFormData({ ...formData, paymentMethod: value })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((m) => (
+                      <SelectItem key={m} value={m} className="capitalize">{m}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select
+                  value={formData.paymentStatus}
+                  onValueChange={(value) => setFormData({ ...formData, paymentStatus: value })}
+                >
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="unpaid">Unpaid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Date</Label>
+                <Input
+                  type="date"
+                  value={formData.expenseDate}
+                  onChange={(e) => setFormData({ ...formData, expenseDate: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Reference</Label>
+                <Input
+                  placeholder="Optional reference"
+                  value={formData.reference}
+                  onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+                />
+              </div>
+            </div>
+            <Button type="submit" className="w-full brass-glow" disabled={submitting}>
+              {submitting ? 'Updating...' : 'Update Expense'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -6,6 +6,7 @@ import { eq, and, desc, sql, count } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
 import { restoreCostLayers } from '@/lib/accounting/cost-layers'
 import { postReturnToGL } from '@/lib/accounting/gl-posting'
+import { logCreate, logRefund } from '@/lib/audit/logger'
 
 async function getTenantId() {
   const session = await auth()
@@ -204,6 +205,8 @@ export async function createReturn(input: {
     console.error('GL posting failed for return:', e)
   }
 
+  logCreate('return', ret.id, { returnNumber: ret.returnNumber, totalAmount: subtotal })
+
   return { success: true, data: ret }
 }
 
@@ -264,6 +267,8 @@ export async function approveReturn(id: number) {
   } catch (e) {
     console.error('GL posting failed for approved return:', e)
   }
+
+  logRefund(id, `Return #${id} approved`)
 
   return { success: true, data: updated }
 }

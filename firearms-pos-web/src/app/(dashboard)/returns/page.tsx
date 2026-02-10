@@ -12,6 +12,8 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertCircle,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -44,8 +46,10 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from '@/components/ui/textarea'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { getReturns, getReturnSummary, createReturn, deleteReturn } from '@/actions/returns'
+import { getReturns, getReturnSummary, createReturn, deleteReturn, approveReturn, rejectReturn } from '@/actions/returns'
 import { getSaleById } from '@/actions/sales'
+import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 type ReturnType = 'refund' | 'exchange' | 'store_credit'
 type ReturnCondition = 'new' | 'good' | 'fair' | 'damaged'
@@ -118,6 +122,9 @@ export default function ReturnsPage() {
   const [refundMethod, setRefundMethod] = useState<RefundMethod>('cash')
   const [returnReason, setReturnReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [rejectDialogOpen, setRejectDialogOpen] = useState(false)
+  const [rejectingReturnId, setRejectingReturnId] = useState<number | null>(null)
+  const [rejectionReason, setRejectionReason] = useState('')
 
   useEffect(() => {
     loadData()
@@ -319,13 +326,16 @@ export default function ReturnsPage() {
       })
 
       if (result.success) {
+        toast.success('Return processed successfully')
         setDialogOpen(false)
         resetDialog()
         loadData()
+      } else {
+        toast.error((result as any).message || 'Failed to process return')
       }
     } catch (error) {
       console.error('Failed to process return:', error)
-      alert('Failed to process return')
+      toast.error('Failed to process return')
     } finally {
       setSubmitting(false)
     }
@@ -352,10 +362,59 @@ export default function ReturnsPage() {
     if (!confirm('Are you sure you want to delete this return?')) return
 
     try {
-      await deleteReturn(id)
-      loadData()
+      const res = await deleteReturn(id)
+      if (res.success) {
+        toast.success('Return deleted successfully')
+        loadData()
+      } else {
+        toast.error((res as any).message || 'Failed to delete return')
+      }
     } catch (error) {
       console.error('Failed to delete return:', error)
+      toast.error('Failed to delete return')
+    }
+  }
+
+  async function handleApprove(id: number) {
+    if (!confirm('Approve this return and process refund?')) return
+
+    try {
+      const res = await approveReturn(id)
+      if (res.success) {
+        toast.success('Return approved successfully')
+        loadData()
+      } else {
+        toast.error(res.message || 'Failed to approve return')
+      }
+    } catch (error) {
+      console.error('Failed to approve return:', error)
+      toast.error('Failed to approve return')
+    }
+  }
+
+  function handleRejectClick(id: number) {
+    setRejectingReturnId(id)
+    setRejectionReason('')
+    setRejectDialogOpen(true)
+  }
+
+  async function handleRejectConfirm() {
+    if (!rejectingReturnId) return
+
+    try {
+      const res = await rejectReturn(rejectingReturnId, rejectionReason || undefined)
+      if (res.success) {
+        toast.success('Return rejected')
+        setRejectDialogOpen(false)
+        setRejectingReturnId(null)
+        setRejectionReason('')
+        loadData()
+      } else {
+        toast.error(res.message || 'Failed to reject return')
+      }
+    } catch (error) {
+      console.error('Failed to reject return:', error)
+      toast.error('Failed to reject return')
     }
   }
 
@@ -752,7 +811,7 @@ export default function ReturnsPage() {
       {/* Returns Table */}
       <div className="card-tactical overflow-hidden">
         {loading ? (
-          <div className="text-center py-8 text-muted-foreground">Loading...</div>
+          <PageLoader />
         ) : (
           <Table>
             <TableHeader>
@@ -793,7 +852,25 @@ export default function ReturnsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-success hover:text-success/80"
+                        onClick={() => handleApprove(ret.return.id)}
+                        title="Approve return"
+                      >
+                        <CheckCircle className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-destructive hover:text-destructive/80"
+                        onClick={() => handleRejectClick(ret.return.id)}
+                        title="Reject return"
+                      >
+                        <XCircle className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" title="View details">
                         <Eye className="h-4 w-4" />
                       </Button>
                       <Button
@@ -801,6 +878,7 @@ export default function ReturnsPage() {
                         size="icon"
                         className="h-8 w-8 text-red-400 hover:text-red-300"
                         onClick={() => handleDelete(ret.return.id)}
+                        title="Delete return"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -819,6 +897,37 @@ export default function ReturnsPage() {
           </Table>
         )}
       </div>
+
+      <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
+        <DialogContent className="sm:max-w-[450px]">
+          <DialogHeader>
+            <DialogTitle>Reject Return</DialogTitle>
+            <DialogDescription>
+              Provide a reason for rejecting this return request.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="rejection-reason">Rejection Reason</Label>
+              <Textarea
+                id="rejection-reason"
+                placeholder="Enter reason for rejection (optional)..."
+                value={rejectionReason}
+                onChange={(e) => setRejectionReason(e.target.value)}
+                rows={4}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleRejectConfirm}>
+              Reject Return
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

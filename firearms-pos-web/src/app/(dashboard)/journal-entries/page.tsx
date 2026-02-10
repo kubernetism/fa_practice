@@ -41,6 +41,7 @@ import {
 } from '@/components/ui/table'
 import { getJournalEntries, getJournalEntrySummary, createJournalEntry, postJournalEntry, reverseJournalEntry } from '@/actions/journal-entries'
 import { getAccounts } from '@/actions/chart-of-accounts'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const statusConfig: Record<string, { color: string; icon: typeof CheckCircle2 }> = {
   draft: { color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20', icon: Clock },
@@ -214,7 +215,7 @@ export default function JournalEntriesPage() {
             <p className="text-sm text-muted-foreground mt-1">Record and manage double-entry transactions</p>
           </div>
         </div>
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        <PageLoader />
       </div>
     )
   }

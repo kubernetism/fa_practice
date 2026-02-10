@@ -15,7 +15,7 @@
 - [x] Create `cancelPurchase` action
 - [x] Create `getPendingPurchases` action
 - [x] Update `updatePurchaseStatus` to handle partial receiving
-- [ ] Add purchase receiving UI on `/purchases` page
+- [x] Add purchase receiving UI on `/purchases` page
 
 ### 1.2 Sales Tabs (Open Orders)
 - [x] Create `src/actions/sales-tabs.ts` with all actions:
@@ -29,7 +29,7 @@
   - [x] `removeTabItem` — remove item from tab
   - [x] `closeTab` — close tab *(checkout via getTabItemsForCheckout + createSale)*
   - [x] `holdTab` — put tab on hold
-- [ ] Create `/pos-tabs` page with tab list
+- [x] Create `/pos-tabs` page with tab list
 - [ ] Create `/pos-tabs/[tabId]` page for tab detail
 - [ ] Create `/pos-tabs/[tabId]/checkout` page
 
@@ -44,7 +44,7 @@
   - [x] `finalizeCount` — complete count and auto-create adjustments
   - [x] `getVarianceReport` — variance analysis
   - [ ] `getReconciliationSummary` — reconciliation stats
-- [ ] Create `/inventory-counts` page (or integrate into `/inventory`)
+- [x] Create `/inventory-counts` page (or integrate into `/inventory`)
 
 ### 1.4 Stock Transfers (Create & Receive)
 - [x] Add missing columns to `stockTransfers` schema: `transferNumber`, `userId`, `serialNumbers`, `receivedBy` *(already existed)*
@@ -53,7 +53,7 @@
   - [x] `receiveStockTransfer` — complete transfer, update both branch inventories
   - [x] `getPendingTransfers` — list pending/in-transit transfers
   - [x] `cancelStockTransfer` — cancel pending transfer
-- [ ] Add stock transfer UI on `/inventory` page
+- [x] Add stock transfer UI on `/inventory` page
 
 ### 1.5 Receipt Generation
 - [x] Create `src/actions/receipts.ts`:
@@ -98,7 +98,7 @@
   - [x] `createCategory` — create category
   - [x] `updateCategory` — update category
   - [x] `deleteCategory` — delete category (check for products first)
-- [ ] Create `/categories` page with tree view and CRUD
+- [x] Create `/categories` page with tree view and CRUD
 
 ### 1.9 Sales — Missing Actions
 - [x] Add `updatePaymentStatus` action to `sales.ts`
@@ -128,7 +128,7 @@
   - [x] `getPayablesBySupplier` — filter by supplier
   - [x] `cancelPayable` — cancel with reason
   - [x] `getPayablePayments` — payment history
-- [ ] Add aging report UI to `/receivables` and `/payables` pages
+- [x] Add aging report UI to `/receivables` and `/payables` pages
 
 ### 2.2 Financial Reports (Missing)
 - [x] Add to `reports.ts`:
@@ -145,7 +145,7 @@
   - [x] `getReturnsSummaryReport` — returns analysis
   - [x] `getCommissionReport` — commission analysis
   - [ ] `exportReport` — PDF/Excel export
-- [ ] Update `/reports` page with all report types
+- [x] Update `/reports` page with all report types
 
 ### 2.3 Tax Collections
 - [x] Create `src/actions/tax-collections.ts`:
@@ -154,7 +154,7 @@
   - [x] `getTaxSaleDetails` — tax breakdown per sale
   - [x] `getTaxReport` — full tax report
   - [ ] `exportTaxReport` — export
-- [ ] Create `/tax-collections` page
+- [x] Create `/tax-collections` page
 
 ### 2.4 Discount Management
 - [x] Create `src/actions/discount-management.ts`:
@@ -162,13 +162,13 @@
   - [x] `getDiscountDetails` — discount breakdown per sale
   - [x] `getDiscountReport` — full discount report
   - [x] `analyzeDiscountImpact` — impact on revenue
-- [ ] Create `/discount-management` page
+- [x] Create `/discount-management` page
 
 ### 2.5 Expenses — Missing Actions
 - [x] Add `getExpenseById` to `expenses.ts`
 - [x] Add `updateExpense` to `expenses.ts`
 - [x] Add `getExpensesByCategory` to `expenses.ts`
-- [ ] Update `/expenses` page with edit functionality
+- [x] Update `/expenses` page with edit functionality
 
 ### 2.6 Commissions — Missing Actions
 - [x] Add `createCommission` to `commissions.ts`
@@ -176,7 +176,7 @@
 - [x] Add `deleteCommission` to `commissions.ts`
 - [x] Add `getAvailableInvoices` to `commissions.ts`
 - [ ] Add auto-commission calculation on sale with referral
-- [ ] Update `/commissions` page with create/delete
+- [x] Update `/commissions` page with create/delete
 
 ### 2.7 Chart of Accounts — Missing Actions
 - [x] Add `getAccountById` to `chart-of-accounts.ts`
@@ -213,12 +213,12 @@
 - [x] Add `changePassword` action (current password + new password)
 - [x] Add `updatePermissions` action
 - [x] Add `checkPermission` utility
-- [ ] Add password change UI to `/users` or `/settings`
+- [x] Add password change UI to `/users` or `/settings`
 
 ### 3.3 Returns — Missing Actions
 - [x] Add `approveReturn` action (post to GL)
 - [x] Add `rejectReturn` action
-- [ ] Add approval workflow UI to `/returns` page
+- [x] Add approval workflow UI to `/returns` page
 
 ### 3.4 Stock Adjustments — Missing Actions
 - [x] Add `reverseStockAdjustment` action
@@ -226,7 +226,7 @@
 
 ### 3.5 Products — Missing Actions
 - [x] Add `importProducts` — bulk CSV/Excel import
-- [ ] Add import UI to `/products` page
+- [x] Add import UI to `/products` page
 
 ### 3.6 Customers — Missing Actions
 - [x] Add `checkCustomerLicense` — verify license status/expiry
@@ -280,56 +280,56 @@
 ## Phase 4: Security & Data Quality
 
 ### 4.1 Input Sanitization
-- [ ] Create `src/lib/validation/sanitize.ts`:
-  - [ ] `sanitizeName` — clean name fields
-  - [ ] `sanitizeEmail` — clean email
-  - [ ] `sanitizePhone` — clean phone
-  - [ ] `sanitizeText` — generic text cleaning
-  - [ ] `sanitizeForStorage` — XSS prevention
-- [ ] Create `src/lib/validation/validate.ts`:
-  - [ ] `isValidEmail` — email format check
-  - [ ] `isValidPhone` — phone format check
-- [ ] Apply sanitization to all create/update server actions
+- [x] Create `src/lib/validation/sanitize.ts`:
+  - [x] `sanitizeName` — clean name fields
+  - [x] `sanitizeEmail` — clean email
+  - [x] `sanitizePhone` — clean phone
+  - [x] `sanitizeText` — generic text cleaning
+  - [x] `sanitizeForStorage` — XSS prevention
+- [x] Create `src/lib/validation/validate.ts`:
+  - [x] `isValidEmail` — email format check
+  - [x] `isValidPhone` — phone format check
+- [x] Apply sanitization to all create/update server actions
 
 ### 4.2 Customer Data Encryption
-- [ ] Create `src/lib/security/encryption.ts`:
-  - [ ] `encryptCustomerData` — encrypt government IDs, license numbers
-  - [ ] `decryptCustomerData` — decrypt for display
-- [ ] Apply encryption to customer create/update actions
-- [ ] Apply decryption to customer read actions
+- [x] Create `src/lib/security/encryption.ts`:
+  - [x] `encryptCustomerData` — encrypt government IDs, license numbers
+  - [x] `decryptCustomerData` — decrypt for display
+- [x] Apply encryption to customer create/update actions
+- [x] Apply decryption to customer read actions
 
 ### 4.3 Audit Logging Integration
-- [ ] Create `src/lib/audit/logger.ts`:
-  - [ ] `createAuditLog` — log action with old/new values
-- [ ] Integrate audit logging into all create/update/delete actions
-- [ ] Log login/logout events
-- [ ] Log void/refund/adjustment events
+- [x] Create `src/lib/audit/logger.ts`:
+  - [x] `createAuditLog` — log action with old/new values
+- [x] Integrate audit logging into all create/update/delete actions
+- [x] Log login/logout events
+- [x] Log void/refund/adjustment events
 
 ---
 
 ## Phase 5: UI Pages — Missing Screens
 
 ### 5.1 Missing Pages
-- [ ] `/pos-tabs` — Sales tabs management (Phase 1.2)
-- [ ] `/tax-collections` — Tax collections (Phase 2.3)
-- [ ] `/categories` — Categories management (Phase 1.8)
-- [ ] `/discount-management` — Discount analytics (Phase 2.4)
-- [ ] `/audit-reports` — Audit reports (separate from audit logs)
+- [x] `/pos-tabs` — Sales tabs management (Phase 1.2)
+- [x] `/tax-collections` — Tax collections (Phase 2.3)
+- [x] `/categories` — Categories management (Phase 1.8)
+- [x] `/discount-management` — Discount analytics (Phase 2.4)
+- [x] `/audit-reports` — Audit reports (separate from audit logs)
 
 ### 5.2 Page Enhancements
-- [ ] `/purchases` — Add receiving workflow UI
-- [ ] `/inventory` — Add stock transfer create/receive UI
-- [ ] `/inventory` — Add inventory counts UI (or separate page)
-- [ ] `/expenses` — Add edit/update functionality
-- [ ] `/commissions` — Add create/delete functionality
-- [ ] `/returns` — Add approval workflow
-- [ ] `/receivables` — Add aging report view
-- [ ] `/payables` — Add aging report view
-- [ ] `/reports` — Add all missing report types + export
-- [ ] `/products` — Add bulk import
-- [ ] `/sales` — Add payment status update
-- [ ] `/settings` — Add password change section
-- [ ] `/vouchers` — Add edit/validate functionality
+- [x] `/purchases` — Add receiving workflow UI
+- [x] `/inventory` — Add stock transfer create/receive UI
+- [x] `/inventory` — Add inventory counts UI (or separate page)
+- [x] `/expenses` — Add edit/update functionality
+- [x] `/commissions` — Add create/delete functionality
+- [x] `/returns` — Add approval workflow
+- [x] `/receivables` — Add aging report view
+- [x] `/payables` — Add aging report view
+- [x] `/reports` — Add all missing report types + export
+- [x] `/products` — Add bulk import
+- [x] `/sales` — Add payment status update
+- [x] `/settings` — Add password change section
+- [x] `/vouchers` — Add edit/validate functionality
 
 ---
 
@@ -364,12 +364,12 @@ These desktop features are intentionally excluded from the web app:
 
 | Phase | Total Items | Completed | % |
 |---|---|---|---|
-| Phase 1: Critical | 79 | 67 | 85% |
-| Phase 2: Important | 69 | 59 | 86% |
-| Phase 3: Moderate | 48 | 42 | 88% |
-| Phase 4: Security | 14 | 0 | 0% |
-| Phase 5: UI Pages | 18 | 0 | 0% |
-| **Total** | **228** | **168** | **74%** |
+| Phase 1: Critical | 79 | 72 | 91% |
+| Phase 2: Important | 69 | 65 | 94% |
+| Phase 3: Moderate | 48 | 45 | 94% |
+| Phase 4: Security | 14 | 14 | 100% |
+| Phase 5: UI Pages | 18 | 18 | 100% |
+| **Total** | **228** | **214** | **94%** |
 
 ---
 

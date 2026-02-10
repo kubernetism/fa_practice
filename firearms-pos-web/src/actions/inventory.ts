@@ -5,6 +5,7 @@ import { inventory, products, branches, stockAdjustments, stockTransfers, users 
 import { eq, and, lte, desc, sql, count, or } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
 import { postStockAdjustmentToGL } from '@/lib/accounting/gl-posting'
+import { logAdjustment } from '@/lib/audit/logger'
 
 async function getTenantId() {
   const session = await auth()
@@ -173,6 +174,8 @@ export async function adjustStock(input: {
   } catch (e) {
     console.error('GL posting failed for stock adjustment:', e)
   }
+
+  logAdjustment(adjustment.id, `Stock ${input.adjustmentType}: ${input.quantityChange} units of product #${input.productId}`)
 
   return { success: true, data: adjustment }
 }

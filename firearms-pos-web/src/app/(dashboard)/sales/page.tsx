@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { TableLoader } from '@/components/ui/page-loader'
 import {
   Receipt,
   Search,
@@ -41,7 +42,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { getSales, getSalesSummary, getSaleById, voidSale } from '@/actions/sales'
+import { getSales, getSalesSummary, getSaleById, voidSale, updatePaymentStatus } from '@/actions/sales'
+import { toast } from 'sonner'
 
 type SaleRow = {
   sale: any
@@ -100,10 +102,28 @@ export default function SalesPage() {
     const result = await voidSale(voidTarget.id, voidReason)
     setVoiding(false)
     if (result.success) {
+      toast.success('Sale voided successfully')
       setVoidOpen(false)
       setVoidTarget(null)
       setVoidReason('')
       loadData()
+    } else {
+      toast.error((result as any).message || 'Failed to void sale')
+    }
+  }
+
+  const handlePaymentStatusChange = async (saleId: number, newStatus: 'paid' | 'partial' | 'pending') => {
+    try {
+      const result = await updatePaymentStatus(saleId, newStatus)
+      if (result.success) {
+        toast.success(`Payment status updated to ${newStatus}`)
+        loadData()
+      } else {
+        toast.error((result as any).message || 'Failed to update payment status')
+      }
+    } catch (error) {
+      console.error('Failed to update payment status:', error)
+      toast.error('Failed to update payment status')
     }
   }
 
@@ -217,9 +237,7 @@ export default function SalesPage() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Loading...</TableCell>
-                </TableRow>
+                <TableLoader colSpan={10} />
               ) : salesData.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">No sales found</TableCell>
@@ -252,7 +270,25 @@ export default function SalesPage() {
                       <TableCell>
                         <Badge variant="outline" className="text-[10px] capitalize">{s.paymentMethod}</Badge>
                       </TableCell>
-                      <TableCell>{getStatusBadge(s.paymentStatus)}</TableCell>
+                      <TableCell>
+                        {!s.isVoided ? (
+                          <Select
+                            value={s.paymentStatus}
+                            onValueChange={(value) => handlePaymentStatusChange(s.id, value as any)}
+                          >
+                            <SelectTrigger className="h-7 w-[100px] text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="paid">Paid</SelectItem>
+                              <SelectItem value="partial">Partial</SelectItem>
+                              <SelectItem value="pending">Pending</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          getStatusBadge(s.paymentStatus)
+                        )}
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Button

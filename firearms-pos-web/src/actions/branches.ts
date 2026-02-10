@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { branches, users } from '@/lib/db/schema'
 import { eq, and, count, ilike, or } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { sanitizeInput } from '@/lib/validation/sanitize'
 
 async function getTenantId() {
   const session = await auth()
@@ -66,10 +67,12 @@ export async function createBranch(input: {
 }) {
   const tenantId = await getTenantId()
 
+  const clean = sanitizeInput(input)
+
   const existing = await db
     .select({ id: branches.id })
     .from(branches)
-    .where(and(eq(branches.tenantId, tenantId), eq(branches.code, input.code)))
+    .where(and(eq(branches.tenantId, tenantId), eq(branches.code, clean.code)))
 
   if (existing.length > 0) {
     return { success: false, message: 'Branch code already exists' }
@@ -79,13 +82,13 @@ export async function createBranch(input: {
     .insert(branches)
     .values({
       tenantId,
-      name: input.name,
-      code: input.code,
-      address: input.address || null,
-      phone: input.phone || null,
-      email: input.email || null,
-      licenseNumber: input.licenseNumber || null,
-      isMain: input.isMain ?? false,
+      name: clean.name,
+      code: clean.code,
+      address: clean.address || null,
+      phone: clean.phone || null,
+      email: clean.email || null,
+      licenseNumber: clean.licenseNumber || null,
+      isMain: clean.isMain ?? false,
     })
     .returning()
 

@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { services, serviceCategories } from '@/lib/db/schema'
 import { eq, and, desc, count, ilike, or } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { sanitizeInput } from '@/lib/validation/sanitize'
 
 async function getTenantId() {
   const session = await auth()
@@ -78,13 +79,15 @@ export async function createService(data: {
 }) {
   const tenantId = await getTenantId()
 
+  const clean = sanitizeInput(data)
+
   const [service] = await db
     .insert(services)
     .values({
       tenantId,
-      code: data.code,
-      name: data.name,
-      description: data.description || null,
+      code: clean.code,
+      name: clean.name,
+      description: clean.description || null,
       categoryId: data.categoryId || null,
       price: data.price,
       pricingType: data.pricingType as any,

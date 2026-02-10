@@ -46,6 +46,7 @@ import {
   deleteTodo,
 } from '@/actions/todos'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-muted text-muted-foreground',
@@ -182,7 +183,7 @@ export default function TodosPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>

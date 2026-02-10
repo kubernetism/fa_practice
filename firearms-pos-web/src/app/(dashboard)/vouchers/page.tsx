@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { PageLoader } from '@/components/ui/page-loader'
 import {
   Ticket,
   Plus,
@@ -11,6 +12,8 @@ import {
   DollarSign,
   CheckCircle2,
   Tag,
+  Edit,
+  ShieldCheck,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -45,6 +48,9 @@ import {
   createVoucher,
   toggleVoucher,
   deleteVoucher,
+  updateVoucher,
+  validateVoucher,
+  getVoucherById,
 } from '@/actions/vouchers'
 import { toast } from 'sonner'
 
@@ -54,7 +60,15 @@ export default function VouchersPage() {
   const [summary, setSummary] = useState<any>(null)
   const [filterStatus, setFilterStatus] = useState('all')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editingVoucher, setEditingVoucher] = useState<any>(null)
   const [formData, setFormData] = useState({
+    code: '',
+    description: '',
+    discountAmount: '',
+    expiresAt: '',
+  })
+  const [editFormData, setEditFormData] = useState({
     code: '',
     description: '',
     discountAmount: '',
@@ -148,6 +162,67 @@ export default function VouchersPage() {
     toast.success(`Copied: ${code}`)
   }
 
+  async function handleEditClick(voucher: any) {
+    try {
+      const res = await getVoucherById(voucher.id)
+      if (res.success && res.data) {
+        setEditingVoucher(res.data)
+        setEditFormData({
+          code: res.data.code || '',
+          description: res.data.description || '',
+          discountAmount: String(res.data.discountAmount || ''),
+          expiresAt: res.data.expiresAt ? new Date(res.data.expiresAt).toISOString().split('T')[0] : '',
+        })
+        setEditDialogOpen(true)
+      } else {
+        toast.error('Failed to load voucher details')
+      }
+    } catch (error) {
+      console.error('Failed to load voucher:', error)
+      toast.error('Failed to load voucher')
+    }
+  }
+
+  async function handleEditSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingVoucher) return
+
+    try {
+      const res = await updateVoucher(editingVoucher.id, {
+        code: editFormData.code,
+        description: editFormData.description,
+        discountAmount: editFormData.discountAmount,
+        expiresAt: editFormData.expiresAt || undefined,
+      })
+
+      if (res.success) {
+        toast.success('Voucher updated successfully')
+        setEditDialogOpen(false)
+        setEditingVoucher(null)
+        loadData()
+      } else {
+        toast.error(res.message || 'Failed to update voucher')
+      }
+    } catch (error) {
+      console.error('Failed to update voucher:', error)
+      toast.error('Failed to update voucher')
+    }
+  }
+
+  async function handleValidate(voucherId: number, code: string) {
+    try {
+      const res = await validateVoucher(code)
+      if (res.success) {
+        toast.success('Voucher is valid and ready to use')
+      } else {
+        toast.error((res as any).message || 'Voucher is not valid')
+      }
+    } catch (error) {
+      console.error('Failed to validate voucher:', error)
+      toast.error('Failed to validate voucher')
+    }
+  }
+
   const summaryCards = [
     { title: 'Total Vouchers', value: String(summary?.totalVouchers || 0), icon: Ticket, accent: 'text-primary' },
     { title: 'Active', value: String(summary?.activeCount || 0), icon: Tag, accent: 'text-success' },
@@ -161,7 +236,7 @@ export default function VouchersPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Vouchers</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>
@@ -216,6 +291,55 @@ export default function VouchersPage() {
             </form>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent className="sm:max-w-[420px]">
+            <DialogHeader>
+              <DialogTitle>Edit Voucher</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleEditSubmit} className="space-y-4 mt-4">
+              <div className="space-y-2">
+                <Label>Voucher Code</Label>
+                <Input
+                  placeholder="e.g., SAVE5000"
+                  className="uppercase"
+                  value={editFormData.code}
+                  onChange={(e) => setEditFormData({...editFormData, code: e.target.value.toUpperCase()})}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Input
+                  placeholder="What is this voucher for?"
+                  value={editFormData.description}
+                  onChange={(e) => setEditFormData({...editFormData, description: e.target.value})}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Discount Amount (Rs.)</Label>
+                  <Input
+                    type="number"
+                    placeholder="0"
+                    value={editFormData.discountAmount}
+                    onChange={(e) => setEditFormData({...editFormData, discountAmount: e.target.value})}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Expires At</Label>
+                  <Input
+                    type="date"
+                    value={editFormData.expiresAt}
+                    onChange={(e) => setEditFormData({...editFormData, expiresAt: e.target.value})}
+                  />
+                </div>
+              </div>
+              <Button type="submit" className="w-full brass-glow">Update Voucher</Button>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -264,7 +388,7 @@ export default function VouchersPage() {
                 <TableHead>Expires</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="w-[120px]"></TableHead>
+                <TableHead className="w-[160px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -305,11 +429,43 @@ export default function VouchersPage() {
                   <TableCell>
                     <div className="flex gap-1">
                       {!v.isUsed && (
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleToggle(v.id)}>
-                          <ToggleLeft className="w-3.5 h-3.5" />
-                        </Button>
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handleEditClick(v)}
+                            title="Edit voucher"
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-success"
+                            onClick={() => handleValidate(v.id, v.code)}
+                            title="Validate voucher"
+                          >
+                            <ShieldCheck className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7"
+                            onClick={() => handleToggle(v.id)}
+                            title="Toggle active status"
+                          >
+                            <ToggleLeft className="w-3.5 h-3.5" />
+                          </Button>
+                        </>
                       )}
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleDelete(v.id)}>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={() => handleDelete(v.id)}
+                        title="Delete voucher"
+                      >
                         <Trash2 className="w-3.5 h-3.5" />
                       </Button>
                     </div>

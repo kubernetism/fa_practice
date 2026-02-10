@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/table'
 import { getUsers, getUsersSummary, createUser, deleteUser } from '@/actions/users'
 import { getBranches } from '@/actions/branches'
+import { PageLoader } from '@/components/ui/page-loader'
 
 type UserData = {
   id: number
@@ -190,7 +191,7 @@ export default function UsersPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <p className="text-muted-foreground">Loading users...</p>
+        <PageLoader />
       </div>
     )
   }

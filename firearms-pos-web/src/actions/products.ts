@@ -4,12 +4,22 @@ import { db } from '@/lib/db'
 import { products, categories, inventory } from '@/lib/db/schema'
 import { eq, and, ilike, or, desc, sql, count } from 'drizzle-orm'
 import { auth } from '@/lib/auth/config'
+import { sanitizeInput } from '@/lib/validation/sanitize'
+import { logCreate, logUpdate, logDelete } from '@/lib/audit/logger'
 
-async function getTenantId() {
+async function getSessionContext() {
   const session = await auth()
   const tenantId = (session as any)?.tenantId
   if (!tenantId) throw new Error('No tenant context')
-  return tenantId as number
+  return {
+    tenantId: tenantId as number,
+    branchId: (session as any)?.branchId as number | null,
+  }
+}
+
+async function getTenantId() {
+  const { tenantId } = await getSessionContext()
+  return tenantId
 }
 
 export async function getProducts(params?: {
@@ -44,6 +54,54 @@ export async function getProducts(params?: {
     })
     .from(products)
     .leftJoin(categories, eq(products.categoryId, categories.id))
+    .where(and(...conditions))
+    .orderBy(products.name)
+
+  return { success: true, data }
+}
+
+export async function getProductsWithStock(params?: {
+  search?: string
+  categoryId?: number
+  isActive?: boolean
+  branchId?: number
+}) {
+  const { tenantId, branchId: sessionBranchId } = await getSessionContext()
+  const branchId = params?.branchId ?? sessionBranchId
+
+  const conditions = [eq(products.tenantId, tenantId)]
+
+  if (params?.search) {
+    conditions.push(
+      or(
+        ilike(products.name, `%${params.search}%`),
+        ilike(products.code, `%${params.search}%`),
+        ilike(products.barcode, `%${params.search}%`)
+      )!
+    )
+  }
+  if (params?.categoryId) {
+    conditions.push(eq(products.categoryId, params.categoryId))
+  }
+  if (params?.isActive !== undefined) {
+    conditions.push(eq(products.isActive, params.isActive))
+  }
+
+  const data = await db
+    .select({
+      product: products,
+      categoryName: categories.name,
+      stockQuantity: sql<number>`COALESCE(${inventory.quantity}, 0)`,
+    })
+    .from(products)
+    .leftJoin(categories, eq(products.categoryId, categories.id))
+    .leftJoin(
+      inventory,
+      and(
+        eq(inventory.productId, products.id),
+        ...(branchId ? [eq(inventory.branchId, branchId)] : [])
+      )
+    )
     .where(and(...conditions))
     .orderBy(products.name)
 
@@ -106,10 +164,12 @@ export async function createProduct(input: {
 }) {
   const tenantId = await getTenantId()
 
+  const clean = sanitizeInput(input)
+
   const existing = await db
     .select({ id: products.id })
     .from(products)
-    .where(and(eq(products.tenantId, tenantId), eq(products.code, input.code)))
+    .where(and(eq(products.tenantId, tenantId), eq(products.code, clean.code)))
 
   if (existing.length > 0) {
     return { success: false, message: 'Product code already exists' }
@@ -119,21 +179,39 @@ export async function createProduct(input: {
     .insert(products)
     .values({
       tenantId,
-      code: input.code,
-      name: input.name,
-      description: input.description || null,
-      categoryId: input.categoryId || null,
-      brand: input.brand || null,
-      costPrice: String(input.costPrice),
-      sellingPrice: String(input.sellingPrice),
-      reorderLevel: input.reorderLevel ?? 10,
-      unit: input.unit ?? 'pcs',
-      isSerialTracked: input.isSerialTracked ?? false,
-      isTaxable: input.isTaxable ?? true,
-      taxRate: String(input.taxRate ?? 0),
-      barcode: input.barcode || null,
+      code: clean.code,
+      name: clean.name,
+      description: clean.description || null,
+      categoryId: clean.categoryId || null,
+      brand: clean.brand || null,
+      costPrice: String(clean.costPrice),
+      sellingPrice: String(clean.sellingPrice),
+      reorderLevel: clean.reorderLevel ?? 10,
+      unit: clean.unit ?? 'pcs',
+      isSerialTracked: clean.isSerialTracked ?? false,
+      isTaxable: clean.isTaxable ?? true,
+      taxRate: String(clean.taxRate ?? 0),
+      barcode: clean.barcode || null,
     })
     .returning()
+
+  logCreate('product', product.id, { code: clean.code, name: clean.name })
+
+  // Auto-create inventory record for the user's branch
+  const { branchId } = await getSessionContext()
+  if (branchId) {
+    try {
+      await db.insert(inventory).values({
+        tenantId,
+        productId: product.id,
+        branchId,
+        quantity: 0,
+        minQuantity: clean.reorderLevel ?? 10,
+      })
+    } catch {
+      // Inventory record may already exist — safe to ignore
+    }
+  }
 
   return { success: true, data: product }
 }
@@ -180,6 +258,7 @@ export async function updateProduct(
     .returning()
 
   if (!product) return { success: false, message: 'Product not found' }
+  logUpdate('product', id, undefined, input)
   return { success: true, data: product }
 }
 
@@ -191,6 +270,7 @@ export async function deleteProduct(id: number) {
     .set({ isActive: false, updatedAt: new Date() })
     .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
 
+  logDelete('product', id)
   return { success: true }
 }
 
@@ -233,7 +313,7 @@ export async function importProducts(
     barcode?: string
   }[]
 ) {
-  const tenantId = await getTenantId()
+  const { tenantId, branchId } = await getSessionContext()
 
   let importedCount = 0
   let skippedCount = 0
@@ -252,7 +332,7 @@ export async function importProducts(
         continue
       }
 
-      await db.insert(products).values({
+      const [inserted] = await db.insert(products).values({
         tenantId,
         code: item.code,
         name: item.name,
@@ -267,7 +347,22 @@ export async function importProducts(
         isTaxable: item.isTaxable ?? true,
         taxRate: String(item.taxRate ?? 0),
         barcode: item.barcode || null,
-      })
+      }).returning()
+
+      // Auto-create inventory record
+      if (inserted && branchId) {
+        try {
+          await db.insert(inventory).values({
+            tenantId,
+            productId: inserted.id,
+            branchId,
+            quantity: 0,
+            minQuantity: item.reorderLevel ?? 10,
+          })
+        } catch {
+          // Inventory record may already exist
+        }
+      }
       importedCount++
     } catch (e: any) {
       skippedCount++

@@ -45,6 +45,7 @@ import {
   deleteService,
 } from '@/actions/services'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 export default function ServicesPage() {
   const [loading, setLoading] = useState(true)
@@ -169,7 +170,7 @@ export default function ServicesPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Services</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>

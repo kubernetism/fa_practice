@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { PageLoader } from '@/components/ui/page-loader';
 import {
   Truck,
   Plus,
@@ -498,7 +499,7 @@ export default function SuppliersPage() {
       <Card className="card-tactical">
         <CardContent className="pt-6">
           {loading ? (
-            <div className="text-center text-muted-foreground py-8">Loading...</div>
+            <PageLoader />
           ) : (
             <div className="rounded-md border">
               <Table>

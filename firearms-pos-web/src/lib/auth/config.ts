@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { db } from '@/lib/db'
 import { users, tenants, platformAdmins } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
+import { createAuditLog } from '@/lib/audit/logger'
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
@@ -220,6 +221,30 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         ;(session as any).impersonatedTenantName = token.impersonatedTenantName ?? null
       }
       return session
+    },
+  },
+  events: {
+    async signIn({ user }) {
+      if (user?.id) {
+        createAuditLog({
+          action: 'login',
+          entityType: 'auth',
+          entityId: Number(user.id),
+          description: `User ${user.name || user.email} logged in`,
+        }).catch(() => {})
+      }
+    },
+    async signOut(message) {
+      // NextAuth v5 signOut event provides token or session
+      const token = 'token' in message ? message.token : null
+      if (token?.sub) {
+        createAuditLog({
+          action: 'logout',
+          entityType: 'auth',
+          entityId: Number(token.sub),
+          description: 'User logged out',
+        }).catch(() => {})
+      }
     },
   },
 })

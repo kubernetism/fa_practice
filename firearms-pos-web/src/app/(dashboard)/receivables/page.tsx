@@ -9,6 +9,7 @@ import {
   Clock,
   AlertTriangle,
   Wallet,
+  TrendingUp,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -38,9 +39,10 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Progress } from '@/components/ui/progress'
-import { getReceivables, getReceivableSummary, createReceivable } from '@/actions/receivables'
+import { getReceivables, getReceivableSummary, createReceivable, getReceivableAgingReport } from '@/actions/receivables'
 import { getCustomers } from '@/actions/customers'
 import { getBranches } from '@/actions/branches'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const statusColors: Record<string, string> = {
   pending: 'bg-warning/10 text-warning border-warning/20',
@@ -57,6 +59,8 @@ export default function ReceivablesPage() {
   const [branches, setBranches] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [showAging, setShowAging] = useState(false)
+  const [agingReport, setAgingReport] = useState<any>(null)
   const [formData, setFormData] = useState({
     customerId: '',
     branchId: '',
@@ -73,11 +77,12 @@ export default function ReceivablesPage() {
   async function loadData() {
     try {
       setLoading(true)
-      const [receivablesRes, summaryRes, customersRes, branchesRes] = await Promise.all([
+      const [receivablesRes, summaryRes, customersRes, branchesRes, agingRes] = await Promise.all([
         getReceivables({ status: filterStatus }),
         getReceivableSummary(),
         getCustomers({ isActive: true }),
         getBranches({ isActive: true }),
+        getReceivableAgingReport(),
       ])
 
       if (receivablesRes.success) {
@@ -91,6 +96,9 @@ export default function ReceivablesPage() {
       }
       if (branchesRes.success) {
         setBranches(branchesRes.data.map((b: any) => b.branch))
+      }
+      if (agingRes.success) {
+        setAgingReport(agingRes.data)
       }
     } catch (error) {
       console.error('Failed to load receivables:', error)
@@ -164,7 +172,7 @@ export default function ReceivablesPage() {
             <p className="text-sm text-muted-foreground mt-1">Track credit sales and customer collections</p>
           </div>
         </div>
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        <PageLoader />
       </div>
     )
   }
@@ -287,21 +295,75 @@ export default function ReceivablesPage() {
 
       <Card>
         <CardContent className="p-4">
-          <div className="flex items-center gap-3">
-            <Filter className="w-4 h-4 text-muted-foreground" />
-            <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="partial">Partial</SelectItem>
-                <SelectItem value="paid">Paid</SelectItem>
-                <SelectItem value="overdue">Overdue</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-[160px]"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <Button variant="outline" onClick={() => setShowAging(!showAging)} className="gap-2">
+              <TrendingUp className="w-4 h-4" />
+              {showAging ? 'Hide' : 'Show'} Aging Report
+            </Button>
           </div>
         </CardContent>
       </Card>
+
+      {showAging && (
+        <Card className="card-tactical">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <TrendingUp className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-semibold">Aging Report</h2>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead className="text-right">Total Outstanding</TableHead>
+                  <TableHead className="text-right">Current</TableHead>
+                  <TableHead className="text-right">1-30 Days</TableHead>
+                  <TableHead className="text-right">31-60 Days</TableHead>
+                  <TableHead className="text-right">61-90 Days</TableHead>
+                  <TableHead className="text-right">90+ Days</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(agingReport || []).map((item: any) => (
+                  <TableRow key={item.customerId}>
+                    <TableCell className="text-sm font-medium">{item.customerName}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold">
+                      Rs. {Number(item.totalOutstanding).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right text-sm">Rs. {Number(item.current).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm">Rs. {Number(item.days1to30).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm">Rs. {Number(item.days31to60).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm">Rs. {Number(item.days61to90).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm text-destructive font-medium">
+                      Rs. {Number(item.days90plus).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {(!agingReport || agingReport.length === 0) && (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                      No aging data available
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="p-0">

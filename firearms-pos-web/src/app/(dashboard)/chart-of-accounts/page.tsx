@@ -41,6 +41,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { getAccounts, getAccountsSummary, createAccount, deleteAccount } from '@/actions/chart-of-accounts'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const accountTypes = ['asset', 'liability', 'equity', 'revenue', 'expense']
 
@@ -181,7 +182,7 @@ export default function ChartOfAccountsPage() {
             <p className="text-sm text-muted-foreground mt-1">Manage your general ledger account structure</p>
           </div>
         </div>
-        <div className="text-center py-12 text-muted-foreground">Loading...</div>
+        <PageLoader />
       </div>
     )
   }

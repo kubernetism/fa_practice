@@ -47,6 +47,7 @@ import {
   addCashTransaction,
 } from '@/actions/cash-register'
 import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 const txTypeLabels: Record<string, { label: string; color: string }> = {
   sale: { label: 'Sale', color: 'text-success' },
@@ -178,7 +179,7 @@ export default function CashRegisterPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">Cash Register</h1>
-            <p className="text-sm text-muted-foreground mt-1">Loading...</p>
+            <PageLoader />
           </div>
         </div>
       </div>

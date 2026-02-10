@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { PageLoader } from '@/components/ui/page-loader';
 import {
   Warehouse,
   Package,
@@ -11,6 +12,8 @@ import {
   Search,
   Filter,
   FileText,
+  CheckCircle2,
+  ClipboardList,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,7 +50,13 @@ import {
   getStockAdjustments,
   getStockTransfers,
   adjustStock,
+  receiveStockTransfer,
 } from '@/actions/inventory';
+import {
+  getInventoryCounts,
+  createInventoryCount,
+} from '@/actions/inventory-counts';
+import { toast } from 'sonner';
 
 // Types
 type StockItem = {
@@ -105,7 +114,19 @@ type Transfer = {
   productName: string;
 };
 
-type Tab = 'stock' | 'adjustments' | 'transfers';
+type Tab = 'stock' | 'adjustments' | 'transfers' | 'counts';
+
+type InventoryCount = {
+  count: {
+    id: number;
+    countType: string;
+    status: string;
+    branchId: number;
+    notes: string | null;
+    createdAt: Date;
+  };
+  branchName: string | null;
+};
 
 export default function InventoryPage() {
   const [activeTab, setActiveTab] = useState<Tab>('stock');
@@ -114,11 +135,13 @@ export default function InventoryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [adjustmentDialogOpen, setAdjustmentDialogOpen] = useState(false);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [countDialogOpen, setCountDialogOpen] = useState(false);
 
   // Data states
   const [stockData, setStockData] = useState<StockItem[]>([]);
   const [adjustments, setAdjustments] = useState<Adjustment[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
+  const [counts, setCounts] = useState<InventoryCount[]>([]);
 
   // Summary stats
   const [totalItems, setTotalItems] = useState(0);
@@ -143,6 +166,13 @@ export default function InventoryPage() {
     fromBranch: '',
     toBranch: '',
     quantity: '',
+    notes: '',
+  });
+
+  // Count form state
+  const [countForm, setCountForm] = useState({
+    type: 'full' as 'full' | 'cycle' | 'spot' | 'annual',
+    branchId: '',
     notes: '',
   });
 
@@ -181,6 +211,11 @@ export default function InventoryPage() {
         const result = await getStockTransfers();
         if (result.success) {
           setTransfers(result.data as Transfer[]);
+        }
+      } else if (activeTab === 'counts') {
+        const result = await getInventoryCounts();
+        if (result.success) {
+          setCounts(result.data as InventoryCount[]);
         }
       }
     } catch (error) {
@@ -224,6 +259,7 @@ export default function InventoryPage() {
       });
 
       if (result.success) {
+        toast.success('Stock adjustment recorded successfully');
         setAdjustmentDialogOpen(false);
         setAdjustmentForm({
           product: '',
@@ -235,9 +271,12 @@ export default function InventoryPage() {
           reference: '',
         });
         loadData();
+      } else {
+        toast.error((result as any).message || 'Failed to record adjustment');
       }
     } catch (error) {
       console.error('Failed to record adjustment:', error);
+      toast.error('Failed to record adjustment');
     }
   };
 
@@ -254,6 +293,50 @@ export default function InventoryPage() {
       quantity: '',
       notes: '',
     });
+  };
+
+  // Handle receiving a stock transfer
+  const handleReceiveTransfer = async (transferId: number) => {
+    try {
+      const result = await receiveStockTransfer(transferId);
+      if (result.success) {
+        toast.success('Transfer received successfully');
+        loadData();
+      } else {
+        toast.error((result as any).message || 'Failed to receive transfer');
+      }
+    } catch (error) {
+      console.error('Failed to receive transfer:', error);
+      toast.error('Failed to receive transfer');
+    }
+  };
+
+  // Handle inventory count creation
+  const handleCountSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const result = await createInventoryCount({
+        countType: countForm.type,
+        branchId: countForm.branchId ? Number(countForm.branchId) : 1,
+        notes: countForm.notes || undefined,
+      });
+
+      if (result.success) {
+        toast.success('Inventory count created successfully');
+        setCountDialogOpen(false);
+        setCountForm({
+          type: 'full',
+          branchId: '',
+          notes: '',
+        });
+        loadData();
+      } else {
+        toast.error('Failed to create inventory count');
+      }
+    } catch (error) {
+      console.error('Failed to create count:', error);
+      toast.error('Failed to create inventory count');
+    }
   };
 
   // Get unique branch names
@@ -350,6 +433,15 @@ export default function InventoryPage() {
             >
               <ArrowRightLeft className="h-4 w-4 mr-2" />
               Transfers
+            </Button>
+            <Button
+              variant={activeTab === 'counts' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setActiveTab('counts')}
+              className={activeTab === 'counts' ? 'brass-glow' : ''}
+            >
+              <ClipboardList className="h-4 w-4 mr-2" />
+              Counts
             </Button>
           </div>
 
@@ -597,13 +689,91 @@ export default function InventoryPage() {
                 </DialogContent>
               </Dialog>
             )}
+
+            {activeTab === 'counts' && (
+              <Dialog open={countDialogOpen} onOpenChange={setCountDialogOpen}>
+                <DialogTrigger asChild>
+                  <Button className="brass-glow">
+                    <Plus className="h-4 w-4 mr-2" />
+                    New Count
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-md">
+                  <form onSubmit={handleCountSubmit}>
+                    <DialogHeader>
+                      <DialogTitle>Create Inventory Count</DialogTitle>
+                      <DialogDescription>
+                        Start a new inventory count session
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid gap-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="count-type">Count Type</Label>
+                        <Select
+                          value={countForm.type}
+                          onValueChange={(value) =>
+                            setCountForm({ ...countForm, type: value as any })
+                          }
+                        >
+                          <SelectTrigger id="count-type">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="full">Full Count</SelectItem>
+                            <SelectItem value="cycle">Cycle Count</SelectItem>
+                            <SelectItem value="spot">Spot Check</SelectItem>
+                            <SelectItem value="annual">Annual Count</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="count-branch">Branch ID (Optional)</Label>
+                        <Input
+                          id="count-branch"
+                          type="number"
+                          placeholder="Enter branch ID"
+                          value={countForm.branchId}
+                          onChange={(e) =>
+                            setCountForm({ ...countForm, branchId: e.target.value })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="count-notes">Notes (Optional)</Label>
+                        <Textarea
+                          id="count-notes"
+                          placeholder="Additional notes..."
+                          value={countForm.notes}
+                          onChange={(e) =>
+                            setCountForm({ ...countForm, notes: e.target.value })
+                          }
+                          rows={3}
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setCountDialogOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button type="submit" className="brass-glow">
+                        Create Count
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            )}
           </div>
         </div>
 
         {/* Tab Content */}
         <div className="p-4">
           {loading ? (
-            <div className="text-center text-muted-foreground py-8">Loading...</div>
+            <PageLoader />
           ) : (
             <>
               {activeTab === 'stock' && (
@@ -801,12 +971,13 @@ export default function InventoryPage() {
                           <TableHead className="text-right">Quantity</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Notes</TableHead>
+                          <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {transfers.length === 0 ? (
                           <TableRow className="border-border">
-                            <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                            <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                               No transfers found
                             </TableCell>
                           </TableRow>
@@ -860,6 +1031,102 @@ export default function InventoryPage() {
                               </TableCell>
                               <TableCell className="max-w-xs truncate">
                                 {transfer.transfer.notes || '—'}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {transfer.transfer.status === 'in_transit' && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => handleReceiveTransfer(transfer.transfer.id)}
+                                    className="h-8"
+                                  >
+                                    <CheckCircle2 className="h-4 w-4 mr-1" />
+                                    Receive
+                                  </Button>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'counts' && (
+                <div className="space-y-4">
+                  <div className="rounded-md border border-border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="hover:bg-transparent border-border">
+                          <TableHead>ID</TableHead>
+                          <TableHead>Type</TableHead>
+                          <TableHead>Branch</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Created</TableHead>
+                          <TableHead>Notes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {counts.length === 0 ? (
+                          <TableRow className="border-border">
+                            <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                              No inventory counts found
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          counts.map((count) => (
+                            <TableRow key={count.count.id} className="border-border">
+                              <TableCell className="font-mono text-sm">#{count.count.id}</TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant="outline"
+                                  className="capitalize"
+                                >
+                                  {count.count.countType}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>{count.branchName || 'All Branches'}</TableCell>
+                              <TableCell>
+                                {count.count.status === 'draft' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+                                  >
+                                    Draft
+                                  </Badge>
+                                )}
+                                {count.count.status === 'in_progress' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-blue-500/10 text-blue-500 border-blue-500/20"
+                                  >
+                                    In Progress
+                                  </Badge>
+                                )}
+                                {count.count.status === 'completed' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-green-500/10 text-green-500 border-green-500/20"
+                                  >
+                                    Completed
+                                  </Badge>
+                                )}
+                                {count.count.status === 'cancelled' && (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-red-500/10 text-red-500 border-red-500/20"
+                                  >
+                                    Cancelled
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-muted-foreground">
+                                {new Date(count.count.createdAt).toLocaleString('en-PK')}
+                              </TableCell>
+                              <TableCell className="max-w-xs truncate">
+                                {count.count.notes || '—'}
                               </TableCell>
                             </TableRow>
                           ))

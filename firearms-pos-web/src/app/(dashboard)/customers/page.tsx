@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { PageLoader } from '@/components/ui/page-loader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -515,7 +516,7 @@ export default function CustomersPage() {
       <Card className="card-tactical">
         <CardContent className="p-6">
           {loading ? (
-            <div className="text-center text-gray-400 py-8">Loading...</div>
+            <PageLoader />
           ) : (
             <Table>
               <TableHeader>

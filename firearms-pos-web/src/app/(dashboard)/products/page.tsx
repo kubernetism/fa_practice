@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { TableLoader } from '@/components/ui/page-loader'
 import {
   Package,
   Plus,
@@ -12,6 +13,7 @@ import {
   Tag,
   ToggleRight,
   ShieldCheck,
+  Upload,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -42,7 +44,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { getProducts, getProductSummary, getCategories, createProduct } from '@/actions/products'
+import { getProductsWithStock, getProductSummary, getCategories, createProduct, importProducts } from '@/actions/products'
+import { toast } from 'sonner'
 
 type Product = {
   id: number
@@ -59,6 +62,7 @@ type Product = {
   taxRate: string
   barcode: string | null
   isActive: boolean
+  stockQuantity: number
 }
 
 type Category = {
@@ -71,6 +75,7 @@ export default function ProductsPage() {
   const [filterCategory, setFilterCategory] = useState('all')
   const [filterStatus, setFilterStatus] = useState('all')
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [summary, setSummary] = useState({ totalProducts: 0, activeCount: 0, serialTrackedCount: 0 })
@@ -92,10 +97,14 @@ export default function ProductsPage() {
   const [formTaxable, setFormTaxable] = useState(true)
   const [saving, setSaving] = useState(false)
 
+  // Import state
+  const [csvData, setCsvData] = useState('')
+  const [importing, setImporting] = useState(false)
+
   const loadData = useCallback(async () => {
     setLoading(true)
     const [productsResult, summaryResult, categoriesResult] = await Promise.all([
-      getProducts({ search: search || undefined }),
+      getProductsWithStock({ search: search || undefined }),
       getProductSummary(),
       getCategories(),
     ])
@@ -105,6 +114,7 @@ export default function ProductsPage() {
         productsResult.data.map((d: any) => ({
           ...d.product,
           categoryName: d.categoryName,
+          stockQuantity: d.stockQuantity ?? 0,
         }))
       )
     }
@@ -136,11 +146,60 @@ export default function ProductsPage() {
     })
     setSaving(false)
     if (result.success) {
+      toast.success('Product created successfully')
       setDialogOpen(false)
       setFormCode(''); setFormName(''); setFormBarcode(''); setFormCategoryId(''); setFormBrand('')
       setFormCostPrice(''); setFormSellingPrice(''); setFormReorderLevel('10'); setFormUnit('pcs')
       setFormTaxRate('16'); setFormDescription(''); setFormSerialTracked(false); setFormTaxable(true)
       loadData()
+    } else {
+      toast.error((result as any).message || 'Failed to create product')
+    }
+  }
+
+  const handleImportSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!csvData.trim()) {
+      toast.error('Please enter CSV data')
+      return
+    }
+
+    setImporting(true)
+    try {
+      // Parse CSV: code,name,costPrice,sellingPrice per line
+      const lines = csvData.trim().split('\n')
+      const products = lines.map(line => {
+        const [code, name, costPrice, sellingPrice] = line.split(',').map(s => s.trim())
+        return {
+          code,
+          name,
+          costPrice: Number(costPrice),
+          sellingPrice: Number(sellingPrice),
+        }
+      }).filter(p => p.code && p.name && p.costPrice && p.sellingPrice)
+
+      if (products.length === 0) {
+        toast.error('No valid products found in CSV data')
+        setImporting(false)
+        return
+      }
+
+      const result = await importProducts(products)
+      setImporting(false)
+
+      if (result.success) {
+        const data = result.data as any
+        toast.success(`Imported ${data.importedCount} products, skipped ${data.skippedCount}`)
+        setImportDialogOpen(false)
+        setCsvData('')
+        loadData()
+      } else {
+        toast.error('Failed to import products')
+      }
+    } catch (error) {
+      console.error('Import failed:', error)
+      toast.error('Failed to parse CSV data')
+      setImporting(false)
     }
   }
 
@@ -165,13 +224,45 @@ export default function ProductsPage() {
           <h1 className="text-2xl font-bold tracking-tight">Products</h1>
           <p className="text-sm text-muted-foreground mt-1">Manage your product catalog, pricing, and serial tracking</p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="brass-glow">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Product
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Upload className="w-4 h-4 mr-2" />
+                Import Products
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[600px]">
+              <DialogHeader>
+                <DialogTitle>Import Products from CSV</DialogTitle>
+              </DialogHeader>
+              <form className="space-y-4 mt-4" onSubmit={handleImportSubmit}>
+                <div className="space-y-2">
+                  <Label>CSV Data</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Format: code,name,costPrice,sellingPrice (one product per line)
+                  </p>
+                  <Textarea
+                    placeholder="P-001,Product Name,100.00,150.00&#10;P-002,Another Product,200.00,300.00"
+                    value={csvData}
+                    onChange={(e) => setCsvData(e.target.value)}
+                    rows={10}
+                    className="font-mono text-xs"
+                  />
+                </div>
+                <Button type="submit" className="w-full brass-glow" disabled={importing}>
+                  {importing ? 'Importing...' : 'Import Products'}
+                </Button>
+              </form>
+            </DialogContent>
+          </Dialog>
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="brass-glow">
+                <Plus className="w-4 h-4 mr-2" />
+                Add Product
+              </Button>
+            </DialogTrigger>
           <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Add New Product</DialogTitle>
@@ -260,6 +351,7 @@ export default function ProductsPage() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -328,6 +420,7 @@ export default function ProductsPage() {
                 <TableHead>Brand</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Price</TableHead>
+                <TableHead className="text-right">Stock</TableHead>
                 <TableHead>Unit</TableHead>
                 <TableHead>Tracking</TableHead>
                 <TableHead>Status</TableHead>
@@ -336,12 +429,10 @@ export default function ProductsPage() {
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">Loading...</TableCell>
-                </TableRow>
+                <TableLoader colSpan={11} />
               ) : filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={11} className="text-center py-8 text-muted-foreground">
                     No products found
                   </TableCell>
                 </TableRow>
@@ -369,6 +460,15 @@ export default function ProductsPage() {
                     </TableCell>
                     <TableCell className="text-right text-sm font-semibold">
                       Rs. {Number(product.sellingPrice).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {product.stockQuantity <= 0 ? (
+                        <Badge variant="destructive" className="text-[10px]">Out of Stock</Badge>
+                      ) : product.stockQuantity <= product.reorderLevel ? (
+                        <Badge className="text-[10px] bg-amber-500/10 text-amber-400 border-amber-500/20">{product.stockQuantity}</Badge>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">{product.stockQuantity}</span>
+                      )}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground capitalize">{product.unit}</TableCell>
                     <TableCell>

@@ -14,6 +14,7 @@ import {
   Printer,
   FileText,
   ShieldCheck,
+  Key,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -29,6 +30,9 @@ import {
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import { getBusinessSettings, updateBusinessSettings, upsertSetting } from '@/actions/settings'
+import { changePassword } from '@/actions/users'
+import { toast } from 'sonner'
+import { PageLoader } from '@/components/ui/page-loader'
 
 type SettingsSection = 'business' | 'tax' | 'receipt' | 'notifications' | 'security'
 
@@ -45,6 +49,12 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [settings, setSettings] = useState<any>(null)
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: '',
+  })
+  const [changingPassword, setChangingPassword] = useState(false)
 
   useEffect(() => {
     loadSettings()
@@ -89,10 +99,48 @@ export default function SettingsPage() {
     setSettings({ ...settings, [field]: value })
   }
 
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault()
+
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      toast.error('New password and confirm password do not match')
+      return
+    }
+
+    if (passwordData.newPassword.length < 6) {
+      toast.error('Password must be at least 6 characters long')
+      return
+    }
+
+    setChangingPassword(true)
+    try {
+      const result = await changePassword(
+        passwordData.currentPassword,
+        passwordData.newPassword,
+      )
+
+      if (result.success) {
+        toast.success('Password changed successfully')
+        setPasswordData({
+          currentPassword: '',
+          newPassword: '',
+          confirmPassword: '',
+        })
+      } else {
+        toast.error(result.message || 'Failed to change password')
+      }
+    } catch (error) {
+      console.error('Failed to change password:', error)
+      toast.error('Failed to change password')
+    } finally {
+      setChangingPassword(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <p className="text-muted-foreground">Loading settings...</p>
+        <PageLoader />
       </div>
     )
   }
@@ -482,6 +530,54 @@ export default function SettingsPage() {
 
           {activeSection === 'security' && (
             <>
+              <Card className="card-tactical">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <Key className="w-4 h-4 text-primary" />
+                    Change Password
+                  </CardTitle>
+                  <CardDescription>Update your account password</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleChangePassword} className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Current Password</Label>
+                      <Input
+                        type="password"
+                        placeholder="Enter current password"
+                        value={passwordData.currentPassword}
+                        onChange={(e) => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>New Password</Label>
+                      <Input
+                        type="password"
+                        placeholder="Enter new password"
+                        value={passwordData.newPassword}
+                        onChange={(e) => setPasswordData({ ...passwordData, newPassword: e.target.value })}
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">Minimum 6 characters</p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Confirm New Password</Label>
+                      <Input
+                        type="password"
+                        placeholder="Re-enter new password"
+                        value={passwordData.confirmPassword}
+                        onChange={(e) => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <Button type="submit" disabled={changingPassword} className="brass-glow">
+                      {changingPassword ? 'Changing Password...' : 'Change Password'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
               <Card className="card-tactical">
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
