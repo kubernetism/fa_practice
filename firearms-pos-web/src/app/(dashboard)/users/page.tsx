@@ -41,7 +41,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { getUsers, getUsersSummary, createUser, deleteUser } from '@/actions/users'
+import { getUsers, getUsersSummary, createUser, updateUser, deleteUser } from '@/actions/users'
 import { getBranches } from '@/actions/branches'
 import { PageLoader } from '@/components/ui/page-loader'
 
@@ -103,6 +103,16 @@ export default function UsersPage() {
     phone: '',
     role: 'cashier' as 'admin' | 'manager' | 'cashier',
     branchId: undefined as number | undefined,
+  })
+  const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [editingUser, setEditingUser] = useState<UserData | null>(null)
+  const [editFormData, setEditFormData] = useState({
+    fullName: '',
+    phone: '',
+    role: 'cashier' as 'admin' | 'manager' | 'cashier',
+    branchId: undefined as number | undefined,
+    isActive: true,
+    password: '',
   })
 
   useEffect(() => {
@@ -166,6 +176,44 @@ export default function UsersPage() {
       loadData()
     } catch (error) {
       console.error('Failed to delete user:', error)
+    }
+  }
+
+  function openEditDialog(user: UserData) {
+    setEditingUser(user)
+    setEditFormData({
+      fullName: user.fullName,
+      phone: user.phone || '',
+      role: user.role,
+      branchId: user.branchId ?? undefined,
+      isActive: user.isActive,
+      password: '',
+    })
+    setEditDialogOpen(true)
+  }
+
+  async function handleEditSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editingUser) return
+    try {
+      const result = await updateUser(editingUser.id, {
+        fullName: editFormData.fullName,
+        phone: editFormData.phone || undefined,
+        role: editFormData.role,
+        branchId: editFormData.branchId ?? null,
+        isActive: editFormData.isActive,
+        password: editFormData.password || undefined,
+      })
+      if (result.success) {
+        setEditDialogOpen(false)
+        setEditingUser(null)
+        loadData()
+      } else {
+        alert(result.message || 'Failed to update user')
+      }
+    } catch (error) {
+      console.error('Failed to update user:', error)
+      alert('Failed to update user')
     }
   }
 
@@ -396,7 +444,7 @@ export default function UsersPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary">
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-primary" onClick={() => openEditDialog(user)}>
                           <Edit2 className="w-3.5 h-3.5" />
                         </Button>
                         <Button
@@ -421,6 +469,87 @@ export default function UsersPage() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* Edit User Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Edit User</DialogTitle>
+            <DialogDescription>
+              Update {editingUser?.fullName}&apos;s information
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4 mt-4" onSubmit={handleEditSubmit}>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Full Name *</Label>
+                <Input
+                  placeholder="Full name"
+                  value={editFormData.fullName}
+                  onChange={(e) => setEditFormData({ ...editFormData, fullName: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input
+                  placeholder="+92-3xx-xxxxxxx"
+                  value={editFormData.phone}
+                  onChange={(e) => setEditFormData({ ...editFormData, phone: e.target.value })}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Role *</Label>
+                <Select value={editFormData.role} onValueChange={(value) => setEditFormData({ ...editFormData, role: value as any })}>
+                  <SelectTrigger><SelectValue placeholder="Select role" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="admin">Admin</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="cashier">Cashier</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Branch</Label>
+                <Select value={editFormData.branchId?.toString() ?? 'none'} onValueChange={(value) => setEditFormData({ ...editFormData, branchId: value === 'none' ? undefined : Number(value) })}>
+                  <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No branch</SelectItem>
+                    {branches.map((b) => (
+                      <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={editFormData.isActive ? 'active' : 'inactive'} onValueChange={(value) => setEditFormData({ ...editFormData, isActive: value === 'active' })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>New Password (leave blank to keep current)</Label>
+              <Input
+                type="password"
+                placeholder="Enter new password"
+                value={editFormData.password}
+                onChange={(e) => setEditFormData({ ...editFormData, password: e.target.value })}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" className="brass-glow">Save Changes</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

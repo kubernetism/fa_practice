@@ -8,6 +8,7 @@ import {
   LayoutDashboard,
   Building2,
   CreditCard,
+  Banknote,
   Settings,
   ChevronDown,
   LogOut,
@@ -37,6 +38,7 @@ const platformNav = [
   { title: 'Dashboard', href: '/platform/dashboard', icon: LayoutDashboard },
   { title: 'Tenants', href: '/platform/tenants', icon: Building2 },
   { title: 'Subscriptions', href: '/platform/subscriptions', icon: CreditCard },
+  { title: 'Payments', href: '/platform/payments', icon: Banknote },
   { title: 'Settings', href: '/platform/settings', icon: Settings },
 ]
 
