@@ -14,6 +14,8 @@ import {
   FileText,
   CheckCircle2,
   ClipboardList,
+  ChevronsUpDown,
+  Check,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,6 +47,19 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import {
   getInventory,
   getInventorySummary,
   getStockAdjustments,
@@ -56,7 +71,10 @@ import {
   getInventoryCounts,
   createInventoryCount,
 } from '@/actions/inventory-counts';
+import { searchProducts } from '@/actions/products';
+import { getActiveBranches } from '@/actions/branches';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 // Types
 type StockItem = {
@@ -149,6 +167,22 @@ export default function InventoryPage() {
   const [lowStockItems, setLowStockItems] = useState(0);
   const [outOfStockItems, setOutOfStockItems] = useState(0);
 
+  // Product & branch combobox data
+  const [allProducts, setAllProducts] = useState<{ id: number; name: string; code: string }[]>([]);
+  const [activeBranches, setActiveBranches] = useState<{ id: number; name: string; code: string; isMain: boolean }[]>([]);
+
+  // Adjustment dialog combobox states
+  const [adjProductOpen, setAdjProductOpen] = useState(false);
+  const [adjBranchOpen, setAdjBranchOpen] = useState(false);
+
+  // Transfer dialog combobox states
+  const [transferProductOpen, setTransferProductOpen] = useState(false);
+  const [transferFromBranchOpen, setTransferFromBranchOpen] = useState(false);
+  const [transferToBranchOpen, setTransferToBranchOpen] = useState(false);
+
+  // Count dialog combobox state
+  const [countBranchOpen, setCountBranchOpen] = useState(false);
+
   // Adjustment form state
   const [adjustmentForm, setAdjustmentForm] = useState({
     product: '',
@@ -175,6 +209,27 @@ export default function InventoryPage() {
     branchId: '',
     notes: '',
   });
+
+  // Load products & branches for comboboxes on mount
+  useEffect(() => {
+    const loadComboboxData = async () => {
+      try {
+        const [productsResult, branchesResult] = await Promise.all([
+          searchProducts(''),
+          getActiveBranches(),
+        ]);
+        if (productsResult.success) {
+          setAllProducts(productsResult.data as { id: number; name: string; code: string }[]);
+        }
+        if (branchesResult.success) {
+          setActiveBranches(branchesResult.data as { id: number; name: string; code: string; isMain: boolean }[]);
+        }
+      } catch (error) {
+        console.error('Failed to load combobox data:', error);
+      }
+    };
+    loadComboboxData();
+  }, []);
 
   // Load data
   useEffect(() => {
@@ -339,6 +394,18 @@ export default function InventoryPage() {
     }
   };
 
+  // Handle product search in combobox
+  const handleProductSearch = async (query: string) => {
+    try {
+      const result = await searchProducts(query);
+      if (result.success) {
+        setAllProducts(result.data as { id: number; name: string; code: string }[]);
+      }
+    } catch (error) {
+      console.error('Failed to search products:', error);
+    }
+  };
+
   // Get unique branch names
   const branches = ['All Branches', ...Array.from(new Set(stockData.map(item => item.branchName).filter((b): b is string => b !== null)))];
 
@@ -466,30 +533,83 @@ export default function InventoryPage() {
                     <div className="grid gap-4 py-4">
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="adj-product">Product ID</Label>
-                          <Input
-                            id="adj-product"
-                            type="number"
-                            value={adjustmentForm.product}
-                            onChange={(e) =>
-                              setAdjustmentForm({ ...adjustmentForm, product: e.target.value })
-                            }
-                            placeholder="Enter product ID"
-                            required
-                          />
+                          <Label>Product</Label>
+                          <Popover open={adjProductOpen} onOpenChange={setAdjProductOpen}>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" className="w-full justify-between font-normal">
+                                <span className="truncate">
+                                  {adjustmentForm.product
+                                    ? allProducts.find(p => String(p.id) === adjustmentForm.product)?.name || `Product #${adjustmentForm.product}`
+                                    : 'Select product...'}
+                                </span>
+                                <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0" align="start">
+                              <Command shouldFilter={false}>
+                                <CommandInput placeholder="Search products..." onValueChange={handleProductSearch} />
+                                <CommandList>
+                                  <CommandEmpty>No product found.</CommandEmpty>
+                                  <CommandGroup>
+                                    {allProducts.map((p) => (
+                                      <CommandItem
+                                        key={p.id}
+                                        value={String(p.id)}
+                                        onSelect={() => {
+                                          setAdjustmentForm({ ...adjustmentForm, product: String(p.id) });
+                                          setAdjProductOpen(false);
+                                        }}
+                                      >
+                                        <Check className={cn('w-4 h-4 mr-2', adjustmentForm.product === String(p.id) ? 'opacity-100' : 'opacity-0')} />
+                                        <div className="flex flex-col">
+                                          <span>{p.name}</span>
+                                          <span className="text-xs text-muted-foreground">{p.code}</span>
+                                        </div>
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="adj-branch">Branch ID</Label>
-                          <Input
-                            id="adj-branch"
-                            type="number"
-                            value={adjustmentForm.branch}
-                            onChange={(e) =>
-                              setAdjustmentForm({ ...adjustmentForm, branch: e.target.value })
-                            }
-                            placeholder="Enter branch ID"
-                            required
-                          />
+                          <Label>Branch</Label>
+                          <Popover open={adjBranchOpen} onOpenChange={setAdjBranchOpen}>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" className="w-full justify-between font-normal">
+                                <span className="truncate">
+                                  {adjustmentForm.branch
+                                    ? activeBranches.find(b => String(b.id) === adjustmentForm.branch)?.name || `Branch #${adjustmentForm.branch}`
+                                    : 'Select branch...'}
+                                </span>
+                                <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0" align="start">
+                              <Command>
+                                <CommandInput placeholder="Search branches..." />
+                                <CommandList>
+                                  <CommandEmpty>No branch found.</CommandEmpty>
+                                  <CommandGroup>
+                                    {activeBranches.map((b) => (
+                                      <CommandItem
+                                        key={b.id}
+                                        value={b.name}
+                                        onSelect={() => {
+                                          setAdjustmentForm({ ...adjustmentForm, branch: String(b.id) });
+                                          setAdjBranchOpen(false);
+                                        }}
+                                      >
+                                        <Check className={cn('w-4 h-4 mr-2', adjustmentForm.branch === String(b.id) ? 'opacity-100' : 'opacity-0')} />
+                                        {b.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
@@ -607,44 +727,122 @@ export default function InventoryPage() {
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
                       <div className="space-y-2">
-                        <Label htmlFor="transfer-product">Product ID</Label>
-                        <Input
-                          id="transfer-product"
-                          type="number"
-                          value={transferForm.product}
-                          onChange={(e) =>
-                            setTransferForm({ ...transferForm, product: e.target.value })
-                          }
-                          placeholder="Enter product ID"
-                          required
-                        />
+                        <Label>Product</Label>
+                        <Popover open={transferProductOpen} onOpenChange={setTransferProductOpen}>
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" className="w-full justify-between font-normal">
+                              <span className="truncate">
+                                {transferForm.product
+                                  ? allProducts.find(p => String(p.id) === transferForm.product)?.name || `Product #${transferForm.product}`
+                                  : 'Select product...'}
+                              </span>
+                              <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[300px] p-0" align="start">
+                            <Command shouldFilter={false}>
+                              <CommandInput placeholder="Search products..." onValueChange={handleProductSearch} />
+                              <CommandList>
+                                <CommandEmpty>No product found.</CommandEmpty>
+                                <CommandGroup>
+                                  {allProducts.map((p) => (
+                                    <CommandItem
+                                      key={p.id}
+                                      value={String(p.id)}
+                                      onSelect={() => {
+                                        setTransferForm({ ...transferForm, product: String(p.id) });
+                                        setTransferProductOpen(false);
+                                      }}
+                                    >
+                                      <Check className={cn('w-4 h-4 mr-2', transferForm.product === String(p.id) ? 'opacity-100' : 'opacity-0')} />
+                                      <div className="flex flex-col">
+                                        <span>{p.name}</span>
+                                        <span className="text-xs text-muted-foreground">{p.code}</span>
+                                      </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label htmlFor="transfer-from">From Branch ID</Label>
-                          <Input
-                            id="transfer-from"
-                            type="number"
-                            value={transferForm.fromBranch}
-                            onChange={(e) =>
-                              setTransferForm({ ...transferForm, fromBranch: e.target.value })
-                            }
-                            placeholder="From branch ID"
-                            required
-                          />
+                          <Label>From Branch</Label>
+                          <Popover open={transferFromBranchOpen} onOpenChange={setTransferFromBranchOpen}>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" className="w-full justify-between font-normal">
+                                <span className="truncate">
+                                  {transferForm.fromBranch
+                                    ? activeBranches.find(b => String(b.id) === transferForm.fromBranch)?.name || `Branch #${transferForm.fromBranch}`
+                                    : 'Select branch...'}
+                                </span>
+                                <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0" align="start">
+                              <Command>
+                                <CommandInput placeholder="Search branches..." />
+                                <CommandList>
+                                  <CommandEmpty>No branch found.</CommandEmpty>
+                                  <CommandGroup>
+                                    {activeBranches.map((b) => (
+                                      <CommandItem
+                                        key={b.id}
+                                        value={b.name}
+                                        onSelect={() => {
+                                          setTransferForm({ ...transferForm, fromBranch: String(b.id) });
+                                          setTransferFromBranchOpen(false);
+                                        }}
+                                      >
+                                        <Check className={cn('w-4 h-4 mr-2', transferForm.fromBranch === String(b.id) ? 'opacity-100' : 'opacity-0')} />
+                                        {b.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
                         <div className="space-y-2">
-                          <Label htmlFor="transfer-to">To Branch ID</Label>
-                          <Input
-                            id="transfer-to"
-                            type="number"
-                            value={transferForm.toBranch}
-                            onChange={(e) =>
-                              setTransferForm({ ...transferForm, toBranch: e.target.value })
-                            }
-                            placeholder="To branch ID"
-                            required
-                          />
+                          <Label>To Branch</Label>
+                          <Popover open={transferToBranchOpen} onOpenChange={setTransferToBranchOpen}>
+                            <PopoverTrigger asChild>
+                              <Button variant="outline" className="w-full justify-between font-normal">
+                                <span className="truncate">
+                                  {transferForm.toBranch
+                                    ? activeBranches.find(b => String(b.id) === transferForm.toBranch)?.name || `Branch #${transferForm.toBranch}`
+                                    : 'Select branch...'}
+                                </span>
+                                <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-[300px] p-0" align="start">
+                              <Command>
+                                <CommandInput placeholder="Search branches..." />
+                                <CommandList>
+                                  <CommandEmpty>No branch found.</CommandEmpty>
+                                  <CommandGroup>
+                                    {activeBranches.map((b) => (
+                                      <CommandItem
+                                        key={b.id}
+                                        value={b.name}
+                                        onSelect={() => {
+                                          setTransferForm({ ...transferForm, toBranch: String(b.id) });
+                                          setTransferToBranchOpen(false);
+                                        }}
+                                      >
+                                        <Check className={cn('w-4 h-4 mr-2', transferForm.toBranch === String(b.id) ? 'opacity-100' : 'opacity-0')} />
+                                        {b.name}
+                                      </CommandItem>
+                                    ))}
+                                  </CommandGroup>
+                                </CommandList>
+                              </Command>
+                            </PopoverContent>
+                          </Popover>
                         </div>
                       </div>
                       <div className="space-y-2">
@@ -727,16 +925,52 @@ export default function InventoryPage() {
                         </Select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="count-branch">Branch ID (Optional)</Label>
-                        <Input
-                          id="count-branch"
-                          type="number"
-                          placeholder="Enter branch ID"
-                          value={countForm.branchId}
-                          onChange={(e) =>
-                            setCountForm({ ...countForm, branchId: e.target.value })
-                          }
-                        />
+                        <Label>Branch (Optional)</Label>
+                        <Popover open={countBranchOpen} onOpenChange={setCountBranchOpen}>
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" className="w-full justify-between font-normal">
+                              <span className="truncate">
+                                {countForm.branchId
+                                  ? activeBranches.find(b => String(b.id) === countForm.branchId)?.name || `Branch #${countForm.branchId}`
+                                  : 'All branches'}
+                              </span>
+                              <ChevronsUpDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[300px] p-0" align="start">
+                            <Command>
+                              <CommandInput placeholder="Search branches..." />
+                              <CommandList>
+                                <CommandEmpty>No branch found.</CommandEmpty>
+                                <CommandGroup>
+                                  <CommandItem
+                                    value="all-branches"
+                                    onSelect={() => {
+                                      setCountForm({ ...countForm, branchId: '' });
+                                      setCountBranchOpen(false);
+                                    }}
+                                  >
+                                    <Check className={cn('w-4 h-4 mr-2', countForm.branchId === '' ? 'opacity-100' : 'opacity-0')} />
+                                    All branches
+                                  </CommandItem>
+                                  {activeBranches.map((b) => (
+                                    <CommandItem
+                                      key={b.id}
+                                      value={b.name}
+                                      onSelect={() => {
+                                        setCountForm({ ...countForm, branchId: String(b.id) });
+                                        setCountBranchOpen(false);
+                                      }}
+                                    >
+                                      <Check className={cn('w-4 h-4 mr-2', countForm.branchId === String(b.id) ? 'opacity-100' : 'opacity-0')} />
+                                      {b.name}
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="count-notes">Notes (Optional)</Label>
