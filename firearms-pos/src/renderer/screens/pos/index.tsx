@@ -918,7 +918,7 @@ export function POSScreen() {
                   </div>
                 ) : filteredServices.length > 0 ? (
                   <ScrollArea className="h-[calc(100vh-24rem)]">
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                       {filteredServices.map((service) => {
                         const cartItem = cart.find((c) => c.type === 'service' && c.service?.id === service.id)
                         const inCartQty = cartItem?.quantity ?? 0
@@ -927,32 +927,30 @@ export function POSScreen() {
                           <button
                             key={service.id}
                             onClick={() => addServiceToCart(service)}
-                            className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md h-full group border-blue-200 bg-blue-50/30"
+                            className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md group border-blue-200 bg-blue-50/30"
                           >
                             {/* Plus Icon - appears on hover */}
                             <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                               <Plus className="h-12 w-12 text-blue-600" strokeWidth={3} />
                             </div>
 
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium break-words whitespace-normal leading-tight text-sm">
-                                  {service.name}
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-0.5">{service.code}</p>
-                              </div>
-                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                                <Badge variant="outline" className="text-xs bg-blue-100 text-blue-700 border-blue-300">
-                                  <Wrench className="h-3 w-3 mr-1" />
-                                  Service
+                            <div className="flex items-center gap-1 mb-1 flex-wrap">
+                              <Badge variant="outline" className="text-[10px] bg-blue-100 text-blue-700 border-blue-300 px-1.5 py-0">
+                                <Wrench className="h-2.5 w-2.5 mr-0.5" />
+                                Service
+                              </Badge>
+                              {service.pricingType === 'hourly' && (
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                                  <Clock className="h-2.5 w-2.5 mr-0.5" />
+                                  Hourly
                                 </Badge>
-                                {service.pricingType === 'hourly' && (
-                                  <Badge variant="secondary" className="text-xs">
-                                    <Clock className="h-3 w-3 mr-1" />
-                                    Hourly
-                                  </Badge>
-                                )}
-                              </div>
+                              )}
+                            </div>
+                            <div className="mb-1">
+                              <p className="font-medium break-words whitespace-normal leading-tight text-sm">
+                                {service.name}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5">{service.code}</p>
                             </div>
                             {service.description && (
                               <p className="text-xs text-muted-foreground mb-2 line-clamp-2">

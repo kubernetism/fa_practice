@@ -157,6 +157,22 @@ export async function runMigrations(): Promise<void> {
     console.error('Setup checklist status column migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Migrate expenses from hardcoded category enum to category_id FK
+  try {
+    await migrateExpensesToCategoryId()
+  } catch (error) {
+    console.error('Expenses category_id migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure default expense and service categories exist in categories table
+  try {
+    await ensureDefaultExpenseAndServiceCategories()
+  } catch (error) {
+    console.error('Default categories seeding error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -391,6 +407,25 @@ export async function seedInitialData(): Promise<void> {
     { name: 'Handguns', parentId: firearmsCategory.id, description: 'All handguns' },
     { name: 'Rifles', parentId: firearmsCategory.id, description: 'All rifles' },
     { name: 'Shotguns', parentId: firearmsCategory.id, description: 'All shotguns' },
+  ])
+
+  // Create default expense categories
+  await db.insert(categories).values([
+    { name: 'Rent', description: 'Rent for premises' },
+    { name: 'Utilities', description: 'Electricity, water, gas expenses' },
+    { name: 'Salaries', description: 'Employee salaries and wages' },
+    { name: 'Supplies', description: 'Office and business supplies' },
+    { name: 'Maintenance', description: 'Equipment and facility maintenance' },
+    { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Other', description: 'Miscellaneous expenses' },
+  ])
+
+  // Create default service categories
+  await db.insert(categories).values([
+    { name: 'Repair', description: 'Weapon repair services' },
+    { name: 'Service Maintenance', description: 'Regular maintenance and servicing' },
+    { name: 'Customization', description: 'Custom painting, coating, and modifications' },
+    { name: 'Testing', description: 'Testing and inspection services' },
   ])
 
   // Create default settings
@@ -1158,4 +1193,141 @@ async function ensureSetupChecklistStatusColumn(): Promise<void> {
   console.log('Adding application_info.setup_checklist_status column...')
   rawDb.exec('ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT')
   console.log('application_info.setup_checklist_status column added successfully')
+}
+
+async function migrateExpensesToCategoryId(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check if expenses table exists
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('expenses table does not exist, skipping category_id migration')
+    return
+  }
+
+  // Check if category_id column already exists
+  const tableInfo = rawDb.prepare('PRAGMA table_info(expenses)').all() as Array<{ name: string }>
+  const hasCategoryId = tableInfo.some((col) => col.name === 'category_id')
+  const hasCategory = tableInfo.some((col) => col.name === 'category')
+
+  if (hasCategoryId) {
+    console.log('expenses.category_id column exists: true')
+    return
+  }
+
+  if (!hasCategory) {
+    console.log('expenses.category column does not exist, skipping migration')
+    return
+  }
+
+  console.log('Migrating expenses from category text to category_id FK...')
+
+  // Ensure expense categories exist in the categories table
+  const defaultExpenseCategories = [
+    { name: 'Rent', description: 'Rent for premises' },
+    { name: 'Utilities', description: 'Electricity, water, gas expenses' },
+    { name: 'Salaries', description: 'Employee salaries and wages' },
+    { name: 'Supplies', description: 'Office and business supplies' },
+    { name: 'Maintenance', description: 'Equipment and facility maintenance' },
+    { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Other', description: 'Miscellaneous expenses' },
+  ]
+
+  const now = new Date().toISOString()
+  for (const cat of defaultExpenseCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now)
+  }
+
+  // Add category_id column
+  rawDb.prepare(
+    `ALTER TABLE expenses ADD COLUMN category_id INTEGER REFERENCES categories(id)`
+  ).run()
+
+  // Map old category text values to category IDs
+  const categoryMapping: Record<string, string> = {
+    rent: 'Rent',
+    utilities: 'Utilities',
+    salaries: 'Salaries',
+    supplies: 'Supplies',
+    maintenance: 'Maintenance',
+    marketing: 'Marketing',
+    other: 'Other',
+  }
+
+  for (const [oldValue, categoryName] of Object.entries(categoryMapping)) {
+    const category = rawDb.prepare(
+      `SELECT id FROM categories WHERE name = ?`
+    ).get(categoryName) as { id: number } | undefined
+
+    if (category) {
+      rawDb.prepare(
+        `UPDATE expenses SET category_id = ? WHERE category = ?`
+      ).run(category.id, oldValue)
+    }
+  }
+
+  // Set any remaining NULL category_id to "Other"
+  const otherCategory = rawDb.prepare(
+    `SELECT id FROM categories WHERE name = 'Other'`
+  ).get() as { id: number } | undefined
+
+  if (otherCategory) {
+    rawDb.prepare(
+      `UPDATE expenses SET category_id = ? WHERE category_id IS NULL`
+    ).run(otherCategory.id)
+  }
+
+  console.log('expenses category_id migration completed successfully!')
+}
+
+async function ensureDefaultExpenseAndServiceCategories(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check if categories table exists
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='categories'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('categories table does not exist, skipping default categories seeding')
+    return
+  }
+
+  const now = new Date().toISOString()
+
+  // Expense categories
+  const expenseCategories = [
+    { name: 'Rent', description: 'Rent for premises' },
+    { name: 'Utilities', description: 'Electricity, water, gas expenses' },
+    { name: 'Salaries', description: 'Employee salaries and wages' },
+    { name: 'Supplies', description: 'Office and business supplies' },
+    { name: 'Maintenance', description: 'Equipment and facility maintenance' },
+    { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Other', description: 'Miscellaneous expenses' },
+  ]
+
+  // Service categories
+  const serviceCats = [
+    { name: 'Repair', description: 'Weapon repair services' },
+    { name: 'Service Maintenance', description: 'Regular maintenance and servicing' },
+    { name: 'Customization', description: 'Custom painting, coating, and modifications' },
+    { name: 'Testing', description: 'Testing and inspection services' },
+  ]
+
+  const allCategories = [...expenseCategories, ...serviceCats]
+
+  for (const cat of allCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now)
+  }
+
+  console.log('Default expense and service categories ensured in categories table')
 }

@@ -17,24 +17,18 @@ export function registerExpenseHandlers(): void {
       _,
       params: PaginationParams & {
         branchId?: number
-        category?: string
+        categoryId?: number
         startDate?: string
         endDate?: string
       }
     ) => {
       try {
-        const { page = 1, limit = 20, sortOrder = 'desc', branchId, category, startDate, endDate } = params
+        const { page = 1, limit = 20, sortOrder = 'desc', branchId, categoryId, startDate, endDate } = params
 
         const conditions = []
 
         if (branchId) conditions.push(eq(expenses.branchId, branchId))
-        if (category)
-          conditions.push(
-            eq(
-              expenses.category,
-              category as 'rent' | 'utilities' | 'salaries' | 'supplies' | 'maintenance' | 'marketing' | 'other'
-            )
-          )
+        if (categoryId) conditions.push(eq(expenses.categoryId, categoryId))
         if (startDate && endDate) {
           conditions.push(between(expenses.expenseDate, startDate, endDate))
         } else if (startDate) {
@@ -55,6 +49,7 @@ export function registerExpenseHandlers(): void {
           offset: (page - 1) * limit,
           orderBy: sortOrder === 'desc' ? desc(expenses.expenseDate) : expenses.expenseDate,
           with: {
+            category: true,
             supplier: true,
             payable: true,
             branch: true,
@@ -89,6 +84,7 @@ export function registerExpenseHandlers(): void {
       const expense = await db.query.expenses.findFirst({
         where: eq(expenses.id, id),
         with: {
+          category: true,
           supplier: true,
           payable: true,
           branch: true,
@@ -133,6 +129,13 @@ export function registerExpenseHandlers(): void {
         }
       }
 
+      // Look up the category name for GL posting and audit logs
+      const { categories: categoriesTable } = await import('../db/schema')
+      const expenseCategory = await db.query.categories.findFirst({
+        where: eq(categoriesTable.id, data.categoryId),
+      })
+      const categoryName = expenseCategory?.name || 'Other'
+
       // Execute all operations in a transaction
       const result = await withTransaction(async ({ db: txDb }) => {
         let payableId: number | undefined = undefined
@@ -167,7 +170,7 @@ export function registerExpenseHandlers(): void {
               status: 'pending',
               dueDate: data.dueDate,
               paymentTerms: data.paymentTerms,
-              notes: `Auto-created from expense: ${data.category} - ${data.description || 'No description'}`,
+              notes: `Auto-created from expense: ${categoryName} - ${data.description || 'No description'}`,
               createdBy: session?.userId,
             })
             .returning()
@@ -187,7 +190,7 @@ export function registerExpenseHandlers(): void {
           {
             id: newExpense.id,
             branchId: data.branchId,
-            category: data.category,
+            categoryName,
             amount: data.amount,
             paymentStatus: data.paymentStatus || 'paid',
             paymentMethod: data.paymentMethod,
@@ -229,7 +232,7 @@ export function registerExpenseHandlers(): void {
           ...data,
           payableId: result.payableId,
         } as Record<string, unknown>),
-        description: `Created ${data.paymentStatus || 'paid'} expense: ${data.category} - $${data.amount}`,
+        description: `Created ${data.paymentStatus || 'paid'} expense: ${categoryName} - $${data.amount}`,
       })
 
       return {
@@ -343,7 +346,7 @@ export function registerExpenseHandlers(): void {
               status: 'pending',
               dueDate: data.dueDate || existing.dueDate,
               paymentTerms: data.paymentTerms || existing.paymentTerms,
-              notes: `Created from expense status change: ${existing.category}`,
+              notes: `Created from expense status change: expense #${existing.id}`,
               createdBy: session?.userId,
             })
             .returning()
@@ -382,7 +385,7 @@ export function registerExpenseHandlers(): void {
         entityId: id,
         oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
         newValues: sanitizeForAudit(data as Record<string, unknown>),
-        description: `Updated expense: ${existing.category}`,
+        description: `Updated expense #${id}`,
       })
 
       return { success: true, data: result[0] }
@@ -453,7 +456,7 @@ export function registerExpenseHandlers(): void {
         entityType: 'expense',
         entityId: id,
         oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-        description: `Deleted expense: ${existing.category}`,
+        description: `Deleted expense #${id}`,
       })
 
       return { success: true, message: 'Expense deleted successfully' }
@@ -465,6 +468,8 @@ export function registerExpenseHandlers(): void {
 
   ipcMain.handle('expenses:get-by-category', async (_, branchId: number, startDate?: string, endDate?: string) => {
     try {
+      const { categories: categoriesTable } = await import('../db/schema')
+
       const conditions = [eq(expenses.branchId, branchId)]
 
       if (startDate && endDate) {
@@ -473,13 +478,15 @@ export function registerExpenseHandlers(): void {
 
       const data = await db
         .select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categoriesTable.name,
           total: sql<number>`sum(${expenses.amount})`,
           count: sql<number>`count(*)`,
         })
         .from(expenses)
+        .innerJoin(categoriesTable, eq(expenses.categoryId, categoriesTable.id))
         .where(and(...conditions))
-        .groupBy(expenses.category)
+        .groupBy(expenses.categoryId, categoriesTable.name)
 
       return { success: true, data }
     } catch (error) {

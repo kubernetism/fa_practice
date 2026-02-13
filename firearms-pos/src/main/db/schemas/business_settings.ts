@@ -87,7 +87,6 @@ export const businessSettings = sqliteTable("business_settings", {
   loyaltyPointsRatio: real("loyalty_points_ratio").default(1),
 
   // Expense Settings
-  expenseCategories: text("expense_categories").default("Utilities,Rent,Salaries,Supplies,Maintenance,Other"),
   expenseApprovalRequired: integer("expense_approval_required", { mode: "boolean" }).default(false),
   expenseApprovalLimit: real("expense_approval_limit").default(10000),
 

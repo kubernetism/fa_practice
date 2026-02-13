@@ -28,15 +28,6 @@ const api = {
     update: (id, data) => electron.ipcRenderer.invoke("categories:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("categories:delete", id)
   },
-  // Service Categories
-  serviceCategories: {
-    getAll: () => electron.ipcRenderer.invoke("service-categories:get-all"),
-    getActive: () => electron.ipcRenderer.invoke("service-categories:get-active"),
-    getById: (id) => electron.ipcRenderer.invoke("service-categories:get-by-id", id),
-    create: (data) => electron.ipcRenderer.invoke("service-categories:create", data),
-    update: (id, data) => electron.ipcRenderer.invoke("service-categories:update", id, data),
-    delete: (id) => electron.ipcRenderer.invoke("service-categories:delete", id)
-  },
   // Services
   services: {
     getAll: (params) => electron.ipcRenderer.invoke("services:get-all", params),

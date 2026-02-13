@@ -50,8 +50,6 @@ export type {
   NewReceivablePayment,
   Todo,
   NewTodo,
-  ServiceCategory,
-  NewServiceCategory,
   Service,
   NewService,
   SaleService,

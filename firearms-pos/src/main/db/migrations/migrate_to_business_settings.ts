@@ -105,7 +105,6 @@ export async function migrateToBusinessSettings() {
         requireCustomerForSale: false,
         enableCustomerLoyalty: false,
         loyaltyPointsRatio: 1,
-        expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
         expenseApprovalRequired: false,
         expenseApprovalLimit: 10000,
         enableReturns: true,

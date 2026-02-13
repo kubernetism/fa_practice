@@ -510,9 +510,7 @@ const expenses = sqliteCore.sqliteTable(
     id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
     branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
     userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
-    category: sqliteCore.text("category", {
-      enum: ["rent", "utilities", "salaries", "supplies", "maintenance", "marketing", "other"]
-    }).notNull().default("other"),
+    categoryId: sqliteCore.integer("category_id").notNull().references(() => categories.id),
     amount: sqliteCore.real("amount").notNull(),
     description: sqliteCore.text("description"),
     paymentMethod: sqliteCore.text("payment_method", { enum: ["cash", "card", "check", "transfer"] }).notNull().default("cash"),
@@ -541,6 +539,10 @@ const expensesRelations = drizzleOrm.relations(expenses, ({ one }) => ({
   user: one(users, {
     fields: [expenses.userId],
     references: [users.id]
+  }),
+  category: one(categories, {
+    fields: [expenses.categoryId],
+    references: [categories.id]
   }),
   supplier: one(suppliers, {
     fields: [expenses.supplierId],
@@ -762,7 +764,6 @@ const businessSettings = sqliteCore.sqliteTable("business_settings", {
   enableCustomerLoyalty: sqliteCore.integer("enable_customer_loyalty", { mode: "boolean" }).default(false),
   loyaltyPointsRatio: sqliteCore.real("loyalty_points_ratio").default(1),
   // Expense Settings
-  expenseCategories: sqliteCore.text("expense_categories").default("Utilities,Rent,Salaries,Supplies,Maintenance,Other"),
   expenseApprovalRequired: sqliteCore.integer("expense_approval_required", { mode: "boolean" }).default(false),
   expenseApprovalLimit: sqliteCore.real("expense_approval_limit").default(1e4),
   // Return/Refund Settings
@@ -1418,7 +1419,7 @@ const services = sqliteCore.sqliteTable("services", {
   code: sqliteCore.text("code").notNull().unique(),
   name: sqliteCore.text("name").notNull(),
   description: sqliteCore.text("description"),
-  categoryId: sqliteCore.integer("category_id").references(() => serviceCategories.id),
+  categoryId: sqliteCore.integer("category_id").references(() => categories.id),
   // Pricing
   price: sqliteCore.real("price").notNull().default(0),
   pricingType: sqliteCore.text("pricing_type", {
@@ -2008,7 +2009,6 @@ async function migrateToBusinessSettings() {
         requireCustomerForSale: false,
         enableCustomerLoyalty: false,
         loyaltyPointsRatio: 1,
-        expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
         expenseApprovalRequired: false,
         expenseApprovalLimit: 1e4,
         enableReturns: true,
@@ -2203,6 +2203,16 @@ async function runMigrations() {
   } catch (error) {
     console.error("Setup checklist status column migration error:", error);
   }
+  try {
+    await migrateExpensesToCategoryId();
+  } catch (error) {
+    console.error("Expenses category_id migration error:", error);
+  }
+  try {
+    await ensureDefaultExpenseAndServiceCategories();
+  } catch (error) {
+    console.error("Default categories seeding error:", error);
+  }
 }
 async function ensureReferralPersonsTable() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -2370,6 +2380,21 @@ async function seedInitialData() {
     { name: "Handguns", parentId: firearmsCategory.id, description: "All handguns" },
     { name: "Rifles", parentId: firearmsCategory.id, description: "All rifles" },
     { name: "Shotguns", parentId: firearmsCategory.id, description: "All shotguns" }
+  ]);
+  await db2.insert(categories2).values([
+    { name: "Rent", description: "Rent for premises" },
+    { name: "Utilities", description: "Electricity, water, gas expenses" },
+    { name: "Salaries", description: "Employee salaries and wages" },
+    { name: "Supplies", description: "Office and business supplies" },
+    { name: "Maintenance", description: "Equipment and facility maintenance" },
+    { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Other", description: "Miscellaneous expenses" }
+  ]);
+  await db2.insert(categories2).values([
+    { name: "Repair", description: "Weapon repair services" },
+    { name: "Service Maintenance", description: "Regular maintenance and servicing" },
+    { name: "Customization", description: "Custom painting, coating, and modifications" },
+    { name: "Testing", description: "Testing and inspection services" }
   ]);
   await db2.insert(settings2).values([
     {
@@ -3056,6 +3081,109 @@ async function ensureSetupChecklistStatusColumn() {
   console.log("Adding application_info.setup_checklist_status column...");
   rawDb.exec("ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT");
   console.log("application_info.setup_checklist_status column added successfully");
+}
+async function migrateExpensesToCategoryId() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get();
+  if (!tableCheck) {
+    console.log("expenses table does not exist, skipping category_id migration");
+    return;
+  }
+  const tableInfo = rawDb.prepare("PRAGMA table_info(expenses)").all();
+  const hasCategoryId = tableInfo.some((col) => col.name === "category_id");
+  const hasCategory = tableInfo.some((col) => col.name === "category");
+  if (hasCategoryId) {
+    console.log("expenses.category_id column exists: true");
+    return;
+  }
+  if (!hasCategory) {
+    console.log("expenses.category column does not exist, skipping migration");
+    return;
+  }
+  console.log("Migrating expenses from category text to category_id FK...");
+  const defaultExpenseCategories = [
+    { name: "Rent", description: "Rent for premises" },
+    { name: "Utilities", description: "Electricity, water, gas expenses" },
+    { name: "Salaries", description: "Employee salaries and wages" },
+    { name: "Supplies", description: "Office and business supplies" },
+    { name: "Maintenance", description: "Equipment and facility maintenance" },
+    { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Other", description: "Miscellaneous expenses" }
+  ];
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  for (const cat of defaultExpenseCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now);
+  }
+  rawDb.prepare(
+    `ALTER TABLE expenses ADD COLUMN category_id INTEGER REFERENCES categories(id)`
+  ).run();
+  const categoryMapping = {
+    rent: "Rent",
+    utilities: "Utilities",
+    salaries: "Salaries",
+    supplies: "Supplies",
+    maintenance: "Maintenance",
+    marketing: "Marketing",
+    other: "Other"
+  };
+  for (const [oldValue, categoryName] of Object.entries(categoryMapping)) {
+    const category = rawDb.prepare(
+      `SELECT id FROM categories WHERE name = ?`
+    ).get(categoryName);
+    if (category) {
+      rawDb.prepare(
+        `UPDATE expenses SET category_id = ? WHERE category = ?`
+      ).run(category.id, oldValue);
+    }
+  }
+  const otherCategory = rawDb.prepare(
+    `SELECT id FROM categories WHERE name = 'Other'`
+  ).get();
+  if (otherCategory) {
+    rawDb.prepare(
+      `UPDATE expenses SET category_id = ? WHERE category_id IS NULL`
+    ).run(otherCategory.id);
+  }
+  console.log("expenses category_id migration completed successfully!");
+}
+async function ensureDefaultExpenseAndServiceCategories() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='categories'`
+  ).get();
+  if (!tableCheck) {
+    console.log("categories table does not exist, skipping default categories seeding");
+    return;
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const expenseCategories = [
+    { name: "Rent", description: "Rent for premises" },
+    { name: "Utilities", description: "Electricity, water, gas expenses" },
+    { name: "Salaries", description: "Employee salaries and wages" },
+    { name: "Supplies", description: "Office and business supplies" },
+    { name: "Maintenance", description: "Equipment and facility maintenance" },
+    { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Other", description: "Miscellaneous expenses" }
+  ];
+  const serviceCats = [
+    { name: "Repair", description: "Weapon repair services" },
+    { name: "Service Maintenance", description: "Regular maintenance and servicing" },
+    { name: "Customization", description: "Custom painting, coating, and modifications" },
+    { name: "Testing", description: "Testing and inspection services" }
+  ];
+  const allCategories = [...expenseCategories, ...serviceCats];
+  for (const cat of allCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now);
+  }
+  console.log("Default expense and service categories ensured in categories table");
 }
 function getLocalIpAddress() {
   try {
@@ -4108,19 +4236,19 @@ async function postExpenseToGL(expense, userId) {
     marketing: ACCOUNT_CODES.OTHER_EXPENSE,
     other: ACCOUNT_CODES.OTHER_EXPENSE
   };
-  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE;
+  const expenseAccount = categoryToAccount[expense.categoryName.toLowerCase()] || ACCOUNT_CODES.OTHER_EXPENSE;
   lines.push({
     accountCode: expenseAccount,
     debitAmount: expense.amount,
     creditAmount: 0,
-    description: expense.description || `Expense: ${expense.category}`
+    description: expense.description || `Expense: ${expense.categoryName}`
   });
   if (expense.paymentStatus === "unpaid") {
     lines.push({
       accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payable for expense ${expense.category}`
+      description: `Payable for expense ${expense.categoryName}`
     });
   } else {
     const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
@@ -4128,11 +4256,11 @@ async function postExpenseToGL(expense, userId) {
       accountCode: cashAccount,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payment for expense ${expense.category}`
+      description: `Payment for expense ${expense.categoryName}`
     });
   }
   return createJournalEntry({
-    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ""}`,
+    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ""}`,
     referenceType: "expense",
     referenceId: expense.id,
     branchId: expense.branchId,
@@ -7399,16 +7527,10 @@ function registerExpenseHandlers() {
     "expenses:get-all",
     async (_, params) => {
       try {
-        const { page = 1, limit = 20, sortOrder = "desc", branchId, category, startDate, endDate } = params;
+        const { page = 1, limit = 20, sortOrder = "desc", branchId, categoryId, startDate, endDate } = params;
         const conditions = [];
         if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
-        if (category)
-          conditions.push(
-            drizzleOrm.eq(
-              expenses.category,
-              category
-            )
-          );
+        if (categoryId) conditions.push(drizzleOrm.eq(expenses.categoryId, categoryId));
         if (startDate && endDate) {
           conditions.push(drizzleOrm.between(expenses.expenseDate, startDate, endDate));
         } else if (startDate) {
@@ -7425,6 +7547,7 @@ function registerExpenseHandlers() {
           offset: (page - 1) * limit,
           orderBy: sortOrder === "desc" ? drizzleOrm.desc(expenses.expenseDate) : expenses.expenseDate,
           with: {
+            category: true,
             supplier: true,
             payable: true,
             branch: true,
@@ -7456,6 +7579,7 @@ function registerExpenseHandlers() {
       const expense = await db2.query.expenses.findFirst({
         where: drizzleOrm.eq(expenses.id, id),
         with: {
+          category: true,
           supplier: true,
           payable: true,
           branch: true,
@@ -7492,6 +7616,11 @@ function registerExpenseHandlers() {
           message: "Due date is required for unpaid expenses"
         };
       }
+      const { categories: categoriesTable } = await Promise.resolve().then(() => schema);
+      const expenseCategory = await db2.query.categories.findFirst({
+        where: drizzleOrm.eq(categoriesTable.id, data.categoryId)
+      });
+      const categoryName = expenseCategory?.name || "Other";
       const result = await withTransaction(async ({ db: txDb }) => {
         let payableId = void 0;
         const expenseResult = await txDb.insert(expenses).values({
@@ -7514,7 +7643,7 @@ function registerExpenseHandlers() {
             status: "pending",
             dueDate: data.dueDate,
             paymentTerms: data.paymentTerms,
-            notes: `Auto-created from expense: ${data.category} - ${data.description || "No description"}`,
+            notes: `Auto-created from expense: ${categoryName} - ${data.description || "No description"}`,
             createdBy: session?.userId
           }).returning();
           const newPayable = payableResult[0];
@@ -7525,7 +7654,7 @@ function registerExpenseHandlers() {
           {
             id: newExpense.id,
             branchId: data.branchId,
-            category: data.category,
+            categoryName,
             amount: data.amount,
             paymentStatus: data.paymentStatus || "paid",
             paymentMethod: data.paymentMethod,
@@ -7563,7 +7692,7 @@ function registerExpenseHandlers() {
           ...data,
           payableId: result.payableId
         }),
-        description: `Created ${data.paymentStatus || "paid"} expense: ${data.category} - $${data.amount}`
+        description: `Created ${data.paymentStatus || "paid"} expense: ${categoryName} - $${data.amount}`
       });
       return {
         success: true,
@@ -7651,7 +7780,7 @@ function registerExpenseHandlers() {
             status: "pending",
             dueDate: data.dueDate || existing.dueDate,
             paymentTerms: data.paymentTerms || existing.paymentTerms,
-            notes: `Created from expense status change: ${existing.category}`,
+            notes: `Created from expense status change: expense #${existing.id}`,
             createdBy: session?.userId
           }).returning();
           data.payableId = payableResult[0].id;
@@ -7681,7 +7810,7 @@ function registerExpenseHandlers() {
         entityId: id,
         oldValues: sanitizeForAudit(existing),
         newValues: sanitizeForAudit(data),
-        description: `Updated expense: ${existing.category}`
+        description: `Updated expense #${id}`
       });
       return { success: true, data: result[0] };
     } catch (error) {
@@ -7738,7 +7867,7 @@ Cancelled: Expense deleted`.trim(),
         entityType: "expense",
         entityId: id,
         oldValues: sanitizeForAudit(existing),
-        description: `Deleted expense: ${existing.category}`
+        description: `Deleted expense #${id}`
       });
       return { success: true, message: "Expense deleted successfully" };
     } catch (error) {
@@ -7748,15 +7877,17 @@ Cancelled: Expense deleted`.trim(),
   });
   electron.ipcMain.handle("expenses:get-by-category", async (_, branchId, startDate, endDate) => {
     try {
+      const { categories: categoriesTable } = await Promise.resolve().then(() => schema);
       const conditions = [drizzleOrm.eq(expenses.branchId, branchId)];
       if (startDate && endDate) {
         conditions.push(drizzleOrm.between(expenses.expenseDate, startDate, endDate));
       }
       const data = await db2.select({
-        category: expenses.category,
+        categoryId: expenses.categoryId,
+        category: categoriesTable.name,
         total: drizzleOrm.sql`sum(${expenses.amount})`,
         count: drizzleOrm.sql`count(*)`
-      }).from(expenses).where(drizzleOrm.and(...conditions)).groupBy(expenses.category);
+      }).from(expenses).innerJoin(categoriesTable, drizzleOrm.eq(expenses.categoryId, categoriesTable.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categoriesTable.name);
       return { success: true, data };
     } catch (error) {
       console.error("Get expenses by category error:", error);
@@ -8504,7 +8635,6 @@ function registerBusinessSettingsHandlers() {
           requireCustomerForSale: false,
           enableCustomerLoyalty: false,
           loyaltyPointsRatio: 1,
-          expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
           expenseApprovalRequired: false,
           expenseApprovalLimit: 1e4,
           enableReturns: true,
@@ -10323,9 +10453,10 @@ function registerReportHandlers() {
           totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`
         }).from(expenses).where(drizzleOrm.and(...expenseConditions));
         const expensesByCategory = await db2.select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           total: drizzleOrm.sql`sum(${expenses.amount})`
-        }).from(expenses).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.category);
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.categoryId, categories.name);
         const totalRevenue = revenue[0]?.totalRevenue ?? 0;
         const totalCost = cogs[0]?.totalCost ?? 0;
         const totalExpenses = expenseTotal[0]?.totalExpenses ?? 0;
@@ -10416,10 +10547,11 @@ function registerReportHandlers() {
           avgExpense: drizzleOrm.sql`avg(${expenses.amount})`
         }).from(expenses).where(drizzleOrm.and(...conditions));
         const expensesByCategory = await db2.select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           amount: drizzleOrm.sql`sum(${expenses.amount})`,
           count: drizzleOrm.sql`count(*)`
-        }).from(expenses).where(drizzleOrm.and(...conditions)).groupBy(expenses.category).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
         const expensesByBranch = await db2.select({
           branchId: expenses.branchId,
           branchName: branches.name,
@@ -10428,12 +10560,13 @@ function registerReportHandlers() {
         }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.branchId, branches.name);
         const topExpenses = await db2.select({
           id: expenses.id,
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           amount: expenses.amount,
           description: expenses.description,
           date: expenses.expenseDate,
           branchName: branches.name
-        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
+        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10945,10 +11078,11 @@ function registerReportHandlers() {
           avgExpense: drizzleOrm.sql`coalesce(avg(${expenses.amount}), 0)`
         }).from(expenses).where(drizzleOrm.and(...expenseConditions));
         const expensesByCategory = await db2.select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           amount: drizzleOrm.sql`sum(${expenses.amount})`,
           count: drizzleOrm.sql`count(*)`
-        }).from(expenses).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.category).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
         const returnsSummary = await db2.select({
           totalReturns: drizzleOrm.sql`count(*)`,
           totalRefundAmount: drizzleOrm.sql`coalesce(sum(${returns.refundAmount}), 0)`
@@ -18925,140 +19059,6 @@ function validateServiceInput(data) {
 }
 function registerServicesHandlers() {
   const db2 = getDatabase();
-  electron.ipcMain.handle("service-categories:get-all", async () => {
-    try {
-      const data = await db2.query.serviceCategories.findMany({
-        orderBy: drizzleOrm.desc(serviceCategories.name)
-      });
-      return { success: true, data };
-    } catch (error) {
-      console.error("Get service categories error:", error);
-      return { success: false, message: "Failed to fetch service categories" };
-    }
-  });
-  electron.ipcMain.handle("service-categories:get-active", async () => {
-    try {
-      const data = await db2.query.serviceCategories.findMany({
-        where: drizzleOrm.eq(serviceCategories.isActive, true),
-        orderBy: drizzleOrm.desc(serviceCategories.name)
-      });
-      return { success: true, data };
-    } catch (error) {
-      console.error("Get active service categories error:", error);
-      return { success: false, message: "Failed to fetch active service categories" };
-    }
-  });
-  electron.ipcMain.handle("service-categories:get-by-id", async (_, id) => {
-    try {
-      const category = await db2.query.serviceCategories.findFirst({
-        where: drizzleOrm.eq(serviceCategories.id, id)
-      });
-      if (!category) {
-        return { success: false, message: "Service category not found" };
-      }
-      return { success: true, data: category };
-    } catch (error) {
-      console.error("Get service category error:", error);
-      return { success: false, message: "Failed to fetch service category" };
-    }
-  });
-  electron.ipcMain.handle("service-categories:create", async (_, data) => {
-    try {
-      const session = getCurrentSession();
-      const existing = await db2.query.serviceCategories.findFirst({
-        where: drizzleOrm.eq(serviceCategories.name, data.name)
-      });
-      if (existing) {
-        return { success: false, message: "Service category with this name already exists" };
-      }
-      const result = await db2.insert(serviceCategories).values(data).returning();
-      const newCategory = result[0];
-      await createAuditLog$1({
-        userId: session?.userId,
-        branchId: session?.branchId,
-        action: "create",
-        entityType: "service_category",
-        entityId: newCategory.id,
-        newValues: sanitizeForAudit(data),
-        description: `Created service category: ${data.name}`
-      });
-      return { success: true, data: newCategory };
-    } catch (error) {
-      console.error("Create service category error:", error);
-      return { success: false, message: "Failed to create service category" };
-    }
-  });
-  electron.ipcMain.handle(
-    "service-categories:update",
-    async (_, id, data) => {
-      try {
-        const session = getCurrentSession();
-        const existing = await db2.query.serviceCategories.findFirst({
-          where: drizzleOrm.eq(serviceCategories.id, id)
-        });
-        if (!existing) {
-          return { success: false, message: "Service category not found" };
-        }
-        if (data.name && data.name !== existing.name) {
-          const duplicate = await db2.query.serviceCategories.findFirst({
-            where: drizzleOrm.eq(serviceCategories.name, data.name)
-          });
-          if (duplicate) {
-            return { success: false, message: "Service category with this name already exists" };
-          }
-        }
-        const result = await db2.update(serviceCategories).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(serviceCategories.id, id)).returning();
-        await createAuditLog$1({
-          userId: session?.userId,
-          branchId: session?.branchId,
-          action: "update",
-          entityType: "service_category",
-          entityId: id,
-          oldValues: sanitizeForAudit(existing),
-          newValues: sanitizeForAudit(data),
-          description: `Updated service category: ${existing.name}`
-        });
-        return { success: true, data: result[0] };
-      } catch (error) {
-        console.error("Update service category error:", error);
-        return { success: false, message: "Failed to update service category" };
-      }
-    }
-  );
-  electron.ipcMain.handle("service-categories:delete", async (_, id) => {
-    try {
-      const session = getCurrentSession();
-      const existing = await db2.query.serviceCategories.findFirst({
-        where: drizzleOrm.eq(serviceCategories.id, id)
-      });
-      if (!existing) {
-        return { success: false, message: "Service category not found" };
-      }
-      const servicesInCategory = await db2.query.services.findFirst({
-        where: drizzleOrm.eq(services.categoryId, id)
-      });
-      if (servicesInCategory) {
-        return {
-          success: false,
-          message: "Cannot delete category with associated services. Reassign services first."
-        };
-      }
-      await db2.update(serviceCategories).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(serviceCategories.id, id));
-      await createAuditLog$1({
-        userId: session?.userId,
-        branchId: session?.branchId,
-        action: "delete",
-        entityType: "service_category",
-        entityId: id,
-        oldValues: sanitizeForAudit(existing),
-        description: `Deactivated service category: ${existing.name}`
-      });
-      return { success: true, message: "Service category deactivated successfully" };
-    } catch (error) {
-      console.error("Delete service category error:", error);
-      return { success: false, message: "Failed to delete service category" };
-    }
-  });
   electron.ipcMain.handle(
     "services:get-all",
     async (_, params) => {

@@ -21,11 +21,18 @@ import {
 } from '@/components/ui/select'
 import { useBranch } from '@/contexts/branch-context'
 
+interface Category {
+  id: number
+  name: string
+  description: string | null
+  isActive: boolean
+}
+
 interface Expense {
   id: number
   branchId: number
   userId: number
-  category: string
+  categoryId: number
   amount: number
   description: string | null
   paymentMethod: string
@@ -38,6 +45,7 @@ interface Expense {
   paymentTerms: string | null
   createdAt: string
   updatedAt: string
+  category?: Category
   supplier?: {
     id: number
     name: string
@@ -50,7 +58,7 @@ interface Expense {
 }
 
 interface ExpenseFormData {
-  category: string
+  categoryId: string
   amount: string
   description: string
   paymentMethod: string
@@ -61,16 +69,6 @@ interface ExpenseFormData {
   dueDate: string
   paymentTerms: string
 }
-
-const EXPENSE_CATEGORIES = [
-  { value: 'rent', label: 'Rent' },
-  { value: 'utilities', label: 'Utilities' },
-  { value: 'salaries', label: 'Salaries' },
-  { value: 'supplies', label: 'Supplies' },
-  { value: 'maintenance', label: 'Maintenance' },
-  { value: 'marketing', label: 'Marketing' },
-  { value: 'other', label: 'Other' },
-]
 
 const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
@@ -88,7 +86,7 @@ const PAYMENT_TERMS = [
 ]
 
 const initialFormData: ExpenseFormData = {
-  category: 'other',
+  categoryId: '',
   amount: '',
   description: '',
   paymentMethod: 'cash',
@@ -103,6 +101,7 @@ const initialFormData: ExpenseFormData = {
 export default function ExpensesScreen() {
   const { currentBranch } = useBranch()
   const [expenses, setExpenses] = useState<Expense[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState('')
@@ -117,6 +116,7 @@ export default function ExpensesScreen() {
 
   useEffect(() => {
     fetchSuppliers()
+    fetchCategories()
   }, [])
 
   const fetchExpenses = async () => {
@@ -157,6 +157,17 @@ export default function ExpensesScreen() {
     }
   }
 
+  const fetchCategories = async () => {
+    try {
+      const response = await window.api.categories.getAll()
+      if (response?.success && response?.data) {
+        setCategories(response.data)
+      }
+    } catch (error) {
+      console.error('Failed to fetch categories:', error)
+    }
+  }
+
   const handleOpenDialog = () => {
     setFormData(initialFormData)
     setIsDialogOpen(true)
@@ -192,10 +203,15 @@ export default function ExpensesScreen() {
       return
     }
 
+    if (!formData.categoryId) {
+      alert('Please select a category')
+      return
+    }
+
     try {
       const expenseData: any = {
         branchId: currentBranch.id,
-        category: formData.category,
+        categoryId: parseInt(formData.categoryId),
         amount: parseFloat(formData.amount),
         description: formData.description || undefined,
         expenseDate: formData.expenseDate,
@@ -300,7 +316,7 @@ export default function ExpensesScreen() {
                 <div key={expense.id} className="flex items-center justify-between p-4 border rounded">
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
-                      <p className="font-medium capitalize">{expense.category}</p>
+                      <p className="font-medium">{expense.category?.name || 'Uncategorized'}</p>
                       {/* Payment Status Badge */}
                       <span
                         className={`px-2 py-0.5 text-xs rounded font-medium ${
@@ -399,18 +415,20 @@ export default function ExpensesScreen() {
               <div className="space-y-2">
                 <Label htmlFor="category">Category *</Label>
                 <Select
-                  value={formData.category}
-                  onValueChange={(value) => setFormData({ ...formData, category: value })}
+                  value={formData.categoryId}
+                  onValueChange={(value) => setFormData({ ...formData, categoryId: value })}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    {EXPENSE_CATEGORIES.map((cat) => (
-                      <SelectItem key={cat.value} value={cat.value}>
-                        {cat.label}
-                      </SelectItem>
-                    ))}
+                    {categories
+                      .filter((cat) => cat.isActive)
+                      .map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id.toString()}>
+                          {cat.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>

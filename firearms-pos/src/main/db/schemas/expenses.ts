@@ -4,6 +4,7 @@ import { branches } from './branches'
 import { users } from './users'
 import { suppliers } from './suppliers'
 import { accountPayables } from './account-payables'
+import { categories } from './categories'
 
 export const expenses = sqliteTable(
   'expenses',
@@ -15,11 +16,9 @@ export const expenses = sqliteTable(
     userId: integer('user_id')
       .notNull()
       .references(() => users.id),
-    category: text('category', {
-      enum: ['rent', 'utilities', 'salaries', 'supplies', 'maintenance', 'marketing', 'other'],
-    })
+    categoryId: integer('category_id')
       .notNull()
-      .default('other'),
+      .references(() => categories.id),
     amount: real('amount').notNull(),
     description: text('description'),
     paymentMethod: text('payment_method', { enum: ['cash', 'card', 'check', 'transfer'] })
@@ -60,6 +59,10 @@ export const expensesRelations = relations(expenses, ({ one }) => ({
   user: one(users, {
     fields: [expenses.userId],
     references: [users.id],
+  }),
+  category: one(categories, {
+    fields: [expenses.categoryId],
+    references: [categories.id],
   }),
   supplier: one(suppliers, {
     fields: [expenses.supplierId],

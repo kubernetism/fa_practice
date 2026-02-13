@@ -17,6 +17,7 @@ import {
   auditLogs,
   users,
   suppliers,
+  categories,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -268,12 +269,14 @@ export function registerReportHandlers(): void {
 
         const expensesByCategory = await db
           .select({
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             total: sql<number>`sum(${expenses.amount})`,
           })
           .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...expenseConditions))
-          .groupBy(expenses.category)
+          .groupBy(expenses.categoryId, categories.name)
 
         const totalRevenue = revenue[0]?.totalRevenue ?? 0
         const totalCost = cogs[0]?.totalCost ?? 0
@@ -410,13 +413,15 @@ export function registerReportHandlers(): void {
         // By category
         const expensesByCategory = await db
           .select({
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             amount: sql<number>`sum(${expenses.amount})`,
             count: sql<number>`count(*)`,
           })
           .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...conditions))
-          .groupBy(expenses.category)
+          .groupBy(expenses.categoryId, categories.name)
           .orderBy(desc(sql`sum(${expenses.amount})`))
 
         // By branch
@@ -436,7 +441,8 @@ export function registerReportHandlers(): void {
         const topExpenses = await db
           .select({
             id: expenses.id,
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             amount: expenses.amount,
             description: expenses.description,
             date: expenses.expenseDate,
@@ -444,6 +450,7 @@ export function registerReportHandlers(): void {
           })
           .from(expenses)
           .innerJoin(branches, eq(expenses.branchId, branches.id))
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...conditions))
           .orderBy(desc(expenses.amount))
           .limit(10)
@@ -1278,13 +1285,15 @@ export function registerReportHandlers(): void {
         // Expenses by Category
         const expensesByCategory = await db
           .select({
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             amount: sql<number>`sum(${expenses.amount})`,
             count: sql<number>`count(*)`,
           })
           .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...expenseConditions))
-          .groupBy(expenses.category)
+          .groupBy(expenses.categoryId, categories.name)
           .orderBy(desc(sql`sum(${expenses.amount})`))
 
         // Returns Summary

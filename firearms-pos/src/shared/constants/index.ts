@@ -96,17 +96,6 @@ export const RETURN_TYPES = {
   STORE_CREDIT: 'store_credit',
 } as const
 
-// Expense categories
-export const EXPENSE_CATEGORIES = {
-  RENT: 'rent',
-  UTILITIES: 'utilities',
-  SALARIES: 'salaries',
-  SUPPLIES: 'supplies',
-  MAINTENANCE: 'maintenance',
-  MARKETING: 'marketing',
-  OTHER: 'other',
-} as const
-
 // Stock adjustment types
 export const ADJUSTMENT_TYPES = {
   ADD: 'add',

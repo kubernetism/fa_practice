@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Edit, Trash2, Wrench, Clock, DollarSign, Tag } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Wrench, Clock, DollarSign } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Table,
   TableBody,
@@ -31,12 +30,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { formatCurrency, debounce } from '@/lib/utils'
-import type { Service, ServiceCategory } from '@shared/types'
+import type { Service } from '@shared/types'
+
+interface Category {
+  id: number
+  name: string
+  description: string | null
+  isActive: boolean
+}
 
 export function ServicesScreen() {
   // Services state
   const [services, setServices] = useState<Service[]>([])
-  const [categories, setCategories] = useState<ServiceCategory[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string>('')
@@ -56,14 +62,6 @@ export function ServicesScreen() {
   const [isSaving, setIsSaving] = useState(false)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
-
-  // Category management state
-  const [showCategoryDialog, setShowCategoryDialog] = useState(false)
-  const [editingCategory, setEditingCategory] = useState<ServiceCategory | null>(null)
-  const [categoryFormData, setCategoryFormData] = useState({
-    name: '',
-    description: '',
-  })
 
   // Fetch services
   const fetchServices = useCallback(async () => {
@@ -88,15 +86,15 @@ export function ServicesScreen() {
     }
   }, [page, searchQuery, selectedCategory])
 
-  // Fetch categories
+  // Fetch categories from the main categories table
   const fetchCategories = useCallback(async () => {
     try {
-      const result = await window.api.serviceCategories.getAll()
+      const result = await window.api.categories.getAll()
       if (result.success && result.data) {
         setCategories(result.data)
       }
     } catch (error) {
-      console.error('Failed to fetch service categories:', error)
+      console.error('Failed to fetch categories:', error)
     }
   }, [])
 
@@ -201,61 +199,6 @@ export function ServicesScreen() {
     }
   }
 
-  // Category handlers
-  const handleNewCategory = () => {
-    setEditingCategory(null)
-    setCategoryFormData({ name: '', description: '' })
-    setShowCategoryDialog(true)
-  }
-
-  const handleEditCategory = (category: ServiceCategory) => {
-    setEditingCategory(category)
-    setCategoryFormData({
-      name: category.name,
-      description: category.description || '',
-    })
-    setShowCategoryDialog(true)
-  }
-
-  const handleSaveCategory = async () => {
-    setIsSaving(true)
-    try {
-      let result
-      if (editingCategory) {
-        result = await window.api.serviceCategories.update(editingCategory.id, categoryFormData)
-      } else {
-        result = await window.api.serviceCategories.create(categoryFormData)
-      }
-
-      if (result.success) {
-        setShowCategoryDialog(false)
-        fetchCategories()
-      } else {
-        alert(result.message || 'Failed to save category')
-      }
-    } catch (error) {
-      console.error('Save category error:', error)
-      alert('An error occurred while saving')
-    } finally {
-      setIsSaving(false)
-    }
-  }
-
-  const handleDeleteCategory = async (category: ServiceCategory) => {
-    if (!confirm(`Are you sure you want to deactivate "${category.name}"?`)) return
-
-    try {
-      const result = await window.api.serviceCategories.delete(category.id)
-      if (result.success) {
-        fetchCategories()
-      } else {
-        alert(result.message || 'Failed to delete category')
-      }
-    } catch (error) {
-      console.error('Delete category error:', error)
-    }
-  }
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -267,20 +210,7 @@ export function ServicesScreen() {
         </div>
       </div>
 
-      <Tabs defaultValue="services" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="services" className="flex items-center gap-2">
-            <Wrench className="h-4 w-4" />
-            Services
-          </TabsTrigger>
-          <TabsTrigger value="categories" className="flex items-center gap-2">
-            <Tag className="h-4 w-4" />
-            Categories
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Services Tab */}
-        <TabsContent value="services" className="space-y-4">
+      <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex gap-4 flex-1">
               <div className="relative flex-1 max-w-md">
@@ -429,75 +359,7 @@ export function ServicesScreen() {
               </Button>
             </div>
           )}
-        </TabsContent>
-
-        {/* Categories Tab */}
-        <TabsContent value="categories" className="space-y-4">
-          <div className="flex items-center justify-end">
-            <Button onClick={handleNewCategory}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Category
-            </Button>
-          </div>
-
-          <Card>
-            <CardContent className="p-0">
-              {categories.length === 0 ? (
-                <div className="flex h-64 flex-col items-center justify-center text-muted-foreground">
-                  <Tag className="mb-2 h-12 w-12" />
-                  <p>No categories found</p>
-                  <Button variant="link" onClick={handleNewCategory}>
-                    Add your first category
-                  </Button>
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {categories.map((category) => (
-                      <TableRow key={category.id}>
-                        <TableCell className="font-medium">{category.name}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {category.description || '-'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={category.isActive ? 'default' : 'secondary'}>
-                            {category.isActive ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleEditCategory(category)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteCategory(category)}
-                            disabled={!category.isActive}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
+      </div>
 
       {/* Service Dialog */}
       <Dialog open={showServiceDialog} onOpenChange={setShowServiceDialog}>
@@ -666,64 +528,6 @@ export function ServicesScreen() {
         </DialogContent>
       </Dialog>
 
-      {/* Category Dialog */}
-      <Dialog open={showCategoryDialog} onOpenChange={setShowCategoryDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {editingCategory ? 'Edit Category' : 'New Category'}
-            </DialogTitle>
-            <DialogDescription>
-              {editingCategory
-                ? 'Update category information'
-                : 'Add a new service category'}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="categoryName">Category Name *</Label>
-              <Input
-                id="categoryName"
-                value={categoryFormData.name}
-                onChange={(e) =>
-                  setCategoryFormData({ ...categoryFormData, name: e.target.value })
-                }
-                placeholder="e.g., Repair, Maintenance"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="categoryDescription">Description</Label>
-              <Textarea
-                id="categoryDescription"
-                value={categoryFormData.description}
-                onChange={(e) =>
-                  setCategoryFormData({ ...categoryFormData, description: e.target.value })
-                }
-                placeholder="Describe this category..."
-                rows={3}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCategoryDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveCategory}
-              disabled={isSaving || !categoryFormData.name}
-            >
-              {isSaving
-                ? 'Saving...'
-                : editingCategory
-                  ? 'Update Category'
-                  : 'Create Category'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

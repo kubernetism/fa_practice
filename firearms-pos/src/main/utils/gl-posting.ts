@@ -521,7 +521,7 @@ export async function postExpenseToGL(
   expense: {
     id: number
     branchId: number
-    category: string
+    categoryName: string
     amount: number
     paymentStatus: string
     paymentMethod?: string
@@ -531,7 +531,7 @@ export async function postExpenseToGL(
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  // Map expense category to account code
+  // Map expense category name (case-insensitive) to account code
   const categoryToAccount: Record<string, string> = {
     salaries: ACCOUNT_CODES.SALARIES_WAGES,
     rent: ACCOUNT_CODES.RENT_EXPENSE,
@@ -542,14 +542,14 @@ export async function postExpenseToGL(
     other: ACCOUNT_CODES.OTHER_EXPENSE,
   }
 
-  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE
+  const expenseAccount = categoryToAccount[expense.categoryName.toLowerCase()] || ACCOUNT_CODES.OTHER_EXPENSE
 
   // DR Expense Account
   lines.push({
     accountCode: expenseAccount,
     debitAmount: expense.amount,
     creditAmount: 0,
-    description: expense.description || `Expense: ${expense.category}`,
+    description: expense.description || `Expense: ${expense.categoryName}`,
   })
 
   // CR based on payment status
@@ -558,7 +558,7 @@ export async function postExpenseToGL(
       accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payable for expense ${expense.category}`,
+      description: `Payable for expense ${expense.categoryName}`,
     })
   } else {
     const cashAccount = expense.paymentMethod === 'bank_transfer' || expense.paymentMethod === 'cheque'
@@ -568,12 +568,12 @@ export async function postExpenseToGL(
       accountCode: cashAccount,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payment for expense ${expense.category}`,
+      description: `Payment for expense ${expense.categoryName}`,
     })
   }
 
   return createJournalEntry({
-    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ''}`,
+    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ''}`,
     referenceType: 'expense',
     referenceId: expense.id,
     branchId: expense.branchId,
