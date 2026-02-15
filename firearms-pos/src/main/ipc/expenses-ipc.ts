@@ -270,6 +270,8 @@ export function registerExpenseHandlers(): void {
       }
 
       // Validation: Can't change amount if payable exists and has payments
+      // Track whether we need to update the payable amount inside the transaction
+      let shouldUpdatePayableAmount = false
       if (existing.payableId && data.amount && data.amount !== existing.amount) {
         const payable = await db.query.accountPayables.findFirst({
           where: eq(accountPayables.id, existing.payableId),
@@ -282,16 +284,8 @@ export function registerExpenseHandlers(): void {
           }
         }
 
-        // Update payable amount if no payments yet
         if (payable) {
-          await db
-            .update(accountPayables)
-            .set({
-              totalAmount: data.amount,
-              remainingAmount: data.amount,
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(accountPayables.id, existing.payableId))
+          shouldUpdatePayableAmount = true
         }
       }
 
@@ -312,9 +306,11 @@ export function registerExpenseHandlers(): void {
         }
       }
 
-      // Handle status change: from paid to unpaid
+      // Handle status change: from paid to unpaid - validate before transaction
+      let shouldCreatePayable = false
+      let supplierIdToUse: number | undefined
       if (existing.paymentStatus === 'paid' && data.paymentStatus === 'unpaid') {
-        const supplierIdToUse = data.supplierId || existing.supplierId
+        supplierIdToUse = data.supplierId || existing.supplierId
         if (!supplierIdToUse) {
           return {
             success: false,
@@ -329,11 +325,32 @@ export function registerExpenseHandlers(): void {
           }
         }
 
-        // Create payable if changing to unpaid
         if (!existing.payableId) {
+          shouldCreatePayable = true
+        }
+      }
+
+      // Execute all mutations in a transaction
+      const txResult = await withTransaction(async ({ db: txDb }) => {
+        let createdPayableId: number | undefined
+
+        // Update payable amount if amount changed and no payments yet
+        if (shouldUpdatePayableAmount && existing.payableId && data.amount) {
+          await txDb
+            .update(accountPayables)
+            .set({
+              totalAmount: data.amount,
+              remainingAmount: data.amount,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(accountPayables.id, existing.payableId))
+        }
+
+        // Create payable if changing from paid to unpaid
+        if (shouldCreatePayable && supplierIdToUse) {
           const invoiceNumber = `EXP-${existing.id}-${Date.now()}`
 
-          const payableResult = await db
+          const payableResult = await txDb
             .insert(accountPayables)
             .values({
               supplierId: supplierIdToUse,
@@ -351,32 +368,41 @@ export function registerExpenseHandlers(): void {
             })
             .returning()
 
-          data.payableId = payableResult[0].id
-
-          await createAuditLog({
-            userId: session?.userId,
-            branchId: existing.branchId,
-            action: 'create',
-            entityType: 'account_payable',
-            entityId: payableResult[0].id,
-            newValues: {
-              supplierId: supplierIdToUse,
-              invoiceNumber: invoiceNumber,
-              totalAmount: data.amount || existing.amount,
-              source: 'expense_status_change',
-              expenseId: existing.id,
-            },
-            description: `Created payable from expense #${existing.id} status change`,
-          })
+          createdPayableId = payableResult[0].id
+          data.payableId = createdPayableId
         }
+
+        // Update the expense record
+        const result = await txDb
+          .update(expenses)
+          .set({ ...data, updatedAt: new Date().toISOString() })
+          .where(eq(expenses.id, id))
+          .returning()
+
+        return { expenseResult: result, createdPayableId }
+      })
+
+      // Audit log for payable creation (outside transaction)
+      if (txResult.createdPayableId && supplierIdToUse) {
+        const invoiceNumber = `EXP-${existing.id}-${Date.now()}`
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: existing.branchId,
+          action: 'create',
+          entityType: 'account_payable',
+          entityId: txResult.createdPayableId,
+          newValues: {
+            supplierId: supplierIdToUse,
+            invoiceNumber: invoiceNumber,
+            totalAmount: data.amount || existing.amount,
+            source: 'expense_status_change',
+            expenseId: existing.id,
+          },
+          description: `Created payable from expense #${existing.id} status change`,
+        })
       }
 
-      const result = await db
-        .update(expenses)
-        .set({ ...data, updatedAt: new Date().toISOString() })
-        .where(eq(expenses.id, id))
-        .returning()
-
+      // Audit log for expense update (outside transaction)
       await createAuditLog({
         userId: session?.userId,
         branchId: existing.branchId,
@@ -388,7 +414,7 @@ export function registerExpenseHandlers(): void {
         description: `Updated expense #${id}`,
       })
 
-      return { success: true, data: result[0] }
+      return { success: true, data: txResult.expenseResult[0] }
     } catch (error) {
       console.error('Update expense error:', error)
       return { success: false, message: 'Failed to update expense' }
