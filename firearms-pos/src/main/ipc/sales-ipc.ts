@@ -24,7 +24,7 @@ import { getCurrentSession } from './auth-ipc'
 import { generateInvoiceNumber, isLicenseExpired, type PaginationParams, type PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
 import { postSaleToGL, postVoidSaleToGL } from '../utils/gl-posting'
-import { consumeCostLayersFIFO, restoreCostLayers } from '../utils/inventory-valuation'
+import { consumeCostLayers, restoreCostLayers } from '../utils/inventory-valuation'
 import { handleIpcError } from '../utils/error-handling'
 
 interface CartItem {
@@ -185,8 +185,8 @@ export function registerSalesHandlers(): void {
         // Process products
         if (hasProducts) {
           for (const item of data.items) {
-            // Get actual FIFO cost for this item
-            const fifoResult = await consumeCostLayersFIFO(
+            // Get actual cost for this item using configured valuation method
+            const fifoResult = await consumeCostLayers(
               item.productId,
               data.branchId,
               item.quantity
