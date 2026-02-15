@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { eq, and, sql, desc } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import { withTransaction } from '../utils/db-transaction'
+import { handleIpcError } from '../utils/error-handling'
 import {
   chartOfAccounts,
   journalEntries,
@@ -360,8 +361,7 @@ export function registerChartOfAccountsHandlers() {
 
       return { success: true, data: updated }
     } catch (error) {
-      console.error('Post journal entry error:', error)
-      return { success: false, message: 'Failed to post journal entry' }
+      return handleIpcError('Post journal entry', error)
     }
   })
 
@@ -454,8 +454,7 @@ export function registerChartOfAccountsHandlers() {
           },
         }
       } catch (error) {
-        console.error('Get journal entries error:', error)
-        return { success: false, message: 'Failed to fetch journal entries' }
+        return handleIpcError('Get journal entries', error)
       }
     }
   )
@@ -533,8 +532,7 @@ export function registerChartOfAccountsHandlers() {
           },
         }
       } catch (error) {
-        console.error('Get journal summary error:', error)
-        return { success: false, message: 'Failed to fetch journal summary' }
+        return handleIpcError('Get journal summary', error)
       }
     }
   )
@@ -608,8 +606,7 @@ export function registerChartOfAccountsHandlers() {
           },
         }
       } catch (error) {
-        console.error('Export journal entries error:', error)
-        return { success: false, message: 'Failed to export journal entries' }
+        return handleIpcError('Export journal entries', error)
       }
     }
   )

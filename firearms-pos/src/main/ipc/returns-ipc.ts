@@ -18,6 +18,7 @@ import { generateReturnNumber, type PaginationParams, type PaginatedResult } fro
 import { withTransaction } from '../utils/db-transaction'
 import { postReturnToGL } from '../utils/gl-posting'
 import { restoreCostLayers } from '../utils/inventory-valuation'
+import { handleIpcError } from '../utils/error-handling'
 
 interface ReturnItemData {
   saleItemId: number
@@ -210,8 +211,7 @@ export function registerReturnHandlers(): void {
 
       return { success: true, data: result.returnRecord }
     } catch (error) {
-      console.error('Create return error:', error)
-      return { success: false, message: 'Failed to create return' }
+      return handleIpcError('Create return', error)
     }
   })
 
@@ -251,8 +251,7 @@ export function registerReturnHandlers(): void {
 
         return { success: true, ...result }
       } catch (error) {
-        console.error('Get returns error:', error)
-        return { success: false, message: 'Failed to fetch returns' }
+        return handleIpcError('Get returns', error)
       }
     }
   )
@@ -297,8 +296,7 @@ export function registerReturnHandlers(): void {
         },
       }
     } catch (error) {
-      console.error('Get return error:', error)
-      return { success: false, message: 'Failed to fetch return' }
+      return handleIpcError('Get return', error)
     }
   })
 
@@ -360,8 +358,7 @@ export function registerReturnHandlers(): void {
 
       return { success: true, message: 'Return deleted successfully' }
     } catch (error) {
-      console.error('Delete return error:', error)
-      return { success: false, message: 'Failed to delete return' }
+      return handleIpcError('Delete return', error)
     }
   })
 }

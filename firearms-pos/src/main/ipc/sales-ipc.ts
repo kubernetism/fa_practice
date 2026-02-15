@@ -25,6 +25,7 @@ import { generateInvoiceNumber, isLicenseExpired, type PaginationParams, type Pa
 import { withTransaction } from '../utils/db-transaction'
 import { postSaleToGL, postVoidSaleToGL } from '../utils/gl-posting'
 import { consumeCostLayersFIFO, restoreCostLayers } from '../utils/inventory-valuation'
+import { handleIpcError } from '../utils/error-handling'
 
 interface CartItem {
   productId: number
@@ -433,10 +434,7 @@ export function registerSalesHandlers(): void {
 
       return { success: true, data: result.sale }
     } catch (error) {
-      console.error('Create sale error:', error)
-      // Provide more detailed error message
-      const errorMessage = error instanceof Error ? error.message : 'Failed to create sale'
-      return { success: false, message: errorMessage }
+      return handleIpcError('Create sale', error)
     }
   })
 
@@ -501,8 +499,7 @@ export function registerSalesHandlers(): void {
 
         return { success: true, ...result }
       } catch (error) {
-        console.error('Get sales error:', error)
-        return { success: false, message: 'Failed to fetch sales' }
+        return handleIpcError('Get sales', error)
       }
     }
   )
@@ -542,8 +539,7 @@ export function registerSalesHandlers(): void {
         },
       }
     } catch (error) {
-      console.error('Get sale error:', error)
-      return { success: false, message: 'Failed to fetch sale' }
+      return handleIpcError('Get sale', error)
     }
   })
 
@@ -647,8 +643,7 @@ export function registerSalesHandlers(): void {
 
       return { success: true, message: 'Sale voided successfully' }
     } catch (error) {
-      console.error('Void sale error:', error)
-      return { success: false, message: 'Failed to void sale' }
+      return handleIpcError('Void sale', error)
     }
   })
 
@@ -684,8 +679,7 @@ export function registerSalesHandlers(): void {
         },
       }
     } catch (error) {
-      console.error('Get daily summary error:', error)
-      return { success: false, message: 'Failed to fetch daily summary' }
+      return handleIpcError('Get daily summary', error)
     }
   })
 
@@ -724,8 +718,7 @@ export function registerSalesHandlers(): void {
         data: { fixedCount },
       }
     } catch (error) {
-      console.error('Fix payment status error:', error)
-      return { success: false, message: 'Failed to fix payment status' }
+      return handleIpcError('Fix payment status', error)
     }
   })
 
@@ -774,8 +767,7 @@ export function registerSalesHandlers(): void {
         data: { createdCount },
       }
     } catch (error) {
-      console.error('Fix orphaned receivables error:', error)
-      return { success: false, message: 'Failed to fix orphaned receivables' }
+      return handleIpcError('Fix orphaned receivables', error)
     }
   })
 }

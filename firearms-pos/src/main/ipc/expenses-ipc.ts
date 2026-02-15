@@ -7,6 +7,7 @@ import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
 import { postExpenseToGL } from '../utils/gl-posting'
+import { handleIpcError } from '../utils/error-handling'
 
 export function registerExpenseHandlers(): void {
   const db = getDatabase()
@@ -73,8 +74,7 @@ export function registerExpenseHandlers(): void {
 
         return { success: true, ...result }
       } catch (error) {
-        console.error('Get expenses error:', error)
-        return { success: false, message: 'Failed to fetch expenses' }
+        return handleIpcError('Get expenses', error)
       }
     }
   )
@@ -104,8 +104,7 @@ export function registerExpenseHandlers(): void {
 
       return { success: true, data: expense }
     } catch (error) {
-      console.error('Get expense error:', error)
-      return { success: false, message: 'Failed to fetch expense' }
+      return handleIpcError('Get expense', error)
     }
   })
 
@@ -241,8 +240,7 @@ export function registerExpenseHandlers(): void {
         payableCreated: !!result.payableId,
       }
     } catch (error) {
-      console.error('Create expense error:', error)
-      return { success: false, message: 'Failed to create expense' }
+      return handleIpcError('Create expense', error)
     }
   })
 
@@ -416,8 +414,7 @@ export function registerExpenseHandlers(): void {
 
       return { success: true, data: txResult.expenseResult[0] }
     } catch (error) {
-      console.error('Update expense error:', error)
-      return { success: false, message: 'Failed to update expense' }
+      return handleIpcError('Update expense', error)
     }
   })
 
@@ -487,8 +484,7 @@ export function registerExpenseHandlers(): void {
 
       return { success: true, message: 'Expense deleted successfully' }
     } catch (error) {
-      console.error('Delete expense error:', error)
-      return { success: false, message: 'Failed to delete expense' }
+      return handleIpcError('Delete expense', error)
     }
   })
 
@@ -516,8 +512,7 @@ export function registerExpenseHandlers(): void {
 
       return { success: true, data }
     } catch (error) {
-      console.error('Get expenses by category error:', error)
-      return { success: false, message: 'Failed to fetch expenses by category' }
+      return handleIpcError('Get expenses by category', error)
     }
   })
 }
