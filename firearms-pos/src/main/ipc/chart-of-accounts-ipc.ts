@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import { eq, and, sql, desc } from 'drizzle-orm'
 import { getDatabase } from '../db'
+import { withTransaction } from '../utils/db-transaction'
 import {
   chartOfAccounts,
   journalEntries,
@@ -300,59 +301,68 @@ export function registerChartOfAccountsHandlers() {
 
   // Post Journal Entry
   ipcMain.handle('journal:post', async (_, entryId: number, postedBy: number) => {
-    const entry = await db.query.journalEntries.findFirst({
-      where: eq(journalEntries.id, entryId),
-      with: {
-        lines: {
-          with: {
-            account: true,
+    try {
+      const entry = await db.query.journalEntries.findFirst({
+        where: eq(journalEntries.id, entryId),
+        with: {
+          lines: {
+            with: {
+              account: true,
+            },
           },
         },
-      },
-    })
+      })
 
-    if (!entry) {
-      throw new Error('Journal entry not found')
-    }
-
-    if (entry.status !== 'draft') {
-      throw new Error('Only draft entries can be posted')
-    }
-
-    // Update account balances
-    for (const line of entry.lines) {
-      const account = line.account
-      if (!account) continue
-
-      let newBalance = account.currentBalance
-      if (account.normalBalance === 'debit') {
-        newBalance += line.debitAmount - line.creditAmount
-      } else {
-        newBalance += line.creditAmount - line.debitAmount
+      if (!entry) {
+        return { success: false, message: 'Journal entry not found' }
       }
 
-      await db
-        .update(chartOfAccounts)
-        .set({
-          currentBalance: newBalance,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(chartOfAccounts.id, account.id))
-    }
+      if (entry.status !== 'draft') {
+        return { success: false, message: 'Only draft entries can be posted' }
+      }
 
-    // Update entry status
-    const [updated] = await db
-      .update(journalEntries)
-      .set({
-        status: 'posted',
-        postedBy,
-        postedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      const updated = await withTransaction(async ({ db: txDb }) => {
+        // Update account balances
+        for (const line of entry.lines) {
+          const account = line.account
+          if (!account) continue
+
+          let newBalance = account.currentBalance
+          if (account.normalBalance === 'debit') {
+            newBalance += line.debitAmount - line.creditAmount
+          } else {
+            newBalance += line.creditAmount - line.debitAmount
+          }
+
+          await txDb
+            .update(chartOfAccounts)
+            .set({
+              currentBalance: newBalance,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(chartOfAccounts.id, account.id))
+        }
+
+        // Update entry status
+        const [result] = await txDb
+          .update(journalEntries)
+          .set({
+            status: 'posted',
+            postedBy,
+            postedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(journalEntries.id, entryId))
+          .returning()
+
+        return result
       })
-      .where(eq(journalEntries.id, entryId))
-      .returning()
 
-    return updated
+      return { success: true, data: updated }
+    } catch (error) {
+      console.error('Post journal entry error:', error)
+      return { success: false, message: 'Failed to post journal entry' }
+    }
   })
 
   // Get Journal Entries with filtering
