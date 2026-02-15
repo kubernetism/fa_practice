@@ -319,28 +319,31 @@ export function registerReturnHandlers(): void {
         where: eq(returnItems.returnId, id),
       })
 
-      // Reverse inventory changes for restockable items
-      for (const item of items) {
-        const existingInventory = await db.query.inventory.findFirst({
-          where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, returnRecord.branchId)),
-        })
+      // Execute inventory reversal and deletion in a transaction
+      await withTransaction(async ({ db: txDb }) => {
+        // Reverse inventory changes for restockable items
+        for (const item of items) {
+          const existingInventory = await txDb.query.inventory.findFirst({
+            where: and(eq(inventory.productId, item.productId), eq(inventory.branchId, returnRecord.branchId)),
+          })
 
-        if (existingInventory && item.restockable) {
-          await db
-            .update(inventory)
-            .set({
-              quantity: sql`${inventory.quantity} - ${item.quantity}`,
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(inventory.id, existingInventory.id))
+          if (existingInventory && item.restockable) {
+            await txDb
+              .update(inventory)
+              .set({
+                quantity: sql`${inventory.quantity} - ${item.quantity}`,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(inventory.id, existingInventory.id))
+          }
         }
-      }
 
-      // Delete return items first
-      await db.delete(returnItems).where(eq(returnItems.returnId, id))
+        // Delete return items first
+        await txDb.delete(returnItems).where(eq(returnItems.returnId, id))
 
-      // Delete the return record
-      await db.delete(returns).where(eq(returns.id, id))
+        // Delete the return record
+        await txDb.delete(returns).where(eq(returns.id, id))
+      })
 
       await createAuditLog({
         userId: session?.userId,
