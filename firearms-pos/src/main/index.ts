@@ -100,17 +100,20 @@ app.whenReady().then(async () => {
 
       if (shouldLock) {
         console.log('Trial/License expired - locking application...')
-        const lockResult = lockApplication()
-        if (lockResult.success) {
-          isAppLocked = true
-          console.log('Application locked and database encrypted')
-          // Only register license handlers since DB is now encrypted
-          registerLicenseOnlyHandlers()
-        } else {
-          console.error('Failed to lock application:', lockResult.message)
-          // Fall through to normal mode if locking fails
-          registerAllHandlers()
+        try {
+          const lockResult = lockApplication()
+          if (lockResult.success) {
+            console.log('Application locked and database encrypted')
+          } else {
+            console.error('Failed to lock application:', lockResult.message)
+          }
+        } catch (lockError) {
+          console.error('Error during lock application:', lockError)
         }
+        // Always enter locked mode when trial/license expired, even if encryption fails
+        isAppLocked = true
+        setApplicationLocked(true)
+        registerLicenseOnlyHandlers()
       } else {
         // Register all IPC handlers
         registerAllHandlers()

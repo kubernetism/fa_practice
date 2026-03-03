@@ -13,7 +13,7 @@ import {
 import { encryptDatabase, decryptDatabase, isDbEncrypted } from '../utils/db-cipher'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
-import { getDatabase, getDbPath, reinitializeDatabase, isDatabaseLocked, setDatabaseLocked } from '../db'
+import { getDatabase, getDbPath, closeDatabase as closeDatabaseFn, reinitializeDatabase, isDatabaseLocked, setDatabaseLocked } from '../db'
 import { applicationInfo } from '../db/schemas/application-info'
 import { eq, and } from 'drizzle-orm'
 import { writeFileSync, existsSync, readFileSync } from 'node:fs'
@@ -119,8 +119,7 @@ export function lockApplication(): { success: boolean; message: string } {
   const dbPath = getDbPath()
 
   // Close the database before encrypting
-  const { closeDatabase } = require('../db')
-  closeDatabase()
+  closeDatabaseFn()
 
   // Encrypt the database
   const result = encryptDatabase(dbPath)

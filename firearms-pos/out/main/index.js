@@ -3029,6 +3029,13 @@ async function fixCommissionsUserIdNullable() {
     return;
   }
   console.log("Fixing commissions.user_id to be nullable (recreating table)...");
+  const leftoverCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='commissions_new'`
+  ).get();
+  if (leftoverCheck) {
+    rawDb.prepare('DROP TABLE "commissions_new"').run();
+    console.log("Dropped leftover commissions_new table from previous attempt");
+  }
   const migrationStatements = [
     `CREATE TABLE "commissions_new" (
       "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -11489,8 +11496,7 @@ function checkAndLockIfExpired() {
 }
 function lockApplication() {
   const dbPath = getDbPath();
-  const { closeDatabase: closeDatabase2 } = require("../db");
-  closeDatabase2();
+  closeDatabase();
   const result = encryptDatabase(dbPath);
   if (!result.success) {
     return result;
@@ -19951,15 +19957,19 @@ electron.app.whenReady().then(async () => {
       const shouldLock = checkAndLockIfExpired();
       if (shouldLock) {
         console.log("Trial/License expired - locking application...");
-        const lockResult = lockApplication();
-        if (lockResult.success) {
-          isAppLocked = true;
-          console.log("Application locked and database encrypted");
-          registerLicenseOnlyHandlers();
-        } else {
-          console.error("Failed to lock application:", lockResult.message);
-          registerAllHandlers();
+        try {
+          const lockResult = lockApplication();
+          if (lockResult.success) {
+            console.log("Application locked and database encrypted");
+          } else {
+            console.error("Failed to lock application:", lockResult.message);
+          }
+        } catch (lockError) {
+          console.error("Error during lock application:", lockError);
         }
+        isAppLocked = true;
+        setApplicationLocked(true);
+        registerLicenseOnlyHandlers();
       } else {
         registerAllHandlers();
         console.log("IPC handlers registered");

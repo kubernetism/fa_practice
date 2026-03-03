@@ -1129,6 +1129,15 @@ async function fixCommissionsUserIdNullable(): Promise<void> {
 
   console.log('Fixing commissions.user_id to be nullable (recreating table)...')
 
+  // Check if a leftover commissions_new table exists from a previous failed attempt
+  const leftoverCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='commissions_new'`
+  ).get()
+  if (leftoverCheck) {
+    rawDb.prepare('DROP TABLE "commissions_new"').run()
+    console.log('Dropped leftover commissions_new table from previous attempt')
+  }
+
   // SQLite does not support ALTER COLUMN, so recreate the table with user_id nullable
   const migrationStatements = [
     `CREATE TABLE "commissions_new" (
