@@ -45,6 +45,8 @@ import {
   PiggyBank,
   Receipt,
   AlertTriangle,
+  Calculator,
+  Pencil,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { useBranch } from '@/contexts/branch-context'
@@ -103,7 +105,11 @@ export default function ChartOfAccountsScreen() {
   // Dialog states
   const [createDialog, setCreateDialog] = useState(false)
   const [editDialog, setEditDialog] = useState(false)
+  const [adjustDialog, setAdjustDialog] = useState(false)
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null)
+  const [adjustTarget, setAdjustTarget] = useState('')
+  const [adjustReason, setAdjustReason] = useState('')
+  const [recalculating, setRecalculating] = useState(false)
 
   // Form states
   const [formData, setFormData] = useState({
@@ -165,7 +171,7 @@ export default function ChartOfAccountsScreen() {
         accountName: formData.accountName,
         accountType: formData.accountType,
         accountSubType: formData.accountSubType || undefined,
-        parentAccountId: formData.parentAccountId ? parseInt(formData.parentAccountId) : undefined,
+        parentAccountId: formData.parentAccountId && formData.parentAccountId !== 'none' ? parseInt(formData.parentAccountId) : undefined,
         description: formData.description || undefined,
         normalBalance: formData.normalBalance,
       })
@@ -228,6 +234,83 @@ export default function ChartOfAccountsScreen() {
       normalBalance: account.normalBalance,
     })
     setEditDialog(true)
+  }
+
+  const handleRecalculateBalances = async () => {
+    if (!confirm('Recalculate all account balances from journal entries? This will fix any balance discrepancies.')) {
+      return
+    }
+
+    setRecalculating(true)
+    try {
+      const result = await window.api.chartOfAccounts.recalculateBalances()
+      if (result.success) {
+        const { totalAccounts, adjustedCount, adjustments } = result.data
+        if (adjustedCount === 0) {
+          alert(`All ${totalAccounts} accounts are already correct. No adjustments needed.`)
+        } else {
+          const details = adjustments
+            .map((a: { accountCode: string; oldBalance: number; newBalance: number }) =>
+              `${a.accountCode}: ${formatCurrency(a.oldBalance)} → ${formatCurrency(a.newBalance)}`)
+            .join('\n')
+          alert(`Recalculated ${adjustedCount} of ${totalAccounts} accounts:\n\n${details}`)
+        }
+        await loadData()
+      } else {
+        alert('Failed to recalculate: ' + result.message)
+      }
+    } catch (error) {
+      console.error('Recalculate balances error:', error)
+      alert('Failed to recalculate balances: ' + (error as Error).message)
+    } finally {
+      setRecalculating(false)
+    }
+  }
+
+  const openAdjustDialog = (account: Account) => {
+    setSelectedAccount(account)
+    setAdjustTarget(account.currentBalance.toString())
+    setAdjustReason('')
+    setAdjustDialog(true)
+  }
+
+  const handleAdjustBalance = async () => {
+    if (!selectedAccount) return
+
+    const target = parseFloat(adjustTarget)
+    if (isNaN(target)) {
+      alert('Please enter a valid number')
+      return
+    }
+
+    if (!adjustReason.trim()) {
+      alert('Please provide a reason for the adjustment')
+      return
+    }
+
+    try {
+      const result = await window.api.chartOfAccounts.adjustBalance(
+        selectedAccount.id,
+        target,
+        adjustReason.trim(),
+        1 // postedBy — system/admin
+      )
+      if (result.success) {
+        if (result.data.adjusted) {
+          alert(`Balance adjusted from ${formatCurrency(result.data.oldBalance)} to ${formatCurrency(result.data.newBalance)}.\nJournal entry: ${result.data.journalEntry}`)
+        } else {
+          alert(result.message || 'Balance is already correct')
+        }
+        setAdjustDialog(false)
+        setSelectedAccount(null)
+        await loadData()
+      } else {
+        alert('Failed to adjust: ' + result.message)
+      }
+    } catch (error) {
+      console.error('Adjust balance error:', error)
+      alert('Failed to adjust balance: ' + (error as Error).message)
+    }
   }
 
   const resetForm = () => {
@@ -312,6 +395,10 @@ export default function ChartOfAccountsScreen() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button onClick={handleRecalculateBalances} variant="outline" disabled={recalculating}>
+            <Calculator className="h-4 w-4 mr-2" />
+            {recalculating ? 'Recalculating...' : 'Recalculate Balances'}
+          </Button>
           <Button onClick={() => loadData()} variant="outline">
             <RefreshCw className="h-4 w-4 mr-2" />
             Refresh
@@ -474,6 +561,15 @@ export default function ChartOfAccountsScreen() {
                             </TableCell>
                             <TableCell className="text-right">
                               <div className="flex justify-end gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openAdjustDialog(account)}
+                                  title="Adjust balance"
+                                >
+                                  <Pencil className="h-3 w-3 mr-1" />
+                                  Adjust
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="sm"
@@ -846,7 +942,7 @@ export default function ChartOfAccountsScreen() {
                   <SelectValue placeholder="Select parent account" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">None</SelectItem>
+                  <SelectItem value="none">None</SelectItem>
                   {accounts
                     .filter((a) => a.accountType === formData.accountType)
                     .map((account) => (
@@ -929,6 +1025,66 @@ export default function ChartOfAccountsScreen() {
             </Button>
             <Button onClick={handleUpdateAccount}>
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Adjust Balance Dialog */}
+      <Dialog open={adjustDialog} onOpenChange={setAdjustDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adjust Account Balance</DialogTitle>
+            <DialogDescription>
+              {selectedAccount && (
+                <>Set the actual balance for <strong>{selectedAccount.accountCode} - {selectedAccount.accountName}</strong>. An adjusting journal entry will be created automatically.</>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label>Current Balance</Label>
+                <Input
+                  value={selectedAccount ? formatCurrency(selectedAccount.currentBalance) : ''}
+                  disabled
+                />
+              </div>
+              <div>
+                <Label>Target Balance *</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="Enter actual balance"
+                  value={adjustTarget}
+                  onChange={(e) => setAdjustTarget(e.target.value)}
+                />
+              </div>
+            </div>
+            {selectedAccount && adjustTarget && !isNaN(parseFloat(adjustTarget)) && (
+              <div className={`p-3 rounded-lg ${
+                parseFloat(adjustTarget) - selectedAccount.currentBalance >= 0
+                  ? 'bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-200'
+                  : 'bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200'
+              }`}>
+                Adjustment: {formatCurrency(parseFloat(adjustTarget) - selectedAccount.currentBalance)}
+              </div>
+            )}
+            <div>
+              <Label>Reason *</Label>
+              <Textarea
+                placeholder="e.g., Bank reconciliation, opening balance correction, physical count adjustment..."
+                value={adjustReason}
+                onChange={(e) => setAdjustReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setAdjustDialog(false); setSelectedAccount(null); }}>
+              Cancel
+            </Button>
+            <Button onClick={handleAdjustBalance}>
+              Apply Adjustment
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -5389,6 +5389,138 @@ async function consumeCostLayersFIFO(productId, branchId, quantity) {
   }
   return { totalCost, layersConsumed };
 }
+async function consumeCostLayersLIFO(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const layers = await db2.query.inventoryCostLayers.findMany({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(inventoryCostLayers.productId, productId),
+      drizzleOrm.eq(inventoryCostLayers.branchId, branchId),
+      drizzleOrm.eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: drizzleOrm.desc(inventoryCostLayers.receivedDate)
+  });
+  let remainingQty = quantity;
+  let totalCost = 0;
+  const layersConsumed = [];
+  for (const layer of layers) {
+    if (remainingQty <= 0) break;
+    const consumeQty = Math.min(remainingQty, layer.quantity);
+    const layerCost = consumeQty * layer.unitCost;
+    totalCost += layerCost;
+    remainingQty -= consumeQty;
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: layer.unitCost,
+      cost: layerCost
+    });
+    const newQuantity = layer.quantity - consumeQty;
+    const isFullyConsumed = newQuantity <= 0;
+    await db2.update(inventoryCostLayers).set({
+      quantity: newQuantity,
+      isFullyConsumed,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(inventoryCostLayers.id, layer.id));
+  }
+  if (remainingQty > 0) {
+    const product = await db2.query.products.findFirst({
+      where: drizzleOrm.eq(products.id, productId)
+    });
+    if (product) {
+      const fallbackCost = remainingQty * product.costPrice;
+      totalCost += fallbackCost;
+      layersConsumed.push({
+        layerId: -1,
+        quantityConsumed: remainingQty,
+        unitCost: product.costPrice,
+        cost: fallbackCost
+      });
+      console.warn(
+        `LIFO: Insufficient cost layers for product ${productId}. Used product.costPrice (${product.costPrice}) for ${remainingQty} units.`
+      );
+    }
+  }
+  return { totalCost, layersConsumed };
+}
+async function consumeCostLayersWeightedAverage(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const layers = await db2.query.inventoryCostLayers.findMany({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(inventoryCostLayers.productId, productId),
+      drizzleOrm.eq(inventoryCostLayers.branchId, branchId),
+      drizzleOrm.eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: drizzleOrm.asc(inventoryCostLayers.receivedDate)
+  });
+  let totalValue = 0;
+  let totalQuantity = 0;
+  for (const layer of layers) {
+    totalValue += layer.quantity * layer.unitCost;
+    totalQuantity += layer.quantity;
+  }
+  let avgCost;
+  if (totalQuantity > 0) {
+    avgCost = totalValue / totalQuantity;
+  } else {
+    const product = await db2.query.products.findFirst({
+      where: drizzleOrm.eq(products.id, productId)
+    });
+    avgCost = product?.costPrice || 0;
+  }
+  let remainingQty = quantity;
+  let totalCostResult = 0;
+  const layersConsumed = [];
+  for (const layer of layers) {
+    if (remainingQty <= 0) break;
+    const consumeQty = Math.min(remainingQty, layer.quantity);
+    const layerCost = consumeQty * avgCost;
+    totalCostResult += layerCost;
+    remainingQty -= consumeQty;
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: avgCost,
+      cost: layerCost
+    });
+    const newQuantity = layer.quantity - consumeQty;
+    const isFullyConsumed = newQuantity <= 0;
+    await db2.update(inventoryCostLayers).set({
+      quantity: newQuantity,
+      isFullyConsumed,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(inventoryCostLayers.id, layer.id));
+  }
+  if (remainingQty > 0) {
+    const fallbackCost = remainingQty * avgCost;
+    totalCostResult += fallbackCost;
+    layersConsumed.push({
+      layerId: -1,
+      quantityConsumed: remainingQty,
+      unitCost: avgCost,
+      cost: fallbackCost
+    });
+    console.warn(
+      `WeightedAverage: Insufficient cost layers for product ${productId}. Used weighted average cost (${avgCost.toFixed(2)}) for ${remainingQty} units.`
+    );
+  }
+  return { totalCost: totalCostResult, layersConsumed };
+}
+async function consumeCostLayers(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const settings2 = await db2.query.businessSettings.findFirst({
+    where: drizzleOrm.isNull(businessSettings.branchId)
+  });
+  const method = settings2?.stockValuationMethod || "FIFO";
+  switch (method) {
+    case "LIFO":
+      return consumeCostLayersLIFO(productId, branchId, quantity);
+    case "Average":
+      return consumeCostLayersWeightedAverage(productId, branchId, quantity);
+    case "FIFO":
+    default:
+      return consumeCostLayersFIFO(productId, branchId, quantity);
+  }
+}
 async function addCostLayer(data) {
   const db2 = getDatabase();
   const [layer] = await db2.insert(inventoryCostLayers).values({
@@ -5417,6 +5549,85 @@ async function restoreCostLayers(data) {
     isFullyConsumed: false
   }).returning();
   return layer.id;
+}
+class AppError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = "AppError";
+    this.code = options.code || "UNKNOWN_ERROR";
+    this.category = options.category || "system";
+    this.isRetryable = options.isRetryable || false;
+    if (options.cause) {
+      this.cause = options.cause;
+    }
+  }
+}
+function classifyError(error) {
+  if (error instanceof AppError) {
+    return {
+      message: error.message,
+      code: error.code,
+      category: error.category,
+      isRetryable: error.isRetryable,
+      originalError: error
+    };
+  }
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorCode = error?.code;
+  if (errorCode === "SQLITE_BUSY" || errorMessage.includes("SQLITE_BUSY") || errorMessage.includes("database is locked")) {
+    return {
+      message: "Database is busy. Please try again.",
+      code: "SQLITE_BUSY",
+      category: "database",
+      isRetryable: true,
+      originalError: error
+    };
+  }
+  if (errorCode === "SQLITE_LOCKED" || errorMessage.includes("SQLITE_LOCKED")) {
+    return {
+      message: "Database table is locked. Please try again.",
+      code: "SQLITE_LOCKED",
+      category: "database",
+      isRetryable: true,
+      originalError: error
+    };
+  }
+  if (errorCode === "SQLITE_CONSTRAINT" || errorMessage.includes("SQLITE_CONSTRAINT") || errorMessage.includes("UNIQUE constraint") || errorMessage.includes("FOREIGN KEY constraint")) {
+    let userMessage = "A data constraint was violated.";
+    if (errorMessage.includes("UNIQUE constraint")) {
+      userMessage = "A record with this value already exists.";
+    } else if (errorMessage.includes("FOREIGN KEY constraint")) {
+      userMessage = "Referenced record does not exist or cannot be removed.";
+    }
+    return {
+      message: userMessage,
+      code: "SQLITE_CONSTRAINT",
+      category: "database",
+      isRetryable: false,
+      originalError: error
+    };
+  }
+  if (errorCode === "SQLITE_READONLY" || errorMessage.includes("SQLITE_READONLY")) {
+    return {
+      message: "Database is read-only.",
+      code: "SQLITE_READONLY",
+      category: "database",
+      isRetryable: false,
+      originalError: error
+    };
+  }
+  return {
+    message: "An unexpected error occurred.",
+    code: errorCode || "UNKNOWN_ERROR",
+    category: "system",
+    isRetryable: false,
+    originalError: error
+  };
+}
+function handleIpcError(operation, error) {
+  const classified = classifyError(error);
+  console.error(`${operation} error [${classified.category}/${classified.code}]:`, error);
+  return { success: false, message: classified.message };
 }
 function registerSalesHandlers() {
   const db2 = getDatabase();
@@ -5500,7 +5711,7 @@ function registerSalesHandlers() {
         const saleServicesData = [];
         if (hasProducts) {
           for (const item of data.items) {
-            const fifoResult = await consumeCostLayersFIFO(
+            const fifoResult = await consumeCostLayers(
               item.productId,
               data.branchId,
               item.quantity
@@ -5691,9 +5902,7 @@ function registerSalesHandlers() {
       });
       return { success: true, data: result.sale };
     } catch (error) {
-      console.error("Create sale error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to create sale";
-      return { success: false, message: errorMessage };
+      return handleIpcError("Create sale", error);
     }
   });
   electron.ipcMain.handle(
@@ -5740,8 +5949,7 @@ function registerSalesHandlers() {
         };
         return { success: true, ...result };
       } catch (error) {
-        console.error("Get sales error:", error);
-        return { success: false, message: "Failed to fetch sales" };
+        return handleIpcError("Get sales", error);
       }
     }
   );
@@ -5772,8 +5980,7 @@ function registerSalesHandlers() {
         }
       };
     } catch (error) {
-      console.error("Get sale error:", error);
-      return { success: false, message: "Failed to fetch sale" };
+      return handleIpcError("Get sale", error);
     }
   });
   electron.ipcMain.handle("sales:void", async (_, id, reason) => {
@@ -5842,8 +6049,7 @@ function registerSalesHandlers() {
       });
       return { success: true, message: "Sale voided successfully" };
     } catch (error) {
-      console.error("Void sale error:", error);
-      return { success: false, message: "Failed to void sale" };
+      return handleIpcError("Void sale", error);
     }
   });
   electron.ipcMain.handle("sales:get-daily-summary", async (_, branchId, date) => {
@@ -5873,8 +6079,7 @@ function registerSalesHandlers() {
         }
       };
     } catch (error) {
-      console.error("Get daily summary error:", error);
-      return { success: false, message: "Failed to fetch daily summary" };
+      return handleIpcError("Get daily summary", error);
     }
   });
   electron.ipcMain.handle("sales:fix-payment-status", async (_, invoiceNumber) => {
@@ -5903,8 +6108,7 @@ function registerSalesHandlers() {
         data: { fixedCount }
       };
     } catch (error) {
-      console.error("Fix payment status error:", error);
-      return { success: false, message: "Failed to fix payment status" };
+      return handleIpcError("Fix payment status", error);
     }
   });
   electron.ipcMain.handle("sales:fix-orphaned-receivables", async () => {
@@ -5944,8 +6148,7 @@ function registerSalesHandlers() {
         data: { createdCount }
       };
     } catch (error) {
-      console.error("Fix orphaned receivables error:", error);
-      return { success: false, message: "Failed to fix orphaned receivables" };
+      return handleIpcError("Fix orphaned receivables", error);
     }
   });
 }
@@ -7050,8 +7253,7 @@ function registerReturnHandlers() {
       });
       return { success: true, data: result.returnRecord };
     } catch (error) {
-      console.error("Create return error:", error);
-      return { success: false, message: "Failed to create return" };
+      return handleIpcError("Create return", error);
     }
   });
   electron.ipcMain.handle(
@@ -7082,8 +7284,7 @@ function registerReturnHandlers() {
         };
         return { success: true, ...result };
       } catch (error) {
-        console.error("Get returns error:", error);
-        return { success: false, message: "Failed to fetch returns" };
+        return handleIpcError("Get returns", error);
       }
     }
   );
@@ -7118,8 +7319,7 @@ function registerReturnHandlers() {
         }
       };
     } catch (error) {
-      console.error("Get return error:", error);
-      return { success: false, message: "Failed to fetch return" };
+      return handleIpcError("Get return", error);
     }
   });
   electron.ipcMain.handle("returns:delete", async (_, id) => {
@@ -7134,19 +7334,21 @@ function registerReturnHandlers() {
       const items = await db2.query.returnItems.findMany({
         where: drizzleOrm.eq(returnItems.returnId, id)
       });
-      for (const item of items) {
-        const existingInventory = await db2.query.inventory.findFirst({
-          where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
-        });
-        if (existingInventory && item.restockable) {
-          await db2.update(inventory).set({
-            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+      await withTransaction(async ({ db: txDb }) => {
+        for (const item of items) {
+          const existingInventory = await txDb.query.inventory.findFirst({
+            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+          });
+          if (existingInventory && item.restockable) {
+            await txDb.update(inventory).set({
+              quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+          }
         }
-      }
-      await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
-      await db2.delete(returns).where(drizzleOrm.eq(returns.id, id));
+        await txDb.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
+        await txDb.delete(returns).where(drizzleOrm.eq(returns.id, id));
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: returnRecord.branchId,
@@ -7161,8 +7363,7 @@ function registerReturnHandlers() {
       });
       return { success: true, message: "Return deleted successfully" };
     } catch (error) {
-      console.error("Delete return error:", error);
-      return { success: false, message: "Failed to delete return" };
+      return handleIpcError("Delete return", error);
     }
   });
 }
@@ -7569,8 +7770,7 @@ function registerExpenseHandlers() {
         };
         return { success: true, ...result };
       } catch (error) {
-        console.error("Get expenses error:", error);
-        return { success: false, message: "Failed to fetch expenses" };
+        return handleIpcError("Get expenses", error);
       }
     }
   );
@@ -7597,8 +7797,7 @@ function registerExpenseHandlers() {
       }
       return { success: true, data: expense };
     } catch (error) {
-      console.error("Get expense error:", error);
-      return { success: false, message: "Failed to fetch expense" };
+      return handleIpcError("Get expense", error);
     }
   });
   electron.ipcMain.handle("expenses:create", async (_, data) => {
@@ -7700,8 +7899,7 @@ function registerExpenseHandlers() {
         payableCreated: !!result.payableId
       };
     } catch (error) {
-      console.error("Create expense error:", error);
-      return { success: false, message: "Failed to create expense" };
+      return handleIpcError("Create expense", error);
     }
   });
   electron.ipcMain.handle("expenses:update", async (_, id, data) => {
@@ -7722,6 +7920,7 @@ function registerExpenseHandlers() {
           message: "Supplier is required for unpaid expenses"
         };
       }
+      let shouldUpdatePayableAmount = false;
       if (existing.payableId && data.amount && data.amount !== existing.amount) {
         const payable = await db2.query.accountPayables.findFirst({
           where: drizzleOrm.eq(accountPayables.id, existing.payableId)
@@ -7733,11 +7932,7 @@ function registerExpenseHandlers() {
           };
         }
         if (payable) {
-          await db2.update(accountPayables).set({
-            totalAmount: data.amount,
-            remainingAmount: data.amount,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
+          shouldUpdatePayableAmount = true;
         }
       }
       if (existing.paymentStatus === "unpaid" && data.paymentStatus === "paid") {
@@ -7753,8 +7948,10 @@ function registerExpenseHandlers() {
           }
         }
       }
+      let shouldCreatePayable = false;
+      let supplierIdToUse;
       if (existing.paymentStatus === "paid" && data.paymentStatus === "unpaid") {
-        const supplierIdToUse = data.supplierId || existing.supplierId;
+        supplierIdToUse = data.supplierId || existing.supplierId;
         if (!supplierIdToUse) {
           return {
             success: false,
@@ -7768,8 +7965,21 @@ function registerExpenseHandlers() {
           };
         }
         if (!existing.payableId) {
+          shouldCreatePayable = true;
+        }
+      }
+      const txResult = await withTransaction(async ({ db: txDb }) => {
+        let createdPayableId;
+        if (shouldUpdatePayableAmount && existing.payableId && data.amount) {
+          await txDb.update(accountPayables).set({
+            totalAmount: data.amount,
+            remainingAmount: data.amount,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
+        }
+        if (shouldCreatePayable && supplierIdToUse) {
           const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
-          const payableResult = await db2.insert(accountPayables).values({
+          const payableResult = await txDb.insert(accountPayables).values({
             supplierId: supplierIdToUse,
             purchaseId: null,
             branchId: existing.branchId,
@@ -7783,25 +7993,30 @@ function registerExpenseHandlers() {
             notes: `Created from expense status change: expense #${existing.id}`,
             createdBy: session?.userId
           }).returning();
-          data.payableId = payableResult[0].id;
-          await createAuditLog$1({
-            userId: session?.userId,
-            branchId: existing.branchId,
-            action: "create",
-            entityType: "account_payable",
-            entityId: payableResult[0].id,
-            newValues: {
-              supplierId: supplierIdToUse,
-              invoiceNumber,
-              totalAmount: data.amount || existing.amount,
-              source: "expense_status_change",
-              expenseId: existing.id
-            },
-            description: `Created payable from expense #${existing.id} status change`
-          });
+          createdPayableId = payableResult[0].id;
+          data.payableId = createdPayableId;
         }
+        const result = await txDb.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
+        return { expenseResult: result, createdPayableId };
+      });
+      if (txResult.createdPayableId && supplierIdToUse) {
+        const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: existing.branchId,
+          action: "create",
+          entityType: "account_payable",
+          entityId: txResult.createdPayableId,
+          newValues: {
+            supplierId: supplierIdToUse,
+            invoiceNumber,
+            totalAmount: data.amount || existing.amount,
+            source: "expense_status_change",
+            expenseId: existing.id
+          },
+          description: `Created payable from expense #${existing.id} status change`
+        });
       }
-      const result = await db2.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
       await createAuditLog$1({
         userId: session?.userId,
         branchId: existing.branchId,
@@ -7812,10 +8027,9 @@ function registerExpenseHandlers() {
         newValues: sanitizeForAudit(data),
         description: `Updated expense #${id}`
       });
-      return { success: true, data: result[0] };
+      return { success: true, data: txResult.expenseResult[0] };
     } catch (error) {
-      console.error("Update expense error:", error);
-      return { success: false, message: "Failed to update expense" };
+      return handleIpcError("Update expense", error);
     }
   });
   electron.ipcMain.handle("expenses:delete", async (_, id) => {
@@ -7871,8 +8085,7 @@ Cancelled: Expense deleted`.trim(),
       });
       return { success: true, message: "Expense deleted successfully" };
     } catch (error) {
-      console.error("Delete expense error:", error);
-      return { success: false, message: "Failed to delete expense" };
+      return handleIpcError("Delete expense", error);
     }
   });
   electron.ipcMain.handle("expenses:get-by-category", async (_, branchId, startDate, endDate) => {
@@ -7890,8 +8103,7 @@ Cancelled: Expense deleted`.trim(),
       }).from(expenses).innerJoin(categoriesTable, drizzleOrm.eq(expenses.categoryId, categoriesTable.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categoriesTable.name);
       return { success: true, data };
     } catch (error) {
-      console.error("Get expenses by category error:", error);
-      return { success: false, message: "Failed to fetch expenses by category" };
+      return handleIpcError("Get expenses by category", error);
     }
   });
 }
@@ -13598,43 +13810,50 @@ function registerChartOfAccountsHandlers() {
     }
   );
   electron.ipcMain.handle("journal:post", async (_, entryId, postedBy) => {
-    const entry = await db2.query.journalEntries.findFirst({
-      where: drizzleOrm.eq(journalEntries.id, entryId),
-      with: {
-        lines: {
-          with: {
-            account: true
+    try {
+      const entry = await db2.query.journalEntries.findFirst({
+        where: drizzleOrm.eq(journalEntries.id, entryId),
+        with: {
+          lines: {
+            with: {
+              account: true
+            }
           }
         }
+      });
+      if (!entry) {
+        return { success: false, message: "Journal entry not found" };
       }
-    });
-    if (!entry) {
-      throw new Error("Journal entry not found");
-    }
-    if (entry.status !== "draft") {
-      throw new Error("Only draft entries can be posted");
-    }
-    for (const line of entry.lines) {
-      const account = line.account;
-      if (!account) continue;
-      let newBalance = account.currentBalance;
-      if (account.normalBalance === "debit") {
-        newBalance += line.debitAmount - line.creditAmount;
-      } else {
-        newBalance += line.creditAmount - line.debitAmount;
+      if (entry.status !== "draft") {
+        return { success: false, message: "Only draft entries can be posted" };
       }
-      await db2.update(chartOfAccounts).set({
-        currentBalance: newBalance,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+      const updated = await withTransaction(async ({ db: txDb }) => {
+        for (const line of entry.lines) {
+          const account = line.account;
+          if (!account) continue;
+          let newBalance = account.currentBalance;
+          if (account.normalBalance === "debit") {
+            newBalance += line.debitAmount - line.creditAmount;
+          } else {
+            newBalance += line.creditAmount - line.debitAmount;
+          }
+          await txDb.update(chartOfAccounts).set({
+            currentBalance: newBalance,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+        }
+        const [result] = await txDb.update(journalEntries).set({
+          status: "posted",
+          postedBy,
+          postedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(journalEntries.id, entryId)).returning();
+        return result;
+      });
+      return { success: true, data: updated };
+    } catch (error) {
+      return handleIpcError("Post journal entry", error);
     }
-    const [updated] = await db2.update(journalEntries).set({
-      status: "posted",
-      postedBy,
-      postedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }).where(drizzleOrm.eq(journalEntries.id, entryId)).returning();
-    return updated;
   });
   electron.ipcMain.handle(
     "journal:get-all",
@@ -13703,8 +13922,7 @@ function registerChartOfAccountsHandlers() {
           }
         };
       } catch (error) {
-        console.error("Get journal entries error:", error);
-        return { success: false, message: "Failed to fetch journal entries" };
+        return handleIpcError("Get journal entries", error);
       }
     }
   );
@@ -13770,8 +13988,7 @@ function registerChartOfAccountsHandlers() {
           }
         };
       } catch (error) {
-        console.error("Get journal summary error:", error);
-        return { success: false, message: "Failed to fetch journal summary" };
+        return handleIpcError("Get journal summary", error);
       }
     }
   );
@@ -13836,8 +14053,7 @@ function registerChartOfAccountsHandlers() {
           }
         };
       } catch (error) {
-        console.error("Export journal entries error:", error);
-        return { success: false, message: "Failed to export journal entries" };
+        return handleIpcError("Export journal entries", error);
       }
     }
   );
@@ -13891,6 +14107,165 @@ function registerChartOfAccountsHandlers() {
       };
     }
   );
+  electron.ipcMain.handle("coa:recalculate-balances", async () => {
+    try {
+      const allAccounts = await db2.query.chartOfAccounts.findMany();
+      const results = await withTransaction(async ({ db: txDb }) => {
+        const updated = [];
+        for (const account of allAccounts) {
+          const lines = await txDb.query.journalEntryLines.findMany({
+            where: drizzleOrm.eq(journalEntryLines.accountId, account.id),
+            with: {
+              journalEntry: true
+            }
+          });
+          const postedLines = lines.filter(
+            (line) => line.journalEntry && line.journalEntry.status === "posted"
+          );
+          let calculatedBalance = 0;
+          for (const line of postedLines) {
+            if (account.normalBalance === "debit") {
+              calculatedBalance += line.debitAmount - line.creditAmount;
+            } else {
+              calculatedBalance += line.creditAmount - line.debitAmount;
+            }
+          }
+          calculatedBalance = Math.round(calculatedBalance * 100) / 100;
+          if (calculatedBalance !== account.currentBalance) {
+            await txDb.update(chartOfAccounts).set({
+              currentBalance: calculatedBalance,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+            updated.push({
+              id: account.id,
+              accountCode: account.accountCode,
+              oldBalance: account.currentBalance,
+              newBalance: calculatedBalance
+            });
+          }
+        }
+        return updated;
+      });
+      return {
+        success: true,
+        data: {
+          totalAccounts: allAccounts.length,
+          adjustedCount: results.length,
+          adjustments: results
+        }
+      };
+    } catch (error) {
+      return handleIpcError("Recalculate balances", error);
+    }
+  });
+  electron.ipcMain.handle("coa:adjust-balance", async (_, accountId, targetBalance, reason, postedBy) => {
+    try {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (!account) {
+        return { success: false, message: "Account not found" };
+      }
+      const difference = targetBalance - account.currentBalance;
+      if (Math.abs(difference) < 0.01) {
+        return { success: true, message: "Balance is already correct", data: { adjusted: false } };
+      }
+      const adjustmentAccount = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(chartOfAccounts.accountCode, "3900"),
+          drizzleOrm.eq(chartOfAccounts.isActive, true)
+        )
+      });
+      const offsetAccount = adjustmentAccount || await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(chartOfAccounts.accountCode, "3200"),
+          drizzleOrm.eq(chartOfAccounts.isActive, true)
+        )
+      });
+      if (!offsetAccount) {
+        return { success: false, message: "No adjustment or retained earnings account found (3900 or 3200)" };
+      }
+      const result = await withTransaction(async ({ db: txDb }) => {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const entryDate = now.split("T")[0];
+        const year = (/* @__PURE__ */ new Date()).getFullYear();
+        const existingEntries = await txDb.query.journalEntries.findMany({
+          where: drizzleOrm.sql`${journalEntries.entryNumber} LIKE ${"ADJ-" + year + "-%"}`
+        });
+        const nextNum = existingEntries.length + 1;
+        const entryNumber = `ADJ-${year}-${String(nextNum).padStart(4, "0")}`;
+        const [entry] = await txDb.insert(journalEntries).values({
+          entryNumber,
+          entryDate,
+          description: `Balance adjustment: ${account.accountCode} ${account.accountName} - ${reason}`,
+          status: "posted",
+          isAutoGenerated: true,
+          postedBy,
+          postedAt: now,
+          createdAt: now,
+          updatedAt: now
+        }).returning();
+        let targetDebit = 0;
+        let targetCredit = 0;
+        if (account.normalBalance === "debit") {
+          if (difference > 0) {
+            targetDebit = difference;
+          } else {
+            targetCredit = Math.abs(difference);
+          }
+        } else {
+          if (difference > 0) {
+            targetCredit = difference;
+          } else {
+            targetDebit = Math.abs(difference);
+          }
+        }
+        await txDb.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: account.id,
+          debitAmount: targetDebit,
+          creditAmount: targetCredit,
+          description: `Adjust ${account.accountCode} balance to ${targetBalance}`,
+          createdAt: now,
+          updatedAt: now
+        });
+        await txDb.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: offsetAccount.id,
+          debitAmount: targetCredit,
+          // Opposite of target
+          creditAmount: targetDebit,
+          description: `Offset for ${account.accountCode} balance adjustment`,
+          createdAt: now,
+          updatedAt: now
+        });
+        await txDb.update(chartOfAccounts).set({ currentBalance: targetBalance, updatedAt: now }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+        let offsetDiff = 0;
+        if (offsetAccount.normalBalance === "debit") {
+          offsetDiff = targetCredit - targetDebit;
+        } else {
+          offsetDiff = targetDebit - targetCredit;
+        }
+        await txDb.update(chartOfAccounts).set({
+          currentBalance: offsetAccount.currentBalance + offsetDiff,
+          updatedAt: now
+        }).where(drizzleOrm.eq(chartOfAccounts.id, offsetAccount.id));
+        return { entryNumber, difference, entry };
+      });
+      return {
+        success: true,
+        data: {
+          adjusted: true,
+          oldBalance: account.currentBalance,
+          newBalance: targetBalance,
+          difference,
+          journalEntry: result.entryNumber
+        }
+      };
+    } catch (error) {
+      return handleIpcError("Adjust balance", error);
+    }
+  });
 }
 const fontSizeMap = {
   small: { base: 11, header: 16, title: 24, caption: 9 },

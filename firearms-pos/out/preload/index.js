@@ -295,7 +295,9 @@ const api = {
     getBalanceSheet: (branchId) => electron.ipcRenderer.invoke("coa:get-balance-sheet", branchId),
     getIncomeStatement: (startDate, endDate, branchId) => electron.ipcRenderer.invoke("coa:get-income-statement", startDate, endDate, branchId),
     getTrialBalance: (asOfDate) => electron.ipcRenderer.invoke("coa:get-trial-balance", asOfDate),
-    getLedger: (accountId, startDate, endDate) => electron.ipcRenderer.invoke("coa:get-ledger", accountId, startDate, endDate)
+    getLedger: (accountId, startDate, endDate) => electron.ipcRenderer.invoke("coa:get-ledger", accountId, startDate, endDate),
+    recalculateBalances: () => electron.ipcRenderer.invoke("coa:recalculate-balances"),
+    adjustBalance: (accountId, targetBalance, reason, postedBy) => electron.ipcRenderer.invoke("coa:adjust-balance", accountId, targetBalance, reason, postedBy)
   },
   // Journal Entries
   journal: {

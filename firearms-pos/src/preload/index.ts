@@ -422,6 +422,9 @@ const api = {
     getTrialBalance: (asOfDate?: string) => ipcRenderer.invoke('coa:get-trial-balance', asOfDate),
     getLedger: (accountId: number, startDate?: string, endDate?: string) =>
       ipcRenderer.invoke('coa:get-ledger', accountId, startDate, endDate),
+    recalculateBalances: () => ipcRenderer.invoke('coa:recalculate-balances'),
+    adjustBalance: (accountId: number, targetBalance: number, reason: string, postedBy: number) =>
+      ipcRenderer.invoke('coa:adjust-balance', accountId, targetBalance, reason, postedBy),
   },
 
   // Journal Entries
