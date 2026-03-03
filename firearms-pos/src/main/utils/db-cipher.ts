@@ -76,7 +76,10 @@ export function encryptDatabase(dbPath: string): { success: boolean; message: st
     // Open the plain database
     const plainDb = new Database(dbPath)
 
-    // Attach the encrypted database and export data to it
+    // Switch from WAL to DELETE journal mode (rekey not supported in WAL mode)
+    plainDb.pragma('journal_mode=DELETE')
+
+    // Encrypt the database by rekeying
     plainDb.pragma(`rekey='${key}'`)
     plainDb.close()
 
@@ -128,6 +131,9 @@ export function decryptDatabase(dbPath: string): { success: boolean; message: st
     // Open the encrypted database with the key
     const encDb = new Database(dbPath)
     encDb.pragma(`key='${key}'`)
+
+    // Switch from WAL to DELETE journal mode (rekey not supported in WAL mode)
+    encDb.pragma('journal_mode=DELETE')
 
     // Verify we can read the database
     const result = encDb.pragma('integrity_check')

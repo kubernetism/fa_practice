@@ -1736,6 +1736,7 @@ function encryptDatabase(dbPath) {
   const key = deriveEncryptionKey();
   try {
     const plainDb = new Database(dbPath);
+    plainDb.pragma("journal_mode=DELETE");
     plainDb.pragma(`rekey='${key}'`);
     plainDb.close();
     setEncryptionStatus(true);
@@ -1780,6 +1781,7 @@ function decryptDatabase(dbPath) {
   try {
     const encDb = new Database(dbPath);
     encDb.pragma(`key='${key}'`);
+    encDb.pragma("journal_mode=DELETE");
     const result = encDb.pragma("integrity_check");
     if (!Array.isArray(result) || result.length === 0) {
       encDb.close();
