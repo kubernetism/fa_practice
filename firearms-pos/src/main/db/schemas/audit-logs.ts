@@ -19,6 +19,10 @@ export const auditLogs = sqliteTable('audit_logs', {
       'transfer',
       'export',
       'view',
+      'reversal_request',
+      'reversal_review',
+      'reversal_executed',
+      'reversal_failed',
     ],
   }).notNull(),
   entityType: text('entity_type', {
@@ -37,6 +41,7 @@ export const auditLogs = sqliteTable('audit_logs', {
       'commission',
       'setting',
       'auth',
+      'reversal_request',
     ],
   }).notNull(),
   entityId: integer('entity_id'),

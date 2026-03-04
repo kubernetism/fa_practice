@@ -36,6 +36,8 @@ export const expenses = sqliteTable(
     payableId: integer('payable_id').references(() => accountPayables.id),
     dueDate: text('due_date'),
     paymentTerms: text('payment_terms'),
+    isVoided: integer('is_voided', { mode: 'boolean' }).notNull().default(false),
+    voidReason: text('void_reason'),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
