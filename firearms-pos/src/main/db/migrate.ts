@@ -173,6 +173,22 @@ export async function runMigrations(): Promise<void> {
     console.error('Default categories seeding error:', error)
     // Don't throw - log error but continue
   }
+
+  // Ensure reversal_requests table exists
+  try {
+    await ensureReversalRequestsTable()
+  } catch (error) {
+    console.error('Reversal requests table migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure expenses void fields exist
+  try {
+    await ensureExpensesVoidFields()
+  } catch (error) {
+    console.error('Expenses void fields migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -1339,4 +1355,90 @@ async function ensureDefaultExpenseAndServiceCategories(): Promise<void> {
   }
 
   console.log('Default expense and service categories ensured in categories table')
+}
+
+async function ensureReversalRequestsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if table exists
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='reversal_requests'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('Starting migration for reversal_requests table...')
+
+    const migrationSQL = `
+      CREATE TABLE IF NOT EXISTS "reversal_requests" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "request_number" text NOT NULL UNIQUE,
+        "entity_type" text NOT NULL,
+        "entity_id" integer NOT NULL,
+        "reason" text NOT NULL,
+        "priority" text DEFAULT 'medium' NOT NULL,
+        "status" text DEFAULT 'pending' NOT NULL,
+        "requested_by" integer NOT NULL,
+        "reviewed_by" integer,
+        "reviewed_at" text,
+        "rejection_reason" text,
+        "reversal_details" text,
+        "error_details" text,
+        "branch_id" integer NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("requested_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("reviewed_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "rr_status_idx" ON "reversal_requests" ("status");
+      CREATE INDEX IF NOT EXISTS "rr_entity_idx" ON "reversal_requests" ("entity_type", "entity_id");
+      CREATE INDEX IF NOT EXISTS "rr_branch_idx" ON "reversal_requests" ("branch_id");
+      CREATE INDEX IF NOT EXISTS "rr_priority_idx" ON "reversal_requests" ("priority");
+    `
+
+    db.exec(migrationSQL)
+    console.log('reversal_requests table migration completed successfully!')
+  } else {
+    console.log('reversal_requests table exists: true')
+  }
+}
+
+async function ensureExpensesVoidFields(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('expenses table does not exist, skipping void fields migration')
+    return
+  }
+
+  const tableInfo = db.prepare(`PRAGMA table_info(expenses)`).all() as Array<{ name: string }>
+  const existingColumns = new Set(tableInfo.map((col) => col.name))
+
+  const columnsToAdd = [
+    { name: 'is_voided', sql: `ALTER TABLE expenses ADD COLUMN is_voided INTEGER DEFAULT 0 NOT NULL` },
+    { name: 'void_reason', sql: `ALTER TABLE expenses ADD COLUMN void_reason TEXT` },
+  ]
+
+  for (const column of columnsToAdd) {
+    if (!existingColumns.has(column.name)) {
+      console.log(`Adding expenses.${column.name} column...`)
+      try {
+        db.exec(column.sql)
+        console.log(`expenses.${column.name} column added successfully`)
+      } catch (error) {
+        console.error(`Error adding expenses.${column.name} column:`, error)
+      }
+    } else {
+      console.log(`expenses.${column.name} column exists: true`)
+    }
+  }
+
+  console.log('expenses void fields migration completed successfully!')
 }
