@@ -3724,9 +3724,16 @@ function registerCategoryHandlers() {
   electron.ipcMain.handle("categories:get-all", async () => {
     try {
       const data = await db2.query.categories.findMany({
-        orderBy: drizzleOrm.desc(categories.name)
+        orderBy: categories.name
       });
-      return { success: true, data };
+      const seen = /* @__PURE__ */ new Map();
+      const uniqueData = data.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? "root"}`;
+        if (seen.has(key)) return false;
+        seen.set(key, true);
+        return true;
+      });
+      return { success: true, data: uniqueData };
     } catch (error) {
       console.error("Get categories error:", error);
       return { success: false, message: "Failed to fetch categories" };
@@ -3767,6 +3774,16 @@ function registerCategoryHandlers() {
   electron.ipcMain.handle("categories:create", async (_, data) => {
     try {
       const session = getCurrentSession();
+      const existing = await db2.query.categories.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(categories.name, data.name),
+          data.parentId ? drizzleOrm.eq(categories.parentId, data.parentId) : drizzleOrm.isNull(categories.parentId),
+          drizzleOrm.eq(categories.isActive, true)
+        )
+      });
+      if (existing) {
+        return { success: false, message: `Category "${data.name}" already exists${data.parentId ? " under this parent" : ""}` };
+      }
       const result = await db2.insert(categories).values(data).returning();
       const newCategory = result[0];
       await createAuditLog$1({
