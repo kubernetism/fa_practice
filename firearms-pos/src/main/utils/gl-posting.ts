@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { desc, eq, like } from 'drizzle-orm'
 import { getDatabase } from '../db/index'
 import {
   chartOfAccounts,
@@ -10,6 +10,7 @@ import {
   type PurchaseItem,
   type NewJournalEntry,
   type NewJournalEntryLine,
+  reversalRequests,
 } from '../db/schema'
 import { createAuditLog } from './audit'
 
@@ -58,6 +59,28 @@ function generateJournalEntryNumber(): string {
   const timestamp = Date.now().toString().slice(-6)
   const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
   return `JE-${year}-${timestamp}${random}`
+}
+
+/**
+ * Generate a unique reversal request number in format REV-YYYY-NNNN
+ */
+export async function generateReversalNumber(): Promise<string> {
+  const db = getDatabase()
+  const year = new Date().getFullYear()
+  const prefix = `REV-${year}-`
+
+  const lastEntry = await db.query.reversalRequests.findFirst({
+    where: like(reversalRequests.requestNumber, `${prefix}%`),
+    orderBy: [desc(reversalRequests.id)],
+  })
+
+  let nextNum = 1
+  if (lastEntry?.requestNumber) {
+    const lastNum = parseInt(lastEntry.requestNumber.replace(prefix, ''), 10)
+    if (!isNaN(lastNum)) nextNum = lastNum + 1
+  }
+
+  return `${prefix}${String(nextNum).padStart(4, '0')}`
 }
 
 /**
