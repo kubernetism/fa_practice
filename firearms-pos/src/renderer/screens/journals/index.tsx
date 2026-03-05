@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { RefreshCw, Download, FileText, BookOpen, CheckCircle, Clock, XCircle, Filter } from 'lucide-react'
+import { RefreshCw, Download, FileText, BookOpen, CheckCircle, Clock, XCircle, Filter, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -31,6 +31,7 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useBranch } from '@/contexts/branch-context'
 import { useAuth } from '@/contexts/auth-context'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
 
 interface JournalEntryLine {
   id: number
@@ -85,6 +86,10 @@ export function JournalsScreen() {
   const [isLoading, setIsLoading] = useState(true)
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null)
   const [showDetail, setShowDetail] = useState(false)
+
+  // Reversal request modal state
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTargetEntry, setReversalTargetEntry] = useState<JournalEntry | null>(null)
 
   // Filters
   const [dateRange, setDateRange] = useState({
@@ -473,9 +478,24 @@ export function JournalsScreen() {
                             <TableCell className="text-right font-mono">{formatCurrency(totalDebit)}</TableCell>
                             <TableCell className="text-right font-mono">{formatCurrency(totalCredit)}</TableCell>
                             <TableCell>
-                              <Button variant="ghost" size="sm" onClick={() => viewEntryDetail(entry)}>
-                                View
-                              </Button>
+                              <div className="flex items-center gap-1">
+                                <Button variant="ghost" size="sm" onClick={() => viewEntryDetail(entry)}>
+                                  View
+                                </Button>
+                                {entry.status !== 'reversed' && entry.status !== 'draft' && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      setReversalTargetEntry(entry)
+                                      setIsReversalModalOpen(true)
+                                    }}
+                                    title="Request Reversal"
+                                  >
+                                    <RotateCcw className="h-4 w-4 text-amber-500" />
+                                  </Button>
+                                )}
+                              </div>
                             </TableCell>
                           </TableRow>
                         )
@@ -513,6 +533,22 @@ export function JournalsScreen() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Reversal Request Modal */}
+      {reversalTargetEntry && (
+        <ReversalRequestModal
+          open={isReversalModalOpen}
+          onClose={() => {
+            setIsReversalModalOpen(false)
+            setReversalTargetEntry(null)
+          }}
+          entityType="journal_entry"
+          entityId={reversalTargetEntry.id}
+          entityLabel={`Journal Entry #${reversalTargetEntry.entryNumber}`}
+          branchId={reversalTargetEntry.branchId ?? currentBranch?.id ?? 0}
+          onSuccess={() => { fetchEntries(); fetchSummary() }}
+        />
+      )}
 
       {/* Entry Detail Dialog */}
       <Dialog open={showDetail} onOpenChange={setShowDetail}>

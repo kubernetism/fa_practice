@@ -19,6 +19,7 @@ import {
   Clock,
   FileText,
   Ban,
+  RotateCcw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,6 +52,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { useBranch } from '@/contexts/branch-context'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
 
 interface Sale {
   id: number
@@ -164,6 +166,10 @@ export function SalesHistoryScreen() {
   const [voidingSale, setVoidingSale] = useState<Sale | null>(null)
   const [voidReason, setVoidReason] = useState('')
   const [isVoiding, setIsVoiding] = useState(false)
+
+  // Reversal request modal state
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTargetSale, setReversalTargetSale] = useState<Sale | null>(null)
 
   // Summary stats
   const [summary, setSummary] = useState<SalesSummary>({
@@ -798,6 +804,19 @@ export function SalesHistoryScreen() {
                             <Ban className="h-4 w-4 text-destructive" />
                           </Button>
                         )}
+                        {!sale.isVoided && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setReversalTargetSale(sale)
+                              setIsReversalModalOpen(true)
+                            }}
+                            title="Request Reversal"
+                          >
+                            <RotateCcw className="h-4 w-4 text-amber-500" />
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1021,6 +1040,22 @@ export function SalesHistoryScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reversal Request Modal */}
+      {reversalTargetSale && (
+        <ReversalRequestModal
+          open={isReversalModalOpen}
+          onClose={() => {
+            setIsReversalModalOpen(false)
+            setReversalTargetSale(null)
+          }}
+          entityType="sale"
+          entityId={reversalTargetSale.id}
+          entityLabel={`Sale #${reversalTargetSale.invoiceNumber}`}
+          branchId={reversalTargetSale.branchId}
+          onSuccess={fetchData}
+        />
+      )}
 
       {/* Void Sale Dialog */}
       <Dialog open={isVoidDialogOpen} onOpenChange={setIsVoidDialogOpen}>

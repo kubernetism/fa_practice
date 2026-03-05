@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Search, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useBranch } from '@/contexts/branch-context'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
 
 interface Category {
   id: number
@@ -39,6 +40,7 @@ interface Expense {
   reference: string | null
   expenseDate: string
   paymentStatus: 'paid' | 'unpaid'
+  isVoided: boolean
   supplierId: number | null
   payableId: number | null
   dueDate: string | null
@@ -107,6 +109,10 @@ export default function ExpensesScreen() {
   const [searchTerm, setSearchTerm] = useState('')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [formData, setFormData] = useState<ExpenseFormData>(initialFormData)
+
+  // Reversal request modal state
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTargetExpense, setReversalTargetExpense] = useState<Expense | null>(null)
 
   useEffect(() => {
     if (currentBranch) {
@@ -371,6 +377,19 @@ export default function ExpensesScreen() {
                     <Button variant="ghost" size="sm" onClick={() => handleDelete(expense.id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
+                    {!expense.isVoided && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setReversalTargetExpense(expense)
+                          setIsReversalModalOpen(true)
+                        }}
+                        title="Request Reversal"
+                      >
+                        <RotateCcw className="h-4 w-4 text-amber-500" />
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -378,6 +397,22 @@ export default function ExpensesScreen() {
           </div>
         )}
       </div>
+
+      {/* Reversal Request Modal */}
+      {reversalTargetExpense && (
+        <ReversalRequestModal
+          open={isReversalModalOpen}
+          onClose={() => {
+            setIsReversalModalOpen(false)
+            setReversalTargetExpense(null)
+          }}
+          entityType="expense"
+          entityId={reversalTargetExpense.id}
+          entityLabel={`Expense #${reversalTargetExpense.id} — ${reversalTargetExpense.category?.name || 'Uncategorized'}`}
+          branchId={reversalTargetExpense.branchId}
+          onSuccess={fetchExpenses}
+        />
+      )}
 
       {/* Add Expense Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
