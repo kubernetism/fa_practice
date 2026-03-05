@@ -36,6 +36,7 @@ import { registerDiscountManagementHandlers } from './discount-management-ipc'
 import { registerInventoryCountsHandlers } from './inventory-counts-ipc'
 import { registerServicesHandlers } from './services-ipc'
 import { registerVoucherHandlers } from './vouchers-ipc'
+import { registerReversalHandlers } from './reversal-ipc'
 
 // Re-export lock state from the centralized module
 export { isApplicationLocked, setApplicationLocked, checkLockGuard } from '../utils/app-lock-state'
@@ -79,6 +80,7 @@ export function registerAllHandlers(): void {
   registerInventoryCountsHandlers()
   registerServicesHandlers()
   registerVoucherHandlers()
+  registerReversalHandlers()
 
   console.log('All IPC handlers registered')
 }
