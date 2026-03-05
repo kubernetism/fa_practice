@@ -511,24 +511,24 @@ export function AccountReceivablesScreen() {
                             )}
                           </Button>
                         )}
+                        {receivable.status !== 'cancelled' && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setReversalTarget(receivable)
+                              setIsReversalModalOpen(true)
+                            }}
+                            title="Request Reversal"
+                          >
+                            <RotateCcw className="h-4 w-4 text-amber-500" />
+                          </Button>
+                        )}
                         {receivable.status !== 'paid' && receivable.status !== 'cancelled' && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setReversalTarget(receivable)
-                                setIsReversalModalOpen(true)
-                              }}
-                              title="Request Reversal"
-                            >
-                              <RotateCcw className="h-4 w-4 text-amber-500" />
-                            </Button>
-                            <Button variant="outline" size="sm" onClick={() => openPaymentDialog(receivable)}>
-                              <CreditCard className="mr-1 h-4 w-4" />
-                              Pay
-                            </Button>
-                          </>
+                          <Button variant="outline" size="sm" onClick={() => openPaymentDialog(receivable)}>
+                            <CreditCard className="mr-1 h-4 w-4" />
+                            Pay
+                          </Button>
                         )}
                       </div>
                     </TableCell>

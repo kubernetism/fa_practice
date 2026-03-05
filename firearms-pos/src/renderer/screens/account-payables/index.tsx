@@ -453,24 +453,24 @@ export function AccountPayablesScreen() {
                             <Button variant="ghost" size="sm" onClick={() => viewDetails(payable)}>
                               <Eye className="h-4 w-4" />
                             </Button>
+                            {payable.status !== 'cancelled' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setReversalTarget(payable)
+                                  setIsReversalModalOpen(true)
+                                }}
+                                title="Request Reversal"
+                              >
+                                <RotateCcw className="h-4 w-4 text-amber-500" />
+                              </Button>
+                            )}
                             {payable.status !== 'paid' && payable.status !== 'cancelled' && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    setReversalTarget(payable)
-                                    setIsReversalModalOpen(true)
-                                  }}
-                                  title="Request Reversal"
-                                >
-                                  <RotateCcw className="h-4 w-4 text-amber-500" />
-                                </Button>
-                                <Button variant="outline" size="sm" onClick={() => openPaymentDialog(payable)}>
-                                  <CreditCard className="mr-1 h-4 w-4" />
-                                  Pay
-                                </Button>
-                              </>
+                              <Button variant="outline" size="sm" onClick={() => openPaymentDialog(payable)}>
+                                <CreditCard className="mr-1 h-4 w-4" />
+                                Pay
+                              </Button>
                             )}
                           </div>
                         </TableCell>
