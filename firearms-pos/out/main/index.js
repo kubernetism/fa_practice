@@ -522,6 +522,8 @@ const expenses = sqliteCore.sqliteTable(
     payableId: sqliteCore.integer("payable_id").references(() => accountPayables.id),
     dueDate: sqliteCore.text("due_date"),
     paymentTerms: sqliteCore.text("payment_terms"),
+    isVoided: sqliteCore.integer("is_voided", { mode: "boolean" }).notNull().default(false),
+    voidReason: sqliteCore.text("void_reason"),
     createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
     updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
   },
@@ -609,7 +611,11 @@ const auditLogs = sqliteCore.sqliteTable("audit_logs", {
       "adjustment",
       "transfer",
       "export",
-      "view"
+      "view",
+      "reversal_request",
+      "reversal_review",
+      "reversal_executed",
+      "reversal_failed"
     ]
   }).notNull(),
   entityType: sqliteCore.text("entity_type", {
@@ -627,7 +633,8 @@ const auditLogs = sqliteCore.sqliteTable("audit_logs", {
       "expense",
       "commission",
       "setting",
-      "auth"
+      "auth",
+      "reversal_request"
     ]
   }).notNull(),
   entityId: sqliteCore.integer("entity_id"),
@@ -1471,6 +1478,69 @@ const vouchers = sqliteCore.sqliteTable("vouchers", {
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const reversalRequests = sqliteCore.sqliteTable(
+  "reversal_requests",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    requestNumber: sqliteCore.text("request_number").notNull().unique(),
+    // REV-YYYY-NNNN
+    entityType: sqliteCore.text("entity_type", {
+      enum: [
+        "sale",
+        "purchase",
+        "expense",
+        "journal_entry",
+        "ar_payment",
+        "ap_payment",
+        "stock_adjustment",
+        "stock_transfer",
+        "commission",
+        "return",
+        "receivable",
+        "payable"
+      ]
+    }).notNull(),
+    entityId: sqliteCore.integer("entity_id").notNull(),
+    reason: sqliteCore.text("reason").notNull(),
+    priority: sqliteCore.text("priority", {
+      enum: ["low", "medium", "high", "urgent"]
+    }).notNull().default("medium"),
+    status: sqliteCore.text("status", {
+      enum: ["pending", "approved", "rejected", "completed", "failed"]
+    }).notNull().default("pending"),
+    requestedBy: sqliteCore.integer("requested_by").notNull().references(() => users.id),
+    reviewedBy: sqliteCore.integer("reviewed_by").references(() => users.id),
+    reviewedAt: sqliteCore.text("reviewed_at"),
+    rejectionReason: sqliteCore.text("rejection_reason"),
+    reversalDetails: sqliteCore.text("reversal_details", { mode: "json" }).$type(),
+    errorDetails: sqliteCore.text("error_details"),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    statusIdx: sqliteCore.index("rr_status_idx").on(table.status),
+    entityIdx: sqliteCore.index("rr_entity_idx").on(table.entityType, table.entityId),
+    branchIdx: sqliteCore.index("rr_branch_idx").on(table.branchId),
+    priorityIdx: sqliteCore.index("rr_priority_idx").on(table.priority)
+  })
+);
+const reversalRequestsRelations = drizzleOrm.relations(reversalRequests, ({ one }) => ({
+  requestedByUser: one(users, {
+    fields: [reversalRequests.requestedBy],
+    references: [users.id],
+    relationName: "requestedBy"
+  }),
+  reviewedByUser: one(users, {
+    fields: [reversalRequests.reviewedBy],
+    references: [users.id],
+    relationName: "reviewedBy"
+  }),
+  branch: one(branches, {
+    fields: [reversalRequests.branchId],
+    references: [branches.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1517,6 +1587,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   referralPersons,
   returnItems,
   returns,
+  reversalRequests,
+  reversalRequestsRelations,
   saleItems,
   salePayments,
   saleServices,
@@ -2214,6 +2286,16 @@ async function runMigrations() {
     await ensureDefaultExpenseAndServiceCategories();
   } catch (error) {
     console.error("Default categories seeding error:", error);
+  }
+  try {
+    await ensureReversalRequestsTable();
+  } catch (error) {
+    console.error("Reversal requests table migration error:", error);
+  }
+  try {
+    await ensureExpensesVoidFields();
+  } catch (error) {
+    console.error("Expenses void fields migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -3194,6 +3276,79 @@ async function ensureDefaultExpenseAndServiceCategories() {
   }
   console.log("Default expense and service categories ensured in categories table");
 }
+async function ensureReversalRequestsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='reversal_requests'`
+  ).get();
+  if (!tableCheck) {
+    console.log("Starting migration for reversal_requests table...");
+    const migrationSQL = `
+      CREATE TABLE IF NOT EXISTS "reversal_requests" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "request_number" text NOT NULL UNIQUE,
+        "entity_type" text NOT NULL,
+        "entity_id" integer NOT NULL,
+        "reason" text NOT NULL,
+        "priority" text DEFAULT 'medium' NOT NULL,
+        "status" text DEFAULT 'pending' NOT NULL,
+        "requested_by" integer NOT NULL,
+        "reviewed_by" integer,
+        "reviewed_at" text,
+        "rejection_reason" text,
+        "reversal_details" text,
+        "error_details" text,
+        "branch_id" integer NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("requested_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("reviewed_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "rr_status_idx" ON "reversal_requests" ("status");
+      CREATE INDEX IF NOT EXISTS "rr_entity_idx" ON "reversal_requests" ("entity_type", "entity_id");
+      CREATE INDEX IF NOT EXISTS "rr_branch_idx" ON "reversal_requests" ("branch_id");
+      CREATE INDEX IF NOT EXISTS "rr_priority_idx" ON "reversal_requests" ("priority");
+    `;
+    db2.exec(migrationSQL);
+    console.log("reversal_requests table migration completed successfully!");
+  } else {
+    console.log("reversal_requests table exists: true");
+  }
+}
+async function ensureExpensesVoidFields() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get();
+  if (!tableCheck) {
+    console.log("expenses table does not exist, skipping void fields migration");
+    return;
+  }
+  const tableInfo = db2.prepare(`PRAGMA table_info(expenses)`).all();
+  const existingColumns = new Set(tableInfo.map((col) => col.name));
+  const columnsToAdd = [
+    { name: "is_voided", sql: `ALTER TABLE expenses ADD COLUMN is_voided INTEGER DEFAULT 0 NOT NULL` },
+    { name: "void_reason", sql: `ALTER TABLE expenses ADD COLUMN void_reason TEXT` }
+  ];
+  for (const column of columnsToAdd) {
+    if (!existingColumns.has(column.name)) {
+      console.log(`Adding expenses.${column.name} column...`);
+      try {
+        db2.exec(column.sql);
+        console.log(`expenses.${column.name} column added successfully`);
+      } catch (error) {
+        console.error(`Error adding expenses.${column.name} column:`, error);
+      }
+    } else {
+      console.log(`expenses.${column.name} column exists: true`);
+    }
+  }
+  console.log("expenses void fields migration completed successfully!");
+}
 function getLocalIpAddress() {
   try {
     const nets = os.networkInterfaces();
@@ -3931,6 +4086,21 @@ function generateJournalEntryNumber() {
   const timestamp = Date.now().toString().slice(-6);
   const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
   return `JE-${year}-${timestamp}${random}`;
+}
+async function generateReversalNumber() {
+  const db2 = getDatabase();
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const prefix = `REV-${year}-`;
+  const lastEntry = await db2.query.reversalRequests.findFirst({
+    where: drizzleOrm.like(reversalRequests.requestNumber, `${prefix}%`),
+    orderBy: [drizzleOrm.desc(reversalRequests.id)]
+  });
+  let nextNum = 1;
+  if (lastEntry?.requestNumber) {
+    const lastNum = parseInt(lastEntry.requestNumber.replace(prefix, ""), 10);
+    if (!isNaN(lastNum)) nextNum = lastNum + 1;
+  }
+  return `${prefix}${String(nextNum).padStart(4, "0")}`;
 }
 const DEFAULT_ACCOUNTS = {
   "1010": {
@@ -19866,6 +20036,728 @@ function registerVoucherHandlers() {
     }
   });
 }
+async function reverseGLEntry(referenceType, referenceId, description, branchId, userId) {
+  const db2 = getDatabase();
+  const jeEntry = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(journalEntries.referenceType, referenceType),
+      drizzleOrm.eq(journalEntries.referenceId, referenceId),
+      drizzleOrm.eq(journalEntries.status, "posted")
+    )
+  });
+  if (!jeEntry) return { reversed: false };
+  const lines = await db2.query.journalEntryLines.findMany({
+    where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+  });
+  const reversingLines = [];
+  for (const line of lines) {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+    });
+    if (!account) {
+      throw new Error(`Account #${line.accountId} not found when reversing GL entry`);
+    }
+    reversingLines.push({
+      accountCode: account.accountCode,
+      debitAmount: line.creditAmount,
+      // swap
+      creditAmount: line.debitAmount,
+      // swap
+      description: `Reversal: ${line.description || ""}`
+    });
+  }
+  const reversalEntryId = await createJournalEntry({
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    userId,
+    lines: reversingLines
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db2.update(journalEntries).set({
+    status: "reversed",
+    reversedBy: userId,
+    reversedAt: now,
+    reversalEntryId,
+    updatedAt: now
+  }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
+  return { reversed: true, originalEntryId: jeEntry.id, reversalEntryId };
+}
+async function executeSaleReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const sale = await db2.query.sales.findFirst({
+    where: drizzleOrm.eq(sales.id, entityId)
+  });
+  if (!sale) throw new Error(`Sale #${entityId} not found`);
+  if (sale.isVoided) throw new Error(`Sale #${entityId} is already voided`);
+  const items = await db2.query.saleItems.findMany({
+    where: drizzleOrm.eq(saleItems.saleId, entityId)
+  });
+  for (const item of items) {
+    await db2.update(inventory).set({
+      quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(
+      drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, sale.branchId))
+    );
+    await restoreCostLayers({
+      productId: item.productId,
+      branchId: sale.branchId,
+      quantity: item.quantity,
+      unitCost: item.costPrice,
+      referenceId: sale.id
+    });
+  }
+  await db2.update(sales).set({
+    isVoided: true,
+    voidReason: "Reversed via reversal system",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(sales.id, entityId));
+  const cancelledCommissions = await db2.update(commissions).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(commissions.saleId, entityId)).returning();
+  const linkedReceivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.saleId, entityId)
+  });
+  if (linkedReceivable) {
+    await db2.update(accountReceivables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
+  }
+  const reversalJEId = await postVoidSaleToGL(
+    sale,
+    items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
+    userId
+  );
+  return {
+    reversalDetails: {
+      saleId: entityId,
+      invoiceNumber: sale.invoiceNumber,
+      itemsRestored: items.length,
+      commissionssCancelled: cancelledCommissions.length,
+      receivableCancelled: linkedReceivable?.id ?? null,
+      reversalJournalEntryId: reversalJEId
+    }
+  };
+}
+async function executeExpenseReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const expense = await db2.query.expenses.findFirst({
+    where: drizzleOrm.eq(expenses.id, entityId)
+  });
+  if (!expense) throw new Error(`Expense #${entityId} not found`);
+  if (expense.isVoided) throw new Error(`Expense #${entityId} is already voided`);
+  let cancelledPayableId = null;
+  if (expense.payableId) {
+    await db2.update(accountPayables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountPayables.id, expense.payableId));
+    cancelledPayableId = expense.payableId;
+  }
+  await db2.update(expenses).set({
+    isVoided: true,
+    voidReason: "Reversed via reversal system",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(expenses.id, entityId));
+  const glResult = await reverseGLEntry(
+    "expense",
+    entityId,
+    `Reversal of expense #${entityId}`,
+    expense.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      expenseId: entityId,
+      amount: expense.amount,
+      cancelledPayableId,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeJournalEntryReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const jeEntry = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.eq(journalEntries.id, entityId)
+  });
+  if (!jeEntry) throw new Error(`Journal entry #${entityId} not found`);
+  if (jeEntry.status === "draft") {
+    throw new Error(`Journal entry #${entityId} is a draft and cannot be reversed — delete it instead`);
+  }
+  if (jeEntry.status === "reversed") {
+    throw new Error(`Journal entry #${entityId} is already reversed`);
+  }
+  const lines = await db2.query.journalEntryLines.findMany({
+    where: drizzleOrm.eq(journalEntryLines.journalEntryId, entityId)
+  });
+  const reversingLines = [];
+  for (const line of lines) {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+    });
+    if (!account) {
+      throw new Error(`Account #${line.accountId} not found when reversing journal entry`);
+    }
+    reversingLines.push({
+      accountCode: account.accountCode,
+      debitAmount: line.creditAmount,
+      // swap
+      creditAmount: line.debitAmount,
+      // swap
+      description: `Reversal: ${line.description || ""}`
+    });
+  }
+  const reversalEntryId = await createJournalEntry({
+    description: `Reversal of ${jeEntry.entryNumber}: ${jeEntry.description}`,
+    referenceType: jeEntry.referenceType || "journal_entry",
+    referenceId: jeEntry.referenceId || entityId,
+    branchId: jeEntry.branchId || 1,
+    userId,
+    lines: reversingLines
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db2.update(journalEntries).set({
+    status: "reversed",
+    reversedBy: userId,
+    reversedAt: now,
+    reversalEntryId,
+    updatedAt: now
+  }).where(drizzleOrm.eq(journalEntries.id, entityId));
+  return {
+    reversalDetails: {
+      journalEntryId: entityId,
+      entryNumber: jeEntry.entryNumber,
+      originalDescription: jeEntry.description,
+      linesReversed: lines.length,
+      reversalEntryId
+    }
+  };
+}
+async function executePurchaseReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const purchase = await db2.query.purchases.findFirst({
+    where: drizzleOrm.eq(purchases.id, entityId)
+  });
+  if (!purchase) throw new Error(`Purchase #${entityId} not found`);
+  if (purchase.status === "cancelled") {
+    throw new Error(`Purchase #${entityId} is already cancelled`);
+  }
+  const items = await db2.query.purchaseItems.findMany({
+    where: drizzleOrm.eq(purchaseItems.purchaseId, entityId)
+  });
+  let inventoryDeducted = false;
+  if (purchase.status === "received" || purchase.status === "partial") {
+    for (const item of items) {
+      if (item.receivedQuantity > 0) {
+        await db2.update(inventory).set({
+          quantity: drizzleOrm.sql`${inventory.quantity} - ${item.receivedQuantity}`,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(inventory.productId, item.productId),
+            drizzleOrm.eq(inventory.branchId, purchase.branchId)
+          )
+        );
+        await db2.update(inventoryCostLayers).set({
+          quantity: 0,
+          isFullyConsumed: true,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(inventoryCostLayers.purchaseItemId, item.id));
+      }
+    }
+    inventoryDeducted = true;
+  }
+  let cancelledPayableId = null;
+  const linkedPayable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.purchaseId, entityId)
+  });
+  if (linkedPayable && linkedPayable.status !== "cancelled") {
+    await db2.update(accountPayables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountPayables.id, linkedPayable.id));
+    cancelledPayableId = linkedPayable.id;
+  }
+  await db2.update(purchases).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(purchases.id, entityId));
+  const glResult = await reverseGLEntry(
+    "purchase",
+    entityId,
+    `Reversal of purchase ${purchase.purchaseOrderNumber}`,
+    purchase.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      purchaseId: entityId,
+      purchaseOrderNumber: purchase.purchaseOrderNumber,
+      inventoryDeducted,
+      itemsAffected: items.length,
+      cancelledPayableId,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeARPaymentReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payment = await db2.query.receivablePayments.findFirst({
+    where: drizzleOrm.eq(receivablePayments.id, entityId)
+  });
+  if (!payment) throw new Error(`Receivable payment #${entityId} not found`);
+  const receivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.id, payment.receivableId)
+  });
+  if (!receivable) throw new Error(`Account receivable #${payment.receivableId} not found`);
+  const newPaidAmount = receivable.paidAmount - payment.amount;
+  const newRemainingAmount = receivable.totalAmount - newPaidAmount;
+  let newStatus;
+  if (newPaidAmount <= 0) {
+    newStatus = "pending";
+  } else if (newPaidAmount < receivable.totalAmount) {
+    newStatus = "partial";
+  } else {
+    newStatus = "paid";
+  }
+  await db2.update(accountReceivables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: newRemainingAmount,
+    status: newStatus,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountReceivables.id, payment.receivableId));
+  const glResult = await reverseGLEntry(
+    "receivable_payment",
+    entityId,
+    `Reversal of AR payment #${entityId} for invoice ${receivable.invoiceNumber}`,
+    receivable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      paymentId: entityId,
+      receivableId: payment.receivableId,
+      invoiceNumber: receivable.invoiceNumber,
+      amountReversed: payment.amount,
+      newPaidAmount,
+      newRemainingAmount,
+      newReceivableStatus: newStatus,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeAPPaymentReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payment = await db2.query.payablePayments.findFirst({
+    where: drizzleOrm.eq(payablePayments.id, entityId)
+  });
+  if (!payment) throw new Error(`Payable payment #${entityId} not found`);
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.id, payment.payableId)
+  });
+  if (!payable) throw new Error(`Account payable #${payment.payableId} not found`);
+  const newPaidAmount = payable.paidAmount - payment.amount;
+  const newRemainingAmount = payable.totalAmount - newPaidAmount;
+  let newStatus;
+  if (newPaidAmount <= 0) {
+    newStatus = "pending";
+  } else if (newPaidAmount < payable.totalAmount) {
+    newStatus = "partial";
+  } else {
+    newStatus = "paid";
+  }
+  await db2.update(accountPayables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: newRemainingAmount,
+    status: newStatus,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountPayables.id, payment.payableId));
+  const glResult = await reverseGLEntry(
+    "payable_payment",
+    entityId,
+    `Reversal of AP payment #${entityId} for invoice ${payable.invoiceNumber}`,
+    payable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      paymentId: entityId,
+      payableId: payment.payableId,
+      invoiceNumber: payable.invoiceNumber,
+      amountReversed: payment.amount,
+      newPaidAmount,
+      newRemainingAmount,
+      newPayableStatus: newStatus,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeCommissionReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const commission = await db2.query.commissions.findFirst({
+    where: drizzleOrm.eq(commissions.id, entityId)
+  });
+  if (!commission) throw new Error(`Commission #${entityId} not found`);
+  if (commission.status === "cancelled") {
+    throw new Error(`Commission #${entityId} is already cancelled`);
+  }
+  await db2.update(commissions).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(commissions.id, entityId));
+  const glResult = await reverseGLEntry(
+    "commission",
+    entityId,
+    `Reversal of commission #${entityId}`,
+    commission.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      commissionId: entityId,
+      saleId: commission.saleId,
+      commissionAmount: commission.commissionAmount,
+      previousStatus: commission.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReversal(entityType, entityId, userId) {
+  switch (entityType) {
+    case "sale":
+      return executeSaleReversal(entityId, userId);
+    case "expense":
+      return executeExpenseReversal(entityId, userId);
+    case "journal_entry":
+      return executeJournalEntryReversal(entityId, userId);
+    case "purchase":
+      return executePurchaseReversal(entityId, userId);
+    case "receivable_payment":
+      return executeARPaymentReversal(entityId, userId);
+    case "payable_payment":
+      return executeAPPaymentReversal(entityId, userId);
+    case "commission":
+      return executeCommissionReversal(entityId, userId);
+    case "stock_adjustment":
+    case "stock_transfer":
+    case "return":
+      throw new Error(`Reversal for entity type '${entityType}' is not yet implemented`);
+    default:
+      throw new Error(`Unknown entity type for reversal: '${entityType}'`);
+  }
+}
+function registerReversalHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "reversal:create",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Not authenticated" };
+        const existing = await db2.query.reversalRequests.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(reversalRequests.entityType, data.entityType),
+            drizzleOrm.eq(reversalRequests.entityId, data.entityId),
+            drizzleOrm.inArray(reversalRequests.status, ["pending", "approved"])
+          )
+        });
+        if (existing) {
+          return {
+            success: false,
+            message: `An active reversal request (${existing.requestNumber}) already exists for this ${data.entityType}`
+          };
+        }
+        const requestNumber = await generateReversalNumber();
+        const [created] = await db2.insert(reversalRequests).values({
+          requestNumber,
+          entityType: data.entityType,
+          entityId: data.entityId,
+          reason: data.reason,
+          priority: data.priority || "medium",
+          status: "pending",
+          requestedBy: session.userId,
+          branchId: data.branchId
+        }).returning();
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: data.branchId,
+          action: "reversal_request",
+          entityType: "reversal_request",
+          entityId: created.id,
+          newValues: {
+            requestNumber,
+            entityType: data.entityType,
+            entityId: data.entityId,
+            reason: data.reason,
+            priority: data.priority || "medium"
+          },
+          description: `Created reversal request ${requestNumber} for ${data.entityType} #${data.entityId}`
+        });
+        return { success: true, data: created };
+      } catch (error) {
+        return handleIpcError("Create reversal request", error);
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reversal:list",
+    async (_, params = {}) => {
+      try {
+        const { page = 1, limit = 20, status, entityType, priority, branchId } = params;
+        const conditions = [];
+        if (status) conditions.push(drizzleOrm.eq(reversalRequests.status, status));
+        if (entityType) conditions.push(drizzleOrm.eq(reversalRequests.entityType, entityType));
+        if (priority) conditions.push(drizzleOrm.eq(reversalRequests.priority, priority));
+        if (branchId) conditions.push(drizzleOrm.eq(reversalRequests.branchId, branchId));
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(reversalRequests).where(whereClause);
+        const total = countResult[0].count;
+        const data = await db2.query.reversalRequests.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: drizzleOrm.desc(reversalRequests.createdAt),
+          with: {
+            requestedByUser: true,
+            reviewedByUser: true,
+            branch: true
+          }
+        });
+        return {
+          success: true,
+          data,
+          pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+        };
+      } catch (error) {
+        return handleIpcError("List reversal requests", error);
+      }
+    }
+  );
+  electron.ipcMain.handle("reversal:get", async (_, id) => {
+    try {
+      const request = await db2.query.reversalRequests.findFirst({
+        where: drizzleOrm.eq(reversalRequests.id, id),
+        with: {
+          requestedByUser: true,
+          reviewedByUser: true,
+          branch: true
+        }
+      });
+      if (!request) {
+        return { success: false, message: `Reversal request #${id} not found` };
+      }
+      return { success: true, data: request };
+    } catch (error) {
+      return handleIpcError("Get reversal request", error);
+    }
+  });
+  electron.ipcMain.handle("reversal:approve", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Not authenticated" };
+      const request = await db2.query.reversalRequests.findFirst({
+        where: drizzleOrm.eq(reversalRequests.id, id)
+      });
+      if (!request) {
+        return { success: false, message: `Reversal request #${id} not found` };
+      }
+      if (request.status !== "pending") {
+        return {
+          success: false,
+          message: `Cannot approve: request is '${request.status}', not 'pending'`
+        };
+      }
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      await db2.update(reversalRequests).set({
+        status: "approved",
+        reviewedBy: session.userId,
+        reviewedAt: now,
+        updatedAt: now
+      }).where(drizzleOrm.eq(reversalRequests.id, id));
+      try {
+        const result = await withTransaction(async () => {
+          return executeReversal(request.entityType, request.entityId, session.userId);
+        });
+        await db2.update(reversalRequests).set({
+          status: "completed",
+          reversalDetails: result.reversalDetails,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_executed",
+          entityType: "reversal_request",
+          entityId: id,
+          newValues: { status: "completed", reversalDetails: result.reversalDetails },
+          description: `Approved and executed reversal ${request.requestNumber} for ${request.entityType} #${request.entityId}`
+        });
+        return { success: true, data: result.reversalDetails };
+      } catch (execError) {
+        const errorMessage = execError instanceof Error ? execError.message : String(execError);
+        await db2.update(reversalRequests).set({
+          status: "failed",
+          errorDetails: errorMessage,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_failed",
+          entityType: "reversal_request",
+          entityId: id,
+          newValues: { status: "failed", errorDetails: errorMessage },
+          description: `Reversal ${request.requestNumber} failed: ${errorMessage}`
+        });
+        return { success: false, message: `Reversal execution failed: ${errorMessage}` };
+      }
+    } catch (error) {
+      return handleIpcError("Approve reversal request", error);
+    }
+  });
+  electron.ipcMain.handle(
+    "reversal:reject",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Not authenticated" };
+        const request = await db2.query.reversalRequests.findFirst({
+          where: drizzleOrm.eq(reversalRequests.id, data.id)
+        });
+        if (!request) {
+          return { success: false, message: `Reversal request #${data.id} not found` };
+        }
+        if (request.status !== "pending") {
+          return {
+            success: false,
+            message: `Cannot reject: request is '${request.status}', not 'pending'`
+          };
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        await db2.update(reversalRequests).set({
+          status: "rejected",
+          rejectionReason: data.rejectionReason,
+          reviewedBy: session.userId,
+          reviewedAt: now,
+          updatedAt: now
+        }).where(drizzleOrm.eq(reversalRequests.id, data.id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_review",
+          entityType: "reversal_request",
+          entityId: data.id,
+          newValues: { status: "rejected", rejectionReason: data.rejectionReason },
+          description: `Rejected reversal ${request.requestNumber}: ${data.rejectionReason}`
+        });
+        return { success: true, message: "Reversal request rejected" };
+      } catch (error) {
+        return handleIpcError("Reject reversal request", error);
+      }
+    }
+  );
+  electron.ipcMain.handle("reversal:retry", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Not authenticated" };
+      const request = await db2.query.reversalRequests.findFirst({
+        where: drizzleOrm.eq(reversalRequests.id, id)
+      });
+      if (!request) {
+        return { success: false, message: `Reversal request #${id} not found` };
+      }
+      if (request.status !== "failed") {
+        return {
+          success: false,
+          message: `Only failed requests can be retried (current: '${request.status}')`
+        };
+      }
+      await db2.update(reversalRequests).set({
+        status: "approved",
+        errorDetails: null,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(reversalRequests.id, id));
+      try {
+        const result = await withTransaction(async () => {
+          return executeReversal(request.entityType, request.entityId, session.userId);
+        });
+        await db2.update(reversalRequests).set({
+          status: "completed",
+          reversalDetails: result.reversalDetails,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_executed",
+          entityType: "reversal_request",
+          entityId: id,
+          newValues: { status: "completed", reversalDetails: result.reversalDetails },
+          description: `Retried and completed reversal ${request.requestNumber}`
+        });
+        return { success: true, data: result.reversalDetails };
+      } catch (execError) {
+        const errorMessage = execError instanceof Error ? execError.message : String(execError);
+        await db2.update(reversalRequests).set({
+          status: "failed",
+          errorDetails: errorMessage,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        return { success: false, message: `Reversal retry failed: ${errorMessage}` };
+      }
+    } catch (error) {
+      return handleIpcError("Retry reversal request", error);
+    }
+  });
+  electron.ipcMain.handle("reversal:stats", async () => {
+    try {
+      const statusCounts = await db2.select({ status: reversalRequests.status, count: drizzleOrm.sql`count(*)` }).from(reversalRequests).groupBy(reversalRequests.status);
+      const pendingByType = await db2.select({ entityType: reversalRequests.entityType, count: drizzleOrm.sql`count(*)` }).from(reversalRequests).where(drizzleOrm.eq(reversalRequests.status, "pending")).groupBy(reversalRequests.entityType);
+      const pendingByPriority = await db2.select({ priority: reversalRequests.priority, count: drizzleOrm.sql`count(*)` }).from(reversalRequests).where(drizzleOrm.eq(reversalRequests.status, "pending")).groupBy(reversalRequests.priority);
+      return {
+        success: true,
+        data: {
+          byStatus: Object.fromEntries(statusCounts.map((s) => [s.status, s.count])),
+          pendingByType: Object.fromEntries(pendingByType.map((t) => [t.entityType, t.count])),
+          pendingByPriority: Object.fromEntries(pendingByPriority.map((p) => [p.priority, p.count]))
+        }
+      };
+    } catch (error) {
+      return handleIpcError("Get reversal stats", error);
+    }
+  });
+  electron.ipcMain.handle(
+    "reversal:check",
+    async (_, data) => {
+      try {
+        const request = await db2.query.reversalRequests.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(reversalRequests.entityType, data.entityType),
+            drizzleOrm.eq(reversalRequests.entityId, data.entityId)
+          ),
+          orderBy: drizzleOrm.desc(reversalRequests.createdAt)
+        });
+        return { success: true, data: request || null };
+      } catch (error) {
+        return handleIpcError("Check reversal status", error);
+      }
+    }
+  );
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -19905,6 +20797,7 @@ function registerAllHandlers() {
   registerInventoryCountsHandlers();
   registerServicesHandlers();
   registerVoucherHandlers();
+  registerReversalHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

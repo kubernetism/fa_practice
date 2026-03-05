@@ -53,6 +53,7 @@ import { Separator } from '@/components/ui/separator'
 import { useBranch } from '@/contexts/branch-context'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 interface Sale {
   id: number
@@ -721,6 +722,7 @@ export function SalesHistoryScreen() {
                       <div className="flex items-center gap-2">
                         <FileText className="h-4 w-4 text-muted-foreground" />
                         <span className="font-mono text-sm">{sale.invoiceNumber}</span>
+                        <ReversalStatusBadge entityType="sale" entityId={sale.id} />
                       </div>
                     </TableCell>
                     <TableCell>
@@ -884,7 +886,10 @@ export function SalesHistoryScreen() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-muted-foreground">Invoice Number</p>
-                  <p className="font-mono font-medium">{viewingSale.invoiceNumber}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-mono font-medium">{viewingSale.invoiceNumber}</p>
+                    <ReversalStatusBadge entityType="sale" entityId={viewingSale.id} />
+                  </div>
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Date & Time</p>

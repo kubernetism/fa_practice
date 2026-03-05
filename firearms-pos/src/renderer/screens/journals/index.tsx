@@ -32,6 +32,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { useBranch } from '@/contexts/branch-context'
 import { useAuth } from '@/contexts/auth-context'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 interface JournalEntryLine {
   id: number
@@ -468,7 +469,12 @@ export function JournalsScreen() {
 
                         return (
                           <TableRow key={entry.id}>
-                            <TableCell className="font-mono">{entry.entryNumber}</TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono">{entry.entryNumber}</span>
+                                <ReversalStatusBadge entityType="journal_entry" entityId={entry.id} />
+                              </div>
+                            </TableCell>
                             <TableCell>{new Date(entry.entryDate).toLocaleDateString()}</TableCell>
                             <TableCell className="max-w-[200px] truncate">{entry.description}</TableCell>
                             <TableCell>
@@ -554,7 +560,10 @@ export function JournalsScreen() {
       <Dialog open={showDetail} onOpenChange={setShowDetail}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>Journal Entry: {selectedEntry?.entryNumber}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              Journal Entry: {selectedEntry?.entryNumber}
+              {selectedEntry && <ReversalStatusBadge entityType="journal_entry" entityId={selectedEntry.id} />}
+            </DialogTitle>
             <DialogDescription>
               {selectedEntry?.description}
             </DialogDescription>

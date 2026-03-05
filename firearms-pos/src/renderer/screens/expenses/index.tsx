@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/select'
 import { useBranch } from '@/contexts/branch-context'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 interface Category {
   id: number
@@ -323,6 +324,7 @@ export default function ExpensesScreen() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <p className="font-medium">{expense.category?.name || 'Uncategorized'}</p>
+                      <ReversalStatusBadge entityType="expense" entityId={expense.id} />
                       {/* Payment Status Badge */}
                       <span
                         className={`px-2 py-0.5 text-xs rounded font-medium ${
