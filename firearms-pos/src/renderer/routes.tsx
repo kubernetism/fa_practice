@@ -119,6 +119,11 @@ const VouchersScreen = lazy(() =>
     default: m.VouchersScreen,
   })),
 );
+const ReversalsScreen = lazy(() =>
+  import("@/screens/reversals").then((m) => ({
+    default: m.ReversalsScreen,
+  })),
+);
 
 // Wrapper component for lazy loaded routes
 function LazyRoute({ children }: { children: React.ReactNode }) {
@@ -410,6 +415,14 @@ export function AppRoutes() {
           element={
             <LazyRoute>
               <VouchersScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="reversals"
+          element={
+            <LazyRoute>
+              <ReversalsScreen />
             </LazyRoute>
           }
         />

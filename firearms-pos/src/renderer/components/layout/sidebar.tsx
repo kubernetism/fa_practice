@@ -33,6 +33,7 @@ import {
   BookOpen,
   Wrench,
   Ticket,
+  RotateCcw,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -88,6 +89,7 @@ const financeNavItems: NavItem[] = [
 ]
 
 const adminNavItems: NavItem[] = [
+  { title: 'Reversal Requests', href: '/reversals', icon: RotateCcw, allowedRoles: ['admin'] },
   { title: 'Users', href: '/users', icon: UserCog, allowedRoles: ['admin'] },
   { title: 'Branches', href: '/branches', icon: Building2, allowedRoles: ['admin'] },
   { title: 'Reports', href: '/reports', icon: FileText, allowedRoles: ['admin'] },
