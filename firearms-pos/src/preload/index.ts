@@ -539,6 +539,22 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('vouchers:delete', id),
   },
 
+  // Reversals
+  reversals: {
+    create: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('reversal:create', data),
+    list: (params?: Record<string, unknown>) =>
+      ipcRenderer.invoke('reversal:list', params),
+    get: (id: number) => ipcRenderer.invoke('reversal:get', id),
+    approve: (id: number) => ipcRenderer.invoke('reversal:approve', id),
+    reject: (data: { id: number; rejectionReason: string }) =>
+      ipcRenderer.invoke('reversal:reject', data),
+    retry: (id: number) => ipcRenderer.invoke('reversal:retry', id),
+    stats: () => ipcRenderer.invoke('reversal:stats'),
+    check: (data: { entityType: string; entityId: number }) =>
+      ipcRenderer.invoke('reversal:check', data),
+  },
+
   // Discount Management
   discountManagement: {
     getSummary: (params: Record<string, unknown>) =>

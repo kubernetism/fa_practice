@@ -664,6 +664,108 @@ export async function executeCommissionReversal(
   }
 }
 
+// ─── Receivable Reversal ─────────────────────────────────────────────────────
+
+/**
+ * Reverse a receivable: mark as cancelled and reverse the GL entry if one exists.
+ */
+export async function executeReceivableReversal(
+  entityId: number,
+  userId: number
+): Promise<ReversalResult> {
+  const db = getDatabase()
+
+  // Fetch receivable
+  const receivable = await db.query.accountReceivables.findFirst({
+    where: eq(accountReceivables.id, entityId),
+  })
+  if (!receivable) throw new Error(`Receivable #${entityId} not found`)
+  if (receivable.status === 'cancelled') {
+    throw new Error(`Receivable #${entityId} is already cancelled`)
+  }
+
+  // 1. Mark receivable as cancelled
+  await db
+    .update(accountReceivables)
+    .set({
+      status: 'cancelled',
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(accountReceivables.id, entityId))
+
+  // 2. Reverse GL entry if one exists
+  const glResult = await reverseGLEntry(
+    'receivable',
+    entityId,
+    `Reversal of receivable #${entityId} (${receivable.invoiceNumber})`,
+    receivable.branchId,
+    userId
+  )
+
+  return {
+    reversalDetails: {
+      receivableId: entityId,
+      invoiceNumber: receivable.invoiceNumber,
+      totalAmount: receivable.totalAmount,
+      previousStatus: receivable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null,
+    },
+  }
+}
+
+// ─── Payable Reversal ───────────────────────────────────────────────────────
+
+/**
+ * Reverse a payable: mark as cancelled and reverse the GL entry if one exists.
+ */
+export async function executePayableReversal(
+  entityId: number,
+  userId: number
+): Promise<ReversalResult> {
+  const db = getDatabase()
+
+  // Fetch payable
+  const payable = await db.query.accountPayables.findFirst({
+    where: eq(accountPayables.id, entityId),
+  })
+  if (!payable) throw new Error(`Payable #${entityId} not found`)
+  if (payable.status === 'cancelled') {
+    throw new Error(`Payable #${entityId} is already cancelled`)
+  }
+
+  // 1. Mark payable as cancelled
+  await db
+    .update(accountPayables)
+    .set({
+      status: 'cancelled',
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(accountPayables.id, entityId))
+
+  // 2. Reverse GL entry if one exists
+  const glResult = await reverseGLEntry(
+    'payable',
+    entityId,
+    `Reversal of payable #${entityId} (${payable.invoiceNumber})`,
+    payable.branchId,
+    userId
+  )
+
+  return {
+    reversalDetails: {
+      payableId: entityId,
+      invoiceNumber: payable.invoiceNumber,
+      totalAmount: payable.totalAmount,
+      previousStatus: payable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null,
+    },
+  }
+}
+
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
 
 /**
@@ -690,6 +792,10 @@ export async function executeReversal(
       return executeAPPaymentReversal(entityId, userId)
     case 'commission':
       return executeCommissionReversal(entityId, userId)
+    case 'receivable':
+      return executeReceivableReversal(entityId, userId)
+    case 'payable':
+      return executePayableReversal(entityId, userId)
     case 'stock_adjustment':
     case 'stock_transfer':
     case 'return':

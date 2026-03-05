@@ -68,16 +68,18 @@ interface ReversalRequest {
   priority: 'urgent' | 'high' | 'medium' | 'low'
   status: 'pending' | 'approved' | 'completed' | 'failed' | 'rejected'
   rejectionReason: string | null
-  requestedBy: ReversalUser | null
-  reviewedBy: ReversalUser | null
+  requestedBy: number
+  reviewedBy: number | null
+  requestedByUser: ReversalUser | null
+  reviewedByUser: ReversalUser | null
   createdAt: string
   updatedAt: string
 }
 
 interface ReversalStats {
-  byStatus: Array<{ status: string; count: number }>
-  pendingByType: Array<{ entityType: string; count: number }>
-  pendingByPriority: Array<{ priority: string; count: number }>
+  byStatus: Record<string, number>
+  pendingByType: Record<string, number>
+  pendingByPriority: Record<string, number>
 }
 
 interface Pagination {
@@ -323,7 +325,7 @@ function RetryDialog({ open, isSubmitting, onConfirm, onCancel, requestNumber }:
 
 function getStatusCount(stats: ReversalStats | null, status: string): number {
   if (!stats) return 0
-  return stats.byStatus.find((s) => s.status === status)?.count ?? 0
+  return stats.byStatus[status] ?? 0
 }
 
 // ---------------------------------------------------------------------------
@@ -333,31 +335,8 @@ function getStatusCount(stats: ReversalStats | null, status: string): number {
 export function ReversalsScreen() {
   const { user } = useAuth()
 
-  // Admin access guard
-  if (user?.role !== 'admin') {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Card className="border-red-200 bg-red-50 max-w-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle className="h-8 w-8 text-red-600" />
-              <div>
-                <p className="text-red-700 font-semibold text-lg">Access Denied</p>
-                <p className="text-red-600 text-sm">Admin Only Access</p>
-              </div>
-            </div>
-            <p className="text-red-600 text-sm">
-              You do not have permission to access the reversal dashboard. Only administrators can
-              review and action reversal requests.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
   // -------------------------------------------------------------------
-  // State
+  // State (hooks must be called before any early return)
   // -------------------------------------------------------------------
 
   const [requests, setRequests] = useState<ReversalRequest[]>([])
@@ -388,7 +367,7 @@ export function ReversalsScreen() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const result = await window.api.invoke('reversal:stats')
+      const result = await window.api.reversals.stats()
       if (result?.success && result.data) {
         setStats(result.data)
       }
@@ -405,7 +384,7 @@ export function ReversalsScreen() {
       if (filterEntityType !== 'all') params.entityType = filterEntityType
       if (filterPriority !== 'all') params.priority = filterPriority
 
-      const result = await window.api.invoke('reversal:list', params)
+      const result = await window.api.reversals.list(params)
       if (result?.success) {
         setRequests(result.data ?? [])
         if (result.pagination) {
@@ -474,7 +453,7 @@ export function ReversalsScreen() {
     if (!selectedRequest) return
     setIsSubmitting(true)
     try {
-      const result = await window.api.invoke('reversal:approve', selectedRequest.id)
+      const result = await window.api.reversals.approve(selectedRequest.id)
       if (result?.success) {
         closeDialog()
         handleRefresh()
@@ -493,7 +472,7 @@ export function ReversalsScreen() {
     if (!selectedRequest || rejectionReason.trim().length === 0) return
     setIsSubmitting(true)
     try {
-      const result = await window.api.invoke('reversal:reject', {
+      const result = await window.api.reversals.reject({
         id: selectedRequest.id,
         rejectionReason: rejectionReason.trim(),
       })
@@ -515,7 +494,7 @@ export function ReversalsScreen() {
     if (!selectedRequest) return
     setIsSubmitting(true)
     try {
-      const result = await window.api.invoke('reversal:retry', selectedRequest.id)
+      const result = await window.api.reversals.retry(selectedRequest.id)
       if (result?.success) {
         closeDialog()
         handleRefresh()
@@ -552,6 +531,32 @@ export function ReversalsScreen() {
 
   const hasActiveFilters =
     filterStatus !== 'all' || filterEntityType !== 'all' || filterPriority !== 'all'
+
+  // -------------------------------------------------------------------
+  // Admin access guard (after all hooks)
+  // -------------------------------------------------------------------
+
+  if (user?.role !== 'admin') {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <Card className="border-red-200 bg-red-50 max-w-md">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle className="h-8 w-8 text-red-600" />
+              <div>
+                <p className="text-red-700 font-semibold text-lg">Access Denied</p>
+                <p className="text-red-600 text-sm">Admin Only Access</p>
+              </div>
+            </div>
+            <p className="text-red-600 text-sm">
+              You do not have permission to access the reversal dashboard. Only administrators can
+              review and action reversal requests.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
   // -------------------------------------------------------------------
   // Render
@@ -791,7 +796,7 @@ export function ReversalsScreen() {
 
                     {/* Requested By */}
                     <TableCell className="text-sm">
-                      {getUserDisplay(req.requestedBy)}
+                      {getUserDisplay(req.requestedByUser)}
                     </TableCell>
 
                     {/* Date */}

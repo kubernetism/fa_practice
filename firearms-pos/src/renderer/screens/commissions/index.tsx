@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Search, Pencil, Trash2, DollarSign, Users, TrendingUp, UserPlus, FileText } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, DollarSign, Users, TrendingUp, UserPlus, FileText, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -28,6 +28,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useBranch } from '@/contexts/branch-context'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 interface Commission {
   id: number
@@ -125,6 +127,8 @@ export default function CommissionsScreen() {
   const [editingCommission, setEditingCommission] = useState<Commission | null>(null)
   const [createMode, setCreateMode] = useState<'select' | 'referral' | 'employee'>('referral')
   const [selectedTab, setSelectedTab] = useState<'referral' | 'employee'>('referral')
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTarget, setReversalTarget] = useState<Commission | null>(null)
 
   useEffect(() => {
     if (currentBranch) {
@@ -530,6 +534,7 @@ export default function CommissionsScreen() {
                         <Badge className={getStatusBadge(commission.status)}>
                           {commission.status}
                         </Badge>
+                        <ReversalStatusBadge entityType="commission" entityId={commission.id} />
                         <Badge variant="outline">
                           {commission.commissionType}
                         </Badge>
@@ -583,6 +588,19 @@ export default function CommissionsScreen() {
                           title="Mark as paid"
                         >
                           <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        </Button>
+                      )}
+                      {commission.status !== 'cancelled' && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setReversalTarget(commission)
+                            setIsReversalModalOpen(true)
+                          }}
+                          title="Request Reversal"
+                        >
+                          <RotateCcw className="h-4 w-4 text-amber-500" />
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => handleOpenDialog(commission)}>
@@ -880,6 +898,22 @@ export default function CommissionsScreen() {
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      {/* Reversal Request Modal */}
+      {reversalTarget && (
+        <ReversalRequestModal
+          open={isReversalModalOpen}
+          onClose={() => {
+            setIsReversalModalOpen(false)
+            setReversalTarget(null)
+          }}
+          entityType="commission"
+          entityId={reversalTarget.id}
+          entityLabel={`Commission #${reversalTarget.id} (${reversalTarget.sale?.invoiceNumber || `Sale #${reversalTarget.saleId}`})`}
+          branchId={reversalTarget.branchId}
+          onSuccess={fetchCommissions}
+        />
+      )}
     </div>
   )
 }

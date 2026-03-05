@@ -387,6 +387,17 @@ const api = {
     validate: (code) => electron.ipcRenderer.invoke("vouchers:validate", code),
     delete: (id) => electron.ipcRenderer.invoke("vouchers:delete", id)
   },
+  // Reversals
+  reversals: {
+    create: (data) => electron.ipcRenderer.invoke("reversal:create", data),
+    list: (params) => electron.ipcRenderer.invoke("reversal:list", params),
+    get: (id) => electron.ipcRenderer.invoke("reversal:get", id),
+    approve: (id) => electron.ipcRenderer.invoke("reversal:approve", id),
+    reject: (data) => electron.ipcRenderer.invoke("reversal:reject", data),
+    retry: (id) => electron.ipcRenderer.invoke("reversal:retry", id),
+    stats: () => electron.ipcRenderer.invoke("reversal:stats"),
+    check: (data) => electron.ipcRenderer.invoke("reversal:check", data)
+  },
   // Discount Management
   discountManagement: {
     getSummary: (params) => electron.ipcRenderer.invoke("discount-management:get-summary", params),

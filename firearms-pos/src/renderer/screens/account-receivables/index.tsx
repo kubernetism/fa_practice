@@ -17,6 +17,7 @@ import {
   BarChart3,
   Download,
   Loader2,
+  RotateCcw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -51,6 +52,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { formatCurrency, formatDate, debounce } from '@/lib/utils'
 import { useBranch } from '@/contexts/branch-context'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 type ReceivableStatus = 'pending' | 'partial' | 'paid' | 'overdue' | 'cancelled'
 type PaymentMethod = 'cash' | 'card' | 'mobile' | 'bank_transfer' | 'cheque'
@@ -157,6 +160,10 @@ export function AccountReceivablesScreen() {
 
   // Receipt download
   const [isDownloadingReceipt, setIsDownloadingReceipt] = useState(false)
+
+  // Reversal
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTarget, setReversalTarget] = useState<Receivable | null>(null)
 
   // Fetch receivables
   const fetchReceivables = useCallback(async () => {
@@ -461,7 +468,12 @@ export function AccountReceivablesScreen() {
               <TableBody>
                 {filteredReceivables.map((receivable) => (
                   <TableRow key={receivable.id}>
-                    <TableCell className="font-medium">{receivable.invoiceNumber}</TableCell>
+                    <TableCell className="font-medium">
+                      <div className="flex items-center gap-2">
+                        {receivable.invoiceNumber}
+                        <ReversalStatusBadge entityType="receivable" entityId={receivable.id} />
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <div>
                         <p className="font-medium">
@@ -500,10 +512,23 @@ export function AccountReceivablesScreen() {
                           </Button>
                         )}
                         {receivable.status !== 'paid' && receivable.status !== 'cancelled' && (
-                          <Button variant="outline" size="sm" onClick={() => openPaymentDialog(receivable)}>
-                            <CreditCard className="mr-1 h-4 w-4" />
-                            Pay
-                          </Button>
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setReversalTarget(receivable)
+                                setIsReversalModalOpen(true)
+                              }}
+                              title="Request Reversal"
+                            >
+                              <RotateCcw className="h-4 w-4 text-amber-500" />
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => openPaymentDialog(receivable)}>
+                              <CreditCard className="mr-1 h-4 w-4" />
+                              Pay
+                            </Button>
+                          </>
                         )}
                       </div>
                     </TableCell>
@@ -605,6 +630,22 @@ export function AccountReceivablesScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Reversal Request Modal */}
+      {reversalTarget && (
+        <ReversalRequestModal
+          open={isReversalModalOpen}
+          onClose={() => {
+            setIsReversalModalOpen(false)
+            setReversalTarget(null)
+          }}
+          entityType="receivable"
+          entityId={reversalTarget.id}
+          entityLabel={`Receivable #${reversalTarget.invoiceNumber}`}
+          branchId={reversalTarget.branchId}
+          onSuccess={() => { fetchReceivables(); fetchSummary(); }}
+        />
+      )}
 
       {/* Details Dialog */}
       <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>

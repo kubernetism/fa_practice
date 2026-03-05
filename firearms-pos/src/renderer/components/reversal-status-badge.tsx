@@ -54,7 +54,7 @@ export function ReversalStatusBadge({ entityType, entityId, className }: Reversa
 
     async function check() {
       try {
-        const result = await window.api.invoke('reversal:check', { entityType, entityId })
+        const result = await window.api.reversals.check({ entityType, entityId })
         if (!cancelled && result?.success && result.data) {
           setStatus(result.data.status as ReversalStatus)
         }

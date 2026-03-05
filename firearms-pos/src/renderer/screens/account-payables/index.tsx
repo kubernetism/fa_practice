@@ -15,6 +15,7 @@ import {
   FileText,
   TrendingDown,
   Plus,
+  RotateCcw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,6 +49,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useBranch } from '@/contexts/branch-context'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 type PayableStatus = 'pending' | 'partial' | 'paid' | 'overdue' | 'cancelled'
 type PaymentMethod = 'cash' | 'card' | 'bank_transfer' | 'cheque' | 'mobile'
@@ -147,6 +150,10 @@ export function AccountPayablesScreen() {
   // Details dialog
   const [showDetailsDialog, setShowDetailsDialog] = useState(false)
   const [detailsPayable, setDetailsPayable] = useState<Payable | null>(null)
+
+  // Reversal
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTarget, setReversalTarget] = useState<Payable | null>(null)
 
   // Fetch payables
   const fetchPayables = useCallback(async () => {
@@ -418,7 +425,12 @@ export function AccountPayablesScreen() {
                   <TableBody>
                     {payables.map((payable) => (
                       <TableRow key={payable.id}>
-                        <TableCell className="font-medium">{payable.invoiceNumber}</TableCell>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            {payable.invoiceNumber}
+                            <ReversalStatusBadge entityType="payable" entityId={payable.id} />
+                          </div>
+                        </TableCell>
                         <TableCell>
                           <div>
                             <p className="font-medium">{payable.supplier?.name}</p>
@@ -442,10 +454,23 @@ export function AccountPayablesScreen() {
                               <Eye className="h-4 w-4" />
                             </Button>
                             {payable.status !== 'paid' && payable.status !== 'cancelled' && (
-                              <Button variant="outline" size="sm" onClick={() => openPaymentDialog(payable)}>
-                                <CreditCard className="mr-1 h-4 w-4" />
-                                Pay
-                              </Button>
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setReversalTarget(payable)
+                                    setIsReversalModalOpen(true)
+                                  }}
+                                  title="Request Reversal"
+                                >
+                                  <RotateCcw className="h-4 w-4 text-amber-500" />
+                                </Button>
+                                <Button variant="outline" size="sm" onClick={() => openPaymentDialog(payable)}>
+                                  <CreditCard className="mr-1 h-4 w-4" />
+                                  Pay
+                                </Button>
+                              </>
                             )}
                           </div>
                         </TableCell>
@@ -591,6 +616,22 @@ export function AccountPayablesScreen() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Reversal Request Modal */}
+      {reversalTarget && (
+        <ReversalRequestModal
+          open={isReversalModalOpen}
+          onClose={() => {
+            setIsReversalModalOpen(false)
+            setReversalTarget(null)
+          }}
+          entityType="payable"
+          entityId={reversalTarget.id}
+          entityLabel={`Payable #${reversalTarget.invoiceNumber}`}
+          branchId={reversalTarget.branchId}
+          onSuccess={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}
+        />
+      )}
 
       {/* Payment Dialog */}
       <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>

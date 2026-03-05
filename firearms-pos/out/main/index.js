@@ -20436,6 +20436,70 @@ async function executeCommissionReversal(entityId, userId) {
     }
   };
 }
+async function executeReceivableReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const receivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.id, entityId)
+  });
+  if (!receivable) throw new Error(`Receivable #${entityId} not found`);
+  if (receivable.status === "cancelled") {
+    throw new Error(`Receivable #${entityId} is already cancelled`);
+  }
+  await db2.update(accountReceivables).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountReceivables.id, entityId));
+  const glResult = await reverseGLEntry(
+    "receivable",
+    entityId,
+    `Reversal of receivable #${entityId} (${receivable.invoiceNumber})`,
+    receivable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      receivableId: entityId,
+      invoiceNumber: receivable.invoiceNumber,
+      totalAmount: receivable.totalAmount,
+      previousStatus: receivable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executePayableReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.id, entityId)
+  });
+  if (!payable) throw new Error(`Payable #${entityId} not found`);
+  if (payable.status === "cancelled") {
+    throw new Error(`Payable #${entityId} is already cancelled`);
+  }
+  await db2.update(accountPayables).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountPayables.id, entityId));
+  const glResult = await reverseGLEntry(
+    "payable",
+    entityId,
+    `Reversal of payable #${entityId} (${payable.invoiceNumber})`,
+    payable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      payableId: entityId,
+      invoiceNumber: payable.invoiceNumber,
+      totalAmount: payable.totalAmount,
+      previousStatus: payable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
 async function executeReversal(entityType, entityId, userId) {
   switch (entityType) {
     case "sale":
@@ -20452,6 +20516,10 @@ async function executeReversal(entityType, entityId, userId) {
       return executeAPPaymentReversal(entityId, userId);
     case "commission":
       return executeCommissionReversal(entityId, userId);
+    case "receivable":
+      return executeReceivableReversal(entityId, userId);
+    case "payable":
+      return executePayableReversal(entityId, userId);
     case "stock_adjustment":
     case "stock_transfer":
     case "return":

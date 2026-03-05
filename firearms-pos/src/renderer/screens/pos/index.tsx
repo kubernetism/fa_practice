@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Wrench,
   Ticket,
+  UserPlus,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -94,6 +95,11 @@ export function POSScreen() {
   const [allCustomers, setAllCustomers] = useState<Customer[]>([])
   const [isLoadingCustomers, setIsLoadingCustomers] = useState(false)
   const [showCustomerDialog, setShowCustomerDialog] = useState(false)
+  const [showQuickAddCustomer, setShowQuickAddCustomer] = useState(false)
+  const [quickAddFirstName, setQuickAddFirstName] = useState('')
+  const [quickAddLastName, setQuickAddLastName] = useState('')
+  const [quickAddPhone, setQuickAddPhone] = useState('')
+  const [isCreatingCustomer, setIsCreatingCustomer] = useState(false)
   const [showPaymentDialog, setShowPaymentDialog] = useState(false)
   const [showSerialDialog, setShowSerialDialog] = useState(false)
   const [pendingSerialProduct, setPendingSerialProduct] = useState<Product | null>(null)
@@ -1279,7 +1285,15 @@ export function POSScreen() {
       </Card>
 
       {/* Customer Selection Dialog */}
-      <Dialog open={showCustomerDialog} onOpenChange={setShowCustomerDialog}>
+      <Dialog open={showCustomerDialog} onOpenChange={(open) => {
+        setShowCustomerDialog(open)
+        if (!open) {
+          setShowQuickAddCustomer(false)
+          setQuickAddFirstName('')
+          setQuickAddLastName('')
+          setQuickAddPhone('')
+        }
+      }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Select Customer</DialogTitle>
@@ -1288,15 +1302,111 @@ export function POSScreen() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name, phone, email, or license..."
-                value={customerSearch}
-                onChange={(e) => setCustomerSearch(e.target.value)}
-                className="pl-9"
-              />
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name, phone, email, or license..."
+                  value={customerSearch}
+                  onChange={(e) => setCustomerSearch(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <Button
+                variant={showQuickAddCustomer ? 'default' : 'outline'}
+                size="icon"
+                onClick={() => setShowQuickAddCustomer(!showQuickAddCustomer)}
+                title="Quick add new customer"
+              >
+                <UserPlus className="h-4 w-4" />
+              </Button>
             </div>
+
+            {/* Quick Add Customer Form */}
+            {showQuickAddCustomer && (
+              <div className="rounded-lg border border-dashed border-primary/50 bg-primary/5 p-3 space-y-3">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <UserPlus className="h-4 w-4" />
+                  Quick Add Customer
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="quick-first-name" className="text-xs">First Name *</Label>
+                    <Input
+                      id="quick-first-name"
+                      value={quickAddFirstName}
+                      onChange={(e) => setQuickAddFirstName(e.target.value)}
+                      placeholder="First name"
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="quick-last-name" className="text-xs">Last Name *</Label>
+                    <Input
+                      id="quick-last-name"
+                      value={quickAddLastName}
+                      onChange={(e) => setQuickAddLastName(e.target.value)}
+                      placeholder="Last name"
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="quick-phone" className="text-xs">Phone (optional)</Label>
+                  <Input
+                    id="quick-phone"
+                    value={quickAddPhone}
+                    onChange={(e) => setQuickAddPhone(e.target.value)}
+                    placeholder="Phone number"
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  className="w-full"
+                  disabled={!quickAddFirstName.trim() || !quickAddLastName.trim() || isCreatingCustomer}
+                  onClick={async () => {
+                    try {
+                      setIsCreatingCustomer(true)
+                      const result = await window.api.customers.create({
+                        firstName: quickAddFirstName.trim(),
+                        lastName: quickAddLastName.trim(),
+                        phone: quickAddPhone.trim() || null,
+                      })
+                      if (result?.success && result.data) {
+                        setSelectedCustomer(result.data)
+                        setShowCustomerDialog(false)
+                        setShowQuickAddCustomer(false)
+                        setQuickAddFirstName('')
+                        setQuickAddLastName('')
+                        setQuickAddPhone('')
+                        setCustomerSearch('')
+                        // Refresh customer list in background
+                        loadAllCustomers()
+                      } else {
+                        alert(result?.message || 'Failed to create customer.')
+                      }
+                    } catch (error) {
+                      console.error('Quick add customer failed:', error)
+                      alert('Failed to create customer. Please try again.')
+                    } finally {
+                      setIsCreatingCustomer(false)
+                    }
+                  }}
+                >
+                  {isCreatingCustomer ? (
+                    <div className="h-4 w-4 animate-spin rounded-full border-2 border-background border-t-transparent mr-2" />
+                  ) : (
+                    <UserPlus className="h-4 w-4 mr-2" />
+                  )}
+                  Add & Select Customer
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  More details can be added later from the Customers tab.
+                </p>
+              </div>
+            )}
+
             <ScrollArea className="h-72 border rounded-lg">
               {isLoadingCustomers ? (
                 <div className="flex h-full items-center justify-center p-8">
@@ -1333,8 +1443,18 @@ export function POSScreen() {
                   ))}
                 </div>
               ) : customerSearch ? (
-                <div className="flex h-full items-center justify-center p-8">
-                  <p className="text-center text-muted-foreground">No customers found for "{customerSearch}"</p>
+                <div className="flex flex-col h-full items-center justify-center p-8 gap-3">
+                  <p className="text-center text-muted-foreground">No customers found for &quot;{customerSearch}&quot;</p>
+                  {!showQuickAddCustomer && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowQuickAddCustomer(true)}
+                    >
+                      <UserPlus className="h-4 w-4 mr-2" />
+                      Add New Customer
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center p-8">

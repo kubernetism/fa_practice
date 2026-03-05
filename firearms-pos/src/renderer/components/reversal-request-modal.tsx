@@ -86,7 +86,7 @@ export function ReversalRequestModal({
       setErrorMessage(null)
       setSuccessMessage(null)
 
-      const result = await window.api.invoke('reversal:create', {
+      const result = await window.api.reversals.create({
         entityType,
         entityId,
         reason: reason.trim(),
