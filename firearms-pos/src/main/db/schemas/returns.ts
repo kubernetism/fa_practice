@@ -54,6 +54,7 @@ export const returnItems = sqliteTable('return_items', {
   quantity: integer('quantity').notNull().default(1),
   unitPrice: real('unit_price').notNull(),
   totalPrice: real('total_price').notNull(),
+  costPrice: real('cost_price').notNull().default(0),
   condition: text('condition', { enum: ['new', 'good', 'fair', 'damaged'] })
     .notNull()
     .default('good'),

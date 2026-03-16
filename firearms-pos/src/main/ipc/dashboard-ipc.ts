@@ -9,6 +9,7 @@ import {
   purchases,
   expenses,
   returns,
+  returnItems,
   accountReceivables,
   receivablePayments,
   accountPayables,
@@ -88,10 +89,34 @@ export function registerDashboardHandlers(): void {
           )
         )
 
-      const revenue = profitResult[0]?.revenue || 0
-      const cost = profitResult[0]?.cost || 0
-      const taxCollected = profitResult[0]?.tax || 0
+      const grossRevenue = profitResult[0]?.revenue || 0
+      const grossCost = profitResult[0]?.cost || 0
+      const grossTax = profitResult[0]?.tax || 0
       const commissionTotal = commissionResult[0]?.total || 0
+
+      // Calculate return deductions for the period
+      const returnDeductions = await db
+        .select({
+          returnRevenue: sql<number>`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
+          returnCost: sql<number>`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
+          returnTax: sql<number>`COALESCE(SUM(${returns.taxAmount}), 0)`,
+        })
+        .from(returnItems)
+        .innerJoin(returns, eq(returnItems.returnId, returns.id))
+        .where(
+          and(
+            eq(returns.branchId, branchId),
+            between(returns.returnDate, dateRange.start, dateRange.end)
+          )
+        )
+
+      const returnRevenue = returnDeductions[0]?.returnRevenue || 0
+      const returnCost = returnDeductions[0]?.returnCost || 0
+      const returnTax = returnDeductions[0]?.returnTax || 0
+
+      const revenue = grossRevenue - returnRevenue
+      const cost = grossCost - returnCost
+      const taxCollected = grossTax - returnTax
       const totalProfit = revenue - cost - commissionTotal - taxCollected
 
       // Get total sales count
@@ -114,7 +139,7 @@ export function registerDashboardHandlers(): void {
         .from(products)
         .where(eq(products.isActive, true))
 
-      // 3. Total Products Sold (quantity sum)
+      // 3. Total Products Sold (quantity sum minus returned quantities)
       const soldResult = await db
         .select({
           total: sql<number>`COALESCE(SUM(${saleItems.quantity}), 0)`,
@@ -126,6 +151,19 @@ export function registerDashboardHandlers(): void {
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
             eq(sales.isVoided, false)
+          )
+        )
+
+      const returnedQtyResult = await db
+        .select({
+          total: sql<number>`COALESCE(SUM(${returnItems.quantity}), 0)`,
+        })
+        .from(returnItems)
+        .innerJoin(returns, eq(returnItems.returnId, returns.id))
+        .where(
+          and(
+            eq(returns.branchId, branchId),
+            between(returns.returnDate, dateRange.start, dateRange.end)
           )
         )
 
@@ -289,7 +327,7 @@ export function registerDashboardHandlers(): void {
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
         totalProducts: productsResult[0]?.count || 0,
-        totalProductsSold: soldResult[0]?.total || 0,
+        totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
         totalPurchases: purchasesResult[0]?.total || 0,
         totalExpense: expensesResult[0]?.total || 0,
         totalReturns: returnsResult[0]?.total || 0,

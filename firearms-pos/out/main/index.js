@@ -419,6 +419,7 @@ const returnItems = sqliteCore.sqliteTable("return_items", {
   quantity: sqliteCore.integer("quantity").notNull().default(1),
   unitPrice: sqliteCore.real("unit_price").notNull(),
   totalPrice: sqliteCore.real("total_price").notNull(),
+  costPrice: sqliteCore.real("cost_price").notNull().default(0),
   condition: sqliteCore.text("condition", { enum: ["new", "good", "fair", "damaged"] }).notNull().default("good"),
   restockable: sqliteCore.integer("restockable", { mode: "boolean" }).notNull().default(true),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
@@ -2297,6 +2298,11 @@ async function runMigrations() {
   } catch (error) {
     console.error("Expenses void fields migration error:", error);
   }
+  try {
+    await ensureReturnItemsCostPrice();
+  } catch (error) {
+    console.error("Return items cost_price migration error:", error);
+  }
 }
 async function ensureReferralPersonsTable() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -3341,6 +3347,19 @@ async function ensureExpensesVoidFields() {
     }
   }
   console.log("expenses void fields migration completed successfully!");
+}
+async function ensureReturnItemsCostPrice() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableInfo = db2.prepare(`PRAGMA table_info(return_items)`).all();
+  const hasCostPrice = tableInfo.some((col) => col.name === "cost_price");
+  if (hasCostPrice) {
+    console.log("return_items.cost_price column exists: true");
+    return;
+  }
+  console.log("Adding return_items.cost_price column...");
+  db2.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run();
+  console.log("return_items.cost_price column added successfully");
 }
 function getLocalIpAddress() {
   try {
@@ -7370,9 +7389,8 @@ function registerReturnHandlers() {
           notes: data.notes
         }).returning();
         for (const item of returnItemsData) {
-          const { costPrice, ...itemData } = item;
           await txDb.insert(returnItems).values({
-            ...itemData,
+            ...item,
             returnId: returnRecord.id
           });
         }
@@ -7525,15 +7543,59 @@ function registerReturnHandlers() {
       });
       await withTransaction(async ({ db: txDb }) => {
         for (const item of items) {
-          const existingInventory = await txDb.query.inventory.findFirst({
-            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
-          });
-          if (existingInventory && item.restockable) {
-            await txDb.update(inventory).set({
-              quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-            }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+          if (item.restockable) {
+            const existingInventory = await txDb.query.inventory.findFirst({
+              where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+            });
+            if (existingInventory) {
+              await txDb.update(inventory).set({
+                quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+            }
+            await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity);
           }
+        }
+        const jeEntry = await txDb.query.journalEntries.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(journalEntries.referenceType, "return"),
+            drizzleOrm.eq(journalEntries.referenceId, id),
+            drizzleOrm.eq(journalEntries.status, "posted")
+          )
+        });
+        if (jeEntry) {
+          const lines = await txDb.query.journalEntryLines.findMany({
+            where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+          });
+          const reversingLines = [];
+          for (const line of lines) {
+            const account = await txDb.query.chartOfAccounts.findFirst({
+              where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+            });
+            if (account) {
+              reversingLines.push({
+                accountCode: account.accountCode,
+                debitAmount: line.creditAmount,
+                creditAmount: line.debitAmount,
+                description: `Reversal: ${line.description || ""}`
+              });
+            }
+          }
+          const reversalEntryId = await createJournalEntry({
+            description: `Reversal of return ${returnRecord.returnNumber} (deleted)`,
+            referenceType: "return",
+            referenceId: id,
+            branchId: returnRecord.branchId,
+            userId: session?.userId ?? 0,
+            lines: reversingLines
+          });
+          await txDb.update(journalEntries).set({
+            status: "reversed",
+            reversedBy: session?.userId ?? 0,
+            reversedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            reversalEntryId,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
         }
         await txDb.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
         await txDb.delete(returns).where(drizzleOrm.eq(returns.id, id));
@@ -10858,8 +10920,20 @@ function registerReportHandlers() {
           category: categories.name,
           total: drizzleOrm.sql`sum(${expenses.amount})`
         }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.categoryId, categories.name);
-        const totalRevenue = revenue[0]?.totalRevenue ?? 0;
-        const totalCost = cogs[0]?.totalCost ?? 0;
+        const returnConditions = [drizzleOrm.between(returns.returnDate, startDate, endDate)];
+        if (branchId) returnConditions.push(drizzleOrm.eq(returns.branchId, branchId));
+        const returnRevenue = await db2.select({
+          totalReturn: drizzleOrm.sql`COALESCE(SUM(${returns.totalAmount}), 0)`
+        }).from(returns).where(drizzleOrm.and(...returnConditions));
+        const returnCogs = await db2.select({
+          totalReturnCost: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`
+        }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(drizzleOrm.and(...returnConditions));
+        const grossRevenue = revenue[0]?.totalRevenue ?? 0;
+        const grossCost = cogs[0]?.totalCost ?? 0;
+        const totalReturnAmount = returnRevenue[0]?.totalReturn ?? 0;
+        const totalReturnCost = returnCogs[0]?.totalReturnCost ?? 0;
+        const totalRevenue = grossRevenue - totalReturnAmount;
+        const totalCost = grossCost - totalReturnCost;
         const totalExpenses = expenseTotal[0]?.totalExpenses ?? 0;
         const grossProfit = totalRevenue - totalCost;
         const netProfit = grossProfit - totalExpenses;
@@ -17360,10 +17434,26 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.isVoided, false)
         )
       );
-      const revenue = profitResult[0]?.revenue || 0;
-      const cost = profitResult[0]?.cost || 0;
-      const taxCollected = profitResult[0]?.tax || 0;
+      const grossRevenue = profitResult[0]?.revenue || 0;
+      const grossCost = profitResult[0]?.cost || 0;
+      const grossTax = profitResult[0]?.tax || 0;
       const commissionTotal = commissionResult[0]?.total || 0;
+      const returnDeductions = await db2.select({
+        returnRevenue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
+        returnCost: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
+        returnTax: drizzleOrm.sql`COALESCE(SUM(${returns.taxAmount}), 0)`
+      }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(returns.branchId, branchId),
+          drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end)
+        )
+      );
+      const returnRevenue = returnDeductions[0]?.returnRevenue || 0;
+      const returnCost = returnDeductions[0]?.returnCost || 0;
+      const returnTax = returnDeductions[0]?.returnTax || 0;
+      const revenue = grossRevenue - returnRevenue;
+      const cost = grossCost - returnCost;
+      const taxCollected = grossTax - returnTax;
       const totalProfit = revenue - cost - commissionTotal - taxCollected;
       const salesCountResult = await db2.select({
         count: drizzleOrm.sql`COUNT(*)`
@@ -17382,6 +17472,14 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
           drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const returnedQtyResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${returnItems.quantity}), 0)`
+      }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(returns.branchId, branchId),
+          drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end)
         )
       );
       const purchasesResult = await db2.select({
@@ -17491,7 +17589,7 @@ function registerDashboardHandlers() {
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
         totalProducts: productsResult[0]?.count || 0,
-        totalProductsSold: soldResult[0]?.total || 0,
+        totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
         totalPurchases: purchasesResult[0]?.total || 0,
         totalExpense: expensesResult[0]?.total || 0,
         totalReturns: returnsResult[0]?.total || 0,
@@ -20507,6 +20605,47 @@ async function executePayableReversal(entityId, userId) {
     }
   };
 }
+async function executeReturnReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const returnRecord = await db2.query.returns.findFirst({
+    where: drizzleOrm.eq(returns.id, entityId)
+  });
+  if (!returnRecord) throw new Error(`Return #${entityId} not found`);
+  const items = await db2.query.returnItems.findMany({
+    where: drizzleOrm.eq(returnItems.returnId, entityId)
+  });
+  for (const item of items) {
+    if (item.restockable) {
+      await db2.update(inventory).set({
+        quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(
+        drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+      );
+      await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity);
+    }
+  }
+  const glResult = await reverseGLEntry(
+    "return",
+    entityId,
+    `Reversal of return ${returnRecord.returnNumber}`,
+    returnRecord.branchId,
+    userId
+  );
+  await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, entityId));
+  await db2.delete(returns).where(drizzleOrm.eq(returns.id, entityId));
+  return {
+    reversalDetails: {
+      returnId: entityId,
+      returnNumber: returnRecord.returnNumber,
+      totalAmount: returnRecord.totalAmount,
+      itemsReversed: items.length,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
 async function executeReversal(entityType, entityId, userId) {
   switch (entityType) {
     case "sale":
@@ -20527,9 +20666,10 @@ async function executeReversal(entityType, entityId, userId) {
       return executeReceivableReversal(entityId, userId);
     case "payable":
       return executePayableReversal(entityId, userId);
+    case "return":
+      return executeReturnReversal(entityId, userId);
     case "stock_adjustment":
     case "stock_transfer":
-    case "return":
       throw new Error(`Reversal for entity type '${entityType}' is not yet implemented`);
     default:
       throw new Error(`Unknown entity type for reversal: '${entityType}'`);

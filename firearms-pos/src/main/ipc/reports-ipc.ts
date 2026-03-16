@@ -278,8 +278,31 @@ export function registerReportHandlers(): void {
           .where(and(...expenseConditions))
           .groupBy(expenses.categoryId, categories.name)
 
-        const totalRevenue = revenue[0]?.totalRevenue ?? 0
-        const totalCost = cogs[0]?.totalCost ?? 0
+        // Return deductions for the period
+        const returnConditions = [between(returns.returnDate, startDate, endDate)]
+        if (branchId) returnConditions.push(eq(returns.branchId, branchId))
+
+        const returnRevenue = await db
+          .select({
+            totalReturn: sql<number>`COALESCE(SUM(${returns.totalAmount}), 0)`,
+          })
+          .from(returns)
+          .where(and(...returnConditions))
+
+        const returnCogs = await db
+          .select({
+            totalReturnCost: sql<number>`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
+          })
+          .from(returnItems)
+          .innerJoin(returns, eq(returnItems.returnId, returns.id))
+          .where(and(...returnConditions))
+
+        const grossRevenue = revenue[0]?.totalRevenue ?? 0
+        const grossCost = cogs[0]?.totalCost ?? 0
+        const totalReturnAmount = returnRevenue[0]?.totalReturn ?? 0
+        const totalReturnCost = returnCogs[0]?.totalReturnCost ?? 0
+        const totalRevenue = grossRevenue - totalReturnAmount
+        const totalCost = grossCost - totalReturnCost
         const totalExpenses = expenseTotal[0]?.totalExpenses ?? 0
         const grossProfit = totalRevenue - totalCost
         const netProfit = grossProfit - totalExpenses

@@ -189,6 +189,14 @@ export async function runMigrations(): Promise<void> {
     console.error('Expenses void fields migration error:', error)
     // Don't throw - log error but continue
   }
+
+  // Ensure return_items.cost_price column exists
+  try {
+    await ensureReturnItemsCostPrice()
+  } catch (error) {
+    console.error('Return items cost_price migration error:', error)
+    // Don't throw - log error but continue
+  }
 }
 
 async function ensureReferralPersonsTable(): Promise<void> {
@@ -1443,4 +1451,21 @@ async function ensureExpensesVoidFields(): Promise<void> {
   }
 
   console.log('expenses void fields migration completed successfully!')
+}
+
+async function ensureReturnItemsCostPrice(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  const tableInfo = db.prepare(`PRAGMA table_info(return_items)`).all() as Array<{ name: string }>
+  const hasCostPrice = tableInfo.some((col) => col.name === 'cost_price')
+
+  if (hasCostPrice) {
+    console.log('return_items.cost_price column exists: true')
+    return
+  }
+
+  console.log('Adding return_items.cost_price column...')
+  db.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run()
+  console.log('return_items.cost_price column added successfully')
 }

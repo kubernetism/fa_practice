@@ -16,9 +16,11 @@ import {
   receivablePayments,
   payablePayments,
   inventoryCostLayers,
+  returns,
+  returnItems,
 } from '../db/schema'
 import { createJournalEntry, postVoidSaleToGL } from './gl-posting'
-import { restoreCostLayers } from './inventory-valuation'
+import { restoreCostLayers, consumeCostLayers } from './inventory-valuation'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -766,6 +768,73 @@ export async function executePayableReversal(
   }
 }
 
+// ─── Return Reversal ────────────────────────────────────────────────────────
+
+/**
+ * Reverse a return: decrement inventory for restockable items, consume
+ * restored cost layers, reverse the GL entry, and delete the return.
+ */
+export async function executeReturnReversal(
+  entityId: number,
+  userId: number
+): Promise<ReversalResult> {
+  const db = getDatabase()
+
+  // Fetch return
+  const returnRecord = await db.query.returns.findFirst({
+    where: eq(returns.id, entityId),
+  })
+  if (!returnRecord) throw new Error(`Return #${entityId} not found`)
+
+  // Fetch return items
+  const items = await db.query.returnItems.findMany({
+    where: eq(returnItems.returnId, entityId),
+  })
+
+  // 1. Reverse inventory changes and consume restored cost layers for restockable items
+  for (const item of items) {
+    if (item.restockable) {
+      await db
+        .update(inventory)
+        .set({
+          quantity: sql`${inventory.quantity} - ${item.quantity}`,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(
+          and(eq(inventory.productId, item.productId), eq(inventory.branchId, returnRecord.branchId))
+        )
+
+      // Consume the cost layers that were restored by this return
+      await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity)
+    }
+  }
+
+  // 2. Reverse GL entry
+  const glResult = await reverseGLEntry(
+    'return',
+    entityId,
+    `Reversal of return ${returnRecord.returnNumber}`,
+    returnRecord.branchId,
+    userId
+  )
+
+  // 3. Delete return items and return record
+  await db.delete(returnItems).where(eq(returnItems.returnId, entityId))
+  await db.delete(returns).where(eq(returns.id, entityId))
+
+  return {
+    reversalDetails: {
+      returnId: entityId,
+      returnNumber: returnRecord.returnNumber,
+      totalAmount: returnRecord.totalAmount,
+      itemsReversed: items.length,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null,
+    },
+  }
+}
+
 // ─── Dispatcher ──────────────────────────────────────────────────────────────
 
 /**
@@ -796,9 +865,10 @@ export async function executeReversal(
       return executeReceivableReversal(entityId, userId)
     case 'payable':
       return executePayableReversal(entityId, userId)
+    case 'return':
+      return executeReturnReversal(entityId, userId)
     case 'stock_adjustment':
     case 'stock_transfer':
-    case 'return':
       throw new Error(`Reversal for entity type '${entityType}' is not yet implemented`)
     default:
       throw new Error(`Unknown entity type for reversal: '${entityType}'`)
