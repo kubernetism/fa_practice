@@ -86,15 +86,15 @@ export function ServicesScreen() {
     }
   }, [page, searchQuery, selectedCategory])
 
-  // Fetch categories from the main categories table
+  // Fetch service categories from the service_categories table
   const fetchCategories = useCallback(async () => {
     try {
-      const result = await window.api.categories.getAll()
+      const result = await window.api.services.getCategories()
       if (result.success && result.data) {
         setCategories(result.data)
       }
     } catch (error) {
-      console.error('Failed to fetch categories:', error)
+      console.error('Failed to fetch service categories:', error)
     }
   }, [])
 

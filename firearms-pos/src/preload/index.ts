@@ -60,6 +60,7 @@ const api = {
       ipcRenderer.invoke('services:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('services:delete', id),
     search: (query: string) => ipcRenderer.invoke('services:search', query),
+    getCategories: () => ipcRenderer.invoke('services:get-categories'),
   },
 
   // Inventory

@@ -1426,7 +1426,7 @@ const services = sqliteCore.sqliteTable("services", {
   code: sqliteCore.text("code").notNull().unique(),
   name: sqliteCore.text("name").notNull(),
   description: sqliteCore.text("description"),
-  categoryId: sqliteCore.integer("category_id").references(() => categories.id),
+  categoryId: sqliteCore.integer("category_id").references(() => serviceCategories.id),
   // Pricing
   price: sqliteCore.real("price").notNull().default(0),
   pricingType: sqliteCore.text("pricing_type", {
@@ -3000,32 +3000,25 @@ async function ensureServicesTables() {
   ).get();
   if (!categoriesTableCheck) {
     console.log("Creating service_categories table...");
-    const categoriesMigration = `
-      CREATE TABLE IF NOT EXISTS "service_categories" (
-        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        "name" text NOT NULL UNIQUE,
-        "description" text,
-        "is_active" integer DEFAULT 1 NOT NULL,
-        "created_at" text NOT NULL,
-        "updated_at" text NOT NULL
-      );
-
-      -- Insert default service categories
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Repair', 'Weapon repair services', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Maintenance', 'Regular maintenance and servicing', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Customization', 'Custom painting, coating, and modifications', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Testing', 'Testing and inspection services', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Other', 'Other services', 1, datetime('now'), datetime('now'));
-    `;
-    rawDb.exec(categoriesMigration);
+    rawDb.exec(
+      'CREATE TABLE IF NOT EXISTS "service_categories" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,"name" text NOT NULL UNIQUE,"description" text,"is_active" integer DEFAULT 1 NOT NULL,"created_at" text NOT NULL,"updated_at" text NOT NULL)'
+    );
     console.log("service_categories table created successfully!");
   } else {
     console.log("service_categories table exists: true");
+  }
+  const seedCategories = rawDb.prepare(
+    `INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at") VALUES (?, ?, 1, datetime('now'), datetime('now'))`
+  );
+  const defaultServiceCategories = [
+    ["Repair", "Weapon repair services"],
+    ["Maintenance", "Regular maintenance and servicing"],
+    ["Customization", "Custom painting, coating, and modifications"],
+    ["Testing", "Testing and inspection services"],
+    ["Other", "Other services"]
+  ];
+  for (const [name, description] of defaultServiceCategories) {
+    seedCategories.run(name, description);
   }
   const servicesTableCheck = rawDb.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='services'`
@@ -17811,6 +17804,8 @@ function registerDatabaseResetHandlers() {
       console.log("Starting hard reset...");
       rawDb.pragma("foreign_keys = OFF");
       try {
+        console.log("Deleting reversal requests...");
+        rawDb.prepare("DELETE FROM reversal_requests").run();
         console.log("Deleting commissions...");
         rawDb.prepare("DELETE FROM commissions").run();
         console.log("Deleting audit logs...");
@@ -19834,6 +19829,18 @@ function registerServicesHandlers() {
     } catch (error) {
       console.error("Search services error:", error);
       return { success: false, message: "Failed to search services" };
+    }
+  });
+  electron.ipcMain.handle("services:get-categories", async () => {
+    try {
+      const data = await db2.query.serviceCategories.findMany({
+        where: drizzleOrm.eq(serviceCategories.isActive, true),
+        orderBy: drizzleOrm.asc(serviceCategories.name)
+      });
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get service categories error:", error);
+      return { success: false, message: "Failed to fetch service categories" };
     }
   });
 }

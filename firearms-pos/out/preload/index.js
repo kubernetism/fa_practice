@@ -37,7 +37,8 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("services:create", data),
     update: (id, data) => electron.ipcRenderer.invoke("services:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("services:delete", id),
-    search: (query) => electron.ipcRenderer.invoke("services:search", query)
+    search: (query) => electron.ipcRenderer.invoke("services:search", query),
+    getCategories: () => electron.ipcRenderer.invoke("services:get-categories")
   },
   // Inventory
   inventory: {

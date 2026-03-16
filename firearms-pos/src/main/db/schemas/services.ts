@@ -1,5 +1,5 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core'
-import { categories } from './categories'
+import { serviceCategories } from './service-categories'
 
 /**
  * Services table - stores service offerings
@@ -10,7 +10,7 @@ export const services = sqliteTable('services', {
   code: text('code').notNull().unique(),
   name: text('name').notNull(),
   description: text('description'),
-  categoryId: integer('category_id').references(() => categories.id),
+  categoryId: integer('category_id').references(() => serviceCategories.id),
   // Pricing
   price: real('price').notNull().default(0),
   pricingType: text('pricing_type', {

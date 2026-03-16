@@ -3,6 +3,7 @@ import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   services,
+  serviceCategories,
   type NewService,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
@@ -332,6 +333,21 @@ export function registerServicesHandlers(): void {
     } catch (error) {
       console.error('Search services error:', error)
       return { success: false, message: 'Failed to search services' }
+    }
+  })
+
+  // Get service categories (from service_categories table)
+  ipcMain.handle('services:get-categories', async () => {
+    try {
+      const data = await db.query.serviceCategories.findMany({
+        where: eq(serviceCategories.isActive, true),
+        orderBy: asc(serviceCategories.name),
+      })
+
+      return { success: true, data }
+    } catch (error) {
+      console.error('Get service categories error:', error)
+      return { success: false, message: 'Failed to fetch service categories' }
     }
   })
 }
