@@ -4,6 +4,8 @@ import {
   getMachineIdForDisplay,
   generateLicenseKey,
   validateLicenseKey,
+  validateLicenseKeyWithDuration,
+  isKeyAlreadyUsed,
   getLicenseStatus,
   activateLicense,
   deactivateLicense,
@@ -150,13 +152,11 @@ export function registerLicenseHandlers(): void {
   ipcMain.handle('license:generate-license-request', async () => {
     try {
       const machineId = getMachineIdForDisplay()
-      const expectedLicenseKey = generateLicenseKey(machineId)
       return {
         success: true,
         data: {
           machineId,
-          expectedLicenseKey,
-          instructions: 'Run: node generate-license.js <machine_id>',
+          instructions: 'Run: node key.js <machine_id> <months>',
         },
       }
     } catch (error) {
@@ -309,8 +309,14 @@ export function registerLicenseHandlers(): void {
 
       const machineId = getMachineIdForDisplay()
 
-      // Validate the license key
-      if (!validateLicenseKey(licenseKey, machineId)) {
+      // Check if key has already been used
+      if (isKeyAlreadyUsed(licenseKey)) {
+        return { success: false, message: 'This license key has already been used. Each key can only be used once.' }
+      }
+
+      // Validate the license key and extract duration
+      const durationMonths = validateLicenseKeyWithDuration(licenseKey, machineId)
+      if (durationMonths === null) {
         return { success: false, message: 'Invalid license key for this machine.' }
       }
 
@@ -328,24 +334,25 @@ export function registerLicenseHandlers(): void {
       await runMigrations()
       await seedInitialData()
 
-      // Activate the license in the DB and file
+      // Activate the license in the DB and file (duration comes from the key)
       const activateResult = activateLicense(licenseKey)
       if (!activateResult.success) {
         return { success: false, message: `Database decrypted but license activation failed: ${activateResult.message}` }
       }
 
-      // Update the application_info table
+      // Update the application_info table with duration from key
       const db = getDatabase()
-      const now = new Date().toISOString()
-      const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+      const now = new Date()
+      const licenseEndDate = new Date(now)
+      licenseEndDate.setMonth(licenseEndDate.getMonth() + durationMonths)
 
       db.update(applicationInfo)
         .set({
           isLicensed: true,
-          licenseStartDate: now,
-          licenseEndDate,
+          licenseStartDate: now.toISOString(),
+          licenseEndDate: licenseEndDate.toISOString(),
           licenseKey: licenseKey.toUpperCase(),
-          updatedAt: now,
+          updatedAt: now.toISOString(),
         })
         .where(eq(applicationInfo.infoId, 1))
         .run()
@@ -370,7 +377,7 @@ export function registerLicenseHandlers(): void {
       }
 
       console.log('Application unlocked successfully')
-      return { success: true, message: 'Application unlocked successfully. License activated for 1 year.' }
+      return { success: true, message: `Application unlocked successfully. License activated for ${durationMonths} month(s).` }
     } catch (error) {
       console.error('Unlock application error:', error)
       return {
@@ -393,21 +400,23 @@ export function registerLicenseHandlers(): void {
         return { success: false, message: 'Only administrators can activate licenses.' }
       }
 
+      // activateLicense handles duplicate check, validation, and duration extraction
       const result = activateLicense(licenseKey)
 
-      if (result.success) {
-        // Update database
+      if (result.success && result.durationMonths) {
+        // Update database with duration from key
         const db = getDatabase()
-        const now = new Date().toISOString()
-        const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()
+        const now = new Date()
+        const licenseEndDate = new Date(now)
+        licenseEndDate.setMonth(licenseEndDate.getMonth() + result.durationMonths)
 
         db.update(applicationInfo)
           .set({
             isLicensed: true,
-            licenseStartDate: now,
-            licenseEndDate,
+            licenseStartDate: now.toISOString(),
+            licenseEndDate: licenseEndDate.toISOString(),
             licenseKey: licenseKey.toUpperCase(),
-            updatedAt: now,
+            updatedAt: now.toISOString(),
           })
           .where(eq(applicationInfo.infoId, 1))
           .run()
@@ -418,7 +427,7 @@ export function registerLicenseHandlers(): void {
           branchId: session.branchId,
           action: 'create',
           entityType: 'license',
-          description: `License activated. Key: ${licenseKey.substring(0, 8)}...`,
+          description: `License activated for ${result.durationMonths} month(s). Key: ${licenseKey.substring(0, 8)}...`,
         })
       }
 
@@ -476,21 +485,34 @@ export function registerLicenseHandlers(): void {
   ipcMain.handle('license:validate-key', async (_, licenseKey: string) => {
     try {
       const machineId = getMachineIdForDisplay()
-      const isValid = validateLicenseKey(licenseKey, machineId)
-      // Accept both 32 and 64 character keys
-      const isValidFormat = /^[A-F0-9]{32}$/.test(licenseKey.toUpperCase()) ||
-                           /^[A-F0-9]{64}$/.test(licenseKey.toUpperCase())
+      const normalizedKey = licenseKey.toUpperCase().replace(/\s/g, '')
+      const durationMonths = validateLicenseKeyWithDuration(normalizedKey, machineId)
+      const isValid = durationMonths !== null
+      const isDuplicate = isKeyAlreadyUsed(normalizedKey)
+
+      // Accept 64 (legacy) or 100 (new format) character hex keys
+      const isValidFormat = /^[A-F0-9]{64}$/.test(normalizedKey) ||
+                           /^[A-F0-9]{100}$/.test(normalizedKey)
+
+      let message: string
+      if (isDuplicate) {
+        message = 'This key has already been used. Each key can only be used once.'
+      } else if (isValid) {
+        message = `License key is valid for this machine (${durationMonths} month(s)).`
+      } else if (isValidFormat) {
+        message = 'License key format is valid but not for this machine.'
+      } else {
+        message = 'Invalid license key format.'
+      }
 
       return {
         success: true,
         data: {
-          isValid,
+          isValid: isValid && !isDuplicate,
           isValidFormat,
-          message: isValid
-            ? 'License key is valid for this machine.'
-            : isValidFormat
-            ? 'License key format is valid but not for this machine.'
-            : 'Invalid license key format.',
+          isDuplicate,
+          durationMonths,
+          message,
         },
       }
     } catch (error) {

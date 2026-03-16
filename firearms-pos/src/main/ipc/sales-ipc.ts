@@ -13,6 +13,8 @@ import {
   commissions,
   accountReceivables,
   expenses,
+  cashRegisterSessions,
+  cashTransactions,
   type NewSale,
   type NewSaleItem,
   type NewSalePayment,
@@ -408,6 +410,53 @@ export function registerSalesHandlers(): void {
             .where(eq(vouchers.id, data.voucherId))
         }
 
+        // 10. Record cash register transaction if there's an open session and cash was received
+        if (data.amountPaid > 0) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, data.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            // For mixed payments, record each cash/non-cash component separately
+            if (data.payments && data.payments.length > 0) {
+              for (const payment of data.payments) {
+                if (payment.method === 'cash') {
+                  // Cash portion goes to cash register (net of change)
+                  const cashAmount = Math.min(payment.amount, totalAmount)
+                  await txDb.insert(cashTransactions).values({
+                    sessionId: openSession.id,
+                    branchId: data.branchId,
+                    transactionType: 'sale',
+                    amount: cashAmount,
+                    referenceType: 'sale',
+                    referenceId: sale.id,
+                    description: `Cash sale: ${invoiceNumber}`,
+                    recordedBy: session?.userId ?? 0,
+                  })
+                }
+              }
+            } else if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
+              // Single cash payment — record net amount (excluding change)
+              const cashAmount = Math.min(data.amountPaid, totalAmount)
+              await txDb.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: data.branchId,
+                transactionType: 'sale',
+                amount: cashAmount,
+                referenceType: 'sale',
+                referenceId: sale.id,
+                description: `Cash sale: ${invoiceNumber}`,
+                recordedBy: session?.userId ?? 0,
+              })
+            }
+          }
+        }
+
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
       })
 
@@ -628,6 +677,32 @@ export function registerSalesHandlers(): void {
           items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
           session?.userId ?? 0
         )
+
+        // 6. Reverse cash register transaction if there's an open session and sale was cash
+        if (sale.amountPaid > 0 && (sale.paymentMethod === 'cash' || sale.paymentMethod === 'cod')) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, sale.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            const cashAmount = Math.min(sale.amountPaid, sale.totalAmount)
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: sale.branchId,
+              transactionType: 'refund',
+              amount: -cashAmount,
+              referenceType: 'sale_void',
+              referenceId: sale.id,
+              description: `Voided sale: ${sale.invoiceNumber}`,
+              recordedBy: session?.userId ?? 0,
+            })
+          }
+        }
       })
 
       await createAuditLog({

@@ -8,6 +8,8 @@ import {
   sales,
   branches,
   users,
+  cashRegisterSessions,
+  cashTransactions,
   type NewAccountReceivable,
   type NewReceivablePayment,
 } from '../db/schema'
@@ -373,6 +375,31 @@ export function registerAccountReceivablesHandlers(): void {
           },
           session.userId
         )
+
+        // 5. Record cash register inflow for cash AR collections
+        if (data.paymentMethod === 'cash') {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, receivable.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: receivable.branchId,
+              transactionType: 'ar_collection',
+              amount: data.amount,
+              referenceType: 'receivable_payment',
+              referenceId: payment.id,
+              description: `AR collection: ${receivable.invoiceNumber}`,
+              recordedBy: session.userId,
+            })
+          }
+        }
 
         return payment
       })

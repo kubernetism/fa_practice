@@ -333,7 +333,7 @@ export function LicenseSettingsScreen() {
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground">License Type</p>
-                    <p className="font-medium">Annual License (1 Year)</p>
+                    <p className="font-medium">Subscription License</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm text-muted-foreground">Installation Date</p>
@@ -435,7 +435,7 @@ export function LicenseSettingsScreen() {
                   <ol className="text-sm text-blue-700 dark:text-blue-300 list-decimal list-inside space-y-1">
                     <li>Click "Copy Machine ID" button above</li>
                     <li>Open terminal in the application folder</li>
-                    <li>Run: <code className="px-1 bg-blue-100 dark:bg-blue-900 rounded">node generate-license.js [paste_machine_id]</code></li>
+                    <li>Run: <code className="px-1 bg-blue-100 dark:bg-blue-900 rounded">node key.js [paste_machine_id] [months]</code></li>
                     <li>Copy the generated license key</li>
                     <li>Paste it in the Activate License dialog below</li>
                   </ol>

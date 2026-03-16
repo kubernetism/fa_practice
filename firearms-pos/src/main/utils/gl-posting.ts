@@ -955,3 +955,48 @@ export async function postStockAdjustmentToGL(
     lines,
   })
 }
+
+/**
+ * Post a commission payment to the General Ledger.
+ *
+ * Journal Entry:
+ * DR Commission Expense (5900)  $amount
+ *     CR Cash (1010/1020)           $amount
+ */
+export async function postCommissionPaymentToGL(
+  commission: {
+    id: number
+    branchId: number
+    commissionAmount: number
+    commissionType: string
+    saleId: number
+  },
+  userId: number
+): Promise<number> {
+  const lines: JournalLine[] = []
+
+  // DR Commission Expense
+  lines.push({
+    accountCode: ACCOUNT_CODES.OTHER_EXPENSE,
+    debitAmount: commission.commissionAmount,
+    creditAmount: 0,
+    description: `Commission payment: ${commission.commissionType} for sale #${commission.saleId}`,
+  })
+
+  // CR Cash in Hand (commissions are typically paid in cash)
+  lines.push({
+    accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+    debitAmount: 0,
+    creditAmount: commission.commissionAmount,
+    description: `Cash paid for commission #${commission.id}`,
+  })
+
+  return createJournalEntry({
+    description: `Commission Payment: ${commission.commissionType} commission #${commission.id}`,
+    referenceType: 'commission',
+    referenceId: commission.id,
+    branchId: commission.branchId,
+    userId,
+    lines,
+  })
+}

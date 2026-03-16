@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, between, gte, lte } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { expenses, type NewExpense, accountPayables } from '../db/schema'
+import { expenses, type NewExpense, accountPayables, cashRegisterSessions, cashTransactions } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -197,6 +197,31 @@ export function registerExpenseHandlers(): void {
           },
           session?.userId ?? 0
         )
+
+        // Record cash register outflow for paid cash expenses
+        if (data.paymentStatus !== 'unpaid' && (!data.paymentMethod || data.paymentMethod === 'cash')) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, data.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: 'expense',
+              amount: -data.amount,
+              referenceType: 'expense',
+              referenceId: newExpense.id,
+              description: `Expense: ${categoryName} - ${data.description || ''}`.trim(),
+              recordedBy: session?.userId ?? 0,
+            })
+          }
+        }
 
         return { newExpense, payableId }
       })

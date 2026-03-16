@@ -1630,17 +1630,66 @@ function getMachineId() {
   hash.update(components.join("|"));
   return hash.digest("hex").toUpperCase();
 }
-function generateLicenseKey(machineId) {
-  const hash = node_crypto.createHash("sha256");
-  hash.update(`${machineId}|${LICENSE_SECRET}`);
-  return hash.digest("hex").toUpperCase();
-}
 function getMachineIdForDisplay() {
   return getMachineId();
 }
-function validateLicenseKey(licenseKey, machineId) {
-  const validKey = generateLicenseKey(machineId);
-  return licenseKey.toUpperCase() === validKey.toUpperCase();
+function parseLicenseKey(licenseKey) {
+  const key = licenseKey.toUpperCase().replace(/\s/g, "");
+  if (key.length !== 100) return null;
+  if (!/^[A-F0-9]{100}$/.test(key)) return null;
+  const nonce = key.substring(0, 32);
+  const monthsHex = key.substring(32, 36);
+  const hmac = key.substring(36, 100);
+  const months = parseInt(monthsHex, 16);
+  if (months < 1 || months > 9999) return null;
+  return { nonce, months, hmac };
+}
+function validateNewFormatKey(licenseKey, machineId) {
+  const parsed = parseLicenseKey(licenseKey);
+  if (!parsed) return null;
+  const payload = `${machineId}|${parsed.months}|${parsed.nonce}`;
+  const expectedHmac = node_crypto.createHmac("sha256", LICENSE_SECRET).update(payload).digest("hex").toUpperCase();
+  if (parsed.hmac !== expectedHmac) return null;
+  return parsed.months;
+}
+function validateLegacyKey(licenseKey, machineId) {
+  const key = licenseKey.toUpperCase().replace(/\s/g, "");
+  if (key.length !== 64) return null;
+  const hash = node_crypto.createHash("sha256");
+  hash.update(`${machineId}|${LICENSE_SECRET}`);
+  const validKey = hash.digest("hex").toUpperCase();
+  if (key !== validKey) return null;
+  return 12;
+}
+function validateLicenseKeyWithDuration(licenseKey, machineId) {
+  const newResult = validateNewFormatKey(licenseKey, machineId);
+  if (newResult !== null) return newResult;
+  return validateLegacyKey(licenseKey, machineId);
+}
+function getUsedKeysFilePath() {
+  return node_path.join(electron.app.getPath("userData"), "used-keys.json");
+}
+function getUsedKeys() {
+  const filePath = getUsedKeysFilePath();
+  if (!node_fs.existsSync(filePath)) return [];
+  try {
+    const data = JSON.parse(node_fs.readFileSync(filePath, "utf-8"));
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+function addUsedKey(licenseKey) {
+  const keys = getUsedKeys();
+  const normalizedKey = licenseKey.toUpperCase().replace(/\s/g, "");
+  if (!keys.includes(normalizedKey)) {
+    keys.push(normalizedKey);
+    node_fs.writeFileSync(getUsedKeysFilePath(), JSON.stringify(keys, null, 2));
+  }
+}
+function isKeyAlreadyUsed(licenseKey) {
+  const keys = getUsedKeys();
+  return keys.includes(licenseKey.toUpperCase().replace(/\s/g, ""));
 }
 function getLicenseFilePath() {
   return node_path.join(electron.app.getPath("userData"), "license.json");
@@ -1719,23 +1768,34 @@ function getLicenseStatus() {
 function activateLicense(licenseKey) {
   const machineId = getMachineId();
   const licensePath = getLicenseFilePath();
-  const validKey = generateLicenseKey(machineId);
-  if (licenseKey.toUpperCase() !== validKey.toUpperCase()) {
+  if (isKeyAlreadyUsed(licenseKey)) {
+    return { success: false, message: "This license key has already been used. Each key can only be used once." };
+  }
+  const durationMonths = validateLicenseKeyWithDuration(licenseKey, machineId);
+  if (durationMonths === null) {
     return { success: false, message: "License key is not valid for this machine." };
   }
+  const now = /* @__PURE__ */ new Date();
+  const endDate = new Date(now);
+  endDate.setMonth(endDate.getMonth() + durationMonths);
   const licenseData = {
     machineId,
     licenseKey: licenseKey.toUpperCase(),
-    licenseStartDate: (/* @__PURE__ */ new Date()).toISOString(),
-    licenseEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString(),
-    // 1 year
+    licenseStartDate: now.toISOString(),
+    licenseEndDate: endDate.toISOString(),
+    durationMonths,
     isPermanent: false,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString()
   };
   try {
     node_fs.writeFileSync(licensePath, JSON.stringify(licenseData, null, 2));
-    return { success: true, message: "License activated successfully for 1 year." };
+    addUsedKey(licenseKey);
+    return {
+      success: true,
+      message: `License activated successfully for ${durationMonths} month(s).`,
+      durationMonths
+    };
   } catch {
     return { success: false, message: "Failed to save license file." };
   }
@@ -4680,6 +4740,29 @@ async function postStockAdjustmentToGL(adjustment, userId) {
     lines
   });
 }
+async function postCommissionPaymentToGL(commission, userId) {
+  const lines = [];
+  lines.push({
+    accountCode: ACCOUNT_CODES.OTHER_EXPENSE,
+    debitAmount: commission.commissionAmount,
+    creditAmount: 0,
+    description: `Commission payment: ${commission.commissionType} for sale #${commission.saleId}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+    debitAmount: 0,
+    creditAmount: commission.commissionAmount,
+    description: `Cash paid for commission #${commission.id}`
+  });
+  return createJournalEntry({
+    description: `Commission Payment: ${commission.commissionType} commission #${commission.id}`,
+    referenceType: "commission",
+    referenceId: commission.id,
+    branchId: commission.branchId,
+    userId,
+    lines
+  });
+}
 function registerInventoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("inventory:get-by-branch", async (_, branchId) => {
@@ -6086,6 +6169,47 @@ function registerSalesHandlers() {
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(vouchers.id, data.voucherId));
         }
+        if (data.amountPaid > 0) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            if (data.payments && data.payments.length > 0) {
+              for (const payment of data.payments) {
+                if (payment.method === "cash") {
+                  const cashAmount = Math.min(payment.amount, totalAmount);
+                  await txDb.insert(cashTransactions).values({
+                    sessionId: openSession.id,
+                    branchId: data.branchId,
+                    transactionType: "sale",
+                    amount: cashAmount,
+                    referenceType: "sale",
+                    referenceId: sale.id,
+                    description: `Cash sale: ${invoiceNumber}`,
+                    recordedBy: session?.userId ?? 0
+                  });
+                }
+              }
+            } else if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
+              const cashAmount = Math.min(data.amountPaid, totalAmount);
+              await txDb.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: data.branchId,
+                transactionType: "sale",
+                amount: cashAmount,
+                referenceType: "sale",
+                referenceId: sale.id,
+                description: `Cash sale: ${invoiceNumber}`,
+                recordedBy: session?.userId ?? 0
+              });
+            }
+          }
+        }
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
       });
       await createAuditLog$1({
@@ -6244,6 +6368,29 @@ function registerSalesHandlers() {
           items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
           session?.userId ?? 0
         );
+        if (sale.amountPaid > 0 && (sale.paymentMethod === "cash" || sale.paymentMethod === "cod")) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, sale.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            const cashAmount = Math.min(sale.amountPaid, sale.totalAmount);
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: sale.branchId,
+              transactionType: "refund",
+              amount: -cashAmount,
+              referenceType: "sale_void",
+              referenceId: sale.id,
+              description: `Voided sale: ${sale.invoiceNumber}`,
+              recordedBy: session?.userId ?? 0
+            });
+          }
+        }
       });
       await createAuditLog$1({
         userId: session?.userId,
@@ -7293,20 +7440,53 @@ function registerPurchaseHandlers() {
           where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
         });
         if (payable) {
-          await db2.insert(payablePayments).values({
+          const [payablePayment] = await db2.insert(payablePayments).values({
             payableId: payable.id,
             amount: payable.remainingAmount,
             paymentMethod: paymentData.paymentMethod,
             referenceNumber: paymentData.referenceNumber,
             notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
             paidBy: session?.userId
-          });
+          }).returning();
           await db2.update(accountPayables).set({
             paidAmount: payable.totalAmount,
             remainingAmount: 0,
             status: "paid",
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(accountPayables.id, payable.id));
+          await postAPPaymentToGL(
+            {
+              id: payablePayment.id,
+              payableId: payable.id,
+              branchId: purchase.branchId,
+              amount: payable.remainingAmount,
+              paymentMethod: paymentData.paymentMethod,
+              invoiceNumber: payable.invoiceNumber
+            },
+            session?.userId ?? 0
+          );
+          if (paymentData.paymentMethod === "cash") {
+            const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+            const openSession = await db2.query.cashRegisterSessions.findFirst({
+              where: drizzleOrm.and(
+                drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
+                drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+                drizzleOrm.eq(cashRegisterSessions.status, "open")
+              )
+            });
+            if (openSession) {
+              await db2.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: purchase.branchId,
+                transactionType: "ap_payment",
+                amount: -payable.remainingAmount,
+                referenceType: "payable_payment",
+                referenceId: payablePayment.id,
+                description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
+                recordedBy: session?.userId ?? 0
+              });
+            }
+          }
         }
         await createAuditLog$1({
           userId: session?.userId,
@@ -7442,6 +7622,28 @@ function registerReturnHandlers() {
           returnItemsForGL,
           session?.userId ?? 0
         );
+        if (data.returnType === "refund" && data.refundMethod === "cash" && totalAmount > 0) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: "refund",
+              amount: -totalAmount,
+              referenceType: "return",
+              referenceId: returnRecord.id,
+              description: `Cash refund: ${returnNumber}`,
+              recordedBy: session?.userId ?? 0
+            });
+          }
+        }
         return { returnRecord, returnNumber, totalAmount };
       });
       await createAuditLog$1({
@@ -8112,6 +8314,28 @@ function registerExpenseHandlers() {
           },
           session?.userId ?? 0
         );
+        if (data.paymentStatus !== "unpaid" && (!data.paymentMethod || data.paymentMethod === "cash")) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: "expense",
+              amount: -data.amount,
+              referenceType: "expense",
+              referenceId: newExpense.id,
+              description: `Expense: ${categoryName} - ${data.description || ""}`.trim(),
+              recordedBy: session?.userId ?? 0
+            });
+          }
+        }
         return { newExpense, payableId };
       });
       if (result.payableId && data.supplierId) {
@@ -8633,6 +8857,36 @@ function registerCommissionHandlers() {
             totalCommissionPaid: drizzleOrm.sql`${referralPersons.totalCommissionPaid} + ${commission.commissionAmount}`,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(referralPersons.id, commission.referralPersonId));
+        }
+        await postCommissionPaymentToGL(
+          {
+            id: commission.id,
+            branchId: commission.branchId,
+            commissionAmount: commission.commissionAmount,
+            commissionType: commission.commissionType,
+            saleId: commission.saleId
+          },
+          session?.userId ?? 0
+        );
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const openSession = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, commission.branchId),
+            drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+            drizzleOrm.eq(cashRegisterSessions.status, "open")
+          )
+        });
+        if (openSession) {
+          await db2.insert(cashTransactions).values({
+            sessionId: openSession.id,
+            branchId: commission.branchId,
+            transactionType: "expense",
+            amount: -commission.commissionAmount,
+            referenceType: "commission",
+            referenceId: commission.id,
+            description: `Commission payment: ${commission.commissionType} #${commission.id}`,
+            recordedBy: session?.userId ?? 0
+          });
         }
         await createAuditLog$1({
           userId: session?.userId,
@@ -11773,13 +12027,11 @@ function registerLicenseHandlers() {
   electron.ipcMain.handle("license:generate-license-request", async () => {
     try {
       const machineId = getMachineIdForDisplay();
-      const expectedLicenseKey = generateLicenseKey(machineId);
       return {
         success: true,
         data: {
           machineId,
-          expectedLicenseKey,
-          instructions: "Run: node generate-license.js <machine_id>"
+          instructions: "Run: node key.js <machine_id> <months>"
         }
       };
     } catch (error) {
@@ -11910,7 +12162,11 @@ function registerLicenseHandlers() {
         return { success: false, message: "Application is not locked." };
       }
       const machineId = getMachineIdForDisplay();
-      if (!validateLicenseKey(licenseKey, machineId)) {
+      if (isKeyAlreadyUsed(licenseKey)) {
+        return { success: false, message: "This license key has already been used. Each key can only be used once." };
+      }
+      const durationMonths = validateLicenseKeyWithDuration(licenseKey, machineId);
+      if (durationMonths === null) {
         return { success: false, message: "Invalid license key for this machine." };
       }
       const dbPath = getDbPath();
@@ -11926,14 +12182,15 @@ function registerLicenseHandlers() {
         return { success: false, message: `Database decrypted but license activation failed: ${activateResult.message}` };
       }
       const db2 = getDatabase();
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString();
+      const now = /* @__PURE__ */ new Date();
+      const licenseEndDate = new Date(now);
+      licenseEndDate.setMonth(licenseEndDate.getMonth() + durationMonths);
       db2.update(applicationInfo).set({
         isLicensed: true,
-        licenseStartDate: now,
-        licenseEndDate,
+        licenseStartDate: now.toISOString(),
+        licenseEndDate: licenseEndDate.toISOString(),
         licenseKey: licenseKey.toUpperCase(),
-        updatedAt: now
+        updatedAt: now.toISOString()
       }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
       try {
         registerAllHandlers();
@@ -11947,7 +12204,7 @@ function registerLicenseHandlers() {
         win.webContents.send("license:application-unlocked");
       }
       console.log("Application unlocked successfully");
-      return { success: true, message: "Application unlocked successfully. License activated for 1 year." };
+      return { success: true, message: `Application unlocked successfully. License activated for ${durationMonths} month(s).` };
     } catch (error) {
       console.error("Unlock application error:", error);
       return {
@@ -11966,23 +12223,24 @@ function registerLicenseHandlers() {
         return { success: false, message: "Only administrators can activate licenses." };
       }
       const result = activateLicense(licenseKey);
-      if (result.success) {
+      if (result.success && result.durationMonths) {
         const db2 = getDatabase();
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString();
+        const now = /* @__PURE__ */ new Date();
+        const licenseEndDate = new Date(now);
+        licenseEndDate.setMonth(licenseEndDate.getMonth() + result.durationMonths);
         db2.update(applicationInfo).set({
           isLicensed: true,
-          licenseStartDate: now,
-          licenseEndDate,
+          licenseStartDate: now.toISOString(),
+          licenseEndDate: licenseEndDate.toISOString(),
           licenseKey: licenseKey.toUpperCase(),
-          updatedAt: now
+          updatedAt: now.toISOString()
         }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
         await createAuditLog$1({
           userId: session.userId,
           branchId: session.branchId,
           action: "create",
           entityType: "license",
-          description: `License activated. Key: ${licenseKey.substring(0, 8)}...`
+          description: `License activated for ${result.durationMonths} month(s). Key: ${licenseKey.substring(0, 8)}...`
         });
       }
       return result;
@@ -12025,14 +12283,29 @@ function registerLicenseHandlers() {
   electron.ipcMain.handle("license:validate-key", async (_, licenseKey) => {
     try {
       const machineId = getMachineIdForDisplay();
-      const isValid = validateLicenseKey(licenseKey, machineId);
-      const isValidFormat = /^[A-F0-9]{32}$/.test(licenseKey.toUpperCase()) || /^[A-F0-9]{64}$/.test(licenseKey.toUpperCase());
+      const normalizedKey = licenseKey.toUpperCase().replace(/\s/g, "");
+      const durationMonths = validateLicenseKeyWithDuration(normalizedKey, machineId);
+      const isValid = durationMonths !== null;
+      const isDuplicate = isKeyAlreadyUsed(normalizedKey);
+      const isValidFormat = /^[A-F0-9]{64}$/.test(normalizedKey) || /^[A-F0-9]{100}$/.test(normalizedKey);
+      let message;
+      if (isDuplicate) {
+        message = "This key has already been used. Each key can only be used once.";
+      } else if (isValid) {
+        message = `License key is valid for this machine (${durationMonths} month(s)).`;
+      } else if (isValidFormat) {
+        message = "License key format is valid but not for this machine.";
+      } else {
+        message = "Invalid license key format.";
+      }
       return {
         success: true,
         data: {
-          isValid,
+          isValid: isValid && !isDuplicate,
           isValidFormat,
-          message: isValid ? "License key is valid for this machine." : isValidFormat ? "License key format is valid but not for this machine." : "Invalid license key format."
+          isDuplicate,
+          durationMonths,
+          message
         }
       };
     } catch (error) {
@@ -12473,6 +12746,28 @@ function registerAccountReceivablesHandlers() {
           },
           session.userId
         );
+        if (data.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, receivable.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: receivable.branchId,
+              transactionType: "ar_collection",
+              amount: data.amount,
+              referenceType: "receivable_payment",
+              referenceId: payment.id,
+              description: `AR collection: ${receivable.invoiceNumber}`,
+              recordedBy: session.userId
+            });
+          }
+        }
         return payment;
       });
       await createAuditLog$1({
@@ -13045,6 +13340,28 @@ function registerAccountPayablesHandlers() {
           },
           session.userId
         );
+        if (data.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, payable.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: payable.branchId,
+              transactionType: "ap_payment",
+              amount: -data.amount,
+              referenceType: "payable_payment",
+              referenceId: payment.id,
+              description: `AP payment: ${payable.invoiceNumber}`,
+              recordedBy: session.userId
+            });
+          }
+        }
         return payment;
       });
       if (newStatus === "paid") {

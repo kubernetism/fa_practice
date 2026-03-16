@@ -8,6 +8,8 @@ import {
   purchases,
   branches,
   expenses,
+  cashRegisterSessions,
+  cashTransactions,
   type NewAccountPayable,
   type NewPayablePayment,
 } from '../db/schema'
@@ -369,6 +371,31 @@ export function registerAccountPayablesHandlers(): void {
           },
           session.userId
         )
+
+        // Record cash register outflow for cash AP payments
+        if (data.paymentMethod === 'cash') {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, payable.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: payable.branchId,
+              transactionType: 'ap_payment',
+              amount: -data.amount,
+              referenceType: 'payable_payment',
+              referenceId: payment.id,
+              description: `AP payment: ${payable.invoiceNumber}`,
+              recordedBy: session.userId,
+            })
+          }
+        }
 
         return payment
       })

@@ -31,7 +31,7 @@ export function LicenseLockScreen({ machineId, onUnlock }: LicenseLockScreenProp
     setError(null)
     setValidationResult(null)
 
-    if (formatted.length === 32 || formatted.length === 64) {
+    if (formatted.length === 64 || formatted.length === 100) {
       try {
         const result = await window.api.license.validateKey(formatted)
         if (result.success) {
@@ -44,8 +44,8 @@ export function LicenseLockScreen({ machineId, onUnlock }: LicenseLockScreenProp
   }
 
   const handleUnlock = async () => {
-    if (licenseKey.length !== 32 && licenseKey.length !== 64) {
-      setError('Please enter a valid license key (32 or 64 characters)')
+    if (licenseKey.length !== 64 && licenseKey.length !== 100) {
+      setError('Please enter a valid license key (64 or 100 characters)')
       return
     }
 
@@ -141,8 +141,8 @@ export function LicenseLockScreen({ machineId, onUnlock }: LicenseLockScreenProp
                 id="unlock-key"
                 value={licenseKey}
                 onChange={handleKeyChange}
-                placeholder="Enter your 64-character license key"
-                maxLength={64}
+                placeholder="Enter your license key"
+                maxLength={100}
                 className="font-mono text-sm"
                 disabled={isUnlocking}
               />
@@ -177,7 +177,7 @@ export function LicenseLockScreen({ machineId, onUnlock }: LicenseLockScreenProp
             {/* Unlock Button */}
             <Button
               onClick={handleUnlock}
-              disabled={isUnlocking || licenseKey.length < 32}
+              disabled={isUnlocking || licenseKey.length < 64}
               className="w-full gap-2"
               size="lg"
             >
@@ -205,7 +205,7 @@ export function LicenseLockScreen({ machineId, onUnlock }: LicenseLockScreenProp
                 <li>
                   Run:{' '}
                   <code className="px-1 bg-blue-100 dark:bg-blue-900 rounded">
-                    node generate-license.js [machine_id]
+                    node key.js [machine_id] [months]
                   </code>
                 </li>
                 <li>Paste the generated key above and click Unlock</li>

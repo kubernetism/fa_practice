@@ -12,6 +12,8 @@ import {
   journalEntries,
   journalEntryLines,
   chartOfAccounts,
+  cashRegisterSessions,
+  cashTransactions,
   type NewReturn,
   type NewReturnItem,
 } from '../db/schema'
@@ -192,6 +194,31 @@ export function registerReturnHandlers(): void {
           returnItemsForGL,
           session?.userId ?? 0
         )
+
+        // Record cash register outflow for cash refunds
+        if (data.returnType === 'refund' && data.refundMethod === 'cash' && totalAmount > 0) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, data.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: 'refund',
+              amount: -totalAmount,
+              referenceType: 'return',
+              referenceId: returnRecord.id,
+              description: `Cash refund: ${returnNumber}`,
+              recordedBy: session?.userId ?? 0,
+            })
+          }
+        }
 
         return { returnRecord, returnNumber, totalAmount }
       })
