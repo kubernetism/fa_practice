@@ -402,64 +402,105 @@ export function SalesHistoryScreen() {
     }
   }
 
-  // Print receipt
-  const handlePrintReceipt = (sale: Sale) => {
-    const receiptHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Receipt - ${sale.invoiceNumber}</title>
-        <style>
-          body { font-family: 'Courier New', monospace; width: 300px; margin: 0 auto; padding: 20px; }
-          .header { text-align: center; margin-bottom: 20px; }
-          .header h1 { margin: 0; font-size: 18px; }
-          .header p { margin: 5px 0; font-size: 12px; }
-          .divider { border-top: 1px dashed #000; margin: 10px 0; }
-          .info { font-size: 12px; margin: 5px 0; }
-          .items { margin: 15px 0; }
-          .item { display: flex; justify-content: space-between; font-size: 12px; margin: 5px 0; }
-          .totals { margin-top: 15px; }
-          .totals .row { display: flex; justify-content: space-between; font-size: 12px; margin: 3px 0; }
-          .totals .total { font-weight: bold; font-size: 14px; }
-          .footer { text-align: center; margin-top: 20px; font-size: 11px; }
-          @media print { body { width: 100%; } }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <h1>FIREARMS POS</h1>
-          <p>${getBranchName(sale.branchId)}</p>
-          <p>Invoice: ${sale.invoiceNumber}</p>
-          <p>${formatDateTime(sale.saleDate)}</p>
-        </div>
-        <div class="divider"></div>
-        <div class="info">
-          <p>Customer: ${getCustomerName(sale.customerId)}</p>
-          <p>Cashier: ${getUserName(sale.userId)}</p>
-          <p>Payment: ${getPaymentMethodLabel(sale.paymentMethod)}</p>
-        </div>
-        <div class="divider"></div>
-        <div class="totals">
-          <div class="row"><span>Subtotal:</span><span>${formatCurrency(sale.subtotal)}</span></div>
-          <div class="row"><span>Tax:</span><span>${formatCurrency(sale.taxAmount)}</span></div>
-          <div class="row"><span>Discount:</span><span>-${formatCurrency(sale.discountAmount)}</span></div>
-          <div class="divider"></div>
-          <div class="row total"><span>TOTAL:</span><span>${formatCurrency(sale.totalAmount)}</span></div>
-          <div class="row"><span>Paid:</span><span>${formatCurrency(sale.amountPaid)}</span></div>
-          <div class="row"><span>Change:</span><span>${formatCurrency(sale.changeGiven)}</span></div>
-        </div>
-        <div class="divider"></div>
-        <div class="footer">
-          <p>Thank you for your business!</p>
-          <p>Printed: ${new Date().toLocaleString()}</p>
-        </div>
-      </body>
-      </html>
-    `
+  // Build receipt HTML string
+  const buildReceiptHtml = (sale: Sale, items?: SaleItem[]): string => {
+    const saleItems = items || viewingSaleItems
+    const customerName = getCustomerName(sale.customerId)
+    const branchName = getBranchName(sale.branchId)
+    const cashierName = getUserName(sale.userId)
+    const paymentLabel = getPaymentMethodLabel(sale.paymentMethod)
 
+    const itemRows = saleItems.map((item) => {
+      const name = item.product?.name || getProductName(item.productId)
+      const shortName = name.length > 22 ? name.substring(0, 22) + '..' : name
+      const serialHtml = item.serialNumber ? `<br><span class="serial">S/N: ${item.serialNumber}</span>` : ''
+      return `<tr><td colspan="4" class="item-name">${shortName}${serialHtml}</td></tr>
+<tr class="item-detail"><td class="qty">${item.quantity}x</td><td class="rate">${formatCurrency(item.unitPrice)}</td><td class="disc">${item.discountAmount > 0 ? '-' + formatCurrency(item.discountAmount) : '-'}</td><td class="amt">${formatCurrency(item.totalPrice)}</td></tr>`
+    }).join('\n')
+
+    const discountRow = sale.discountAmount > 0
+      ? `<div class="total-row discount"><span class="label">Discount</span><span class="value">-${formatCurrency(sale.discountAmount)}</span></div>`
+      : ''
+    const changeRow = sale.changeGiven > 0
+      ? `<div class="payment-info"><span class="label">Change</span><span class="value">${formatCurrency(sale.changeGiven)}</span></div>`
+      : ''
+    const voidedStamp = sale.isVoided ? `<div class="voided-stamp">Voided</div>` : ''
+    const notesBlock = sale.notes
+      ? `<div style="font-size:9px;color:#777;padding:6px 0;border-top:1px dotted #ddd;margin-top:4px"><strong>Note:</strong> ${sale.notes}</div>`
+      : ''
+
+    return `<!DOCTYPE html>
+<html><head><title>Receipt - ${sale.invoiceNumber}</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'DM Sans',-apple-system,sans-serif;width:320px;margin:0 auto;padding:16px 12px;color:#1a1a1a;background:#fff;-webkit-font-smoothing:antialiased}
+.receipt-header{text-align:center;padding:8px 0 12px;border-bottom:2px solid #1a1a1a}
+.biz-name{font-size:20px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:2px}
+.branch-name{font-size:11px;font-weight:500;color:#555;letter-spacing:1px;text-transform:uppercase}
+.invoice-block{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #ccc}
+.invoice-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:#1a1a1a}
+.invoice-date{font-size:10px;color:#777;text-align:right;line-height:1.4}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;padding:8px 0;font-size:10px;border-bottom:1px dashed #ccc}
+.info-label{color:#999;text-transform:uppercase;letter-spacing:.5px;font-size:8px;font-weight:600}
+.info-value{font-weight:500;color:#333;margin-bottom:4px}
+.items-header{display:flex;justify-content:space-between;align-items:center;padding:8px 0 4px;border-bottom:1px solid #e5e5e5}
+.items-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#555}
+.items-count{font-size:9px;color:#999}
+table{width:100%;border-collapse:collapse;margin:4px 0}
+.col-headers td{font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#aaa;padding:4px 0 2px;border-bottom:1px dotted #ddd}
+.item-name{font-size:11px;font-weight:500;padding:6px 0 0;color:#1a1a1a}
+.serial{font-size:8px;color:#999;font-family:'JetBrains Mono',monospace}
+.item-detail td{font-family:'JetBrains Mono',monospace;font-size:10px;padding:0 0 6px;color:#555;border-bottom:1px dotted #f0f0f0}
+.qty{width:15%}.rate{width:30%}.disc{width:20%;color:#c0392b!important}.amt{width:35%;text-align:right;font-weight:600;color:#1a1a1a!important}
+.totals-section{padding:8px 0;border-top:1px dashed #ccc}
+.total-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:11px}
+.total-row .label{color:#777}.total-row .value{font-family:'JetBrains Mono',monospace;font-weight:500;color:#333}
+.total-row.discount .value{color:#c0392b}
+.grand-total{display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin:6px 0 2px;border-top:2px solid #1a1a1a;border-bottom:2px solid #1a1a1a}
+.grand-total .label{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px}
+.grand-total .value{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700}
+.payment-info{display:flex;justify-content:space-between;padding:3px 0;font-size:10px}
+.payment-info .label{color:#999}.payment-info .value{font-family:'JetBrains Mono',monospace;font-weight:500}
+.receipt-footer{text-align:center;padding:12px 0 4px;border-top:1px dashed #ccc;margin-top:8px}
+.thank-you{font-size:11px;font-weight:600;letter-spacing:.5px;margin-bottom:4px}
+.footer-sub{font-size:8px;color:#aaa;line-height:1.5}
+.voided-stamp{text-align:center;padding:6px;margin:8px 0;border:2px solid #c0392b;color:#c0392b;font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;transform:rotate(-3deg)}
+@media print{body{width:100%;padding:8px}@page{margin:0;size:80mm auto}}
+</style></head>
+<body>
+<div class="receipt-header"><div class="biz-name">Firearms POS</div><div class="branch-name">${branchName}</div></div>
+<div class="invoice-block"><div class="invoice-num">#${sale.invoiceNumber}</div><div class="invoice-date">${formatDateTime(sale.saleDate)}</div></div>
+<div class="info-grid">
+<div><div class="info-label">Customer</div><div class="info-value">${customerName}</div></div>
+<div><div class="info-label">Cashier</div><div class="info-value">${cashierName}</div></div>
+<div><div class="info-label">Payment</div><div class="info-value">${paymentLabel}</div></div>
+<div><div class="info-label">Status</div><div class="info-value">${sale.isVoided ? 'VOIDED' : sale.paymentStatus.toUpperCase()}</div></div>
+</div>
+<div class="items-header"><span class="items-title">Items</span><span class="items-count">${saleItems.length} item${saleItems.length !== 1 ? 's' : ''}</span></div>
+<table>
+<tr class="col-headers"><td>Qty</td><td>Rate</td><td>Disc</td><td style="text-align:right">Amount</td></tr>
+${itemRows}
+</table>
+<div class="totals-section">
+<div class="total-row"><span class="label">Subtotal</span><span class="value">${formatCurrency(sale.subtotal)}</span></div>
+<div class="total-row"><span class="label">Tax</span><span class="value">${formatCurrency(sale.taxAmount)}</span></div>
+${discountRow}
+</div>
+<div class="grand-total"><span class="label">Total</span><span class="value">${formatCurrency(sale.totalAmount)}</span></div>
+<div class="payment-info"><span class="label">Amount Paid</span><span class="value">${formatCurrency(sale.amountPaid)}</span></div>
+${changeRow}${voidedStamp}${notesBlock}
+<div class="receipt-footer"><div class="thank-you">Thank you for your business!</div><div class="footer-sub">Printed: ${new Date().toLocaleString()}<br>Powered by Firearms POS</div></div>
+</body></html>`
+  }
+
+  // Print receipt
+  const handlePrintReceipt = (sale: Sale, items?: SaleItem[]) => {
+    const html = buildReceiptHtml(sale, items)
     const printWindow = window.open('', '_blank')
     if (printWindow) {
-      printWindow.document.write(receiptHtml)
+      printWindow.document.open()
+      printWindow.document.write(html)
       printWindow.document.close()
       printWindow.print()
     }
@@ -869,180 +910,208 @@ export function SalesHistoryScreen() {
 
       {/* View Sale Dialog */}
       <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5" />
-              Sale Details
-            </DialogTitle>
-            <DialogDescription>
-              Invoice: {viewingSale?.invoiceNumber}
-            </DialogDescription>
+        <DialogContent className="max-w-[520px] max-h-[90vh] overflow-y-auto p-0 gap-0 border-border/50">
+          {/* Suppress default header — we build our own */}
+          <DialogHeader className="sr-only">
+            <DialogTitle>Sale Details</DialogTitle>
+            <DialogDescription>Invoice: {viewingSale?.invoiceNumber}</DialogDescription>
           </DialogHeader>
 
           {viewingSale && (
-            <div className="space-y-6">
-              {/* Sale Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Invoice Number</p>
-                  <div className="flex items-center gap-2">
-                    <p className="font-mono font-medium">{viewingSale.invoiceNumber}</p>
-                    <ReversalStatusBadge entityType="sale" entityId={viewingSale.id} />
+            <div className="relative">
+              {/* ── Invoice Header Band ── */}
+              <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-6 pt-5 pb-4 text-white">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold tracking-widest uppercase">Firearms POS</h2>
+                    <p className="text-[10px] text-slate-400 tracking-wider uppercase mt-0.5">
+                      {getBranchName(viewingSale.branchId)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="flex items-center gap-2 justify-end">
+                      <span className="font-mono text-sm font-semibold tracking-wide">#{viewingSale.invoiceNumber}</span>
+                      <ReversalStatusBadge entityType="sale" entityId={viewingSale.id} />
+                    </div>
+                    <p className="text-[10px] text-slate-400 mt-1">{formatDateTime(viewingSale.saleDate)}</p>
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Date & Time</p>
-                  <p className="font-medium">{formatDateTime(viewingSale.saleDate)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Branch</p>
-                  <p className="font-medium">{getBranchName(viewingSale.branchId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Cashier</p>
-                  <p className="font-medium">{getUserName(viewingSale.userId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Customer</p>
-                  <p className="font-medium">{viewingCustomer ? `${viewingCustomer.firstName} ${viewingCustomer.lastName}`.trim() : getCustomerName(viewingSale.customerId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Contact</p>
-                  <p className="font-medium">{viewingCustomer?.phone || getCustomerPhone(viewingSale.customerId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Payment Method</p>
-                  <div className="flex items-center gap-2">
+
+                {/* Status Pill */}
+                <div className="flex items-center gap-2 mt-3">
+                  {viewingSale.isVoided ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30">
+                      <Ban className="h-2.5 w-2.5" /> Voided
+                    </span>
+                  ) : (
+                    <span className={cn(
+                      "inline-flex items-center text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border",
+                      viewingSale.paymentStatus === 'paid' && "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+                      viewingSale.paymentStatus === 'partial' && "bg-amber-500/20 text-amber-300 border-amber-500/30",
+                      viewingSale.paymentStatus === 'pending' && "bg-slate-500/20 text-slate-300 border-slate-500/30"
+                    )}>
+                      {viewingSale.paymentStatus}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1 text-[10px] text-slate-400 uppercase tracking-wider">
                     {getPaymentMethodIcon(viewingSale.paymentMethod)}
-                    <span className="font-medium">{getPaymentMethodLabel(viewingSale.paymentMethod)}</span>
-                  </div>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  {getPaymentStatusBadge(viewingSale.paymentStatus, viewingSale.isVoided)}
+                    {getPaymentMethodLabel(viewingSale.paymentMethod)}
+                  </span>
                 </div>
               </div>
 
-              <Separator />
+              {/* ── Customer / Cashier Info Strip ── */}
+              <div className="grid grid-cols-2 gap-px bg-border/30">
+                <div className="bg-background px-6 py-3">
+                  <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Customer</p>
+                  <p className="text-sm font-medium mt-0.5 truncate">
+                    {viewingCustomer ? `${viewingCustomer.firstName} ${viewingCustomer.lastName}`.trim() : getCustomerName(viewingSale.customerId)}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground font-mono">
+                    {viewingCustomer?.phone || getCustomerPhone(viewingSale.customerId)}
+                  </p>
+                </div>
+                <div className="bg-background px-6 py-3">
+                  <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Cashier</p>
+                  <p className="text-sm font-medium mt-0.5 truncate">{getUserName(viewingSale.userId)}</p>
+                  <p className="text-[11px] text-muted-foreground">{getBranchName(viewingSale.branchId)}</p>
+                </div>
+              </div>
 
-              {/* Sale Items */}
-              <div>
-                <h4 className="font-medium mb-3">Items</h4>
+              {/* ── Items Section ── */}
+              <div className="px-6 pt-4 pb-2">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
+                    Items
+                  </h4>
+                  <span className="text-[10px] text-muted-foreground">
+                    {viewingSaleItems.length} item{viewingSaleItems.length !== 1 ? 's' : ''}
+                  </span>
+                </div>
+
                 {isLoadingSaleDetails ? (
                   <div className="flex items-center justify-center py-8">
-                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                   </div>
                 ) : viewingSaleItems.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4">No items found</p>
+                  <p className="text-muted-foreground text-center py-6 text-xs">No items found</p>
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-center">Qty</TableHead>
-                        <TableHead className="text-right">Unit Price</TableHead>
-                        <TableHead className="text-right">Subtotal</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {viewingSaleItems.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">
-                                {item.product?.name || getProductName(item.productId)}
-                              </p>
-                              {item.serialNumber && (
-                                <p className="text-xs text-muted-foreground">
-                                  S/N: {item.serialNumber}
-                                </p>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-center">{item.quantity}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.unitPrice)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.totalPrice)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <div className="space-y-0">
+                    {/* Column headers */}
+                    <div className="grid grid-cols-[1fr_50px_80px_80px] gap-2 pb-1.5 border-b border-border/50">
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/50">Product</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/50 text-center">Qty</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/50 text-right">Price</span>
+                      <span className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/50 text-right">Amount</span>
+                    </div>
+                    {viewingSaleItems.map((item, idx) => (
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "grid grid-cols-[1fr_50px_80px_80px] gap-2 py-2 items-center",
+                          idx < viewingSaleItems.length - 1 && "border-b border-border/20"
+                        )}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium truncate">
+                            {item.product?.name || getProductName(item.productId)}
+                          </p>
+                          {item.serialNumber && (
+                            <p className="text-[10px] text-muted-foreground font-mono mt-0.5">
+                              S/N: {item.serialNumber}
+                            </p>
+                          )}
+                          {item.discountAmount > 0 && (
+                            <p className="text-[10px] text-red-400 mt-0.5">
+                              -{formatCurrency(item.discountAmount)} disc.
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-xs text-center font-mono tabular-nums text-muted-foreground">{item.quantity}</span>
+                        <span className="text-xs text-right font-mono tabular-nums text-muted-foreground">{formatCurrency(item.unitPrice)}</span>
+                        <span className="text-xs text-right font-mono tabular-nums font-semibold">{formatCurrency(item.totalPrice)}</span>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              <Separator />
+              {/* ── Totals Block ── */}
+              <div className="px-6 pb-4">
+                <div className="bg-muted/30 rounded-lg p-4 space-y-1.5 border border-border/30">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Subtotal</span>
+                    <span className="font-mono tabular-nums">{formatCurrency(viewingSale.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-muted-foreground">Tax</span>
+                    <span className="font-mono tabular-nums">{formatCurrency(viewingSale.taxAmount)}</span>
+                  </div>
+                  {viewingSale.discountAmount > 0 && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-muted-foreground">Discount</span>
+                      <span className="font-mono tabular-nums text-red-400">-{formatCurrency(viewingSale.discountAmount)}</span>
+                    </div>
+                  )}
 
-              {/* Totals */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span>{formatCurrency(viewingSale.subtotal)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Tax:</span>
-                  <span>{formatCurrency(viewingSale.taxAmount)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Discount:</span>
-                  <span>-{formatCurrency(viewingSale.discountAmount)}</span>
-                </div>
-                <Separator />
-                <div className="flex justify-between font-bold">
-                  <span>Total:</span>
-                  <span className={cn(viewingSale.isVoided && 'line-through')}>
-                    {formatCurrency(viewingSale.totalAmount)}
-                  </span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Amount Paid:</span>
-                  <span>{formatCurrency(viewingSale.amountPaid)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Change:</span>
-                  <span>{formatCurrency(viewingSale.changeGiven)}</span>
+                  <Separator className="my-2 !bg-border/50" />
+
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm font-bold uppercase tracking-wider">Total</span>
+                    <span className={cn(
+                      "text-lg font-bold font-mono tabular-nums",
+                      viewingSale.isVoided && "line-through text-muted-foreground"
+                    )}>
+                      {formatCurrency(viewingSale.totalAmount)}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs pt-1">
+                    <span className="text-muted-foreground">Paid</span>
+                    <span className="font-mono tabular-nums font-medium text-emerald-500">{formatCurrency(viewingSale.amountPaid)}</span>
+                  </div>
+                  {viewingSale.changeGiven > 0 && (
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-muted-foreground">Change</span>
+                      <span className="font-mono tabular-nums">{formatCurrency(viewingSale.changeGiven)}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Void Info */}
+              {/* ── Void Banner ── */}
               {viewingSale.isVoided && (
-                <>
-                  <Separator />
-                  <div className="rounded-lg bg-destructive/10 p-4 text-destructive">
-                    <div className="flex items-center gap-2 font-medium">
-                      <Ban className="h-4 w-4" />
-                      This sale has been voided
-                    </div>
-                    {viewingSale.voidReason && (
-                      <p className="mt-2 text-sm">Reason: {viewingSale.voidReason}</p>
-                    )}
+                <div className="mx-6 mb-3 rounded-lg bg-red-500/10 border border-red-500/20 p-3">
+                  <div className="flex items-center gap-2 text-red-400">
+                    <Ban className="h-3.5 w-3.5" />
+                    <span className="text-xs font-semibold uppercase tracking-wider">Sale Voided</span>
                   </div>
-                </>
+                  {viewingSale.voidReason && (
+                    <p className="text-xs text-red-400/80 mt-1 ml-5">{viewingSale.voidReason}</p>
+                  )}
+                </div>
               )}
 
-              {/* Notes */}
+              {/* ── Notes ── */}
               {viewingSale.notes && (
-                <>
-                  <Separator />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Notes</p>
-                    <p className="mt-1">{viewingSale.notes}</p>
-                  </div>
-                </>
+                <div className="mx-6 mb-3 rounded-lg bg-muted/20 border border-border/30 p-3">
+                  <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60 mb-1">Notes</p>
+                  <p className="text-xs text-muted-foreground">{viewingSale.notes}</p>
+                </div>
               )}
+
+              {/* ── Footer Actions ── */}
+              <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-border/30 bg-muted/10">
+                <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setIsViewDialogOpen(false)}>
+                  Close
+                </Button>
+                <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => handlePrintReceipt(viewingSale, viewingSaleItems)}>
+                  <Printer className="h-3 w-3" />
+                  Print Receipt
+                </Button>
+              </div>
             </div>
           )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
-              Close
-            </Button>
-            {viewingSale && (
-              <Button onClick={() => handlePrintReceipt(viewingSale)}>
-                <Printer className="mr-2 h-4 w-4" />
-                Print Receipt
-              </Button>
-            )}
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

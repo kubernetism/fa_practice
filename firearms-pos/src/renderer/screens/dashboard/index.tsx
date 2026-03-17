@@ -18,12 +18,30 @@ import {
   Check,
   Loader2,
   Percent,
+  BarChart3,
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts'
 import { Card, CardContent } from '@/components/ui/card'
 import { SetupChecklist } from '@/components/setup-checklist'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useBranch } from '@/contexts/branch-context'
 import { useCurrency } from '@/contexts/settings-context'
 import { formatNumber } from '@/lib/utils'
@@ -59,6 +77,25 @@ interface LowStockItem {
   productCode: string
   quantity: number
   minQuantity: number
+}
+
+type ChartFilter = 'revenue_profit' | 'products' | 'services' | 'expenses' | 'purchases' | 'returns'
+
+interface TrendChartData {
+  series: string[]
+  seriesLabels: Record<string, string>
+  seriesColors: Record<string, string>
+  points: Record<string, any>[]
+  badge: string
+}
+
+const CHART_FILTER_LABELS: Record<ChartFilter, string> = {
+  revenue_profit: 'Revenue & Profit',
+  products: 'Top Products',
+  services: 'Services',
+  expenses: 'Expenses',
+  purchases: 'Purchases',
+  returns: 'Returns',
 }
 
 const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
@@ -129,6 +166,8 @@ export function DashboardScreen() {
   const { formatCurrency } = useCurrency()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
+  const [trendChart, setTrendChart] = useState<TrendChartData | null>(null)
+  const [chartFilter, setChartFilter] = useState<ChartFilter>('revenue_profit')
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('daily')
   const [isLoading, setIsLoading] = useState(true)
   const [isCopied, setIsCopied] = useState(false)
@@ -215,6 +254,15 @@ export function DashboardScreen() {
           }))
           setLowStockItems(items)
         }
+
+        const trendResult = await window.api.dashboard.getTrendData({
+          branchId: currentBranch.id,
+          timePeriod,
+          chartFilter,
+        })
+        if (trendResult.success && trendResult.data) {
+          setTrendChart(trendResult.data)
+        }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error)
       } finally {
@@ -223,7 +271,7 @@ export function DashboardScreen() {
     }
 
     fetchDashboardData()
-  }, [currentBranch, timePeriod])
+  }, [currentBranch, timePeriod, chartFilter])
 
   if (isLoading) {
     return (
@@ -449,54 +497,103 @@ export function DashboardScreen() {
           </Panel>
         </div>
 
-        {/* Right column — Low Stock list + Quick Actions */}
+        {/* Right column — Business Progress Chart + Quick Actions */}
         <div className="col-span-6 flex flex-col gap-3 min-h-0">
-          {/* Low Stock Items */}
+          {/* Business Progress Chart */}
           <Card className="flex-1 min-h-0 flex flex-col">
             <CardContent className="p-3 flex flex-col flex-1 min-h-0">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <AlertTriangle className="h-3 w-3 text-warning" />
-                  Low Stock Alerts
+                  <BarChart3 className="h-3 w-3 text-blue-500" />
+                  Business Progress
                 </h3>
-                {lowStockItems.length > 0 && (
-                  <span className="text-[10px] bg-destructive/10 text-destructive px-1.5 py-0.5 rounded-full font-medium">
-                    {lowStockItems.length} items
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  {trendChart && trendChart.points.length > 0 && (
+                    <span className="text-[10px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">
+                      {trendChart.badge}
+                    </span>
+                  )}
+                  <Select value={chartFilter} onValueChange={(v) => setChartFilter(v as ChartFilter)}>
+                    <SelectTrigger className="h-6 w-[140px] text-[10px] px-2">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(Object.keys(CHART_FILTER_LABELS) as ChartFilter[]).map((key) => (
+                        <SelectItem key={key} value={key} className="text-xs">
+                          {CHART_FILTER_LABELS[key]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-              <div className="flex-1 overflow-auto min-h-0">
-                {lowStockItems.length === 0 ? (
-                  <p className="text-xs text-muted-foreground text-center py-6">
-                    All stock levels are healthy
-                  </p>
-                ) : (
-                  <div className="space-y-0">
-                    {lowStockItems.slice(0, 8).map((item) => (
-                      <div
-                        key={item.productId}
-                        className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="text-xs font-medium truncate">{item.productName}</p>
-                          <p className="text-[10px] text-muted-foreground">{item.productCode}</p>
-                        </div>
-                        <div className="text-right shrink-0 ml-3">
-                          <span className="text-xs font-semibold text-destructive tabular-nums">
-                            {item.quantity}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            /{item.minQuantity}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                    {lowStockItems.length > 8 && (
-                      <p className="text-[10px] text-muted-foreground text-center pt-1">
-                        +{lowStockItems.length - 8} more
-                      </p>
-                    )}
+              <div className="flex-1 min-h-0">
+                {!trendChart || trendChart.points.length === 0 ? (
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-xs text-muted-foreground text-center">
+                      No data for this period
+                    </p>
                   </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={trendChart.points} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
+                      <defs>
+                        {trendChart.series.map((key) => (
+                          <linearGradient key={key} id={`gradient_${key}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor={trendChart.seriesColors[key]} stopOpacity={0.3} />
+                            <stop offset="95%" stopColor={trendChart.seriesColors[key]} stopOpacity={0} />
+                          </linearGradient>
+                        ))}
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
+                      <XAxis
+                        dataKey="label"
+                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                        axisLine={{ stroke: 'hsl(var(--border))' }}
+                        tickLine={false}
+                      />
+                      <YAxis
+                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                        axisLine={false}
+                        tickLine={false}
+                        tickFormatter={(v) => {
+                          if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`
+                          if (v >= 1000) return `${(v / 1000).toFixed(0)}K`
+                          return v.toString()
+                        }}
+                      />
+                      <RechartsTooltip
+                        contentStyle={{
+                          backgroundColor: 'hsl(var(--card))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '8px',
+                          fontSize: '11px',
+                          padding: '8px 12px',
+                        }}
+                        labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 600, marginBottom: 4 }}
+                        formatter={(value: number, name: string) => [
+                          formatCurrency(value),
+                          trendChart.seriesLabels[name] || name,
+                        ]}
+                      />
+                      <Legend
+                        iconType="circle"
+                        iconSize={6}
+                        wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }}
+                        formatter={(value) => trendChart.seriesLabels[value] || value}
+                      />
+                      {trendChart.series.map((key) => (
+                        <Area
+                          key={key}
+                          type="monotone"
+                          dataKey={key}
+                          stroke={trendChart.seriesColors[key]}
+                          strokeWidth={2}
+                          fill={`url(#gradient_${key})`}
+                        />
+                      ))}
+                    </AreaChart>
+                  </ResponsiveContainer>
                 )}
               </div>
             </CardContent>

@@ -448,6 +448,11 @@ const api = {
       ipcRenderer.invoke('receipt:generate-payment-history', receivableId),
   },
 
+  // Shell
+  shell: {
+    openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
+  },
+
   // Todos
   todos: {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('todos:create', data),
@@ -483,6 +488,8 @@ const api = {
   dashboard: {
     getStats: (params: { branchId: number; timePeriod: string }) =>
       ipcRenderer.invoke('dashboard:get-stats', params),
+    getTrendData: (params: { branchId: number; timePeriod: string; chartFilter: string }) =>
+      ipcRenderer.invoke('dashboard:get-trend-data', params),
   },
 
   // Setup Wizard

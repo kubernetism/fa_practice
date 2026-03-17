@@ -4,6 +4,7 @@ import { getDatabase } from '../db'
 import {
   sales,
   saleItems,
+  saleServices,
   products,
   inventory,
   purchases,
@@ -20,9 +21,17 @@ import {
 } from '../db/schema'
 import { getDateRange, type TimePeriod } from '../utils/date-helpers'
 
+type ChartFilter = 'revenue_profit' | 'products' | 'services' | 'expenses' | 'purchases' | 'returns'
+
 interface DashboardParams {
   branchId: number
   timePeriod: TimePeriod
+}
+
+interface TrendParams {
+  branchId: number
+  timePeriod: TimePeriod
+  chartFilter: ChartFilter
 }
 
 interface DashboardStats {
@@ -56,7 +65,7 @@ export function registerDashboardHandlers(): void {
       const dateRange = getDateRange(timePeriod)
 
       // 1. Total Profit calculation
-      // Revenue = sum(unitPrice * quantity)
+      // Revenue = sum(unitPrice * quantity)  for products
       // Cost = sum(costPrice * quantity)
       // Tax = sum(taxAmount)
       const profitResult = await db
@@ -67,6 +76,22 @@ export function registerDashboardHandlers(): void {
         })
         .from(saleItems)
         .innerJoin(sales, eq(saleItems.saleId, sales.id))
+        .where(
+          and(
+            eq(sales.branchId, branchId),
+            between(sales.saleDate, dateRange.start, dateRange.end),
+            eq(sales.isVoided, false)
+          )
+        )
+
+      // Service revenue (services have no cost, so full amount is profit)
+      const serviceResult = await db
+        .select({
+          revenue: sql<number>`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+          tax: sql<number>`COALESCE(SUM(${saleServices.taxAmount}), 0)`,
+        })
+        .from(saleServices)
+        .innerJoin(sales, eq(saleServices.saleId, sales.id))
         .where(
           and(
             eq(sales.branchId, branchId),
@@ -91,9 +116,14 @@ export function registerDashboardHandlers(): void {
           )
         )
 
-      const grossRevenue = profitResult[0]?.revenue || 0
-      const grossCost = profitResult[0]?.cost || 0
-      const grossTax = profitResult[0]?.tax || 0
+      const productRevenue = profitResult[0]?.revenue || 0
+      const productCost = profitResult[0]?.cost || 0
+      const productTax = profitResult[0]?.tax || 0
+      const svcRevenue = serviceResult[0]?.revenue || 0
+      const svcTax = serviceResult[0]?.tax || 0
+      const grossRevenue = productRevenue + svcRevenue
+      const grossCost = productCost // services have no COGS
+      const grossTax = productTax + svcTax
       const commissionTotal = commissionResult[0]?.total || 0
 
       // Calculate return deductions for the period
@@ -351,6 +381,314 @@ export function registerDashboardHandlers(): void {
     } catch (error) {
       console.error('Dashboard stats error:', error)
       return { success: false, message: 'Failed to fetch dashboard stats' }
+    }
+  })
+
+  ipcMain.handle('dashboard:get-trend-data', async (_, params: TrendParams) => {
+    try {
+      const { branchId, timePeriod, chartFilter } = params
+      const dateRange = getDateRange(timePeriod)
+
+      // Helper to build time-group expressions based on a date column
+      function timeExprs(dateCol: ReturnType<typeof sql>) {
+        if (timePeriod === 'daily') {
+          return {
+            groupExpr: sql`strftime('%H', ${dateCol})`,
+            labelExpr: sql<string>`strftime('%H:00', ${dateCol})`,
+          }
+        } else if (timePeriod === 'weekly') {
+          return {
+            groupExpr: sql`strftime('%Y-%m-%d', ${dateCol})`,
+            labelExpr: sql<string>`strftime('%a', ${dateCol})`,
+          }
+        } else if (timePeriod === 'monthly') {
+          return {
+            groupExpr: sql`strftime('%Y-%m-%d', ${dateCol})`,
+            labelExpr: sql<string>`strftime('%d', ${dateCol})`,
+          }
+        } else {
+          return {
+            groupExpr: sql`strftime('%Y-%m', ${dateCol})`,
+            labelExpr: sql<string>`strftime('%b', ${dateCol})`,
+          }
+        }
+      }
+
+      // ── Revenue & Profit ──
+      if (chartFilter === 'revenue_profit') {
+        const { groupExpr, labelExpr } = timeExprs(sql`${sales.saleDate}`)
+
+        // Product revenue by time group
+        const productRows = await db
+          .select({
+            label: labelExpr,
+            revenue: sql<number>`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+            cost: sql<number>`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
+            tax: sql<number>`COALESCE(SUM(${saleItems.taxAmount}), 0)`,
+            count: sql<number>`COUNT(DISTINCT ${sales.id})`,
+            groupKey: groupExpr,
+          })
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .groupBy(groupExpr)
+          .orderBy(groupExpr)
+
+        // Service revenue by time group
+        const serviceRows = await db
+          .select({
+            label: labelExpr,
+            revenue: sql<number>`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+            tax: sql<number>`COALESCE(SUM(${saleServices.taxAmount}), 0)`,
+            groupKey: groupExpr,
+          })
+          .from(saleServices)
+          .innerJoin(sales, eq(saleServices.saleId, sales.id))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .groupBy(groupExpr)
+          .orderBy(groupExpr)
+
+        // Merge product + service data by label
+        const merged = new Map<string, { label: string; revenue: number; cost: number; tax: number; count: number }>()
+        for (const r of productRows) {
+          merged.set(r.label, {
+            label: r.label,
+            revenue: Number(r.revenue),
+            cost: Number(r.cost),
+            tax: Number(r.tax),
+            count: Number(r.count),
+          })
+        }
+        for (const r of serviceRows) {
+          const existing = merged.get(r.label)
+          if (existing) {
+            existing.revenue += Number(r.revenue)
+            existing.tax += Number(r.tax)
+          } else {
+            merged.set(r.label, {
+              label: r.label,
+              revenue: Number(r.revenue),
+              cost: 0,
+              tax: Number(r.tax),
+              count: 0,
+            })
+          }
+        }
+
+        const points = Array.from(merged.values())
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map((r) => ({
+            label: r.label,
+            revenue: r.revenue,
+            profit: r.revenue - r.cost - r.tax,
+          }))
+
+        const totalSales = Array.from(merged.values()).reduce((s, r) => s + r.count, 0)
+
+        return {
+          success: true,
+          data: {
+            series: ['revenue', 'profit'],
+            seriesLabels: { revenue: 'Revenue', profit: 'Profit' },
+            seriesColors: { revenue: '#3b82f6', profit: '#22c55e' },
+            points,
+            badge: `${totalSales} sales`,
+          },
+        }
+      }
+
+      // ── Products (top 5 by revenue) ──
+      if (chartFilter === 'products') {
+        const { groupExpr, labelExpr } = timeExprs(sql`${sales.saleDate}`)
+        // First find top 5 products by revenue in this period
+        const topProducts = await db
+          .select({
+            productId: saleItems.productId,
+            name: products.name,
+            totalRev: sql<number>`SUM(${saleItems.unitPrice} * ${saleItems.quantity})`,
+          })
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .groupBy(saleItems.productId)
+          .orderBy(sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity}) DESC`)
+          .limit(5)
+
+        if (topProducts.length === 0) {
+          return { success: true, data: { series: [], seriesLabels: {}, seriesColors: {}, points: [], badge: '0 products' } }
+        }
+
+        const productColors = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6']
+        const series: string[] = []
+        const seriesLabels: Record<string, string> = {}
+        const seriesColors: Record<string, string> = {}
+        topProducts.forEach((p, i) => {
+          const key = `p${p.productId}`
+          series.push(key)
+          seriesLabels[key] = p.name.length > 15 ? p.name.substring(0, 15) + '...' : p.name
+          seriesColors[key] = productColors[i]
+        })
+
+        // Get time-grouped data for each top product
+        const productIds = topProducts.map((p) => p.productId)
+        const rows = await db
+          .select({
+            label: labelExpr,
+            productId: saleItems.productId,
+            revenue: sql<number>`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+            groupKey: groupExpr,
+          })
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .where(
+            and(
+              eq(sales.branchId, branchId),
+              between(sales.saleDate, dateRange.start, dateRange.end),
+              eq(sales.isVoided, false),
+              sql`${saleItems.productId} IN (${sql.join(productIds.map((id) => sql`${id}`), sql`, `)})`
+            )
+          )
+          .groupBy(groupExpr, saleItems.productId)
+          .orderBy(groupExpr)
+
+        // Pivot: group by label, spread product revenues
+        const pointsMap = new Map<string, Record<string, any>>()
+        for (const row of rows) {
+          if (!pointsMap.has(row.label)) {
+            const point: Record<string, any> = { label: row.label }
+            series.forEach((s) => (point[s] = 0))
+            pointsMap.set(row.label, point)
+          }
+          const point = pointsMap.get(row.label)!
+          point[`p${row.productId}`] = Number(row.revenue)
+        }
+
+        return {
+          success: true,
+          data: {
+            series,
+            seriesLabels,
+            seriesColors,
+            points: Array.from(pointsMap.values()),
+            badge: `Top ${topProducts.length} products`,
+          },
+        }
+      }
+
+      // ── Services ──
+      if (chartFilter === 'services') {
+        const { groupExpr, labelExpr } = timeExprs(sql`${sales.saleDate}`)
+        const rows = await db
+          .select({
+            label: labelExpr,
+            revenue: sql<number>`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+            count: sql<number>`COUNT(*)`,
+            groupKey: groupExpr,
+          })
+          .from(saleServices)
+          .innerJoin(sales, eq(saleServices.saleId, sales.id))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .groupBy(groupExpr)
+          .orderBy(groupExpr)
+
+        return {
+          success: true,
+          data: {
+            series: ['serviceRevenue'],
+            seriesLabels: { serviceRevenue: 'Service Revenue' },
+            seriesColors: { serviceRevenue: '#8b5cf6' },
+            points: rows.map((r) => ({ label: r.label, serviceRevenue: Number(r.revenue) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} services`,
+          },
+        }
+      }
+
+      // ── Expenses ──
+      if (chartFilter === 'expenses') {
+        const { groupExpr, labelExpr } = timeExprs(sql`${expenses.expenseDate}`)
+        const rows = await db
+          .select({
+            label: labelExpr,
+            amount: sql<number>`COALESCE(SUM(${expenses.amount}), 0)`,
+            count: sql<number>`COUNT(*)`,
+            groupKey: groupExpr,
+          })
+          .from(expenses)
+          .where(and(eq(expenses.branchId, branchId), between(expenses.expenseDate, dateRange.start, dateRange.end)))
+          .groupBy(groupExpr)
+          .orderBy(groupExpr)
+
+        return {
+          success: true,
+          data: {
+            series: ['expenseAmount'],
+            seriesLabels: { expenseAmount: 'Expenses' },
+            seriesColors: { expenseAmount: '#ef4444' },
+            points: rows.map((r) => ({ label: r.label, expenseAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} entries`,
+          },
+        }
+      }
+
+      // ── Purchases ──
+      if (chartFilter === 'purchases') {
+        const { groupExpr, labelExpr } = timeExprs(sql`${purchases.createdAt}`)
+        const rows = await db
+          .select({
+            label: labelExpr,
+            amount: sql<number>`COALESCE(SUM(${purchases.totalAmount}), 0)`,
+            count: sql<number>`COUNT(*)`,
+            groupKey: groupExpr,
+          })
+          .from(purchases)
+          .where(and(eq(purchases.branchId, branchId), between(purchases.createdAt, dateRange.start, dateRange.end)))
+          .groupBy(groupExpr)
+          .orderBy(groupExpr)
+
+        return {
+          success: true,
+          data: {
+            series: ['purchaseAmount'],
+            seriesLabels: { purchaseAmount: 'Purchases' },
+            seriesColors: { purchaseAmount: '#f59e0b' },
+            points: rows.map((r) => ({ label: r.label, purchaseAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} orders`,
+          },
+        }
+      }
+
+      // ── Returns ──
+      if (chartFilter === 'returns') {
+        const { groupExpr, labelExpr } = timeExprs(sql`${returns.returnDate}`)
+        const rows = await db
+          .select({
+            label: labelExpr,
+            amount: sql<number>`COALESCE(SUM(${returns.totalAmount}), 0)`,
+            count: sql<number>`COUNT(*)`,
+            groupKey: groupExpr,
+          })
+          .from(returns)
+          .where(and(eq(returns.branchId, branchId), between(returns.returnDate, dateRange.start, dateRange.end)))
+          .groupBy(groupExpr)
+          .orderBy(groupExpr)
+
+        return {
+          success: true,
+          data: {
+            series: ['returnAmount'],
+            seriesLabels: { returnAmount: 'Returns' },
+            seriesColors: { returnAmount: '#f97316' },
+            points: rows.map((r) => ({ label: r.label, returnAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} returns`,
+          },
+        }
+      }
+
+      return { success: false, message: 'Unknown chart filter' }
+    } catch (error) {
+      console.error('Dashboard trend data error:', error)
+      return { success: false, message: 'Failed to fetch trend data' }
     }
   })
 }

@@ -17741,6 +17741,16 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.isVoided, false)
         )
       );
+      const serviceResult = await db2.select({
+        revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+        tax: drizzleOrm.sql`COALESCE(SUM(${saleServices.taxAmount}), 0)`
+      }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
       const commissionResult = await db2.select({
         total: drizzleOrm.sql`COALESCE(SUM(${commissions.commissionAmount}), 0)`
       }).from(commissions).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(
@@ -17751,9 +17761,14 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.isVoided, false)
         )
       );
-      const grossRevenue = profitResult[0]?.revenue || 0;
-      const grossCost = profitResult[0]?.cost || 0;
-      const grossTax = profitResult[0]?.tax || 0;
+      const productRevenue = profitResult[0]?.revenue || 0;
+      const productCost = profitResult[0]?.cost || 0;
+      const productTax = profitResult[0]?.tax || 0;
+      const svcRevenue = serviceResult[0]?.revenue || 0;
+      const svcTax = serviceResult[0]?.tax || 0;
+      const grossRevenue = productRevenue + svcRevenue;
+      const grossCost = productCost;
+      const grossTax = productTax + svcTax;
       const commissionTotal = commissionResult[0]?.total || 0;
       const returnDeductions = await db2.select({
         returnRevenue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
@@ -17927,6 +17942,228 @@ function registerDashboardHandlers() {
     } catch (error) {
       console.error("Dashboard stats error:", error);
       return { success: false, message: "Failed to fetch dashboard stats" };
+    }
+  });
+  electron.ipcMain.handle("dashboard:get-trend-data", async (_, params) => {
+    try {
+      let timeExprs = function(dateCol) {
+        if (timePeriod === "daily") {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%H', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%H:00', ${dateCol})`
+          };
+        } else if (timePeriod === "weekly") {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%Y-%m-%d', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%a', ${dateCol})`
+          };
+        } else if (timePeriod === "monthly") {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%Y-%m-%d', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%d', ${dateCol})`
+          };
+        } else {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%Y-%m', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%b', ${dateCol})`
+          };
+        }
+      };
+      const { branchId, timePeriod, chartFilter } = params;
+      const dateRange = getDateRange(timePeriod);
+      if (chartFilter === "revenue_profit") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
+        const productRows = await db2.select({
+          label: labelExpr,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+          cost: drizzleOrm.sql`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
+          tax: drizzleOrm.sql`COALESCE(SUM(${saleItems.taxAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(DISTINCT ${sales.id})`,
+          groupKey: groupExpr
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        const serviceRows = await db2.select({
+          label: labelExpr,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+          tax: drizzleOrm.sql`COALESCE(SUM(${saleServices.taxAmount}), 0)`,
+          groupKey: groupExpr
+        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        const merged = /* @__PURE__ */ new Map();
+        for (const r of productRows) {
+          merged.set(r.label, {
+            label: r.label,
+            revenue: Number(r.revenue),
+            cost: Number(r.cost),
+            tax: Number(r.tax),
+            count: Number(r.count)
+          });
+        }
+        for (const r of serviceRows) {
+          const existing = merged.get(r.label);
+          if (existing) {
+            existing.revenue += Number(r.revenue);
+            existing.tax += Number(r.tax);
+          } else {
+            merged.set(r.label, {
+              label: r.label,
+              revenue: Number(r.revenue),
+              cost: 0,
+              tax: Number(r.tax),
+              count: 0
+            });
+          }
+        }
+        const points = Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label)).map((r) => ({
+          label: r.label,
+          revenue: r.revenue,
+          profit: r.revenue - r.cost - r.tax
+        }));
+        const totalSales = Array.from(merged.values()).reduce((s, r) => s + r.count, 0);
+        return {
+          success: true,
+          data: {
+            series: ["revenue", "profit"],
+            seriesLabels: { revenue: "Revenue", profit: "Profit" },
+            seriesColors: { revenue: "#3b82f6", profit: "#22c55e" },
+            points,
+            badge: `${totalSales} sales`
+          }
+        };
+      }
+      if (chartFilter === "products") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
+        const topProducts = await db2.select({
+          productId: saleItems.productId,
+          name: products.name,
+          totalRev: drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity})`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(saleItems.productId).orderBy(drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity}) DESC`).limit(5);
+        if (topProducts.length === 0) {
+          return { success: true, data: { series: [], seriesLabels: {}, seriesColors: {}, points: [], badge: "0 products" } };
+        }
+        const productColors = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6"];
+        const series = [];
+        const seriesLabels = {};
+        const seriesColors = {};
+        topProducts.forEach((p, i) => {
+          const key = `p${p.productId}`;
+          series.push(key);
+          seriesLabels[key] = p.name.length > 15 ? p.name.substring(0, 15) + "..." : p.name;
+          seriesColors[key] = productColors[i];
+        });
+        const productIds = topProducts.map((p) => p.productId);
+        const rows = await db2.select({
+          label: labelExpr,
+          productId: saleItems.productId,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+          groupKey: groupExpr
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(sales.branchId, branchId),
+            drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+            drizzleOrm.eq(sales.isVoided, false),
+            drizzleOrm.sql`${saleItems.productId} IN (${drizzleOrm.sql.join(productIds.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
+          )
+        ).groupBy(groupExpr, saleItems.productId).orderBy(groupExpr);
+        const pointsMap = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          if (!pointsMap.has(row.label)) {
+            const point2 = { label: row.label };
+            series.forEach((s) => point2[s] = 0);
+            pointsMap.set(row.label, point2);
+          }
+          const point = pointsMap.get(row.label);
+          point[`p${row.productId}`] = Number(row.revenue);
+        }
+        return {
+          success: true,
+          data: {
+            series,
+            seriesLabels,
+            seriesColors,
+            points: Array.from(pointsMap.values()),
+            badge: `Top ${topProducts.length} products`
+          }
+        };
+      }
+      if (chartFilter === "services") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["serviceRevenue"],
+            seriesLabels: { serviceRevenue: "Service Revenue" },
+            seriesColors: { serviceRevenue: "#8b5cf6" },
+            points: rows.map((r) => ({ label: r.label, serviceRevenue: Number(r.revenue) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} services`
+          }
+        };
+      }
+      if (chartFilter === "expenses") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${expenses.expenseDate}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          amount: drizzleOrm.sql`COALESCE(SUM(${expenses.amount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(expenses).where(drizzleOrm.and(drizzleOrm.eq(expenses.branchId, branchId), drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["expenseAmount"],
+            seriesLabels: { expenseAmount: "Expenses" },
+            seriesColors: { expenseAmount: "#ef4444" },
+            points: rows.map((r) => ({ label: r.label, expenseAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} entries`
+          }
+        };
+      }
+      if (chartFilter === "purchases") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${purchases.createdAt}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          amount: drizzleOrm.sql`COALESCE(SUM(${purchases.totalAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(purchases).where(drizzleOrm.and(drizzleOrm.eq(purchases.branchId, branchId), drizzleOrm.between(purchases.createdAt, dateRange.start, dateRange.end))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["purchaseAmount"],
+            seriesLabels: { purchaseAmount: "Purchases" },
+            seriesColors: { purchaseAmount: "#f59e0b" },
+            points: rows.map((r) => ({ label: r.label, purchaseAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} orders`
+          }
+        };
+      }
+      if (chartFilter === "returns") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${returns.returnDate}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          amount: drizzleOrm.sql`COALESCE(SUM(${returns.totalAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(returns).where(drizzleOrm.and(drizzleOrm.eq(returns.branchId, branchId), drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["returnAmount"],
+            seriesLabels: { returnAmount: "Returns" },
+            seriesColors: { returnAmount: "#f97316" },
+            points: rows.map((r) => ({ label: r.label, returnAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} returns`
+          }
+        };
+      }
+      return { success: false, message: "Unknown chart filter" };
+    } catch (error) {
+      console.error("Dashboard trend data error:", error);
+      return { success: false, message: "Failed to fetch trend data" };
     }
   });
 }
@@ -21304,6 +21541,19 @@ function registerClipboardHandlers() {
     }
   });
 }
+function registerShellHandlers() {
+  electron.ipcMain.handle("shell:openPath", async (_, filePath) => {
+    try {
+      const result = await electron.shell.openPath(filePath);
+      if (result) {
+        return { success: false, message: result };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, message: String(error) };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -21345,6 +21595,7 @@ function registerAllHandlers() {
   registerVoucherHandlers();
   registerReversalHandlers();
   registerClipboardHandlers();
+  registerShellHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

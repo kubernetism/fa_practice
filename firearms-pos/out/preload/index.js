@@ -315,6 +315,10 @@ const api = {
     getSettings: (branchId) => electron.ipcRenderer.invoke("receipt:get-settings", branchId),
     generatePaymentHistory: (receivableId) => electron.ipcRenderer.invoke("receipt:generate-payment-history", receivableId)
   },
+  // Shell
+  shell: {
+    openPath: (filePath) => electron.ipcRenderer.invoke("shell:openPath", filePath)
+  },
   // Todos
   todos: {
     create: (data) => electron.ipcRenderer.invoke("todos:create", data),
@@ -344,7 +348,8 @@ const api = {
   },
   // Dashboard
   dashboard: {
-    getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params)
+    getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params),
+    getTrendData: (params) => electron.ipcRenderer.invoke("dashboard:get-trend-data", params)
   },
   // Setup Wizard
   setup: {

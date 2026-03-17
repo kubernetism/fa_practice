@@ -23,6 +23,7 @@ import {
   Wrench,
   Ticket,
   UserPlus,
+  Printer,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -109,6 +110,23 @@ export function POSScreen() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState('')
   const [addToReceivable, setAddToReceivable] = useState(false)
+
+  // Success invoice dialog state
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false)
+  const [completedSale, setCompletedSale] = useState<{
+    saleId: number
+    invoiceNumber: string
+    totalAmount: number
+    amountPaid: number
+    changeGiven: number
+    paymentMethod: string
+    paymentStatus: string
+    customerName: string
+    remainingAmount: number
+    newCustomerCreated: boolean
+    codName: string
+    receiptPath?: string
+  } | null>(null)
 
   // Tax settings state - loaded from businessSettings
   const [taxSettings, setTaxSettings] = useState<{
@@ -681,7 +699,8 @@ export function POSScreen() {
         actualAmountPaid = total
       }
 
-      const remainingAmount = total - actualAmountPaid
+      const remainingAmount = Math.max(0, total - actualAmountPaid)
+      const changeGiven = actualAmountPaid > total ? actualAmountPaid - total : 0
 
       // Separate products and services from cart
       const productItems = cart.filter((item) => item.type === 'product' && item.product)
@@ -736,10 +755,12 @@ export function POSScreen() {
         // Do NOT create receivable here to avoid duplicates.
 
         // Generate receipt automatically
+        let receiptPath: string | undefined
         try {
           const receiptResult = await window.api.receipt.generate(result.data.id)
           if (receiptResult.success) {
-            console.log('Receipt generated:', receiptResult.data.filePath)
+            receiptPath = receiptResult.data.filePath
+            console.log('Receipt generated:', receiptPath)
           } else {
             console.error('Receipt generation failed:', receiptResult.message)
           }
@@ -775,16 +796,22 @@ export function POSScreen() {
         // Reload products to update stock quantities
         loadAvailableProducts()
 
-        let message = `Sale completed! Invoice: ${result.data.invoiceNumber}`
-        if (newCustomerCreated) {
-          message += `\n\nNew customer "${codName}" created from COD details.`
-        }
-        if (paymentMethod === 'receivable' || addToReceivable) {
-          message += `\n\nFull amount (${formatCurrency(total)}) added to customer's receivables.`
-        } else if (paymentStatus === 'partial') {
-          message += `\n\nPaid: ${formatCurrency(actualAmountPaid)}\nRemaining: ${formatCurrency(remainingAmount)} added to customer's receivables.`
-        }
-        alert(message)
+        // Show success invoice dialog instead of plain alert
+        setCompletedSale({
+          saleId: result.data.id,
+          invoiceNumber: result.data.invoiceNumber,
+          totalAmount: total,
+          amountPaid: actualAmountPaid,
+          changeGiven,
+          paymentMethod: addToReceivable ? 'receivable' : paymentMethod,
+          paymentStatus,
+          customerName: selectedCustomer ? `${selectedCustomer.firstName} ${selectedCustomer.lastName}`.trim() : (newCustomerCreated ? codName : 'Walk-in Customer'),
+          remainingAmount,
+          newCustomerCreated,
+          codName,
+          receiptPath,
+        })
+        setShowSuccessDialog(true)
       } else {
         setError(result.message || 'Failed to process sale')
       }
@@ -1546,19 +1573,34 @@ export function POSScreen() {
 
       {/* Payment Dialog */}
       <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
+        <DialogContent className="max-w-md p-0 gap-0 border-border/50 overflow-hidden">
+          {/* Payment Header */}
+          <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-5 py-4 text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold tracking-wider uppercase">Complete Payment</h3>
+                <p className="text-[10px] text-slate-400 mt-0.5 capitalize">
+                  {paymentMethod === 'receivable' ? 'Pay Later' : paymentMethod} Payment
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-[9px] text-slate-500 uppercase tracking-wider">Total</p>
+                <p className="text-xl font-bold font-mono tabular-nums">{formatCurrency(total)}</p>
+              </div>
+            </div>
+          </div>
+
+          <DialogHeader className="sr-only">
             <DialogTitle>Complete Payment</DialogTitle>
-            <DialogDescription>
-              Total: {formatCurrency(total)} | Method: {paymentMethod === 'receivable' ? 'Pay Later' : paymentMethod.toUpperCase()}
-            </DialogDescription>
+            <DialogDescription>Payment details</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+
+          <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
             {/* Voucher Code Input */}
-            <div className="rounded-lg border p-3 bg-amber-50">
+            <div className="rounded-lg border p-3 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800/50">
               <div className="flex items-center gap-2 mb-2">
                 <Ticket className="h-4 w-4 text-amber-600" />
-                <Label htmlFor="voucher-code" className="font-medium text-amber-800">Voucher Code</Label>
+                <Label htmlFor="voucher-code" className="font-medium text-amber-800 dark:text-amber-300">Voucher Code</Label>
               </div>
               {appliedVoucher ? (
                 <div className="flex items-center justify-between rounded-md bg-amber-100 px-3 py-2">
@@ -1614,10 +1656,10 @@ export function POSScreen() {
             </div>
 
             {/* Discount Input - shown for all payment methods */}
-            <div className="rounded-lg border p-3 bg-green-50">
+            <div className="rounded-lg border p-3 bg-green-50 dark:bg-green-950/20 dark:border-green-800/50">
               <div className="flex items-center gap-2 mb-2">
                 <Percent className="h-4 w-4 text-green-600" />
-                <Label htmlFor="discount" className="font-medium text-green-800">Apply Discount</Label>
+                <Label htmlFor="discount" className="font-medium text-green-800 dark:text-green-300">Apply Discount</Label>
               </div>
               <Input
                 id="discount"
@@ -1875,11 +1917,14 @@ export function POSScreen() {
               </div>
             )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPaymentDialog(false)}>
+
+          {/* Footer Actions */}
+          <div className="flex items-center gap-2 pt-2 border-t border-border/30">
+            <Button variant="ghost" className="flex-1 h-10" onClick={() => setShowPaymentDialog(false)}>
               Cancel
             </Button>
             <Button
+              className="flex-[2] h-10 font-semibold"
               onClick={processPayment}
               disabled={
                 isProcessing ||
@@ -1904,7 +1949,7 @@ export function POSScreen() {
                 </>
               )}
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -2278,6 +2323,149 @@ export function POSScreen() {
               Confirm Payment
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Sale Success Invoice Dialog */}
+      <Dialog open={showSuccessDialog} onOpenChange={setShowSuccessDialog}>
+        <DialogContent className="max-w-[420px] p-0 gap-0 border-border/50 overflow-hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Sale Complete</DialogTitle>
+            <DialogDescription>Invoice details</DialogDescription>
+          </DialogHeader>
+
+          {completedSale && (
+            <div>
+              {/* Header */}
+              <div className="bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-500 px-6 py-5 text-white text-center relative overflow-hidden">
+                <div className="absolute inset-0 opacity-10" style={{
+                  backgroundImage: 'radial-gradient(circle at 20% 50%, white 1px, transparent 1px), radial-gradient(circle at 80% 50%, white 1px, transparent 1px)',
+                  backgroundSize: '30px 30px',
+                }} />
+                <div className="relative">
+                  <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
+                    <CheckCircle2 className="h-8 w-8 text-white" />
+                  </div>
+                  <h2 className="text-lg font-bold tracking-wide">Sale Complete!</h2>
+                  <p className="text-emerald-100 text-xs mt-1">Transaction processed successfully</p>
+                </div>
+              </div>
+
+              {/* Invoice Number Band */}
+              <div className="flex items-center justify-between px-6 py-3 bg-muted/30 border-b border-border/30">
+                <div>
+                  <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Invoice</p>
+                  <p className="font-mono text-sm font-bold tracking-wider">#{completedSale.invoiceNumber}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[9px] font-semibold uppercase tracking-widest text-muted-foreground/60">Customer</p>
+                  <p className="text-sm font-medium truncate max-w-[180px]">{completedSale.customerName}</p>
+                </div>
+              </div>
+
+              {/* Details */}
+              <div className="px-6 py-4 space-y-3">
+                {/* Grand Total */}
+                <div className="flex items-center justify-between py-3 border-b-2 border-t-2 border-foreground/10">
+                  <span className="text-sm font-bold uppercase tracking-wider">Total Amount</span>
+                  <span className="text-2xl font-bold font-mono tabular-nums">
+                    {formatCurrency(completedSale.totalAmount)}
+                  </span>
+                </div>
+
+                {/* Payment Info */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Payment Method</span>
+                    <span className="font-medium capitalize">
+                      {completedSale.paymentMethod === 'receivable' ? 'Pay Later' : completedSale.paymentMethod}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Status</span>
+                    <span className={`font-semibold text-xs uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                      completedSale.paymentStatus === 'paid'
+                        ? 'bg-emerald-500/10 text-emerald-500'
+                        : completedSale.paymentStatus === 'partial'
+                          ? 'bg-amber-500/10 text-amber-500'
+                          : 'bg-slate-500/10 text-slate-400'
+                    }`}>
+                      {completedSale.paymentStatus}
+                    </span>
+                  </div>
+                  {completedSale.amountPaid > 0 && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Amount Paid</span>
+                      <span className="font-mono tabular-nums font-medium text-emerald-500">
+                        {formatCurrency(completedSale.amountPaid)}
+                      </span>
+                    </div>
+                  )}
+                  {completedSale.changeGiven > 0 && (
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-muted-foreground">Change Returned</span>
+                      <span className="font-mono tabular-nums font-medium">
+                        {formatCurrency(completedSale.changeGiven)}
+                      </span>
+                    </div>
+                  )}
+                  {completedSale.remainingAmount > 0 && (
+                    <div className="flex justify-between items-center text-sm rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 mt-1">
+                      <span className="text-amber-500 font-medium">Added to Receivables</span>
+                      <span className="font-mono tabular-nums font-bold text-amber-500">
+                        {formatCurrency(completedSale.remainingAmount)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {completedSale.newCustomerCreated && (
+                  <div className="flex items-center gap-2 text-xs bg-blue-500/10 border border-blue-500/20 rounded-lg px-3 py-2">
+                    <UserPlus className="h-3.5 w-3.5 text-blue-500" />
+                    <span className="text-blue-500">New customer <strong>{completedSale.codName}</strong> created from COD details</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 pb-5 pt-1 flex gap-2">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="flex-1 h-11 gap-2"
+                  onClick={async () => {
+                    try {
+                      let filePath = completedSale.receiptPath
+                      if (!filePath) {
+                        const receiptResult = await window.api.receipt.generate(completedSale.saleId)
+                        if (receiptResult.success && receiptResult.data?.filePath) {
+                          filePath = receiptResult.data.filePath
+                        }
+                      }
+                      if (filePath) {
+                        await window.api.shell.openPath(filePath)
+                      }
+                    } catch (err) {
+                      console.error('Failed to print receipt:', err)
+                    }
+                  }}
+                >
+                  <Printer className="h-4 w-4" />
+                  Print Invoice
+                </Button>
+                <Button
+                  size="lg"
+                  className="flex-1 h-11 font-semibold"
+                  onClick={() => {
+                    setShowSuccessDialog(false)
+                    setCompletedSale(null)
+                  }}
+                >
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
