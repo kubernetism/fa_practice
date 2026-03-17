@@ -4490,7 +4490,8 @@ async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
     referenceType: "purchase",
     referenceId: purchase.id,
     branchId: purchase.branchId,
-    userId
+    userId,
+    lines
   });
 }
 async function postExpenseToGL(expense, userId) {
@@ -4827,7 +4828,7 @@ function registerInventoryHandlers() {
     async (_, data) => {
       try {
         const session = getCurrentSession();
-        let currentInventory = await db2.query.inventory.findFirst({
+        const currentInventory = await db2.query.inventory.findFirst({
           where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, data.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
         });
         const product = await db2.query.products.findFirst({
@@ -4841,32 +4842,32 @@ function registerInventoryHandlers() {
         if (quantityAfter < 0) {
           return { success: false, message: "Insufficient stock for this adjustment" };
         }
-        if (currentInventory) {
-          await db2.update(inventory).set({
-            quantity: quantityAfter,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(inventory.id, currentInventory.id));
-        } else {
-          await db2.insert(inventory).values({
+        const result = await withTransaction(async ({ db: txDb }) => {
+          if (currentInventory) {
+            await txDb.update(inventory).set({
+              quantity: quantityAfter,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(inventory.id, currentInventory.id));
+          } else {
+            await txDb.insert(inventory).values({
+              productId: data.productId,
+              branchId: data.branchId,
+              quantity: quantityAfter
+            });
+          }
+          const [adjustment] = await txDb.insert(stockAdjustments).values({
             productId: data.productId,
             branchId: data.branchId,
-            quantity: quantityAfter
-          });
-        }
-        const [adjustment] = await db2.insert(stockAdjustments).values({
-          productId: data.productId,
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          adjustmentType: data.adjustmentType,
-          quantityBefore,
-          quantityChange: data.quantityChange,
-          quantityAfter,
-          serialNumber: data.serialNumber,
-          reason: data.reason,
-          reference: data.reference
-        }).returning();
-        if (data.quantityChange > 0) {
-          try {
+            userId: session?.userId ?? 0,
+            adjustmentType: data.adjustmentType,
+            quantityBefore,
+            quantityChange: data.quantityChange,
+            quantityAfter,
+            serialNumber: data.serialNumber,
+            reason: data.reason,
+            reference: data.reference
+          }).returning();
+          if (data.quantityChange > 0) {
             await postStockAdjustmentToGL(
               {
                 id: adjustment.id,
@@ -4879,10 +4880,9 @@ function registerInventoryHandlers() {
               },
               session?.userId ?? 0
             );
-          } catch (glError) {
-            console.error("GL posting for stock adjustment failed:", glError);
           }
-        }
+          return adjustment;
+        });
         await createAuditLog$1({
           userId: session?.userId,
           branchId: data.branchId,
@@ -17902,9 +17902,11 @@ function registerDashboardHandlers() {
       const stats = {
         totalProfit,
         totalRevenue: revenue,
+        grossRevenue,
         totalCost: cost,
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
+        returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
         totalPurchases: purchasesResult[0]?.total || 0,
@@ -21290,6 +21292,18 @@ function registerReversalHandlers() {
     }
   );
 }
+function registerClipboardHandlers() {
+  electron.ipcMain.handle("clipboard:copy-image", async (_, dataUrl) => {
+    try {
+      const image = electron.nativeImage.createFromDataURL(dataUrl);
+      electron.clipboard.writeImage(image);
+      return { success: true };
+    } catch (error) {
+      console.error("Clipboard copy image error:", error);
+      return { success: false, message: "Failed to copy image to clipboard" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -21330,6 +21344,7 @@ function registerAllHandlers() {
   registerServicesHandlers();
   registerVoucherHandlers();
   registerReversalHandlers();
+  registerClipboardHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

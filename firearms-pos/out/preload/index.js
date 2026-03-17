@@ -399,6 +399,10 @@ const api = {
     stats: () => electron.ipcRenderer.invoke("reversal:stats"),
     check: (data) => electron.ipcRenderer.invoke("reversal:check", data)
   },
+  // Clipboard
+  clipboard: {
+    copyImage: (dataUrl) => electron.ipcRenderer.invoke("clipboard:copy-image", dataUrl)
+  },
   // Discount Management
   discountManagement: {
     getSummary: (params) => electron.ipcRenderer.invoke("discount-management:get-summary", params),

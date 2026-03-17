@@ -556,6 +556,11 @@ const api = {
       ipcRenderer.invoke('reversal:check', data),
   },
 
+  // Clipboard
+  clipboard: {
+    copyImage: (dataUrl: string) => ipcRenderer.invoke('clipboard:copy-image', dataUrl),
+  },
+
   // Discount Management
   discountManagement: {
     getSummary: (params: Record<string, unknown>) =>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   DollarSign,
@@ -14,10 +14,12 @@ import {
   Users,
   ArrowDownCircle,
   ArrowUpCircle,
-  Copy,
+  Camera,
   Check,
+  Loader2,
   Percent,
 } from 'lucide-react'
+import { toPng } from 'html-to-image'
 import { Card, CardContent } from '@/components/ui/card'
 import { SetupChecklist } from '@/components/setup-checklist'
 import { Button } from '@/components/ui/button'
@@ -25,6 +27,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useBranch } from '@/contexts/branch-context'
 import { useCurrency } from '@/contexts/settings-context'
 import { formatNumber } from '@/lib/utils'
+import { ReportCard } from './report-card'
 
 type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
 
@@ -129,70 +132,62 @@ export function DashboardScreen() {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('daily')
   const [isLoading, setIsLoading] = useState(true)
   const [isCopied, setIsCopied] = useState(false)
+  const [isCopying, setIsCopying] = useState(false)
+  const [businessName, setBusinessName] = useState('')
+  const reportRef = useRef<HTMLDivElement>(null)
 
-  const handleCopyDashboard = async () => {
-    if (!stats || !currentBranch) return
-
-    const text = `
-═══════════════════════════════════════════════════════
-                    DASHBOARD REPORT
-═══════════════════════════════════════════════════════
-Branch: ${currentBranch.name}
-Period: ${TIME_PERIOD_LABELS[timePeriod]}
-Generated: ${new Date().toLocaleString()}
-═══════════════════════════════════════════════════════
-
-📊 FINANCIAL OVERVIEW
-───────────────────────────────────────────────────────
-Gross Revenue:        ${formatCurrency(stats.grossRevenue)}
-Return Deductions:    -${formatCurrency(stats.returnDeductions)}
-Net Revenue:          ${formatCurrency(stats.totalRevenue)}
-Total Cost:           ${formatCurrency(stats.totalCost)}
-Total Profit:         ${formatCurrency(stats.totalProfit)}
-Total Purchases:      ${formatCurrency(stats.totalPurchases)}
-Total Expenses:       ${formatCurrency(stats.totalExpense)}
-
-💰 TAX & COMMISSION
-───────────────────────────────────────────────────────
-Tax Collected:        ${formatCurrency(stats.totalTaxCollected)}
-Commission Paid:      ${formatCurrency(stats.totalCommission)}
-
-📦 SALES & INVENTORY
-───────────────────────────────────────────────────────
-Total Sales:          ${formatNumber(stats.totalSalesCount)} transactions
-Products Sold:        ${formatNumber(stats.totalProductsSold)} units
-Total Products:       ${formatNumber(stats.totalProducts)} items
-Total Returns:        ${formatCurrency(stats.totalReturns)}
-Low Stock Items:      ${formatNumber(stats.lowStockCount)} items
-
-💳 RECEIVABLES & PAYABLES
-───────────────────────────────────────────────────────
-AR Pending:           ${formatCurrency(stats.receivablesPending)}
-AR Received:          ${formatCurrency(stats.receivablesReceived)}
-AP Pending:           ${formatCurrency(stats.payablesPending)}
-AP Paid:              ${formatCurrency(stats.payablesPaid)}
-
-💵 CASH POSITION
-───────────────────────────────────────────────────────
-Cash In Hand:         ${formatCurrency(stats.cashInHand)}
-
-${lowStockItems.length > 0 ? `
-⚠️ LOW STOCK ALERTS (${lowStockItems.length} items)
-───────────────────────────────────────────────────────
-${lowStockItems.slice(0, 10).map(item => `• ${item.productName} (${item.productCode}): ${item.quantity}/${item.minQuantity}`).join('\n')}
-${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` : ''}
-` : ''}
-═══════════════════════════════════════════════════════
-`.trim()
-
-    try {
-      await navigator.clipboard.writeText(text)
-      setIsCopied(true)
-      setTimeout(() => setIsCopied(false), 2000)
-    } catch (error) {
-      console.error('Failed to copy:', error)
+  // Fetch business name for the report header
+  useEffect(() => {
+    const fetchBizName = async () => {
+      try {
+        const result = await window.api.businessSettings.getGlobal()
+        if (result.success && result.data?.businessName) {
+          setBusinessName(result.data.businessName)
+        }
+      } catch {
+        // ignore — will fall back to default
+      }
     }
-  }
+    fetchBizName()
+  }, [])
+
+  const handleCopyDashboard = useCallback(async () => {
+    if (!stats || !currentBranch || !reportRef.current || isCopying) return
+
+    setIsCopying(true)
+    try {
+      // Temporarily make the off-screen report card visible for rendering
+      const node = reportRef.current
+      const prevPos = node.style.position
+      const prevLeft = node.style.left
+      const prevTop = node.style.top
+      node.style.position = 'fixed'
+      node.style.left = '0px'
+      node.style.top = '0px'
+      node.style.zIndex = '-1'
+
+      const dataUrl = await toPng(node, {
+        pixelRatio: 2,
+        backgroundColor: '#0f172a',
+      })
+
+      // Restore off-screen positioning
+      node.style.position = prevPos
+      node.style.left = prevLeft
+      node.style.top = prevTop
+      node.style.zIndex = ''
+
+      // Copy via Electron native clipboard
+      await window.api.clipboard.copyImage(dataUrl)
+
+      setIsCopied(true)
+      setTimeout(() => setIsCopied(false), 2500)
+    } catch (error) {
+      console.error('Failed to capture dashboard:', error)
+    } finally {
+      setIsCopying(false)
+    }
+  }, [stats, currentBranch, isCopying])
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -258,13 +253,15 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
             variant="ghost"
             size="sm"
             onClick={handleCopyDashboard}
-            disabled={!stats}
+            disabled={!stats || isCopying}
             className="h-7 px-2 gap-1.5 text-xs"
           >
-            {isCopied ? (
-              <><Check className="h-3 w-3 text-green-500" /> Copied</>
+            {isCopying ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Capturing...</>
+            ) : isCopied ? (
+              <><Check className="h-3 w-3 text-green-500" /> Copied!</>
             ) : (
-              <><Copy className="h-3 w-3" /> Copy</>
+              <><Camera className="h-3 w-3" /> Screenshot</>
             )}
           </Button>
           <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
@@ -534,6 +531,20 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
           </div>
         </div>
       </div>
+
+      {/* Off-screen report card for screenshot capture */}
+      {stats && (
+        <ReportCard
+          ref={reportRef}
+          businessName={businessName}
+          branchName={currentBranch?.name || 'Branch'}
+          periodLabel={TIME_PERIOD_LABELS[timePeriod]}
+          generatedAt={new Date().toLocaleString()}
+          formatCurrency={formatCurrency}
+          formatNumber={formatNumber}
+          stats={stats}
+        />
+      )}
     </div>
   )
 }
