@@ -28,6 +28,7 @@ interface DashboardParams {
 interface DashboardStats {
   totalProfit: number
   totalRevenue: number
+  grossRevenue: number
   totalCost: number
   totalTaxCollected: number
   totalCommission: number
@@ -36,6 +37,7 @@ interface DashboardStats {
   totalPurchases: number
   totalExpense: number
   totalReturns: number
+  returnDeductions: number
   receivablesPending: number
   receivablesReceived: number
   payablesPending: number
@@ -323,9 +325,11 @@ export function registerDashboardHandlers(): void {
       const stats: DashboardStats = {
         totalProfit,
         totalRevenue: revenue,
+        grossRevenue,
         totalCost: cost,
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
+        returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
         totalPurchases: purchasesResult[0]?.total || 0,

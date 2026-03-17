@@ -529,6 +529,7 @@ export async function postPurchaseReceiveToGL(
     referenceId: purchase.id,
     branchId: purchase.branchId,
     userId,
+    lines,
   })
 }
 

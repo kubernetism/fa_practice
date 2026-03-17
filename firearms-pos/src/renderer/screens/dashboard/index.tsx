@@ -6,6 +6,7 @@ import {
   Package,
   AlertTriangle,
   TrendingUp,
+  TrendingDown,
   Receipt,
   RotateCcw,
   Wallet,
@@ -17,7 +18,7 @@ import {
   Check,
   Percent,
 } from 'lucide-react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { SetupChecklist } from '@/components/setup-checklist'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -30,6 +31,7 @@ type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
 interface DashboardStats {
   totalProfit: number
   totalRevenue: number
+  grossRevenue: number
   totalCost: number
   totalTaxCollected: number
   totalCommission: number
@@ -38,6 +40,7 @@ interface DashboardStats {
   totalPurchases: number
   totalExpense: number
   totalReturns: number
+  returnDeductions: number
   receivablesPending: number
   receivablesReceived: number
   payablesPending: number
@@ -62,6 +65,62 @@ const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
   yearly: 'This Year',
 }
 
+/* ------------------------------------------------------------------ */
+/*  Compact inline metric row used inside grouped panels               */
+/* ------------------------------------------------------------------ */
+function MetricRow({
+  icon: Icon,
+  iconColor,
+  label,
+  value,
+  sub,
+  valueColor,
+}: {
+  icon: React.ElementType
+  iconColor: string
+  label: string
+  value: string
+  sub?: string
+  valueColor?: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-1.5">
+      <div className="flex items-center gap-2 min-w-0">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconColor}`} />
+        <span className="text-xs text-muted-foreground truncate">{label}</span>
+      </div>
+      <div className="text-right shrink-0">
+        <span className={`text-sm font-semibold tabular-nums ${valueColor || ''}`}>{value}</span>
+        {sub && <p className="text-[10px] text-muted-foreground leading-tight">{sub}</p>}
+      </div>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Small panel wrapper                                                */
+/* ------------------------------------------------------------------ */
+function Panel({
+  title,
+  children,
+  className = '',
+}: {
+  title: string
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <Card className={`${className}`}>
+      <CardContent className="p-3">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
+          {title}
+        </h3>
+        <div className="divide-y divide-border/50">{children}</div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function DashboardScreen() {
   const { currentBranch } = useBranch()
   const { formatCurrency } = useCurrency()
@@ -71,7 +130,6 @@ export function DashboardScreen() {
   const [isLoading, setIsLoading] = useState(true)
   const [isCopied, setIsCopied] = useState(false)
 
-  // Copy dashboard data to clipboard as organized text
   const handleCopyDashboard = async () => {
     if (!stats || !currentBranch) return
 
@@ -86,7 +144,9 @@ Generated: ${new Date().toLocaleString()}
 
 📊 FINANCIAL OVERVIEW
 ───────────────────────────────────────────────────────
-Total Revenue:        ${formatCurrency(stats.totalRevenue)}
+Gross Revenue:        ${formatCurrency(stats.grossRevenue)}
+Return Deductions:    -${formatCurrency(stats.returnDeductions)}
+Net Revenue:          ${formatCurrency(stats.totalRevenue)}
 Total Cost:           ${formatCurrency(stats.totalCost)}
 Total Profit:         ${formatCurrency(stats.totalProfit)}
 Total Purchases:      ${formatCurrency(stats.totalPurchases)}
@@ -140,7 +200,6 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
 
       setIsLoading(true)
       try {
-        // Fetch dashboard stats with time period
         const statsResult = await window.api.dashboard.getStats({
           branchId: currentBranch.id,
           timePeriod,
@@ -150,7 +209,6 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
           setStats(statsResult.data)
         }
 
-        // Fetch low stock items
         const lowStockResult = await window.api.inventory.getLowStock(currentBranch.id)
         if (lowStockResult.success && lowStockResult.data) {
           const items = lowStockResult.data.map((item: any) => ({
@@ -180,43 +238,39 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
     )
   }
 
+  const profit = stats?.totalProfit || 0
+  const profitPositive = profit >= 0
+
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col gap-3 overflow-hidden">
       {/* Setup Checklist - shown until dismissed */}
       <SetupChecklist />
 
-      {/* Header with Time Period Selector */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Welcome back! Here's what's happening at {currentBranch?.name || 'your store'}.
-          </p>
+      {/* ── Header ─────────────────────────────────────── */}
+      <div className="flex items-center justify-between shrink-0">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold leading-tight truncate">
+            {currentBranch?.name || 'Dashboard'}
+          </h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 shrink-0">
           <Button
-            variant="outline"
+            variant="ghost"
             size="sm"
             onClick={handleCopyDashboard}
             disabled={!stats}
-            className="gap-2"
+            className="h-7 px-2 gap-1.5 text-xs"
           >
             {isCopied ? (
-              <>
-                <Check className="h-4 w-4 text-green-500" />
-                Copied!
-              </>
+              <><Check className="h-3 w-3 text-green-500" /> Copied</>
             ) : (
-              <>
-                <Copy className="h-4 w-4" />
-                Copy Report
-              </>
+              <><Copy className="h-3 w-3" /> Copy</>
             )}
           </Button>
           <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
-            <TabsList>
+            <TabsList className="h-7">
               {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
-                <TabsTrigger key={period} value={period}>
+                <TabsTrigger key={period} value={period} className="text-xs px-2.5 h-5">
                   {TIME_PERIOD_LABELS[period]}
                 </TabsTrigger>
               ))}
@@ -225,263 +279,260 @@ ${lowStockItems.length > 10 ? `... and ${lowStockItems.length - 10} more items` 
         </div>
       </div>
 
-      {/* Financial Metrics */}
-      <div>
-        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Financial Overview</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
-              <TrendingUp className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${(stats?.totalProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatCurrency(stats?.totalProfit || 0)}
-              </div>
-              <p className="text-xs text-muted-foreground">Revenue - Cost - Commission - Tax</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Purchases</CardTitle>
-              <Receipt className="h-4 w-4 text-purple-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.totalPurchases || 0)}</div>
-              <p className="text-xs text-muted-foreground">Purchase orders value</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Expense</CardTitle>
-              <Wallet className="h-4 w-4 text-red-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.totalExpense || 0)}</div>
-              <p className="text-xs text-muted-foreground">Operating expenses</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Sales Metrics */}
-      <div>
-        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Sales & Inventory</h2>
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Products</CardTitle>
-              <Package className="h-4 w-4 text-blue-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNumber(stats?.totalProducts || 0)}</div>
-              <p className="text-xs text-muted-foreground">Active products in catalog</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Products Sold</CardTitle>
-              <ShoppingCart className="h-4 w-4 text-indigo-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNumber(stats?.totalProductsSold || 0)}</div>
-              <p className="text-xs text-muted-foreground">Units sold in period</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Returns</CardTitle>
-              <RotateCcw className="h-4 w-4 text-orange-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.totalReturns || 0)}</div>
-              <p className="text-xs text-muted-foreground">Returned goods value</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Receivables & Payables */}
-      <div>
-        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Receivables & Payables</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">AR Pending</CardTitle>
-              <ArrowDownCircle className="h-4 w-4 text-yellow-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.receivablesPending || 0)}</div>
-              <p className="text-xs text-muted-foreground">Outstanding customer dues</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">AR Received</CardTitle>
-              <ArrowDownCircle className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.receivablesReceived || 0)}</div>
-              <p className="text-xs text-muted-foreground">Collected in period</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">AP Pending</CardTitle>
-              <ArrowUpCircle className="h-4 w-4 text-red-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.payablesPending || 0)}</div>
-              <p className="text-xs text-muted-foreground">Outstanding supplier dues</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">AP Paid</CardTitle>
-              <ArrowUpCircle className="h-4 w-4 text-green-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.payablesPaid || 0)}</div>
-              <p className="text-xs text-muted-foreground">Paid in period</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Tax & Commission Overview */}
-      <div>
-        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Tax & Commission</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Tax Collected</CardTitle>
-              <Percent className="h-4 w-4 text-blue-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-blue-600">{formatCurrency(stats?.totalTaxCollected || 0)}</div>
-              <p className="text-xs text-muted-foreground">Total tax collected from sales</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Commission Paid</CardTitle>
-              <DollarSign className="h-4 w-4 text-amber-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-amber-600">{formatCurrency(stats?.totalCommission || 0)}</div>
-              <p className="text-xs text-muted-foreground">Sales commissions paid out</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Cash & Alerts */}
-      <div>
-        <h2 className="mb-3 text-lg font-semibold text-muted-foreground">Cash & Alerts</h2>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Cash In Hand</CardTitle>
-              <Banknote className="h-4 w-4 text-emerald-500" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatCurrency(stats?.cashInHand || 0)}</div>
-              <p className="text-xs text-muted-foreground">Current cash register balance</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Low Stock Alerts</CardTitle>
-              <AlertTriangle className="h-4 w-4 text-warning" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatNumber(stats?.lowStockCount || 0)}</div>
-              <p className="text-xs text-muted-foreground">Items need restock</p>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
-      {/* Bottom Section: Low Stock Items & Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {/* Low Stock Items */}
+      {/* ── Hero KPIs ──────────────────────────────────── */}
+      <div className="grid grid-cols-4 gap-3 shrink-0">
+        {/* Revenue */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-warning" />
-              Low Stock Items
-            </CardTitle>
-            <CardDescription>Products that need to be restocked</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {lowStockItems.length === 0 ? (
-              <p className="py-8 text-center text-muted-foreground">All stock levels are healthy</p>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Revenue</span>
+              <DollarSign className="h-3.5 w-3.5 text-blue-500" />
+            </div>
+            <div className="text-2xl font-bold tabular-nums text-blue-600">
+              {formatCurrency(stats?.grossRevenue || 0)}
+            </div>
+            {(stats?.returnDeductions || 0) > 0 ? (
+              <p className="text-[10px] text-orange-500 mt-0.5">
+                Returns: -{formatCurrency(stats?.returnDeductions || 0)} &middot; Net: {formatCurrency(stats?.totalRevenue || 0)}
+              </p>
             ) : (
-              <div className="space-y-4">
-                {lowStockItems.slice(0, 5).map((item) => (
-                  <div key={item.productId} className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">{item.productName}</p>
-                      <p className="text-sm text-muted-foreground">{item.productCode}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-medium text-destructive">{item.quantity} left</p>
-                      <p className="text-sm text-muted-foreground">Min: {item.minQuantity}</p>
-                    </div>
-                  </div>
-                ))}
-                {lowStockItems.length > 5 && (
-                  <Button variant="outline" className="w-full">
-                    View All ({lowStockItems.length} items)
-                  </Button>
-                )}
-              </div>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Gross sales revenue</p>
             )}
           </CardContent>
         </Card>
 
-        {/* Quick Actions */}
+        {/* Profit */}
         <Card>
-          <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
-            <CardDescription>Common tasks you can do right now</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            <Button variant="outline" className="justify-start" asChild>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Profit</span>
+              {profitPositive ? (
+                <TrendingUp className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <TrendingDown className="h-3.5 w-3.5 text-red-500" />
+              )}
+            </div>
+            <div className={`text-2xl font-bold tabular-nums ${profitPositive ? 'text-green-600' : 'text-red-600'}`}>
+              {formatCurrency(profit)}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Revenue - Cost - Comm - Tax</p>
+          </CardContent>
+        </Card>
+
+        {/* Cash In Hand */}
+        <Card>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Cash In Hand</span>
+              <Banknote className="h-3.5 w-3.5 text-emerald-500" />
+            </div>
+            <div className="text-2xl font-bold tabular-nums">
+              {formatCurrency(stats?.cashInHand || 0)}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Register balance</p>
+          </CardContent>
+        </Card>
+
+        {/* Sales Count */}
+        <Card>
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sales</span>
+              <ShoppingCart className="h-3.5 w-3.5 text-indigo-500" />
+            </div>
+            <div className="text-2xl font-bold tabular-nums">
+              {formatNumber(stats?.totalSalesCount || 0)}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {formatNumber(stats?.totalProductsSold || 0)} units sold
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* ── Detail Grid ────────────────────────────────── */}
+      <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
+        {/* Left column — Financials + Purchases/Expenses */}
+        <div className="col-span-3 flex flex-col gap-3">
+          <Panel title="Cost & Margins">
+            <MetricRow
+              icon={Receipt}
+              iconColor="text-purple-500"
+              label="Total Cost"
+              value={formatCurrency(stats?.totalCost || 0)}
+            />
+            <MetricRow
+              icon={Receipt}
+              iconColor="text-purple-500"
+              label="Purchases"
+              value={formatCurrency(stats?.totalPurchases || 0)}
+            />
+            <MetricRow
+              icon={Wallet}
+              iconColor="text-red-500"
+              label="Expenses"
+              value={formatCurrency(stats?.totalExpense || 0)}
+            />
+            <MetricRow
+              icon={RotateCcw}
+              iconColor="text-orange-500"
+              label="Returns"
+              value={formatCurrency(stats?.totalReturns || 0)}
+            />
+          </Panel>
+
+          <Panel title="Tax & Commission">
+            <MetricRow
+              icon={Percent}
+              iconColor="text-blue-500"
+              label="Tax Collected"
+              value={formatCurrency(stats?.totalTaxCollected || 0)}
+            />
+            <MetricRow
+              icon={DollarSign}
+              iconColor="text-amber-500"
+              label="Commission"
+              value={formatCurrency(stats?.totalCommission || 0)}
+            />
+          </Panel>
+        </div>
+
+        {/* Center column — AR / AP */}
+        <div className="col-span-3 flex flex-col gap-3">
+          <Panel title="Accounts Receivable">
+            <MetricRow
+              icon={ArrowDownCircle}
+              iconColor="text-yellow-500"
+              label="Pending"
+              value={formatCurrency(stats?.receivablesPending || 0)}
+              valueColor="text-yellow-600"
+            />
+            <MetricRow
+              icon={ArrowDownCircle}
+              iconColor="text-green-500"
+              label="Received"
+              value={formatCurrency(stats?.receivablesReceived || 0)}
+              valueColor="text-green-600"
+            />
+          </Panel>
+
+          <Panel title="Accounts Payable">
+            <MetricRow
+              icon={ArrowUpCircle}
+              iconColor="text-red-500"
+              label="Pending"
+              value={formatCurrency(stats?.payablesPending || 0)}
+              valueColor="text-red-600"
+            />
+            <MetricRow
+              icon={ArrowUpCircle}
+              iconColor="text-green-500"
+              label="Paid"
+              value={formatCurrency(stats?.payablesPaid || 0)}
+              valueColor="text-green-600"
+            />
+          </Panel>
+
+          <Panel title="Inventory">
+            <MetricRow
+              icon={Package}
+              iconColor="text-emerald-500"
+              label="Active Products"
+              value={formatNumber(stats?.totalProducts || 0)}
+            />
+            <MetricRow
+              icon={AlertTriangle}
+              iconColor="text-warning"
+              label="Low Stock"
+              value={formatNumber(stats?.lowStockCount || 0)}
+              valueColor={
+                (stats?.lowStockCount || 0) > 0 ? 'text-destructive' : ''
+              }
+            />
+          </Panel>
+        </div>
+
+        {/* Right column — Low Stock list + Quick Actions */}
+        <div className="col-span-6 flex flex-col gap-3 min-h-0">
+          {/* Low Stock Items */}
+          <Card className="flex-1 min-h-0 flex flex-col">
+            <CardContent className="p-3 flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  <AlertTriangle className="h-3 w-3 text-warning" />
+                  Low Stock Alerts
+                </h3>
+                {lowStockItems.length > 0 && (
+                  <span className="text-[10px] bg-destructive/10 text-destructive px-1.5 py-0.5 rounded-full font-medium">
+                    {lowStockItems.length} items
+                  </span>
+                )}
+              </div>
+              <div className="flex-1 overflow-auto min-h-0">
+                {lowStockItems.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-6">
+                    All stock levels are healthy
+                  </p>
+                ) : (
+                  <div className="space-y-0">
+                    {lowStockItems.slice(0, 8).map((item) => (
+                      <div
+                        key={item.productId}
+                        className="flex items-center justify-between py-1.5 border-b border-border/40 last:border-0"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium truncate">{item.productName}</p>
+                          <p className="text-[10px] text-muted-foreground">{item.productCode}</p>
+                        </div>
+                        <div className="text-right shrink-0 ml-3">
+                          <span className="text-xs font-semibold text-destructive tabular-nums">
+                            {item.quantity}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            /{item.minQuantity}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {lowStockItems.length > 8 && (
+                      <p className="text-[10px] text-muted-foreground text-center pt-1">
+                        +{lowStockItems.length - 8} more
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Quick Actions — compact row */}
+          <div className="grid grid-cols-4 gap-2 shrink-0">
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
               <Link to="/pos">
-                <ShoppingCart className="mr-2 h-4 w-4" />
+                <ShoppingCart className="h-3 w-3" />
                 New Sale
               </Link>
             </Button>
-            <Button variant="outline" className="justify-start" asChild>
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
               <Link to="/products">
-                <Package className="mr-2 h-4 w-4" />
+                <Package className="h-3 w-3" />
                 Add Product
               </Link>
             </Button>
-            <Button variant="outline" className="justify-start" asChild>
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
               <Link to="/customers">
-                <Users className="mr-2 h-4 w-4" />
+                <Users className="h-3 w-3" />
                 Add Customer
               </Link>
             </Button>
-            <Button variant="outline" className="justify-start" asChild>
+            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
               <Link to="/inventory">
-                <Package className="mr-2 h-4 w-4" />
-                Stock Adjustment
+                <Package className="h-3 w-3" />
+                Stock Adjust
               </Link>
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </div>
       </div>
     </div>
   )

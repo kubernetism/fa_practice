@@ -118,7 +118,7 @@ export function registerInventoryHandlers(): void {
         const session = getCurrentSession()
 
         // Get current inventory
-        let currentInventory = await db.query.inventory.findFirst({
+        const currentInventory = await db.query.inventory.findFirst({
           where: and(eq(inventory.productId, data.productId), eq(inventory.branchId, data.branchId)),
         })
 
@@ -141,40 +141,42 @@ export function registerInventoryHandlers(): void {
           return { success: false, message: 'Insufficient stock for this adjustment' }
         }
 
-        // Update or create inventory
-        if (currentInventory) {
-          await db
-            .update(inventory)
-            .set({
+        // Execute inventory update, adjustment record, and GL posting in a transaction
+        // so they all succeed or all roll back together
+        const result = await withTransaction(async ({ db: txDb }) => {
+          // Update or create inventory
+          if (currentInventory) {
+            await txDb
+              .update(inventory)
+              .set({
+                quantity: quantityAfter,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(inventory.id, currentInventory.id))
+          } else {
+            await txDb.insert(inventory).values({
+              productId: data.productId,
+              branchId: data.branchId,
               quantity: quantityAfter,
-              updatedAt: new Date().toISOString(),
             })
-            .where(eq(inventory.id, currentInventory.id))
-        } else {
-          await db.insert(inventory).values({
+          }
+
+          // Create adjustment record with returning to get ID
+          const [adjustment] = await txDb.insert(stockAdjustments).values({
             productId: data.productId,
             branchId: data.branchId,
-            quantity: quantityAfter,
-          })
-        }
+            userId: session?.userId ?? 0,
+            adjustmentType: data.adjustmentType,
+            quantityBefore,
+            quantityChange: data.quantityChange,
+            quantityAfter,
+            serialNumber: data.serialNumber,
+            reason: data.reason,
+            reference: data.reference,
+          }).returning()
 
-        // Create adjustment record with returning to get ID
-        const [adjustment] = await db.insert(stockAdjustments).values({
-          productId: data.productId,
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          adjustmentType: data.adjustmentType,
-          quantityBefore,
-          quantityChange: data.quantityChange,
-          quantityAfter,
-          serialNumber: data.serialNumber,
-          reason: data.reason,
-          reference: data.reference,
-        }).returning()
-
-        // Post to GL if quantity changed
-        if (data.quantityChange > 0) {
-          try {
+          // Post to GL — if this fails the entire adjustment rolls back
+          if (data.quantityChange > 0) {
             await postStockAdjustmentToGL(
               {
                 id: adjustment.id,
@@ -187,11 +189,10 @@ export function registerInventoryHandlers(): void {
               },
               session?.userId ?? 0
             )
-          } catch (glError) {
-            console.error('GL posting for stock adjustment failed:', glError)
-            // Don't fail the adjustment if GL posting fails
           }
-        }
+
+          return adjustment
+        })
 
         await createAuditLog({
           userId: session?.userId,

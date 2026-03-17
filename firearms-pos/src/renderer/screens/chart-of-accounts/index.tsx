@@ -856,7 +856,7 @@ export default function ChartOfAccountsScreen() {
 
       {/* Create Account Dialog */}
       <Dialog open={createDialog} onOpenChange={setCreateDialog}>
-        <DialogContent>
+        <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Create New Account</DialogTitle>
             <DialogDescription>
@@ -976,7 +976,7 @@ export default function ChartOfAccountsScreen() {
 
       {/* Edit Account Dialog */}
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
-        <DialogContent>
+        <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Edit Account</DialogTitle>
             <DialogDescription>
@@ -1032,7 +1032,7 @@ export default function ChartOfAccountsScreen() {
 
       {/* Adjust Balance Dialog */}
       <Dialog open={adjustDialog} onOpenChange={setAdjustDialog}>
-        <DialogContent>
+        <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
           <DialogHeader>
             <DialogTitle>Adjust Account Balance</DialogTitle>
             <DialogDescription>
