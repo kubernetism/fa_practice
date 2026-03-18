@@ -268,9 +268,26 @@ export default function ReportsScreen() {
         ? 'All Branches'
         : branches.find((b) => b.id.toString() === selectedBranch)?.name || 'Unknown Branch'
 
+      // For audit-trail, fetch comprehensive data for the PDF
+      let pdfData = reportData
+      if (selectedReport === 'audit-trail') {
+        const auditParams: any = {
+          timePeriod,
+          startDate,
+          endDate,
+        }
+        if (selectedBranch !== 'all') {
+          auditParams.branchId = parseInt(selectedBranch)
+        }
+        const comprehensiveResponse = await window.api.reports.comprehensiveAudit(auditParams)
+        if (comprehensiveResponse?.success && comprehensiveResponse?.data) {
+          pdfData = comprehensiveResponse.data
+        }
+      }
+
       const result = await window.api.reports.exportPDF({
         reportType: selectedReport,
-        data: reportData,
+        data: pdfData,
         filters: {
           timePeriod,
           startDate,
