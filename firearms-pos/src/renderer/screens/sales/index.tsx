@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { useBranch } from '@/contexts/branch-context'
+import { useCurrentBranchSettings } from '@/contexts/settings-context'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
 import { ReversalStatusBadge } from '@/components/reversal-status-badge'
@@ -135,6 +136,7 @@ const ITEMS_PER_PAGE = 10
 
 export function SalesHistoryScreen() {
   const { currentBranch, branches } = useBranch()
+  const { settings: branchSettings } = useCurrentBranchSettings()
 
   // Data lists
   const [sales, setSales] = useState<Sale[]>([])
@@ -469,7 +471,7 @@ table{width:100%;border-collapse:collapse;margin:4px 0}
 @media print{body{width:100%;padding:8px}@page{margin:0;size:80mm auto}}
 </style></head>
 <body>
-<div class="receipt-header"><div class="biz-name">Firearms POS</div><div class="branch-name">${branchName}</div></div>
+<div class="receipt-header"><div class="biz-name">${branchSettings?.businessName || 'POS System'}</div><div class="branch-name">${branchName}</div></div>
 <div class="invoice-block"><div class="invoice-num">#${sale.invoiceNumber}</div><div class="invoice-date">${formatDateTime(sale.saleDate)}</div></div>
 <div class="info-grid">
 <div><div class="info-label">Customer</div><div class="info-value">${customerName}</div></div>
@@ -490,7 +492,7 @@ ${discountRow}
 <div class="grand-total"><span class="label">Total</span><span class="value">${formatCurrency(sale.totalAmount)}</span></div>
 <div class="payment-info"><span class="label">Amount Paid</span><span class="value">${formatCurrency(sale.amountPaid)}</span></div>
 ${changeRow}${voidedStamp}${notesBlock}
-<div class="receipt-footer"><div class="thank-you">Thank you for your business!</div><div class="footer-sub">Printed: ${new Date().toLocaleString()}<br>Powered by Firearms POS</div></div>
+<div class="receipt-footer"><div class="thank-you">Thank you for your business!</div><div class="footer-sub">Printed: ${new Date().toLocaleString()}<br>Powered by ${branchSettings?.businessName || 'POS System'}</div></div>
 </body></html>`
   }
 
@@ -923,7 +925,7 @@ ${changeRow}${voidedStamp}${notesBlock}
               <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-6 pt-5 pb-4 text-white">
                 <div className="flex items-start justify-between">
                   <div>
-                    <h2 className="text-lg font-bold tracking-widest uppercase">Firearms POS</h2>
+                    <h2 className="text-lg font-bold tracking-widest uppercase">{branchSettings?.businessName || 'POS System'}</h2>
                     <p className="text-[10px] text-slate-400 tracking-wider uppercase mt-0.5">
                       {getBranchName(viewingSale.branchId)}
                     </p>

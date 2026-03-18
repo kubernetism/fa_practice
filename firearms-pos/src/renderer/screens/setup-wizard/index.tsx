@@ -252,7 +252,7 @@ export function SetupWizardScreen() {
       {/* Footer */}
       <div className="border-t bg-background/80 backdrop-blur-sm py-3">
         <div className="max-w-5xl mx-auto px-4 text-center text-sm text-muted-foreground">
-          Firearms POS - Initial Setup Wizard
+          POS System - Initial Setup Wizard
         </div>
       </div>
     </div>

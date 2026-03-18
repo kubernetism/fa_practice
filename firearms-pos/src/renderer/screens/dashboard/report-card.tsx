@@ -200,7 +200,7 @@ export const ReportCard = React.forwardRef<HTMLDivElement, ReportCardProps>(
       <div ref={ref} style={s.root}>
         {/* ── Header ─────────────────────────── */}
         <div style={s.header}>
-          <p style={s.bizName}>{businessName || 'Firearms POS'}</p>
+          <p style={s.bizName}>{businessName || 'POS System'}</p>
           <div style={s.metaRow}>
             <p style={s.metaText}>{branchName}</p>
             <span style={s.periodBadge}>{periodLabel}</span>
@@ -328,7 +328,7 @@ export const ReportCard = React.forwardRef<HTMLDivElement, ReportCardProps>(
         <div style={s.footer}>
           <div style={s.footerMain}>
             <p style={s.footerDate}>{generatedAt}</p>
-            <p style={s.footerBrand}>Firearms POS</p>
+            <p style={s.footerBrand}>{businessName || 'POS System'}</p>
           </div>
           <div style={s.devInfo}>
             <p style={s.devText}>

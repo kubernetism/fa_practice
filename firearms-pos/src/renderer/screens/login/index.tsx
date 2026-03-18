@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, Navigate } from 'react-router-dom'
 import { Eye, EyeOff, Lock, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -15,6 +15,13 @@ export function LoginScreen() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [businessName, setBusinessName] = useState('POS System')
+
+  useEffect(() => {
+    window.api.businessSettings.getGlobal().then((settings) => {
+      if (settings?.businessName) setBusinessName(settings.businessName)
+    }).catch(() => {})
+  }, [])
 
   // Redirect if already authenticated
   if (authLoading) {
@@ -52,7 +59,7 @@ export function LoginScreen() {
     <div className="flex min-h-screen items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-2xl font-bold">Firearms POS</CardTitle>
+          <CardTitle className="text-2xl font-bold">{businessName}</CardTitle>
           <CardDescription>Enter your credentials to access your account</CardDescription>
         </CardHeader>
         <CardContent>

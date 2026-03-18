@@ -456,7 +456,7 @@ export async function seedInitialData(): Promise<void> {
   await db.insert(settings).values([
     {
       key: 'company_name',
-      value: JSON.stringify('Firearms POS'),
+      value: JSON.stringify('My Business'),
       category: 'company',
       description: 'Company name displayed on receipts',
     },

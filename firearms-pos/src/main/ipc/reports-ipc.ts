@@ -18,6 +18,7 @@ import {
   users,
   suppliers,
   categories,
+  businessSettings,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -1462,12 +1463,14 @@ export function registerReportHandlers(): void {
         const session = getCurrentSession()
         const { reportType, data, filters } = params
 
-        // Get business info from settings (optional)
+        // Get business info from settings
+        const globalSetting = await db.select().from(businessSettings).where(sql`${businessSettings.branchId} IS NULL`).limit(1)
+        const settingsRow = globalSetting[0]
         const businessInfo = {
-          name: 'Firearms Retail POS',
-          address: '',
-          phone: '',
-          email: '',
+          name: settingsRow?.businessName || 'POS System',
+          address: settingsRow?.businessAddress || '',
+          phone: settingsRow?.businessPhone || '',
+          email: settingsRow?.businessEmail || '',
         }
 
         const filePath = await generateReportPDF({

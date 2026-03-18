@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
@@ -38,6 +38,7 @@ Wallet,
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAuth } from '@/contexts/auth-context'
+import { useSettings } from '@/contexts/settings-context'
 import { ThemeToggle } from '@/components/theme'
 
 type UserRole = 'admin' | 'manager' | 'cashier'
@@ -140,10 +141,17 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
 }
 
 export function Sidebar() {
+  const { currentBranchSettings, globalSettings } = useSettings()
+  const businessName = currentBranchSettings?.businessName || globalSettings?.businessName || 'POS System'
+
+  useEffect(() => {
+    document.title = businessName
+  }, [businessName])
+
   return (
     <aside className="flex h-full w-64 flex-col border-r bg-card">
       <div className="flex h-16 items-center border-b px-6">
-        <h1 className="text-xl font-bold">Firearms POS</h1>
+        <h1 className="text-xl font-bold">{businessName}</h1>
       </div>
       <ScrollArea className="flex-1 py-4">
         <NavSection title="Main" items={mainNavItems} />

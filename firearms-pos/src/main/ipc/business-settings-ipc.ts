@@ -57,7 +57,7 @@ export function registerBusinessSettingsHandlers(): void {
         // Create default global settings if not exists
         const defaultSettings = {
           branchId: null,
-          businessName: 'Firearms Retail POS',
+          businessName: 'My Business',
           businessAddress: '',
           businessCity: '',
           businessState: '',

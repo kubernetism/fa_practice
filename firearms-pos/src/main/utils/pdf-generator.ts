@@ -39,7 +39,6 @@ interface PDFOptions {
 export async function generateReportPDF(options: PDFOptions): Promise<string> {
   const { reportType, data, filters, businessInfo } = options
 
-  // Generate HTML content based on report type
   let htmlContent = ''
   switch (reportType) {
     case 'sales':
@@ -82,7 +81,6 @@ export async function generateReportPDF(options: PDFOptions): Promise<string> {
       throw new Error(`Unknown report type: ${reportType}`)
   }
 
-  // Create hidden window for PDF generation
   const pdfWindow = new BrowserWindow({
     show: false,
     width: 800,
@@ -93,1419 +91,1373 @@ export async function generateReportPDF(options: PDFOptions): Promise<string> {
     },
   })
 
-  // Load HTML content
   await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`)
-
-  // Wait for content to fully render
   await new Promise((resolve) => setTimeout(resolve, 1500))
 
-  // Generate PDF - A4 size with compact margins for space efficiency
   const pdfData = await pdfWindow.webContents.printToPDF({
     pageSize: 'A4',
     printBackground: true,
     landscape: false,
     margins: {
-      top: 0.2,
-      bottom: 0.2,
-      left: 0.2,
-      right: 0.2,
+      top: 0.4,
+      bottom: 0.4,
+      left: 0.4,
+      right: 0.4,
     },
   })
 
-  // Save to downloads folder
   const downloadsPath = app.getPath('downloads')
   const fileName = `${reportType}_report_${Date.now()}.pdf`
   const filePath = path.join(downloadsPath, fileName)
 
   fs.writeFileSync(filePath, pdfData)
-
   pdfWindow.close()
 
   return filePath
 }
 
-// Clean Invoice Style Template - Matching reference image
+// ── Helpers ────────────────────────────────────────────────
+function fmtCurrency(amount: number): string {
+  return `Rs. ${(amount || 0).toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function fmtNum(n: number): string {
+  return (n || 0).toLocaleString('en-PK')
+}
+
+function fmtPct(n: number): string {
+  return `${(n || 0).toFixed(1)}%`
+}
+
+// ── Master Template ────────────────────────────────────────
 function getReportTemplate(
   title: string,
   content: string,
   filters: any,
   businessInfo?: any
 ): string {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+  const bizName = businessInfo?.name || 'Business'
+  const bizAddress = businessInfo?.address || ''
+  const bizPhone = businessInfo?.phone || ''
+  const bizEmail = businessInfo?.email || ''
+  const hasContact = bizAddress || bizPhone || bizEmail
+  const periodLabel = getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)
+  const generatedAt = formatDateTime(new Date())
 
-        @page {
-          size: A4;
-          margin: 10mm;
-        }
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-        body {
-          font-family: 'Segoe UI', 'Arial', sans-serif;
-          font-size: 11px;
-          line-height: 1.4;
-          color: #333;
-          background: white;
-          padding: 15px 20px;
-          max-width: 800px;
-          margin: 0 auto;
-        }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @page { size: A4; margin: 12mm 14mm; }
 
-        /* Header - Compact */
-        .header {
-          text-align: center;
-          margin-bottom: 12px;
-          padding-bottom: 8px;
-        }
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #1e293b;
+    background: #fff;
+  }
 
-        .business-name {
-          font-size: 18px;
-          font-weight: bold;
-          color: #1a1a1a;
-          text-transform: uppercase;
-          letter-spacing: 2px;
-          margin-bottom: 6px;
-        }
+  /* ── Header ── */
+  .report-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 14px;
+    border-bottom: 2px solid #0f172a;
+    margin-bottom: 16px;
+  }
+  .biz-block {}
+  .biz-name {
+    font-size: 20px;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: 0.5px;
+    line-height: 1.2;
+  }
+  .biz-contact {
+    font-size: 9px;
+    color: #64748b;
+    margin-top: 4px;
+    line-height: 1.6;
+  }
+  .report-meta {
+    text-align: right;
+  }
+  .report-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #0f172a;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+  .report-period {
+    font-size: 10px;
+    color: #475569;
+    margin-top: 3px;
+  }
+  .report-branch {
+    display: inline-block;
+    margin-top: 5px;
+    padding: 2px 8px;
+    background: #f1f5f9;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
 
-        .report-title {
-          font-size: 13px;
-          color: #555;
-          margin: 4px 0;
-        }
+  /* ── KPI Cards ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .kpi-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .kpi-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .kpi-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .kpi-card.highlight {
+    background: #0f172a;
+    border-color: #0f172a;
+  }
+  .kpi-card.highlight .kpi-label { color: #94a3b8; }
+  .kpi-card.highlight .kpi-value { color: #fff; }
+  .kpi-card.accent {
+    background: #fefce8;
+    border-color: #fde68a;
+  }
+  .kpi-card.danger {
+    background: #fef2f2;
+    border-color: #fecaca;
+  }
+  .kpi-card.danger .kpi-value { color: #dc2626; }
+  .kpi-card.success {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+  }
+  .kpi-card.success .kpi-value { color: #16a34a; }
+  .kpi-label {
+    font-size: 8.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #64748b;
+    margin-bottom: 4px;
+  }
+  .kpi-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.2;
+  }
+  .kpi-sub {
+    font-size: 9px;
+    color: #94a3b8;
+    margin-top: 2px;
+  }
 
-        .report-date {
-          font-size: 11px;
-          color: #666;
-          margin-top: 3px;
-        }
+  /* ── Sections ── */
+  .section {
+    margin-bottom: 16px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #0f172a;
+  }
+  .section-badge {
+    font-size: 8px;
+    font-weight: 600;
+    padding: 2px 6px;
+    background: #f1f5f9;
+    border-radius: 3px;
+    color: #64748b;
+  }
 
-        /* Separator Lines - Tighter */
-        .line {
-          border-top: 1px solid #ddd;
-          margin: 8px 0;
-        }
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+  }
+  table thead th {
+    text-align: left;
+    font-size: 8.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #64748b;
+    padding: 6px 10px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  table thead th:last-child { text-align: right; }
+  table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #334155;
+  }
+  table tbody td:last-child {
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  table tbody tr:last-child td { border-bottom: none; }
+  table tbody tr:nth-child(even) { background: #fafbfc; }
+  .col-num {
+    width: 40px;
+    text-align: center;
+    color: #94a3b8;
+    font-weight: 500;
+  }
 
-        .dashed-line {
-          border-top: 1px dashed #ccc;
-          margin: 8px 0;
-        }
+  /* ── Data Rows (key-value pairs) ── */
+  .data-rows {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 2px 0;
+    overflow: hidden;
+  }
+  .data-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 14px;
+    font-size: 11px;
+  }
+  .data-row + .data-row { border-top: 1px solid #e2e8f0; }
+  .data-row .label {
+    color: #475569;
+    font-weight: 500;
+  }
+  .data-row .value {
+    font-weight: 600;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+  }
+  .data-row.total {
+    background: #0f172a;
+    padding: 10px 14px;
+  }
+  .data-row.total .label { color: #cbd5e1; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+  .data-row.total .value { color: #fff; font-size: 14px; font-weight: 700; }
+  .data-row.subtotal {
+    background: #f1f5f9;
+  }
+  .data-row.subtotal .label { font-weight: 600; }
+  .data-row.subtotal .value { font-weight: 700; }
+  .data-row.deduction .value { color: #dc2626; }
+  .data-row.positive .value { color: #16a34a; }
 
-        .double-line {
-          border-top: 2px solid #333;
-          margin: 10px 0;
-        }
+  /* ── Two Column Layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
 
-        /* Info Row - Compact */
-        .info-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 3px 0;
-        }
+  /* ── Alert Box ── */
+  .alert {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 500;
+    margin-bottom: 14px;
+  }
+  .alert.warning {
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    color: #92400e;
+  }
+  .alert.danger {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+  }
 
-        .info-row span:first-child {
-          color: #e67e22;
-          font-weight: 500;
-        }
+  /* ── Footer ── */
+  .report-footer {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8.5px;
+    color: #94a3b8;
+  }
+  .footer-left { }
+  .footer-right { text-align: right; }
 
-        .info-row span:last-child {
-          color: #2980b9;
-          font-weight: 600;
-        }
+  /* ── Utility ── */
+  .text-right { text-align: right; }
+  .text-center { text-align: center; }
+  .text-danger { color: #dc2626; }
+  .text-success { color: #16a34a; }
+  .text-muted { color: #94a3b8; }
+  .mb-0 { margin-bottom: 0; }
+  .mt-sm { margin-top: 8px; }
 
-        /* Table Header - Compact */
-        .table-header {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          font-weight: bold;
-          text-transform: uppercase;
-          padding: 6px 0;
-          border-bottom: 2px solid #333;
-          margin-bottom: 4px;
-          color: #1a1a1a;
-        }
+  /* ── Page break ── */
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
 
-        .col-qty { width: 50px; }
-        .col-item { flex: 1; padding: 0 10px; }
-        .col-total { width: 100px; text-align: right; }
+  <!-- Header -->
+  <div class="report-header">
+    <div class="biz-block">
+      <div class="biz-name">${bizName}</div>
+      ${hasContact ? `<div class="biz-contact">
+        ${bizAddress ? `${bizAddress}<br>` : ''}
+        ${bizPhone ? `Tel: ${bizPhone}` : ''}${bizPhone && bizEmail ? ' &nbsp;|&nbsp; ' : ''}${bizEmail ? `Email: ${bizEmail}` : ''}
+      </div>` : ''}
+    </div>
+    <div class="report-meta">
+      <div class="report-title">${title}</div>
+      <div class="report-period">${periodLabel}</div>
+      <div class="report-branch">${filters.branchName || 'All Branches'}</div>
+    </div>
+  </div>
 
-        /* Table Row - Tight spacing */
-        .table-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 4px 0;
-          border-bottom: 1px solid #eee;
-        }
+  <!-- Content -->
+  ${content}
 
-        .table-row:last-child {
-          border-bottom: none;
-        }
+  <!-- Footer -->
+  <div class="report-footer">
+    <div class="footer-left">
+      Generated: ${generatedAt} &nbsp;|&nbsp; ${bizName}
+    </div>
+    <div class="footer-right">
+      Confidential &mdash; For Internal Use Only
+    </div>
+  </div>
 
-        .table-row .col-qty { color: #e74c3c; font-weight: 500; }
-        .table-row .col-item { color: #2980b9; }
-        .table-row .col-total { font-weight: 600; color: #27ae60; }
-
-        /* Summary Section - Compact */
-        .summary-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 4px 0;
-        }
-
-        .summary-row.subtotal {
-          padding-top: 6px;
-          border-top: 1px dashed #ccc;
-        }
-
-        .summary-row.total {
-          font-size: 12px;
-          font-weight: bold;
-          padding: 6px 0;
-          border-top: 1px solid #333;
-        }
-
-        .summary-row.grand-total {
-          font-size: 14px;
-          font-weight: bold;
-          padding: 8px 6px;
-          margin-top: 6px;
-          border-top: 2px solid #333;
-          background: #f8f9fa;
-        }
-
-        /* Section - Reduced gaps */
-        .section {
-          margin: 10px 0;
-        }
-
-        .section-title {
-          font-size: 11px;
-          font-weight: bold;
-          text-transform: uppercase;
-          text-align: center;
-          padding: 6px 10px;
-          margin-bottom: 6px;
-          background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
-          border-left: 3px solid #3498db;
-          color: #2c3e50;
-        }
-
-        /* Footer - Compact */
-        .footer {
-          margin-top: 15px;
-          text-align: center;
-          padding-top: 10px;
-          border-top: 2px solid #333;
-        }
-
-        .thank-you {
-          font-size: 10px;
-          font-style: italic;
-          color: #7f8c8d;
-          margin: 6px 0;
-        }
-
-        .footer-message {
-          font-size: 12px;
-          font-weight: bold;
-          letter-spacing: 2px;
-          margin: 6px 0;
-          color: #2c3e50;
-        }
-
-        .footer-date {
-          font-size: 10px;
-          color: #95a5a6;
-          margin-top: 6px;
-        }
-
-        /* Utility */
-        .text-center { text-align: center; }
-        .text-right { text-align: right; }
-        .bold { font-weight: bold; }
-        .small { font-size: 10px; }
-        .muted { color: #95a5a6; }
-
-        /* Data List - Tighter */
-        .data-list {
-          margin: 6px 0;
-        }
-
-        .data-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 4px 0;
-          border-bottom: 1px solid #eee;
-          font-size: 11px;
-        }
-
-        .data-item:last-child {
-          border-bottom: none;
-        }
-
-        .data-item .label { color: #e67e22; font-weight: 500; }
-        .data-item .value { font-weight: 600; color: #2980b9; }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <div class="business-name">${businessInfo?.name || 'STORE'}</div>
-        <div class="report-title">${title}</div>
-        <div class="report-date">${getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)}</div>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="info-row">
-        <span>Branch:</span>
-        <span>${filters.branchName || 'All Branches'}</span>
-      </div>
-      <div class="info-row">
-        <span>Generated:</span>
-        <span>${formatDateTime(new Date())}</span>
-      </div>
-
-      <div class="line"></div>
-
-      ${content}
-
-      <div class="double-line"></div>
-
-      <div class="footer">
-        <div class="thank-you">Thank you for your business!</div>
-        <div class="footer-message">THANK YOU - COME AGAIN!</div>
-        <div class="footer-date">${formatDateTime(new Date())}</div>
-      </div>
-    </body>
-    </html>
-  `
+</body></html>`
 }
 
-// Sales Report HTML - Classic Receipt Style
-function generateSalesReportHTML(
-  data: SalesReportData,
-  filters: any,
-  businessInfo?: any
-): string {
+// ══════════════════════════════════════════════════════════
+// SALES REPORT
+// ══════════════════════════════════════════════════════════
+function generateSalesReportHTML(data: SalesReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Sales Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Transactions:</span>
-          <span class="value">${data.summary?.totalSales || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average Order:</span>
-          <span class="value">Rs. ${(data.summary?.avgOrderValue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Tax Collected:</span>
-          <span class="value">Rs. ${(data.summary?.totalTax || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalRevenue || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL REVENUE:</span>
-        <span>Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Transactions</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalSales || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Order Value</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgOrderValue || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tax Collected</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalTax || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Payment Method</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Method</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.byPaymentMethod
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.paymentMethod}</span>
-          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Payment Method</div>
+          <div class="section-badge">${data.byPaymentMethod?.length || 0} methods</div>
         </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+        <table>
+          <thead><tr><th>Method</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.byPaymentMethod?.map(item => `
+              <tr>
+                <td>${item.paymentMethod}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.total)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Top Products</div>
+          <div class="section-badge">Top 10</div>
+        </div>
+        <table>
+          <thead><tr><th>Product</th><th>Qty</th><th>Revenue</th></tr></thead>
+          <tbody>
+            ${data.topProducts?.slice(0, 10).map(item => `
+              <tr>
+                <td>${item.productName}</td>
+                <td class="col-num">${fmtNum(item.quantitySold)}</td>
+                <td>${fmtCurrency(item.revenue)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="dashed-line"></div>
-
+    ${data.dailySales && data.dailySales.length > 0 ? `
     <div class="section">
-      <div class="section-title">Top Selling Products</div>
-      <div class="table-header">
-        <span class="col-qty">QTY</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Revenue</span>
+      <div class="section-header">
+        <div class="section-title">Daily Breakdown</div>
+        <div class="section-badge">${data.dailySales.length} days</div>
       </div>
-      ${data.topProducts
-        ?.slice(0, 10)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.quantitySold}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">Rs. ${item.revenue.toFixed(2)}</span>
-        </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Date</th><th>Transactions</th><th>Revenue</th></tr></thead>
+        <tbody>
+          ${data.dailySales.map(item => `
+            <tr>
+              <td>${formatDate(item.date)}</td>
+              <td class="col-num">${fmtNum(item.count)}</td>
+              <td>${fmtCurrency(item.total)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
     </div>
+    ` : ''}
   `
-
   return getReportTemplate('Sales Report', content, filters, businessInfo)
 }
 
-// Inventory Report HTML - Classic Receipt Style
-function generateInventoryReportHTML(
-  data: InventoryReportData,
-  filters: any,
-  businessInfo?: any
-): string {
+// ══════════════════════════════════════════════════════════
+// INVENTORY REPORT
+// ══════════════════════════════════════════════════════════
+function generateInventoryReportHTML(data: InventoryReportData, filters: any, businessInfo?: any): string {
   const totalValue = data.stockValue?.reduce((sum, item) => sum + item.costValue, 0) || 0
+  const totalRetail = data.stockValue?.reduce((sum, item) => sum + item.retailValue, 0) || 0
+  const lowCount = data.stockSummary?.[0]?.lowStockItems || 0
+  const outCount = data.stockSummary?.[0]?.outOfStockItems || 0
 
   const content = `
-    <div class="section">
-      <div class="section-title">Inventory Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Low Stock Items:</span>
-          <span class="value">${data.stockSummary?.[0]?.lowStockItems || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Out of Stock:</span>
-          <span class="value">${data.stockSummary?.[0]?.outOfStockItems || 0}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Stock Value (Cost)</div>
+        <div class="kpi-value">${fmtCurrency(totalValue)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>STOCK VALUE:</span>
-        <span>Rs. ${totalValue.toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Retail Value</div>
+        <div class="kpi-value">${fmtCurrency(totalRetail)}</div>
+      </div>
+      <div class="kpi-card${lowCount > 0 ? ' accent' : ''}">
+        <div class="kpi-label">Low Stock Items</div>
+        <div class="kpi-value">${fmtNum(lowCount)}</div>
+      </div>
+      <div class="kpi-card${outCount > 0 ? ' danger' : ''}">
+        <div class="kpi-label">Out of Stock</div>
+        <div class="kpi-value">${fmtNum(outCount)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
+    ${(lowCount > 0 || outCount > 0) ? `
+    <div class="alert ${outCount > 0 ? 'danger' : 'warning'}">
+      ${outCount > 0 ? `&#9888; ${outCount} product(s) are OUT OF STOCK and need immediate restocking.` : ''}
+      ${lowCount > 0 ? `${outCount > 0 ? '<br>' : '&#9888; '}${lowCount} product(s) are running low on stock.` : ''}
+    </div>
+    ` : ''}
 
     <div class="section">
-      <div class="section-title">Stock by Branch</div>
-      <div class="table-header">
-        <span class="col-qty">Units</span>
-        <span class="col-item">Branch</span>
-        <span class="col-total">Low Stock</span>
+      <div class="section-header">
+        <div class="section-title">Stock by Branch</div>
       </div>
-      ${data.stockSummary
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.totalUnits}</span>
-          <span class="col-item">${item.branchName}</span>
-          <span class="col-total">${item.lowStockItems}</span>
-        </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Branch</th><th>Products</th><th>Units</th><th>Low Stock</th><th>Out of Stock</th></tr></thead>
+        <tbody>
+          ${data.stockSummary?.map(item => `
+            <tr>
+              <td>${item.branchName}</td>
+              <td class="col-num">${fmtNum(item.totalProducts)}</td>
+              <td class="col-num">${fmtNum(item.totalUnits)}</td>
+              <td class="col-num${item.lowStockItems > 0 ? ' text-danger' : ''}">${item.lowStockItems}</td>
+              <td class="col-num${item.outOfStockItems > 0 ? ' text-danger' : ''}">${item.outOfStockItems}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="5" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
 
-    ${
-      data.lowStock && data.lowStock.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
+    ${data.lowStock && data.lowStock.length > 0 ? `
     <div class="section">
-      <div class="section-title">** LOW STOCK ALERT **</div>
-      <div class="table-header">
-        <span class="col-qty">Qty</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Status</span>
+      <div class="section-header">
+        <div class="section-title">Low Stock Alert</div>
+        <div class="section-badge">${data.lowStock.length} items</div>
       </div>
-      ${data.lowStock
-        .slice(0, 15)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.quantity}/${item.minQuantity}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">${item.quantity === 0 ? 'OUT!' : 'LOW'}</span>
-        </div>
-      `
-        )
-        .join('')}
+      <table>
+        <thead><tr><th>Product</th><th>Code</th><th>Branch</th><th>Current</th><th>Min Required</th></tr></thead>
+        <tbody>
+          ${data.lowStock.slice(0, 20).map(item => `
+            <tr>
+              <td>${item.productName}</td>
+              <td>${item.productCode || '-'}</td>
+              <td>${item.branchName}</td>
+              <td class="col-num ${item.quantity === 0 ? 'text-danger' : ''}">${item.quantity}</td>
+              <td class="col-num">${item.minQuantity}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
     </div>
-    `
-        : ''
-    }
+    ` : ''}
   `
-
   return getReportTemplate('Inventory Report', content, filters, businessInfo)
 }
 
-// Profit & Loss Report HTML - Classic Receipt Style
-function generateProfitLossReportHTML(
-  data: ProfitLossData,
-  filters: any,
-  businessInfo?: any
-): string {
+// ══════════════════════════════════════════════════════════
+// PROFIT & LOSS
+// ══════════════════════════════════════════════════════════
+function generateProfitLossReportHTML(data: ProfitLossData, filters: any, businessInfo?: any): string {
+  const isProfit = (data.netProfit || 0) >= 0
+
   const content = `
-    <div class="section">
-      <div class="section-title">Financial Statement</div>
-
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Revenue:</span>
-          <span class="value">Rs. ${(data.revenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Cost of Goods Sold:</span>
-          <span class="value">- Rs. ${(data.costOfGoodsSold || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card">
+        <div class="kpi-label">Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.revenue || 0)}</div>
       </div>
-
-      <div class="dashed-line"></div>
-
-      <div class="summary-row subtotal">
-        <span>Gross Profit:</span>
-        <span>Rs. ${(data.grossProfit || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Gross Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.grossProfit || 0)}</div>
+        <div class="kpi-sub">Margin: ${fmtPct(data.grossMargin || 0)}</div>
       </div>
-      <div class="data-item">
-        <span class="label small">Gross Margin:</span>
-        <span class="value">${(data.grossMargin || 0).toFixed(1)}%</span>
-      </div>
-
-      <div class="dashed-line"></div>
-
-      <div class="data-item">
-        <span class="label">Operating Expenses:</span>
-        <span class="value">- Rs. ${(data.expenses || 0).toFixed(2)}</span>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="summary-row grand-total">
-        <span>NET PROFIT:</span>
-        <span>Rs. ${(data.netProfit || 0).toFixed(2)}</span>
-      </div>
-      <div class="data-item">
-        <span class="label small">Net Margin:</span>
-        <span class="value">${(data.netMargin || 0).toFixed(1)}%</span>
+      <div class="kpi-card ${isProfit ? 'success' : 'danger'}">
+        <div class="kpi-label">Net Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.netProfit || 0)}</div>
+        <div class="kpi-sub">Margin: ${fmtPct(data.netMargin || 0)}</div>
       </div>
     </div>
 
-    ${
-      data.expensesByCategory && data.expensesByCategory.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Expenses by Category</div>
-      <div class="table-header">
-        <span class="col-item">Category</span>
-        <span class="col-total">Amount</span>
+      <div class="section-header">
+        <div class="section-title">Profit &amp; Loss Statement</div>
       </div>
-      ${data.expensesByCategory
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.category}</span>
-          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Total Revenue</span>
+          <span class="value">${fmtCurrency(data.revenue || 0)}</span>
         </div>
-      `
-        )
-        .join('')}
+        <div class="data-row deduction">
+          <span class="label">Less: Cost of Goods Sold</span>
+          <span class="value">(${fmtCurrency(data.costOfGoodsSold || 0)})</span>
+        </div>
+        <div class="data-row subtotal">
+          <span class="label">Gross Profit</span>
+          <span class="value">${fmtCurrency(data.grossProfit || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Operating Expenses</span>
+          <span class="value">(${fmtCurrency(data.expenses || 0)})</span>
+        </div>
+        <div class="data-row total">
+          <span class="label">Net Profit / (Loss)</span>
+          <span class="value">${fmtCurrency(data.netProfit || 0)}</span>
+        </div>
+      </div>
     </div>
-    `
-        : ''
-    }
+
+    ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Expense Breakdown</div>
+      </div>
+      <table>
+        <thead><tr><th>Category</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.expensesByCategory.map(item => `
+            <tr>
+              <td>${item.category}</td>
+              <td>${fmtCurrency(item.total)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
   `
-
   return getReportTemplate('Profit & Loss', content, filters, businessInfo)
 }
 
-// Expense Report HTML - Classic Receipt Style
-function generateExpenseReportHTML(
-  data: ExpenseReportData,
-  filters: any,
-  businessInfo?: any
-): string {
+// ══════════════════════════════════════════════════════════
+// EXPENSE REPORT
+// ══════════════════════════════════════════════════════════
+function generateExpenseReportHTML(data: ExpenseReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Expense Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Count:</span>
-          <span class="value">${data.summary?.expenseCount || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average Expense:</span>
-          <span class="value">Rs. ${(data.summary?.avgExpense || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Expenses</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalExpenses || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL EXPENSES:</span>
-        <span>Rs. ${(data.summary?.totalExpenses || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Expense Count</div>
+        <div class="kpi-value">${fmtNum(data.summary?.expenseCount || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Average Expense</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgExpense || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Category</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Category</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.expensesByCategory
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.category}</span>
-          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Category</div>
         </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    ${
-      data.topExpenses && data.topExpenses.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Recent Expenses</div>
-      <div class="table-header">
-        <span class="col-item">Description</span>
-        <span class="col-total">Amount</span>
+        <table>
+          <thead><tr><th>Category</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.expensesByCategory?.map(item => `
+              <tr>
+                <td>${item.category}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.amount)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.topExpenses
-        .slice(0, 10)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.category}${item.description ? ' - ' + item.description.substring(0, 15) : ''}</span>
-          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+
+      ${data.topExpenses && data.topExpenses.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Recent Expenses</div>
         </div>
-        <div class="small muted" style="padding-left:20px;">${formatDate(item.date)}</div>
-      `
-        )
-        .join('')}
+        <table>
+          <thead><tr><th>Description</th><th>Date</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.topExpenses.slice(0, 10).map(item => `
+              <tr>
+                <td>${item.category}${item.description ? ' - ' + item.description.substring(0, 20) : ''}</td>
+                <td>${formatDate(item.date)}</td>
+                <td>${fmtCurrency(item.amount)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : ''}
     </div>
-    `
-        : ''
-    }
   `
-
   return getReportTemplate('Expense Report', content, filters, businessInfo)
 }
 
-// Purchase Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// PURCHASE REPORT
+// ══════════════════════════════════════════════════════════
 function generatePurchaseReportHTML(data: PurchaseReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Purchase Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Orders:</span>
-          <span class="value">${data.summary?.totalPurchases || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average Order:</span>
-          <span class="value">Rs. ${(data.summary?.avgPurchaseValue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Pending Payment:</span>
-          <span class="value">Rs. ${(data.summary?.pendingPayments || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Cost</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalCost || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL COST:</span>
-        <span>Rs. ${(data.summary?.totalCost || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Orders</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalPurchases || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Order Value</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgPurchaseValue || 0)}</div>
+      </div>
+      <div class="kpi-card${(data.summary?.pendingPayments || 0) > 0 ? ' danger' : ''}">
+        <div class="kpi-label">Pending Payment</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.pendingPayments || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Supplier</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Supplier</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.purchasesBySupplier
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.totalPurchases}</span>
-          <span class="col-item">${item.supplierName}</span>
-          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Supplier</div>
         </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+        <table>
+          <thead><tr><th>Supplier</th><th>Orders</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.purchasesBySupplier?.map(item => `
+              <tr>
+                <td>${item.supplierName}</td>
+                <td class="col-num">${fmtNum(item.totalPurchases)}</td>
+                <td>${fmtCurrency(item.totalAmount)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Status</div>
+        </div>
+        <table>
+          <thead><tr><th>Status</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.purchasesByStatus?.map(item => `
+              <tr>
+                <td>${item.status}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.totalAmount)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="dashed-line"></div>
-
+    ${data.recentPurchases && data.recentPurchases.length > 0 ? `
     <div class="section">
-      <div class="section-title">By Status</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Status</span>
-        <span class="col-total">Amount</span>
+      <div class="section-header">
+        <div class="section-title">Recent Orders</div>
       </div>
-      ${data.purchasesByStatus
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.status}</span>
-          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
-        </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>PO Number</th><th>Supplier</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.recentPurchases.slice(0, 10).map(item => `
+            <tr>
+              <td>${item.purchaseOrderNumber}</td>
+              <td>${item.supplierName}</td>
+              <td>${formatDate(item.createdAt)}</td>
+              <td>${fmtCurrency(item.totalAmount)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
     </div>
-
-    ${
-      data.recentPurchases && data.recentPurchases.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Recent Orders</div>
-      <div class="table-header">
-        <span class="col-item">PO Number</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.recentPurchases
-        .slice(0, 8)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.purchaseOrderNumber}</span>
-          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
-        </div>
-        <div class="small muted" style="padding-left:20px;">${item.supplierName} | ${formatDate(item.createdAt)}</div>
-      `
-        )
-        .join('')}
-    </div>
-    `
-        : ''
-    }
+    ` : ''}
   `
-
   return getReportTemplate('Purchase Report', content, filters, businessInfo)
 }
 
-// Returns Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// RETURNS REPORT
+// ══════════════════════════════════════════════════════════
 function generateReturnReportHTML(data: ReturnReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Returns Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Returns:</span>
-          <span class="value">${data.summary?.totalReturns || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Return Rate:</span>
-          <span class="value">${(data.summary?.returnRate || 0).toFixed(1)}%</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Refund Value</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalValue || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>REFUND VALUE:</span>
-        <span>Rs. ${(data.summary?.totalValue || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Returns</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalReturns || 0)}</div>
+      </div>
+      <div class="kpi-card${(data.summary?.returnRate || 0) > 5 ? ' danger' : ''}">
+        <div class="kpi-label">Return Rate</div>
+        <div class="kpi-value">${fmtPct(data.summary?.returnRate || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Reason</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Reason</span>
-        <span class="col-total">Value</span>
-      </div>
-      ${data.returnsByReason
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.reason}</span>
-          <span class="col-total">Rs. ${item.value.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Reason</div>
         </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    ${
-      data.returnsByProduct && data.returnsByProduct.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Most Returned Products</div>
-      <div class="table-header">
-        <span class="col-qty">QTY</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Value</span>
+        <table>
+          <thead><tr><th>Reason</th><th>Count</th><th>Value</th></tr></thead>
+          <tbody>
+            ${data.returnsByReason?.map(item => `
+              <tr>
+                <td>${item.reason}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.value)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.returnsByProduct
-        .slice(0, 10)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.returnCount}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">Rs. ${item.totalValue.toFixed(2)}</span>
+
+      ${data.returnsByProduct && data.returnsByProduct.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Most Returned Products</div>
         </div>
-      `
-        )
-        .join('')}
+        <table>
+          <thead><tr><th>Product</th><th>Returns</th><th>Value</th></tr></thead>
+          <tbody>
+            ${data.returnsByProduct.slice(0, 10).map(item => `
+              <tr>
+                <td>${item.productName}</td>
+                <td class="col-num">${fmtNum(item.returnCount)}</td>
+                <td>${fmtCurrency(item.totalValue)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : ''}
     </div>
-    `
-        : ''
-    }
   `
-
   return getReportTemplate('Returns Report', content, filters, businessInfo)
 }
 
-// Commission Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// COMMISSION REPORT
+// ══════════════════════════════════════════════════════════
 function generateCommissionReportHTML(data: CommissionReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Commission Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Count:</span>
-          <span class="value">${data.summary?.commissionCount || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average:</span>
-          <span class="value">Rs. ${(data.summary?.avgCommission || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Paid</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalCommissions || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL PAID:</span>
-        <span>Rs. ${(data.summary?.totalCommissions || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Commission Count</div>
+        <div class="kpi-value">${fmtNum(data.summary?.commissionCount || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Average</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgCommission || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">By Salesperson</div>
-      <div class="table-header">
-        <span class="col-qty">Sales</span>
-        <span class="col-item">Name</span>
-        <span class="col-total">Commission</span>
+      <div class="section-header">
+        <div class="section-title">By Salesperson</div>
       </div>
-      ${data.commissionsBySalesperson
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.salesCount}</span>
-          <span class="col-item">${item.userName}</span>
-          <span class="col-total">Rs. ${item.totalCommission.toFixed(2)}</span>
-        </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Name</th><th>Sales</th><th>Commission</th></tr></thead>
+        <tbody>
+          ${data.commissionsBySalesperson?.map(item => `
+            <tr>
+              <td>${item.userName}</td>
+              <td class="col-num">${fmtNum(item.salesCount)}</td>
+              <td>${fmtCurrency(item.totalCommission)}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
 
-    ${
-      data.recentCommissions && data.recentCommissions.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
+    ${data.recentCommissions && data.recentCommissions.length > 0 ? `
     <div class="section">
-      <div class="section-title">Recent Commissions</div>
-      <div class="table-header">
-        <span class="col-item">Salesperson</span>
-        <span class="col-total">Amount</span>
+      <div class="section-header">
+        <div class="section-title">Recent Commissions</div>
       </div>
-      ${data.recentCommissions
-        .slice(0, 10)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.userName}</span>
-          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
-        </div>
-        <div class="small muted" style="padding-left:20px;">${formatDate(item.date)} | ${item.saleInvoice}</div>
-      `
-        )
-        .join('')}
+      <table>
+        <thead><tr><th>Salesperson</th><th>Invoice</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.recentCommissions.slice(0, 10).map(item => `
+            <tr>
+              <td>${item.userName}</td>
+              <td>${item.saleInvoice}</td>
+              <td>${formatDate(item.date)}</td>
+              <td>${fmtCurrency(item.amount)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
     </div>
-    `
-        : ''
-    }
+    ` : ''}
   `
-
   return getReportTemplate('Commission Report', content, filters, businessInfo)
 }
 
-// Tax Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// TAX REPORT
+// ══════════════════════════════════════════════════════════
 function generateTaxReportHTML(data: TaxReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Tax Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Taxable Sales:</span>
-          <span class="value">Rs. ${(data.summary?.taxableSales || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Avg Tax per Sale:</span>
-          <span class="value">Rs. ${(data.summary?.avgTaxPerSale || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Tax Collected</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalTaxCollected || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TAX COLLECTED:</span>
-        <span>Rs. ${(data.summary?.totalTaxCollected || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Taxable Sales</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.taxableSales || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Tax per Sale</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgTaxPerSale || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Branch</div>
-      <div class="table-header">
-        <span class="col-item">Branch</span>
-        <span class="col-total">Tax</span>
-      </div>
-      ${data.taxByBranch
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.branchName}</span>
-          <span class="col-total">Rs. ${item.taxCollected.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Branch</div>
         </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Payment Method</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Method</span>
-        <span class="col-total">Tax</span>
+        <table>
+          <thead><tr><th>Branch</th><th>Tax Collected</th></tr></thead>
+          <tbody>
+            ${data.taxByBranch?.map(item => `
+              <tr>
+                <td>${item.branchName}</td>
+                <td>${fmtCurrency(item.taxCollected)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="2" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.taxByPaymentMethod
-        ?.map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.salesCount}</span>
-          <span class="col-item">${item.paymentMethod}</span>
-          <span class="col-total">Rs. ${item.taxCollected.toFixed(2)}</span>
+
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Payment Method</div>
         </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+        <table>
+          <thead><tr><th>Method</th><th>Sales</th><th>Tax</th></tr></thead>
+          <tbody>
+            ${data.taxByPaymentMethod?.map(item => `
+              <tr>
+                <td>${item.paymentMethod}</td>
+                <td class="col-num">${fmtNum(item.salesCount)}</td>
+                <td>${fmtCurrency(item.taxCollected)}</td>
+              </tr>
+            `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
   `
-
   return getReportTemplate('Tax Report', content, filters, businessInfo)
 }
 
-// Customer Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// CUSTOMER REPORT
+// ══════════════════════════════════════════════════════════
 function generateCustomerReportHTML(data: CustomerReportData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Customer Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Customers:</span>
-          <span class="value">${data.summary?.totalCustomers || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Active:</span>
-          <span class="value">${data.summary?.activeCustomers || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">New This Period:</span>
-          <span class="value">${data.summary?.newCustomers || 0}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalRevenue || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL REVENUE:</span>
-        <span>Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Customers</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalCustomers || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Active</div>
+        <div class="kpi-value">${fmtNum(data.summary?.activeCustomers || 0)}</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-label">New This Period</div>
+        <div class="kpi-value">${fmtNum(data.summary?.newCustomers || 0)}</div>
       </div>
     </div>
 
-    ${
-      data.customerRetention
-        ? `
-    <div class="dashed-line"></div>
-
+    ${data.customerRetention ? `
     <div class="section">
-      <div class="section-title">Retention Stats</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Repeat Customers:</span>
-          <span class="value">${data.customerRetention.repeatCustomers || 0}</span>
+      <div class="section-header">
+        <div class="section-title">Retention Metrics</div>
+      </div>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Repeat Customers</span>
+          <span class="value">${fmtNum(data.customerRetention.repeatCustomers || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">One-time Buyers:</span>
-          <span class="value">${data.customerRetention.oneTimeCustomers || 0}</span>
+        <div class="data-row">
+          <span class="label">One-time Buyers</span>
+          <span class="value">${fmtNum(data.customerRetention.oneTimeCustomers || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">Retention Rate:</span>
-          <span class="value">${(data.customerRetention.repeatRate || 0).toFixed(1)}%</span>
+        <div class="data-row subtotal">
+          <span class="label">Retention Rate</span>
+          <span class="value">${fmtPct(data.customerRetention.repeatRate || 0)}</span>
         </div>
       </div>
     </div>
-    `
-        : ''
-    }
-
-    <div class="dashed-line"></div>
+    ` : ''}
 
     <div class="section">
-      <div class="section-title">Top Customers</div>
-      <div class="table-header">
-        <span class="col-qty">Orders</span>
-        <span class="col-item">Customer</span>
-        <span class="col-total">Spent</span>
+      <div class="section-header">
+        <div class="section-title">Top Customers</div>
+        <div class="section-badge">Top 10</div>
       </div>
-      ${data.topCustomers
-        ?.slice(0, 10)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.totalOrders}</span>
-          <span class="col-item">${item.customerName}</span>
-          <span class="col-total">Rs. ${item.totalSpent.toFixed(2)}</span>
-        </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Customer</th><th>Orders</th><th>Total Spent</th></tr></thead>
+        <tbody>
+          ${data.topCustomers?.slice(0, 10).map(item => `
+            <tr>
+              <td>${item.customerName}</td>
+              <td class="col-num">${fmtNum(item.totalOrders)}</td>
+              <td>${fmtCurrency(item.totalSpent)}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
   `
-
   return getReportTemplate('Customer Report', content, filters, businessInfo)
 }
 
-// Branch Performance Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// BRANCH PERFORMANCE
+// ══════════════════════════════════════════════════════════
 function generateBranchPerformanceHTML(data: BranchPerformanceData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Performance Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Branches:</span>
-          <span class="value">${data.summary?.totalBranches || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Total Revenue:</span>
-          <span class="value">Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
-        </div>
-        ${
-          data.topPerformingBranch
-            ? `
-        <div class="data-item">
-          <span class="label">Top Branch:</span>
-          <span class="value">${data.topPerformingBranch.branchName}</span>
-        </div>
-        `
-            : ''
-        }
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Branches</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalBranches || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL PROFIT:</span>
-        <span>Rs. ${(data.summary?.totalProfit || 0).toFixed(2)}</span>
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalRevenue || 0)}</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-label">Total Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalProfit || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
+    ${data.topPerformingBranch ? `
+    <div class="alert warning">
+      &#127942; Top Performing Branch: <strong>${data.topPerformingBranch.branchName}</strong>
+    </div>
+    ` : ''}
 
     <div class="section">
-      <div class="section-title">Branch Rankings</div>
-      ${data.branchMetrics
-        ?.sort((a, b) => b.revenue - a.revenue)
-        .map(
-          (item, index) => `
-        <div style="margin-bottom:2mm;padding-bottom:1mm;border-bottom:1px dotted #ddd;">
-          <div class="table-row" style="padding:0;">
-            <span class="col-qty bold">#${index + 1}</span>
-            <span class="col-item bold">${item.branchName}</span>
-          </div>
-          <div class="data-list" style="padding-left:25px;margin-top:1mm;">
-            <div class="data-item">
-              <span class="label">Sales:</span>
-              <span class="value">${item.salesCount}</span>
-            </div>
-            <div class="data-item">
-              <span class="label">Revenue:</span>
-              <span class="value">Rs. ${item.revenue.toFixed(2)}</span>
-            </div>
-            <div class="data-item">
-              <span class="label">Expenses:</span>
-              <span class="value">Rs. ${item.expenses.toFixed(2)}</span>
-            </div>
-            <div class="data-item">
-              <span class="label">Profit:</span>
-              <span class="value bold">Rs. ${item.profit.toFixed(2)}</span>
-            </div>
-          </div>
-        </div>
-      `
-        )
-        .join('') || '<div class="text-center muted">No data available</div>'}
+      <div class="section-header">
+        <div class="section-title">Branch Rankings</div>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>Branch</th><th>Sales</th><th>Revenue</th><th>Expenses</th><th>Profit</th></tr></thead>
+        <tbody>
+          ${data.branchMetrics?.sort((a, b) => b.revenue - a.revenue).map((item, i) => `
+            <tr>
+              <td class="col-num">${i + 1}</td>
+              <td><strong>${item.branchName}</strong></td>
+              <td class="col-num">${fmtNum(item.salesCount)}</td>
+              <td>${fmtCurrency(item.revenue)}</td>
+              <td>${fmtCurrency(item.expenses)}</td>
+              <td class="${item.profit >= 0 ? 'text-success' : 'text-danger'}">${fmtCurrency(item.profit)}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
   `
-
   return getReportTemplate('Branch Performance', content, filters, businessInfo)
 }
 
-// Cash Flow Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// CASH FLOW
+// ══════════════════════════════════════════════════════════
 function generateCashFlowHTML(data: CashFlowData, filters: any, businessInfo?: any): string {
+  const netFlow = data.summary?.netCashFlow || 0
+
   const content = `
-    <div class="section">
-      <div class="section-title">Cash Flow Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Opening Balance:</span>
-          <span class="value">Rs. ${(data.summary?.openingBalance || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(+) Cash In:</span>
-          <span class="value">Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) Cash Out:</span>
-          <span class="value">Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Opening Balance</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.openingBalance || 0)}</div>
       </div>
-      <div class="line"></div>
-      <div class="summary-row grand-total">
-        <span>CLOSING BALANCE:</span>
-        <span>Rs. ${(data.summary?.closingBalance || 0).toFixed(2)}</span>
+      <div class="kpi-card success">
+        <div class="kpi-label">Cash In</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.cashIn || 0)}</div>
       </div>
-      <div class="data-item">
-        <span class="label">Net Cash Flow:</span>
-        <span class="value">${(data.summary?.netCashFlow || 0) >= 0 ? '+' : ''}Rs. ${(data.summary?.netCashFlow || 0).toFixed(2)}</span>
+      <div class="kpi-card danger">
+        <div class="kpi-label">Cash Out</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.cashOut || 0)}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Closing Balance</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.closingBalance || 0)}</div>
+        <div class="kpi-sub">Net Flow: ${netFlow >= 0 ? '+' : ''}${fmtCurrency(netFlow)}</div>
       </div>
     </div>
 
-    ${
-      data.cashInBreakdown
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Cash Inflow</div>
-      <div class="table-header">
-        <span class="col-item">Source</span>
-        <span class="col-total">Amount</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Sales Revenue</span>
-        <span class="col-total">+ Rs. ${(data.cashInBreakdown.sales || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Receivables</span>
-        <span class="col-total">+ Rs. ${(data.cashInBreakdown.receivables || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Other Income</span>
-        <span class="col-total">+ Rs. ${(data.cashInBreakdown.other || 0).toFixed(2)}</span>
-      </div>
-      <div class="summary-row total">
-        <span>Total Cash In:</span>
-        <span>Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</span>
-      </div>
-    </div>
-    `
-        : ''
-    }
-
-    ${
-      data.cashOutBreakdown
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Cash Outflow</div>
-      <div class="table-header">
-        <span class="col-item">Category</span>
-        <span class="col-total">Amount</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Purchases</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.purchases || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Expenses</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.expenses || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Commissions</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.commissions || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Refunds</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.refunds || 0).toFixed(2)}</span>
-      </div>
-      <div class="summary-row total">
-        <span>Total Cash Out:</span>
-        <span>Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</span>
-      </div>
-    </div>
-    `
-        : ''
-    }
-
-    ${
-      data.cashByBranch && data.cashByBranch.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Cash by Branch</div>
-      <div class="table-header">
-        <span class="col-item">Branch</span>
-        <span class="col-total">Cash in Hand</span>
-      </div>
-      ${data.cashByBranch
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.branchName}</span>
-          <span class="col-total">Rs. ${item.cashInHand.toFixed(2)}</span>
+    <div class="two-col">
+      ${data.cashInBreakdown ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Cash Inflow</div>
         </div>
-      `
-        )
-        .join('')}
+        <div class="data-rows">
+          <div class="data-row positive">
+            <span class="label">Sales Revenue</span>
+            <span class="value">+ ${fmtCurrency(data.cashInBreakdown.sales || 0)}</span>
+          </div>
+          <div class="data-row positive">
+            <span class="label">Receivables Collected</span>
+            <span class="value">+ ${fmtCurrency(data.cashInBreakdown.receivables || 0)}</span>
+          </div>
+          <div class="data-row positive">
+            <span class="label">Other Income</span>
+            <span class="value">+ ${fmtCurrency(data.cashInBreakdown.other || 0)}</span>
+          </div>
+          <div class="data-row subtotal">
+            <span class="label">Total Cash In</span>
+            <span class="value">${fmtCurrency(data.summary?.cashIn || 0)}</span>
+          </div>
+        </div>
+      </div>
+      ` : ''}
+
+      ${data.cashOutBreakdown ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Cash Outflow</div>
+        </div>
+        <div class="data-rows">
+          <div class="data-row deduction">
+            <span class="label">Purchases</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.purchases || 0)})</span>
+          </div>
+          <div class="data-row deduction">
+            <span class="label">Expenses</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.expenses || 0)})</span>
+          </div>
+          <div class="data-row deduction">
+            <span class="label">Commissions</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.commissions || 0)})</span>
+          </div>
+          <div class="data-row deduction">
+            <span class="label">Refunds</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.refunds || 0)})</span>
+          </div>
+          <div class="data-row subtotal">
+            <span class="label">Total Cash Out</span>
+            <span class="value">${fmtCurrency(data.summary?.cashOut || 0)}</span>
+          </div>
+        </div>
+      </div>
+      ` : ''}
     </div>
-    `
-        : ''
-    }
+
+    ${data.cashByBranch && data.cashByBranch.length > 0 ? `
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Cash by Branch</div>
+      </div>
+      <table>
+        <thead><tr><th>Branch</th><th>Cash in Hand</th></tr></thead>
+        <tbody>
+          ${data.cashByBranch.map(item => `
+            <tr>
+              <td>${item.branchName}</td>
+              <td>${fmtCurrency(item.cashInHand)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
   `
-
   return getReportTemplate('Cash Flow Report', content, filters, businessInfo)
 }
 
-// Audit Trail Report HTML - Classic Receipt Style
+// ══════════════════════════════════════════════════════════
+// AUDIT TRAIL (Comprehensive)
+// ══════════════════════════════════════════════════════════
 function generateAuditTrailHTML(data: AuditTrailData, filters: any, businessInfo?: any): string {
   const content = `
-    <div class="section">
-      <div class="section-title">Business Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Sales:</span>
-          <span class="value">${data.salesSummary?.totalSales || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Revenue:</span>
-          <span class="value">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Expenses:</span>
-          <span class="value">Rs. ${(data.expensesSummary?.totalExpenses || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Inventory Value:</span>
-          <span class="value">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Net Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.financialSummary?.netProfit || 0)}</div>
+        <div class="kpi-sub">Margin: ${fmtPct(data.financialSummary?.profitMargin || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>NET PROFIT:</span>
-        <span>Rs. ${(data.financialSummary?.netProfit || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.salesSummary?.totalRevenue || 0)}</div>
+        <div class="kpi-sub">${fmtNum(data.salesSummary?.totalSales || 0)} transactions</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Expenses</div>
+        <div class="kpi-value">${fmtCurrency(data.expensesSummary?.totalExpenses || 0)}</div>
+        <div class="kpi-sub">${fmtNum(data.expensesSummary?.expenseCount || 0)} entries</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Inventory Value</div>
+        <div class="kpi-value">${fmtCurrency(data.inventorySummary?.totalValue || 0)}</div>
+        <div class="kpi-sub">${fmtNum(data.inventorySummary?.totalProducts || 0)} products</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
+    <!-- Sales Section -->
     <div class="section">
-      <div class="section-title">Sales Details</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Transactions:</span>
-          <span class="value">${data.salesSummary?.totalSales || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Avg Order Value:</span>
-          <span class="value">Rs. ${(data.salesSummary?.avgOrderValue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Tax Collected:</span>
-          <span class="value">Rs. ${(data.salesSummary?.totalTax || 0).toFixed(2)}</span>
-        </div>
+      <div class="section-header">
+        <div class="section-title">Sales Overview</div>
       </div>
-    </div>
-
-    ${
-      data.salesByPaymentMethod && data.salesByPaymentMethod.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Sales by Payment</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Method</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.salesByPaymentMethod
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.paymentMethod}</span>
-          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+      <div class="data-rows mb-0">
+        <div class="data-row">
+          <span class="label">Total Transactions</span>
+          <span class="value">${fmtNum(data.salesSummary?.totalSales || 0)}</span>
         </div>
-      `
-        )
-        .join('')}
-    </div>
-    `
-        : ''
-    }
-
-    ${
-      data.topProducts && data.topProducts.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Top Products</div>
-      <div class="table-header">
-        <span class="col-qty">QTY</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Revenue</span>
-      </div>
-      ${data.topProducts
-        .slice(0, 5)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.quantitySold}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">Rs. ${item.revenue.toFixed(2)}</span>
+        <div class="data-row">
+          <span class="label">Average Order Value</span>
+          <span class="value">${fmtCurrency(data.salesSummary?.avgOrderValue || 0)}</span>
         </div>
-      `
-        )
-        .join('')}
-    </div>
-    `
-        : ''
-    }
-
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Inventory Status</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Products:</span>
-          <span class="value">${data.inventorySummary?.totalProducts || 0}</span>
+        <div class="data-row">
+          <span class="label">Tax Collected</span>
+          <span class="value">${fmtCurrency(data.salesSummary?.totalTax || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">Low Stock Items:</span>
-          <span class="value">${data.inventorySummary?.lowStockItems || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Out of Stock:</span>
-          <span class="value">${data.inventorySummary?.outOfStockItems || 0}</span>
+        <div class="data-row total">
+          <span class="label">Total Revenue</span>
+          <span class="value">${fmtCurrency(data.salesSummary?.totalRevenue || 0)}</span>
         </div>
       </div>
     </div>
 
-    ${
-      data.financialSummary
-        ? `
-    <div class="dashed-line"></div>
+    <div class="two-col">
+      ${data.salesByPaymentMethod && data.salesByPaymentMethod.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Sales by Payment</div>
+        </div>
+        <table>
+          <thead><tr><th>Method</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.salesByPaymentMethod.map(item => `
+              <tr>
+                <td>${item.paymentMethod}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.total)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : ''}
 
+      ${data.topProducts && data.topProducts.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Top Products</div>
+        </div>
+        <table>
+          <thead><tr><th>Product</th><th>Qty</th><th>Revenue</th></tr></thead>
+          <tbody>
+            ${data.topProducts.slice(0, 5).map(item => `
+              <tr>
+                <td>${item.productName}</td>
+                <td class="col-num">${fmtNum(item.quantitySold)}</td>
+                <td>${fmtCurrency(item.revenue)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ` : ''}
+    </div>
+
+    <!-- Inventory Status -->
     <div class="section">
-      <div class="section-title">P&L Statement</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Gross Revenue:</span>
-          <span class="value">Rs. ${(data.financialSummary.grossRevenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) Refunds:</span>
-          <span class="value">Rs. ${(data.financialSummary.refunds || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Net Revenue:</span>
-          <span class="value">Rs. ${(data.financialSummary.netRevenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) COGS:</span>
-          <span class="value">Rs. ${(data.financialSummary.cogs || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Gross Profit:</span>
-          <span class="value">Rs. ${(data.financialSummary.grossProfit || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) Expenses:</span>
-          <span class="value">Rs. ${(data.financialSummary.expenses || 0).toFixed(2)}</span>
-        </div>
+      <div class="section-header">
+        <div class="section-title">Inventory Status</div>
       </div>
-      <div class="line"></div>
-      <div class="summary-row grand-total">
-        <span>NET PROFIT:</span>
-        <span>Rs. ${(data.financialSummary.netProfit || 0).toFixed(2)}</span>
-      </div>
-      <div class="data-item">
-        <span class="label">Profit Margin:</span>
-        <span class="value">${(data.financialSummary.profitMargin || 0).toFixed(1)}%</span>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Total Products</span>
+          <span class="value">${fmtNum(data.inventorySummary?.totalProducts || 0)}</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Low Stock Items</span>
+          <span class="value${(data.inventorySummary?.lowStockItems || 0) > 0 ? ' text-danger' : ''}">${fmtNum(data.inventorySummary?.lowStockItems || 0)}</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Out of Stock</span>
+          <span class="value${(data.inventorySummary?.outOfStockItems || 0) > 0 ? ' text-danger' : ''}">${fmtNum(data.inventorySummary?.outOfStockItems || 0)}</span>
+        </div>
       </div>
     </div>
-    `
-        : ''
-    }
 
-    ${
-      data.auditLogs && data.auditLogs.length > 0
-        ? `
-    <div class="dashed-line"></div>
-
+    <!-- P&L Statement -->
+    ${data.financialSummary ? `
     <div class="section">
-      <div class="section-title">Recent Activity</div>
-      <div class="table-header">
-        <span class="col-item">Action</span>
-        <span class="col-total">User</span>
+      <div class="section-header">
+        <div class="section-title">Profit &amp; Loss Statement</div>
       </div>
-      ${data.auditLogs
-        .slice(0, 10)
-        .map(
-          (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.action} ${item.tableName}</span>
-          <span class="col-total">${item.userName}</span>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Gross Revenue</span>
+          <span class="value">${fmtCurrency(data.financialSummary.grossRevenue || 0)}</span>
         </div>
-        <div class="small muted" style="padding-left:20px;">${formatDateTime(item.timestamp)}</div>
-      `
-        )
-        .join('')}
+        <div class="data-row deduction">
+          <span class="label">Less: Refunds</span>
+          <span class="value">(${fmtCurrency(data.financialSummary.refunds || 0)})</span>
+        </div>
+        <div class="data-row subtotal">
+          <span class="label">Net Revenue</span>
+          <span class="value">${fmtCurrency(data.financialSummary.netRevenue || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Cost of Goods Sold</span>
+          <span class="value">(${fmtCurrency(data.financialSummary.cogs || 0)})</span>
+        </div>
+        <div class="data-row subtotal">
+          <span class="label">Gross Profit</span>
+          <span class="value">${fmtCurrency(data.financialSummary.grossProfit || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Operating Expenses</span>
+          <span class="value">(${fmtCurrency(data.financialSummary.expenses || 0)})</span>
+        </div>
+        <div class="data-row total">
+          <span class="label">Net Profit / (Loss)</span>
+          <span class="value">${fmtCurrency(data.financialSummary.netProfit || 0)}</span>
+        </div>
+      </div>
     </div>
-    `
-        : ''
-    }
+    ` : ''}
+
+    <!-- Expense Breakdown -->
+    ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Expense Breakdown</div>
+      </div>
+      <table>
+        <thead><tr><th>Category</th><th>Count</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.expensesByCategory.map(item => `
+            <tr>
+              <td>${item.category}</td>
+              <td class="col-num">${fmtNum(item.count)}</td>
+              <td>${fmtCurrency(item.amount)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Audit Logs -->
+    ${data.auditLogs && data.auditLogs.length > 0 ? `
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Recent Activity Log</div>
+        <div class="section-badge">${data.auditLogs.length} entries</div>
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th></tr></thead>
+        <tbody>
+          ${data.auditLogs.slice(0, 15).map(item => `
+            <tr>
+              <td>${formatDateTime(item.timestamp)}</td>
+              <td>${item.userName}</td>
+              <td>${item.action}</td>
+              <td>${item.tableName}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
   `
-
-  return getReportTemplate('Audit Report', content, filters, businessInfo)
+  return getReportTemplate('Comprehensive Audit Report', content, filters, businessInfo)
 }

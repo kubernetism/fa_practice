@@ -216,7 +216,7 @@ export function LicenseLockScreen({ machineId, onUnlock }: LicenseLockScreenProp
 
         {/* Footer */}
         <p className="text-center text-xs text-muted-foreground mt-6">
-          Firearms POS - All data is encrypted and secure. Only a valid license key can restore access.
+          All data is encrypted and secure. Only a valid license key can restore access.
         </p>
       </div>
     </div>

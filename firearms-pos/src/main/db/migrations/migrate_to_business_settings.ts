@@ -66,7 +66,7 @@ export async function migrateToBusinessSettings() {
       // Create default global settings
       await db.insert(businessSettings).values({
         branchId: null,
-        businessName: "Firearms Retail POS",
+        businessName: "My Business",
         businessAddress: "",
         businessCity: "",
         businessState: "",

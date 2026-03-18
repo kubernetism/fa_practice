@@ -252,7 +252,7 @@ export function DeveloperInfoScreen() {
 
         {/* Version tag */}
         <p className="text-center text-[10px] text-muted-foreground/30 mt-3 tracking-wider">
-          FIREARMS POS &middot; DESKTOP APPLICATION &middot; v1.0.0
+          FIREARMS POS &middot; DEVELOPED BY {DEVELOPER.company.toUpperCase()} &middot; v1.0.0
         </p>
       </div>
     </div>
