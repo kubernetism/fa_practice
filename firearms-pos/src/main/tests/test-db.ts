@@ -2,7 +2,7 @@
  * Test database setup — creates a fresh in-memory SQLite database with all schemas.
  * Used by all Section 9 audit test scenarios.
  */
-import Database from 'better-sqlite3-multiple-ciphers'
+import Database from 'better-sqlite3'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import * as schema from '../db/schema'
 
@@ -338,6 +338,35 @@ function createTables(sqlite: Database.Database) {
       require_customer_for_sale INTEGER DEFAULT 0,
       enable_customer_loyalty INTEGER DEFAULT 0,
       loyalty_points_ratio REAL DEFAULT 1,
+      expense_approval_required INTEGER DEFAULT 0,
+      expense_approval_limit REAL DEFAULT 10000,
+      enable_returns INTEGER DEFAULT 1,
+      return_window_days INTEGER DEFAULT 30,
+      require_receipt_for_return INTEGER DEFAULT 1,
+      refund_method TEXT DEFAULT 'Original Payment Method',
+      enable_email_notifications INTEGER DEFAULT 0,
+      notification_email TEXT,
+      low_stock_notifications INTEGER DEFAULT 1,
+      daily_sales_report INTEGER DEFAULT 0,
+      working_days_start TEXT DEFAULT 'Monday',
+      working_days_end TEXT DEFAULT 'Saturday',
+      opening_time TEXT DEFAULT '09:00',
+      closing_time TEXT DEFAULT '18:00',
+      auto_backup_enabled INTEGER DEFAULT 1,
+      auto_backup_frequency TEXT DEFAULT 'daily',
+      backup_retention_days INTEGER DEFAULT 30,
+      date_format TEXT DEFAULT 'DD/MM/YYYY',
+      time_format TEXT DEFAULT '24-hour',
+      language TEXT DEFAULT 'en',
+      timezone TEXT DEFAULT 'UTC',
+      session_timeout_minutes INTEGER DEFAULT 60,
+      require_password_change INTEGER DEFAULT 0,
+      password_change_interval_days INTEGER DEFAULT 90,
+      enable_audit_logs INTEGER DEFAULT 1,
+      is_active INTEGER DEFAULT 1,
+      is_default INTEGER DEFAULT 0,
+      notes TEXT,
+      created_by INTEGER REFERENCES users(id),
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,

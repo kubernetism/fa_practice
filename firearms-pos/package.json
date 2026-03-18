@@ -28,7 +28,7 @@
     "typecheck": "tsc --noEmit",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
-    "test": "vitest run",
+    "test": "vitest run && npx electron-rebuild -f -w better-sqlite3",
     "test:watch": "vitest"
   },
   "dependencies": {
