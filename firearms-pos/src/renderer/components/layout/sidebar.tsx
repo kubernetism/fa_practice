@@ -21,8 +21,7 @@ import {
   ClipboardList,
   Database,
   Shield,
-  Layers,
-  Wallet,
+Wallet,
   UserPlus,
   CreditCard,
   Landmark,
@@ -56,8 +55,7 @@ interface NavItem {
 const mainNavItems: NavItem[] = [
   { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { title: 'Point of Sale', href: '/pos', icon: ShoppingCart },
-  { title: 'POS Tabs', href: '/pos-tabs', icon: Layers },
-  { title: 'Sales History', href: '/sales', icon: Receipt },
+{ title: 'Sales History', href: '/sales', icon: Receipt },
 ]
 
 const inventoryNavItems: NavItem[] = [

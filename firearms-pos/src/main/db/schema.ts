@@ -8,7 +8,7 @@ export * from './schemas/customers'
 export * from './schemas/suppliers'
 export * from './schemas/sales'
 export * from './schemas/sale-payments'
-export * from './schemas/sales-tabs'
+
 export * from './schemas/purchases'
 export * from './schemas/returns'
 export * from './schemas/expenses'

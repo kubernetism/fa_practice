@@ -17,7 +17,8 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("products:create", data),
     update: (id, data) => electron.ipcRenderer.invoke("products:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("products:delete", id),
-    search: (query) => electron.ipcRenderer.invoke("products:search", query)
+    search: (query) => electron.ipcRenderer.invoke("products:search", query),
+    getAvailable: (params) => electron.ipcRenderer.invoke("products:get-available", params)
   },
   // Categories
   categories: {
@@ -93,20 +94,6 @@ const api = {
     getDailySummary: (branchId, date) => electron.ipcRenderer.invoke("sales:get-daily-summary", branchId, date),
     fixPaymentStatus: (invoiceNumber) => electron.ipcRenderer.invoke("sales:fix-payment-status", invoiceNumber),
     fixOrphanedReceivables: () => electron.ipcRenderer.invoke("sales:fix-orphaned-receivables")
-  },
-  // Sales Tabs
-  salesTabs: {
-    getAll: (params) => electron.ipcRenderer.invoke("sales-tabs:get-all", params),
-    getById: (id) => electron.ipcRenderer.invoke("sales-tabs:get-by-id", id),
-    create: (data) => electron.ipcRenderer.invoke("sales-tabs:create", data),
-    update: (id, data) => electron.ipcRenderer.invoke("sales-tabs:update", id, data),
-    delete: (id) => electron.ipcRenderer.invoke("sales-tabs:delete", id),
-    addItem: (tabId, data) => electron.ipcRenderer.invoke("sales-tabs:add-item", tabId, data),
-    updateItem: (tabId, itemId, data) => electron.ipcRenderer.invoke("sales-tabs:update-item", tabId, itemId, data),
-    removeItem: (tabId, itemId) => electron.ipcRenderer.invoke("sales-tabs:remove-item", tabId, itemId),
-    getAvailableProducts: (params) => electron.ipcRenderer.invoke("sales-tabs:get-available-products", params),
-    checkout: (tabId, data) => electron.ipcRenderer.invoke("sales-tabs:checkout", tabId, data),
-    clearItems: (tabId) => electron.ipcRenderer.invoke("sales-tabs:clear-items", tabId)
   },
   // Purchases
   purchases: {

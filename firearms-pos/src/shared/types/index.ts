@@ -18,10 +18,6 @@ export type {
   NewSale,
   SaleItem,
   NewSaleItem,
-  SalesTab,
-  NewSalesTab,
-  SalesTabItem,
-  NewSalesTabItem,
   Purchase,
   NewPurchase,
   PurchaseItem,
@@ -459,53 +455,6 @@ export interface AuditTrailData {
     tableName: string
     timestamp: string
   }>
-}
-
-// Sales Tabs types
-export type SalesTabStatus = 'open' | 'on_hold' | 'closed'
-export type PaymentMethod = 'cash' | 'card' | 'debit_card' | 'credit' | 'mixed' | 'mobile' | 'cod' | 'receivable'
-export type SplitPaymentMethod = 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
-
-// Payment breakdown for mixed/split payments
-export interface PaymentBreakdownItem {
-  method: SplitPaymentMethod
-  amount: number
-  referenceNumber?: string
-}
-
-export interface SalesTabWithItems extends SalesTab {
-  items: SalesTabItem[]
-  customer?: Customer
-  branch?: Branch
-  user?: {
-    id: number
-    username: string
-    fullName: string
-  }
-}
-
-export interface TabCheckoutData {
-  paymentMethod: PaymentMethod
-  discount?: number
-  amountPaid?: number
-  codName?: string
-  codPhone?: string
-  codAddress?: string
-  codCity?: string
-  codCharges?: number
-  notes?: string
-  payments?: PaymentBreakdownItem[] // For mixed/split payments
-}
-
-export interface AvailableProduct {
-  product: Product
-  quantity: number
-}
-
-export interface TabFilters {
-  branchId?: number
-  status?: SalesTabStatus
-  userId?: number
 }
 
 // Todo types

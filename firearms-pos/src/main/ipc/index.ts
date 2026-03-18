@@ -5,7 +5,7 @@ import { registerInventoryHandlers } from './inventory-ipc'
 import { registerCustomerHandlers } from './customers-ipc'
 import { registerSupplierHandlers } from './suppliers-ipc'
 import { registerSalesHandlers } from './sales-ipc'
-import { registerSalesTabsHandlers } from './sales-tabs-ipc'
+
 import { registerPurchaseHandlers } from './purchases-ipc'
 import { registerReturnHandlers } from './returns-ipc'
 import { registerBranchHandlers } from './branches-ipc'
@@ -51,7 +51,6 @@ export function registerAllHandlers(): void {
   registerCustomerHandlers()
   registerSupplierHandlers()
   registerSalesHandlers()
-  registerSalesTabsHandlers()
   registerPurchaseHandlers()
   registerReturnHandlers()
   registerBranchHandlers()

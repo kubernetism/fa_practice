@@ -322,7 +322,7 @@ export function POSScreen() {
 
     setIsLoadingProducts(true)
     try {
-      const result = await window.api.salesTabs.getAvailableProducts({
+      const result = await window.api.products.getAvailable({
         branchId: currentBranch.id,
         limit: 500,
       })

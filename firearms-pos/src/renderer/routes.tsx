@@ -37,19 +37,7 @@ const CommissionsScreen = lazy(() => import("@/screens/commissions"));
 const UsersScreen = lazy(() => import("@/screens/users"));
 const BranchesScreen = lazy(() => import("@/screens/branches"));
 const ReportsScreen = lazy(() => import("@/screens/reports"));
-const PosTabsScreen = lazy(() =>
-  import("@/screens/pos-tabs").then((m) => ({ default: m.PosTabsScreen })),
-);
-const TabDetailScreen = lazy(() =>
-  import("@/screens/pos-tabs/tab-detail").then((m) => ({
-    default: m.TabDetailScreen,
-  })),
-);
-const TabCheckoutScreen = lazy(() =>
-  import("@/screens/pos-tabs/checkout").then((m) => ({
-    default: m.TabCheckoutScreen,
-  })),
-);
+
 const AuditReportsScreen = lazy(
   () => import("@/screens/reports/audit-reports"),
 );
@@ -271,34 +259,7 @@ export function AppRoutes() {
             </LazyRoute>
           }
         />
-        <Route
-          path="pos-tabs"
-          element={
-            <LazyRoute>
-              {/* <PosTabsScreen /> */}
-              <div className="text-center mt-20 text-muted-foreground text-lg">
-                Pos Tabs Screen - Under Construction
-              </div>
-            </LazyRoute>
-          }
-        />
-        <Route
-          path="pos-tabs/:tabId"
-          element={
-            <LazyRoute>
-              <TabDetailScreen />
-            </LazyRoute>
-          }
-        />
-        <Route
-          path="pos-tabs/:tabId/checkout"
-          element={
-            <LazyRoute>
-              <TabCheckoutScreen />
-            </LazyRoute>
-          }
-        />
-        <Route
+<Route
           path="audit-reports"
           element={
             <LazyRoute>

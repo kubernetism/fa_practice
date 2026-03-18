@@ -36,6 +36,8 @@ const api = {
       ipcRenderer.invoke('products:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('products:delete', id),
     search: (query: string) => ipcRenderer.invoke('products:search', query),
+    getAvailable: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('products:get-available', params),
   },
 
   // Categories
@@ -136,27 +138,6 @@ const api = {
     fixPaymentStatus: (invoiceNumber?: string) =>
       ipcRenderer.invoke('sales:fix-payment-status', invoiceNumber),
     fixOrphanedReceivables: () => ipcRenderer.invoke('sales:fix-orphaned-receivables'),
-  },
-
-  // Sales Tabs
-  salesTabs: {
-    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('sales-tabs:get-all', params),
-    getById: (id: number) => ipcRenderer.invoke('sales-tabs:get-by-id', id),
-    create: (data: Record<string, unknown>) => ipcRenderer.invoke('sales-tabs:create', data),
-    update: (id: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:update', id, data),
-    delete: (id: number) => ipcRenderer.invoke('sales-tabs:delete', id),
-    addItem: (tabId: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:add-item', tabId, data),
-    updateItem: (tabId: number, itemId: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:update-item', tabId, itemId, data),
-    removeItem: (tabId: number, itemId: number) =>
-      ipcRenderer.invoke('sales-tabs:remove-item', tabId, itemId),
-    getAvailableProducts: (params: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:get-available-products', params),
-    checkout: (tabId: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:checkout', tabId, data),
-    clearItems: (tabId: number) => ipcRenderer.invoke('sales-tabs:clear-items', tabId),
   },
 
   // Purchases
