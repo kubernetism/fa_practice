@@ -299,6 +299,7 @@ const api = {
   // Receipt Generation
   receipt: {
     generate: (saleId) => electron.ipcRenderer.invoke("receipt:generate", saleId),
+    getData: (saleId) => electron.ipcRenderer.invoke("receipt:get-data", saleId),
     getSettings: (branchId) => electron.ipcRenderer.invoke("receipt:get-settings", branchId),
     generatePaymentHistory: (receivableId) => electron.ipcRenderer.invoke("receipt:generate-payment-history", receivableId)
   },

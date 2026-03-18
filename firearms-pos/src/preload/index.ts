@@ -424,6 +424,7 @@ const api = {
   // Receipt Generation
   receipt: {
     generate: (saleId: number) => ipcRenderer.invoke('receipt:generate', saleId),
+    getData: (saleId: number) => ipcRenderer.invoke('receipt:get-data', saleId),
     getSettings: (branchId?: number) => ipcRenderer.invoke('receipt:get-settings', branchId),
     generatePaymentHistory: (receivableId: number) =>
       ipcRenderer.invoke('receipt:generate-payment-history', receivableId),

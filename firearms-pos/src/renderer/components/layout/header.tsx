@@ -32,6 +32,7 @@ const getPageName = (pathname: string): string => {
     'cash-register': 'Cash Register',
     'chart-of-accounts': 'Chart of Accounts',
     audit: 'Audit Logs',
+    developer: 'Developer Info',
     settings: 'Settings',
     database: 'Database Viewer',
   }

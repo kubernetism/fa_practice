@@ -16186,6 +16186,109 @@ function registerReceiptHandlers() {
       };
     }
   });
+  electron.ipcMain.handle("receipt:get-data", async (_, saleId) => {
+    try {
+      const sale = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, saleId)
+      });
+      if (!sale) {
+        return { success: false, message: "Sale not found" };
+      }
+      const items = await db2.select({ saleItem: saleItems, product: products }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      const saleServiceItems = await db2.select({ saleService: saleServices, service: services }).from(saleServices).innerJoin(services, drizzleOrm.eq(saleServices.serviceId, services.id)).where(drizzleOrm.eq(saleServices.saleId, saleId));
+      let customer = null;
+      if (sale.customerId) {
+        const customerData = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, sale.customerId)
+        });
+        if (customerData) {
+          customer = {
+            name: `${customerData.firstName} ${customerData.lastName}`.trim(),
+            phone: customerData.phone || void 0,
+            email: customerData.email || void 0,
+            address: [customerData.address, customerData.city, customerData.state].filter(Boolean).join(", ") || void 0
+          };
+        }
+      }
+      let settings2 = null;
+      if (sale.branchId) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.branchId, sale.branchId)
+        });
+      }
+      if (!settings2) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.isNull(businessSettings.branchId)
+        });
+      }
+      if (!settings2) {
+        return { success: false, message: "Business settings not configured" };
+      }
+      return {
+        success: true,
+        data: {
+          sale: {
+            id: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            saleDate: sale.saleDate || (/* @__PURE__ */ new Date()).toISOString(),
+            subtotal: sale.subtotal || 0,
+            taxAmount: sale.taxAmount || 0,
+            discountAmount: sale.discountAmount || 0,
+            totalAmount: sale.totalAmount || 0,
+            amountPaid: sale.amountPaid || 0,
+            changeGiven: sale.changeGiven || 0,
+            paymentMethod: sale.paymentMethod || "cash",
+            paymentStatus: sale.paymentStatus || "paid",
+            notes: sale.notes || void 0
+          },
+          items: items.map((item) => ({
+            productName: item.product.name,
+            productCode: item.product.code,
+            quantity: item.saleItem.quantity || 1,
+            unitPrice: item.saleItem.unitPrice || 0,
+            serialNumber: item.saleItem.serialNumber || void 0,
+            discountAmount: item.saleItem.discountAmount || 0,
+            taxAmount: item.saleItem.taxAmount || 0,
+            totalPrice: item.saleItem.totalPrice || 0
+          })),
+          services: saleServiceItems.map((item) => ({
+            serviceName: item.saleService.serviceName || item.service.name,
+            serviceCode: item.service.code || void 0,
+            quantity: item.saleService.quantity || 1,
+            unitPrice: item.saleService.unitPrice || 0,
+            hours: item.saleService.hours || void 0,
+            taxAmount: item.saleService.taxAmount || 0,
+            totalAmount: item.saleService.totalPrice || 0,
+            notes: item.saleService.notes || void 0
+          })),
+          customer,
+          businessSettings: {
+            businessName: settings2.businessName,
+            businessLogo: settings2.businessLogo,
+            currencySymbol: settings2.currencySymbol || "Rs.",
+            currencyPosition: settings2.currencyPosition || "prefix",
+            decimalPlaces: settings2.decimalPlaces || 2,
+            taxRate: settings2.taxRate || 0,
+            showTaxOnReceipt: settings2.showTaxOnReceipt !== false,
+            receiptFooter: settings2.receiptFooter || "",
+            receiptTermsAndConditions: settings2.receiptTermsAndConditions || "",
+            receiptCustomField1Label: settings2.receiptCustomField1Label || "",
+            receiptCustomField1Value: settings2.receiptCustomField1Value || "",
+            receiptCustomField2Label: settings2.receiptCustomField2Label || "",
+            receiptCustomField2Value: settings2.receiptCustomField2Value || "",
+            receiptCustomField3Label: settings2.receiptCustomField3Label || "",
+            receiptCustomField3Value: settings2.receiptCustomField3Value || ""
+          }
+        }
+      };
+    } catch (error) {
+      console.error("Receipt data fetch error:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to fetch receipt data"
+      };
+    }
+  });
   electron.ipcMain.handle("receipt:get-settings", async (_, branchId) => {
     try {
       let settings2 = null;

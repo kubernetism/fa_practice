@@ -33,6 +33,7 @@ Wallet,
   Wrench,
   Ticket,
   RotateCcw,
+  Code2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -96,6 +97,7 @@ const adminNavItems: NavItem[] = [
   { title: 'Settings', href: '/settings', icon: Settings, allowedRoles: ['admin'] },
   { title: 'Database Viewer', href: '/database', icon: Database, allowedRoles: ['admin'] },
   { title: 'License Settings', href: '/settings/license', icon: Shield, allowedRoles: ['admin'] },
+  { title: 'Developer Info', href: '/developer', icon: Code2, allowedRoles: ['admin'] },
 ]
 
 function NavSection({ title, items }: { title: string; items: NavItem[] }) {

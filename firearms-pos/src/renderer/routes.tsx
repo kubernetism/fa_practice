@@ -112,6 +112,11 @@ const ReversalsScreen = lazy(() =>
     default: m.ReversalsScreen,
   })),
 );
+const DeveloperInfoScreen = lazy(() =>
+  import("@/screens/developer-info").then((m) => ({
+    default: m.DeveloperInfoScreen,
+  })),
+);
 
 // Wrapper component for lazy loaded routes
 function LazyRoute({ children }: { children: React.ReactNode }) {
@@ -384,6 +389,14 @@ export function AppRoutes() {
           element={
             <LazyRoute>
               <ReversalsScreen />
+            </LazyRoute>
+          }
+        />
+        <Route
+          path="developer"
+          element={
+            <LazyRoute>
+              <DeveloperInfoScreen />
             </LazyRoute>
           }
         />
