@@ -45,9 +45,18 @@ export function registerCategoryHandlers(): void {
         where: eq(categories.isActive, true),
       })
 
+      // Deduplicate by name+parentId, keeping the first entry
+      const seen = new Map<string, boolean>()
+      const uniqueCategories = allCategories.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? 'root'}`
+        if (seen.has(key)) return false
+        seen.set(key, true)
+        return true
+      })
+
       // Build tree structure
       const buildTree = (parentId: number | null): CategoryWithChildren[] => {
-        return allCategories
+        return uniqueCategories
           .filter((cat) => cat.parentId === parentId)
           .map((cat) => ({
             ...cat,

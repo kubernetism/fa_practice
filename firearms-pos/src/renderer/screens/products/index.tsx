@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Edit, Trash2, Package } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Package, ChevronLeft, ChevronRight, X, Filter, ArrowUpDown, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -28,6 +27,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { formatCurrency, debounce } from '@/lib/utils'
 import type { Product, Category } from '@shared/types'
 import { useBranch } from '@/contexts/branch-context'
@@ -232,147 +237,241 @@ export function ProductsScreen() {
     }
   }
 
+  // Computed stats
+  const totalProducts = products.length
+  const lowStockCount = products.filter(p => p.stock !== undefined && p.stock > 0 && p.stock < p.reorderLevel).length
+  const outOfStockCount = products.filter(p => p.stock === 0).length
+
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Products</h1>
-          <p className="text-muted-foreground">
-            Manage your product catalog • Stock levels for {currentBranch?.name || 'selected branch'}
-          </p>
+    <div className="flex flex-col gap-3 h-full">
+      {/* ── Header: Title + Stats + Action ── */}
+      <div className="flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">Products</h1>
+            <p className="text-xs text-muted-foreground/70">
+              {currentBranch?.name || 'All branches'} inventory
+            </p>
+          </div>
+          {/* Inline stats pills */}
+          {!isLoading && totalProducts > 0 && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                {totalProducts} total
+              </span>
+              {lowStockCount > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-warning">
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                  {lowStockCount} low
+                </span>
+              )}
+              {outOfStockCount > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-destructive/10 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-destructive">
+                  {outOfStockCount} out
+                </span>
+              )}
+            </div>
+          )}
         </div>
-        <Button onClick={handleNewProduct}>
-          <Plus className="mr-2 h-4 w-4" />
+        <Button size="sm" onClick={handleNewProduct} className="h-8 px-3 text-xs font-semibold gap-1.5">
+          <Plus className="h-3.5 w-3.5" />
           Add Product
         </Button>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search products..."
-                className="pl-9"
-                onChange={(e) => debouncedSearch(e.target.value)}
-              />
-            </div>
-            <Select value={selectedCategory} onValueChange={(value) => {
-              setSelectedCategory(value === 'all' ? '' : value)
-              setPage(1)
-            }}>
-              <SelectTrigger className="w-48">
-                <SelectValue placeholder="All Categories" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                {categories.filter(c => c.isActive).map((category) => (
-                  <SelectItem key={category.id} value={category.id.toString()}>
-                    {category.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+      {/* ── Toolbar: Search + Category Filter ── */}
+      <div className="flex items-center gap-2 shrink-0">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+          <Input
+            placeholder="Search by name, code, barcode..."
+            className="h-8 pl-8 pr-8 text-xs bg-card border-border/50 focus:border-primary/40 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+            onChange={(e) => debouncedSearch(e.target.value)}
+          />
+          {searchQuery && (
+            <button
+              onClick={() => { setSearchQuery(''); setPage(1) }}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+        <Select value={selectedCategory} onValueChange={(value) => {
+          setSelectedCategory(value === 'all' ? '' : value)
+          setPage(1)
+        }}>
+          <SelectTrigger className="h-8 w-44 text-xs border-border/50 bg-card">
+            <Filter className="h-3 w-3 mr-1.5 text-muted-foreground/50" />
+            <SelectValue placeholder="All Categories" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Categories</SelectItem>
+            {categories.filter(c => c.isActive).map((category) => (
+              <SelectItem key={category.id} value={category.id.toString()}>
+                {category.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-      {/* Products Table */}
-      <Card>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex h-64 items-center justify-center">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            </div>
-          ) : products.length === 0 ? (
-            <div className="flex h-64 flex-col items-center justify-center text-muted-foreground">
-              <Package className="mb-2 h-12 w-12" />
-              <p>No products found</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Code</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
-                  <TableHead className="text-right">Cost</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {products.map((product) => (
-                  <TableRow key={product.id}>
-                    <TableCell className="font-mono">{product.code}</TableCell>
-                    <TableCell className="font-medium">{product.name}</TableCell>
-                    <TableCell>
-                      {categories.find((c) => c.id === product.categoryId)?.name || '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={product.stock === 0 ? 'text-destructive' : product.stock && product.stock < product.reorderLevel ? 'text-warning' : ''}>
-                        {product.stock ?? 0}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">{formatCurrency(product.costPrice)}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatCurrency(product.sellingPrice)}
-                    </TableCell>
-                    <TableCell>
-                      {product.isSerialTracked && (
-                        <Badge variant="outline">Serial Tracked</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
+      {/* ── Table ── */}
+      <div className="flex-1 min-h-0 rounded-lg border border-border/50 bg-card/40 overflow-hidden">
+        {isLoading ? (
+          <div className="flex h-full items-center justify-center gap-2">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary/50 border-t-transparent" />
+            <span className="text-xs text-muted-foreground/50">Loading products...</span>
+          </div>
+        ) : products.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center text-muted-foreground/50 gap-2">
+            <Package className="h-8 w-8 opacity-20" />
+            <p className="text-xs">{searchQuery ? `No results for "${searchQuery}"` : 'No products found'}</p>
+            {!searchQuery && (
+              <Button variant="link" size="sm" onClick={handleNewProduct} className="text-xs h-auto p-0 text-primary/70">
+                Add your first product
+              </Button>
+            )}
+          </div>
+        ) : (
+          <div className="h-full overflow-auto">
+            <TooltipProvider delayDuration={300}>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border/40 bg-muted/30 hover:bg-muted/30">
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[100px]">Code</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Product</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[120px]">Category</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[70px]">Stock</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[90px]">Cost</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[90px]">Price</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[80px]">Flags</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[70px]"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {products.map((product) => {
+                    const isOutOfStock = product.stock === 0
+                    const isLowStock = !isOutOfStock && product.stock !== undefined && product.stock < product.reorderLevel
+
+                    return (
+                      <TableRow
+                        key={product.id}
+                        className="group border-border/30 hover:bg-muted/20 transition-colors h-9 cursor-pointer"
                         onClick={() => handleEditProduct(product)}
                       >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeleteProduct(product)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                        <TableCell className="py-1.5 px-3">
+                          <span className="font-mono text-[11px] text-muted-foreground/70">{product.code}</span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3">
+                          <div className="flex flex-col">
+                            <span className="text-xs font-medium leading-tight truncate max-w-[240px]">{product.name}</span>
+                            {product.brand && (
+                              <span className="text-[10px] text-muted-foreground/40 leading-tight">{product.brand}</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3">
+                          <span className="text-[11px] text-muted-foreground/60 truncate">
+                            {categories.find((c) => c.id === product.categoryId)?.name || '—'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3 text-right">
+                          <span className={`text-xs font-medium tabular-nums ${
+                            isOutOfStock ? 'text-destructive' : isLowStock ? 'text-warning' : 'text-foreground/80'
+                          }`}>
+                            {product.stock ?? 0}
+                          </span>
+                          {isLowStock && (
+                            <AlertTriangle className="inline-block ml-1 h-2.5 w-2.5 text-warning/70" />
+                          )}
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3 text-right">
+                          <span className="text-[11px] tabular-nums text-muted-foreground/50">{formatCurrency(product.costPrice)}</span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3 text-right">
+                          <span className="text-xs font-semibold tabular-nums">{formatCurrency(product.sellingPrice)}</span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3">
+                          <div className="flex items-center gap-1">
+                            {product.isSerialTracked && (
+                              <Badge variant="outline" className="h-4 px-1 text-[9px] font-semibold border-info/30 text-info bg-info/5">
+                                SN
+                              </Badge>
+                            )}
+                            {product.isTaxable && (
+                              <Badge variant="outline" className="h-4 px-1 text-[9px] font-medium border-border/40 text-muted-foreground/50 bg-transparent">
+                                TAX
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={() => handleEditProduct(product)}
+                                >
+                                  <Edit className="h-3 w-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="text-[10px]">Edit</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 hover:bg-destructive/10 hover:text-destructive"
+                                  onClick={() => handleDeleteProduct(product)}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="text-[10px]">Deactivate</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </TooltipProvider>
+          </div>
+        )}
+      </div>
 
-      {/* Pagination */}
+      {/* ── Pagination ── */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page === 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
+        <div className="flex items-center justify-between shrink-0 px-1">
+          <span className="text-[10px] text-muted-foreground/50 tabular-nums">
             Page {page} of {totalPages}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page === totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </Button>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7 border-border/40"
+              disabled={page === 1}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7 border-border/40"
+              disabled={page === totalPages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
         </div>
       )}
 

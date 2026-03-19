@@ -3918,8 +3918,15 @@ function registerCategoryHandlers() {
       const allCategories = await db2.query.categories.findMany({
         where: drizzleOrm.eq(categories.isActive, true)
       });
+      const seen = /* @__PURE__ */ new Map();
+      const uniqueCategories = allCategories.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? "root"}`;
+        if (seen.has(key)) return false;
+        seen.set(key, true);
+        return true;
+      });
       const buildTree = (parentId) => {
-        return allCategories.filter((cat) => cat.parentId === parentId).map((cat) => ({
+        return uniqueCategories.filter((cat) => cat.parentId === parentId).map((cat) => ({
           ...cat,
           children: buildTree(cat.id)
         }));
