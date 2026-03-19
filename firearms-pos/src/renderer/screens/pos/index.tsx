@@ -777,492 +777,402 @@ export function POSScreen() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-4">
-      {/* Products and Services Tabs */}
-      <div className="flex flex-1 flex-col">
+    <div className="flex h-full gap-3 -m-6 p-3 overflow-hidden">
+      {/* ═══ LEFT: Product/Service Catalog ═══ */}
+      <div className="flex flex-1 flex-col min-w-0">
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'products' | 'services')} className="flex flex-col h-full">
-          <TabsList className="mb-4 grid w-full grid-cols-2">
-            <TabsTrigger value="products" className="flex items-center gap-2">
-              <Package className="h-4 w-4" />
-              Products
-            </TabsTrigger>
-            <TabsTrigger value="services" className="flex items-center gap-2">
-              <Wrench className="h-4 w-4" />
-              Services
-            </TabsTrigger>
-          </TabsList>
-
-          {/* Products Tab */}
-          <TabsContent value="products" className="flex-1 flex flex-col mt-0">
-            <div className="mb-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search products by name, code, or barcode..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 text-lg"
-                />
-              </div>
+          {/* Tab Switcher + Search Bar — single compact row */}
+          <div className="flex items-center gap-2 mb-2">
+            <TabsList className="h-9 shrink-0">
+              <TabsTrigger value="products" className="h-7 px-3 text-xs font-semibold gap-1.5">
+                <Package className="h-3.5 w-3.5" />
+                Products
+                <span className="ml-1 text-[10px] tabular-nums text-muted-foreground/70">({filteredProducts.length})</span>
+              </TabsTrigger>
+              <TabsTrigger value="services" className="h-7 px-3 text-xs font-semibold gap-1.5">
+                <Wrench className="h-3.5 w-3.5" />
+                Services
+                <span className="ml-1 text-[10px] tabular-nums text-muted-foreground/70">({filteredServices.length})</span>
+              </TabsTrigger>
+            </TabsList>
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                placeholder={activeTab === 'products' ? 'Search by name, code, barcode...' : 'Search services...'}
+                value={activeTab === 'products' ? searchQuery : serviceSearchQuery}
+                onChange={(e) => activeTab === 'products' ? setSearchQuery(e.target.value) : setServiceSearchQuery(e.target.value)}
+                className="h-9 pl-8 text-sm bg-card border-border/60"
+              />
+              {(activeTab === 'products' ? searchQuery : serviceSearchQuery) && (
+                <button
+                  onClick={() => activeTab === 'products' ? setSearchQuery('') : setServiceSearchQuery('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
+          </div>
 
-            <Card className="flex-1 overflow-hidden">
-              <CardContent className="p-4 h-full">
-                {isLoadingProducts ? (
-                  <div className="flex h-full items-center justify-center">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                  </div>
-                ) : filteredProducts.length > 0 ? (
-                  <ScrollArea className="h-[calc(100vh-24rem)]">
-                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {filteredProducts.map((item) => {
-                        const cartItem = cart.find((c) => c.type === 'product' && c.product?.id === item.product.id)
-                        const inCartQty = cartItem?.quantity ?? 0
-                        const remainingStock = item.quantity - inCartQty
+          {/* Products Grid */}
+          <TabsContent value="products" className="flex-1 mt-0 overflow-hidden rounded-lg border border-border bg-card/50">
+            {isLoadingProducts ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            ) : filteredProducts.length > 0 ? (
+              <ScrollArea className="h-full">
+                <div className="grid gap-1.5 p-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                  {filteredProducts.map((item) => {
+                    const cartItem = cart.find((c) => c.type === 'product' && c.product?.id === item.product.id)
+                    const inCartQty = cartItem?.quantity ?? 0
+                    const remainingStock = item.quantity - inCartQty
 
-                        return (
-                          <button
-                            key={item.product.id}
-                            onClick={() => addToCart(item.product, item.quantity)}
-                            disabled={remainingStock <= 0 && !item.product.isSerialTracked}
-                            className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md disabled:opacity-50 disabled:cursor-not-allowed h-full group"
-                          >
-                            {/* Plus Icon - appears on hover */}
-                            <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                              <Plus className="h-12 w-12 text-green-600" strokeWidth={3} />
-                            </div>
+                    return (
+                      <button
+                        key={item.product.id}
+                        onClick={() => addToCart(item.product, item.quantity)}
+                        disabled={remainingStock <= 0 && !item.product.isSerialTracked}
+                        className={`group relative flex flex-col rounded-md border p-2 text-left transition-all
+                          hover:border-primary/40 hover:shadow-sm
+                          disabled:opacity-40 disabled:cursor-not-allowed
+                          ${inCartQty > 0 ? 'border-primary/50 bg-primary/[0.04]' : 'border-border'}`}
+                      >
+                        {/* Cart indicator dot */}
+                        {inCartQty > 0 && (
+                          <div className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground shadow-sm">
+                            {inCartQty}
+                          </div>
+                        )}
 
-                            <div className="flex items-start justify-between gap-2 mb-2">
-                              <div className="flex-1 min-w-0">
-                                <p className="font-medium break-words whitespace-normal leading-tight text-sm">
-                                  {item.product.name}
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-0.5">{item.product.code}</p>
-                              </div>
-                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                                {item.product.isSerialTracked && (
-                                  <Badge variant="outline" className="text-xs">
-                                    Serial
-                                  </Badge>
-                                )}
-                                <Badge
-                                  variant={remainingStock <= 5 ? "destructive" : "secondary"}
-                                  className="text-xs whitespace-nowrap"
-                                >
-                                  {remainingStock} left
-                                </Badge>
-                              </div>
-                            </div>
-                            <div className="mt-auto flex items-center justify-between pt-2 border-t">
-                              <p className="text-lg font-bold">{formatCurrency(item.product.sellingPrice)}</p>
-                              {inCartQty > 0 && (
-                                <Badge variant="default" className="text-xs">
-                                  {inCartQty} in cart
-                                </Badge>
-                              )}
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </ScrollArea>
-                ) : searchQuery ? (
-                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                    <Package className="h-12 w-12 mb-4" />
-                    <p>No products found for "{searchQuery}"</p>
-                  </div>
-                ) : (
-                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                    <Package className="h-12 w-12 mb-4" />
-                    <p>No products available in inventory</p>
-                    <p className="text-sm">Add products to inventory first</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                        <div className="flex items-start justify-between gap-1 mb-1">
+                          <p className="font-medium leading-snug text-xs line-clamp-2 flex-1">
+                            {item.product.name}
+                          </p>
+                          {item.product.isSerialTracked && (
+                            <span className="shrink-0 mt-0.5 rounded bg-blue-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
+                              SN
+                            </span>
+                          )}
+                        </div>
+
+                        <p className="text-[10px] font-mono text-muted-foreground/70 mb-1.5">{item.product.code}</p>
+
+                        <div className="mt-auto flex items-end justify-between gap-1 pt-1.5 border-t border-border">
+                          <span className="text-sm font-bold tabular-nums">{formatCurrency(item.product.sellingPrice)}</span>
+                          <span className={`text-[10px] font-medium tabular-nums ${remainingStock <= 5 ? 'text-destructive' : 'text-muted-foreground/60'}`}>
+                            {remainingStock} qty
+                          </span>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </ScrollArea>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center text-muted-foreground gap-2">
+                <Package className="h-8 w-8 opacity-30" />
+                <p className="text-sm">{searchQuery ? `No results for "${searchQuery}"` : 'No products in inventory'}</p>
+              </div>
+            )}
           </TabsContent>
 
-          {/* Services Tab */}
-          <TabsContent value="services" className="flex-1 flex flex-col mt-0">
-            <div className="mb-4">
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search services by name, code, or description..."
-                  value={serviceSearchQuery}
-                  onChange={(e) => setServiceSearchQuery(e.target.value)}
-                  className="pl-9 text-lg"
-                />
+          {/* Services Grid */}
+          <TabsContent value="services" className="flex-1 mt-0 overflow-hidden rounded-lg border border-border bg-card/50">
+            {isLoadingServices ? (
+              <div className="flex h-full items-center justify-center">
+                <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
               </div>
-            </div>
+            ) : filteredServices.length > 0 ? (
+              <ScrollArea className="h-full">
+                <div className="grid gap-1.5 p-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                  {filteredServices.map((service) => {
+                    const cartItem = cart.find((c) => c.type === 'service' && c.service?.id === service.id)
+                    const inCartQty = cartItem?.quantity ?? 0
 
-            <Card className="flex-1 overflow-hidden">
-              <CardContent className="p-4 h-full">
-                {isLoadingServices ? (
-                  <div className="flex h-full items-center justify-center">
-                    <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                  </div>
-                ) : filteredServices.length > 0 ? (
-                  <ScrollArea className="h-[calc(100vh-24rem)]">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                      {filteredServices.map((service) => {
-                        const cartItem = cart.find((c) => c.type === 'service' && c.service?.id === service.id)
-                        const inCartQty = cartItem?.quantity ?? 0
+                    return (
+                      <button
+                        key={service.id}
+                        onClick={() => addServiceToCart(service)}
+                        className={`group relative flex flex-col rounded-md border p-2 text-left transition-all
+                          hover:border-blue-500/50 hover:shadow-[0_0_12px_rgba(59,130,246,0.08)]
+                          ${inCartQty > 0 ? 'border-blue-500/40 bg-blue-500/[0.03]' : 'border-border'}`}
+                      >
+                        {inCartQty > 0 && (
+                          <div className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-[10px] font-bold text-white shadow-sm">
+                            {inCartQty}
+                          </div>
+                        )}
 
-                        return (
-                          <button
-                            key={service.id}
-                            onClick={() => addServiceToCart(service)}
-                            className="relative flex flex-col rounded-lg border p-3 text-left transition-all hover:bg-accent hover:shadow-md group border-blue-200 bg-blue-50/30"
-                          >
-                            {/* Plus Icon - appears on hover */}
-                            <div className="absolute inset-0 flex items-center justify-center rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                              <Plus className="h-12 w-12 text-blue-600" strokeWidth={3} />
-                            </div>
+                        <div className="flex items-center gap-1 mb-1">
+                          <Wrench className="h-3 w-3 text-blue-500 shrink-0" />
+                          <p className="font-medium leading-snug text-xs line-clamp-2 flex-1">{service.name}</p>
+                        </div>
 
-                            <div className="flex items-center gap-1 mb-1 flex-wrap">
-                              <Badge variant="outline" className="text-[10px] bg-blue-100 text-blue-700 border-blue-300 px-1.5 py-0">
-                                <Wrench className="h-2.5 w-2.5 mr-0.5" />
-                                Service
-                              </Badge>
-                              {service.pricingType === 'hourly' && (
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                                  <Clock className="h-2.5 w-2.5 mr-0.5" />
-                                  Hourly
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="mb-1">
-                              <p className="font-medium break-words whitespace-normal leading-tight text-sm">
-                                {service.name}
-                              </p>
-                              <p className="text-xs text-muted-foreground mt-0.5">{service.code}</p>
-                            </div>
-                            {service.description && (
-                              <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
-                                {service.description}
-                              </p>
-                            )}
-                            <div className="mt-auto flex items-center justify-between pt-2 border-t">
-                              <p className="text-lg font-bold text-blue-700">
-                                {formatCurrency(service.price)}
-                                {service.pricingType === 'hourly' && <span className="text-xs font-normal">/hr</span>}
-                              </p>
-                              {inCartQty > 0 && (
-                                <Badge variant="default" className="text-xs bg-blue-600">
-                                  {inCartQty} in cart
-                                </Badge>
-                              )}
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </ScrollArea>
-                ) : serviceSearchQuery ? (
-                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                    <Wrench className="h-12 w-12 mb-4" />
-                    <p>No services found for "{serviceSearchQuery}"</p>
-                  </div>
-                ) : (
-                  <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
-                    <Wrench className="h-12 w-12 mb-4" />
-                    <p>No services available</p>
-                    <p className="text-sm">Add services in the Services section first</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                        <p className="text-[10px] font-mono text-muted-foreground/70 mb-1">{service.code}</p>
+                        {service.description && (
+                          <p className="text-[10px] text-muted-foreground/50 line-clamp-1 mb-1">{service.description}</p>
+                        )}
+
+                        <div className="mt-auto flex items-end justify-between gap-1 pt-1.5 border-t border-border">
+                          <span className="text-sm font-bold tabular-nums text-blue-600 dark:text-blue-400">
+                            {formatCurrency(service.price)}
+                            {service.pricingType === 'hourly' && <span className="text-[9px] font-normal opacity-60">/hr</span>}
+                          </span>
+                          {service.pricingType === 'hourly' && (
+                            <span className="rounded bg-blue-500/10 px-1 py-0.5 text-[9px] font-semibold text-blue-500">
+                              <Clock className="inline h-2.5 w-2.5 mr-0.5" />HR
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </ScrollArea>
+            ) : (
+              <div className="flex h-full flex-col items-center justify-center text-muted-foreground gap-2">
+                <Wrench className="h-8 w-8 opacity-30" />
+                <p className="text-sm">{serviceSearchQuery ? `No results for "${serviceSearchQuery}"` : 'No services available'}</p>
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </div>
 
-      {/* Cart */}
-      <Card className="w-96 flex flex-col overflow-hidden">
-        <CardHeader className="pb-2 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <CardTitle>Cart ({cart.length})</CardTitle>
+      {/* ═══ RIGHT: Cart Panel ═══ */}
+      <div className="w-80 xl:w-[22rem] flex flex-col rounded-lg border border-border bg-card overflow-hidden shrink-0">
+        {/* Cart Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">Cart</span>
             {cart.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={clearCart}>
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary/15 px-1 text-[10px] font-bold text-primary tabular-nums">
+                {cart.reduce((sum, item) => sum + item.quantity, 0)}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {cart.length > 0 && (
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground hover:text-destructive" onClick={clearCart}>
                 Clear
               </Button>
             )}
           </div>
-          {/* Customer Selection */}
-          <div className="mt-2">
-            {selectedCustomer ? (
-              <div className="flex items-center justify-between rounded-lg bg-muted p-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <User className="h-4 w-4 flex-shrink-0" />
-                  <span className="text-sm truncate">
-                    {selectedCustomer.firstName} {selectedCustomer.lastName}
-                  </span>
-                </div>
-                <Button variant="ghost" size="icon" className="flex-shrink-0" onClick={() => setSelectedCustomer(null)}>
-                  <X className="h-4 w-4" />
-                </Button>
+        </div>
+
+        {/* Customer Selection — compact */}
+        <div className="px-3 py-1.5 border-b border-border/30">
+          {selectedCustomer ? (
+            <div className="flex items-center justify-between rounded bg-muted/50 px-2 py-1">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <User className="h-3 w-3 text-muted-foreground shrink-0" />
+                <span className="text-xs font-medium truncate">
+                  {selectedCustomer.firstName} {selectedCustomer.lastName}
+                </span>
+              </div>
+              <button className="shrink-0 text-muted-foreground hover:text-foreground p-0.5" onClick={() => setSelectedCustomer(null)}>
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ) : (
+            <button
+              className="flex w-full items-center justify-center gap-1.5 rounded border border-dashed border-border/60 px-2 py-1 text-xs text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+              onClick={() => setShowCustomerDialog(true)}
+            >
+              <User className="h-3 w-3" />
+              Select Customer
+            </button>
+          )}
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mx-3 mt-1.5 flex items-start gap-1.5 rounded bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive">
+            <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+            <span className="break-words leading-tight">{error}</span>
+          </div>
+        )}
+
+        {/* Cart Items */}
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <ScrollArea className="h-full">
+            {cart.length === 0 ? (
+              <div className="flex h-32 flex-col items-center justify-center text-muted-foreground/40 gap-1">
+                <Receipt className="h-6 w-6" />
+                <span className="text-xs">No items</span>
               </div>
             ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={() => setShowCustomerDialog(true)}
-              >
-                <User className="mr-2 h-4 w-4" />
-                Select Customer
-              </Button>
-            )}
-          </div>
-        </CardHeader>
+              <div className="p-2 space-y-1">
+                {cart.map((item, index) => {
+                  const isService = item.type === 'service'
+                  const name = isService ? item.service?.name : item.product?.name
+                  const price = isService ? item.service?.price ?? 0 : item.product?.sellingPrice ?? 0
+                  const lineTotal = isService && item.service?.pricingType === 'hourly' && item.hours
+                    ? price * item.hours
+                    : price * item.quantity
 
-        <CardContent className="flex flex-1 flex-col p-4 pt-0 min-h-0">
-          {error && (
-            <div className="mb-2 flex items-center gap-2 rounded-lg bg-destructive/10 p-2 text-sm text-destructive flex-shrink-0">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              <span className="break-words">{error}</span>
-            </div>
-          )}
-
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <ScrollArea className="h-full">
-              {cart.length === 0 ? (
-                <div className="flex h-40 items-center justify-center text-muted-foreground">
-                  Cart is empty
-                </div>
-              ) : (
-                <div className="space-y-2 pr-2">
-                  {cart.map((item, index) => (
+                  return (
                     <div
-                      key={`${item.type}-${item.type === 'product' ? item.product?.id : item.service?.id}-${item.serialNumber || index}`}
-                      className={`flex items-center gap-2 rounded-lg border p-2 ${item.type === 'service' ? 'border-blue-200 bg-blue-50/30' : ''}`}
+                      key={`${item.type}-${isService ? item.service?.id : item.product?.id}-${item.serialNumber || index}`}
+                      className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors
+                        ${isService ? 'bg-blue-500/[0.04] hover:bg-blue-500/[0.08]' : 'hover:bg-muted/50'}`}
                     >
+                      {/* Item info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          {item.type === 'service' && (
-                            <Wrench className="h-3 w-3 text-blue-600 flex-shrink-0" />
-                          )}
-                          <p className="font-medium text-sm leading-tight break-words">
-                            {item.type === 'product' ? item.product?.name : item.service?.name}
-                          </p>
+                        <div className="flex items-center gap-1">
+                          {isService && <Wrench className="h-2.5 w-2.5 text-blue-500 shrink-0" />}
+                          <span className="font-medium truncate">{name}</span>
                         </div>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {item.type === 'product' ? (
-                            <>
-                              {formatCurrency(item.product?.sellingPrice ?? 0)}
-                              {item.serialNumber && (
-                                <span className="ml-2">SN: {item.serialNumber}</span>
-                              )}
-                            </>
-                          ) : (
-                            <>
-                              {formatCurrency(item.service?.price ?? 0)}
-                              {item.service?.pricingType === 'hourly' && item.hours && (
-                                <span className="ml-2">× {item.hours} hr{item.hours > 1 ? 's' : ''}</span>
-                              )}
-                            </>
+                        <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
+                          <span className="tabular-nums">{formatCurrency(price)}</span>
+                          {item.serialNumber && <span className="font-mono">SN:{item.serialNumber}</span>}
+                          {isService && item.service?.pricingType === 'hourly' && item.hours && (
+                            <span>{item.hours}hr{item.hours > 1 ? 's' : ''}</span>
                           )}
-                        </p>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        {item.type === 'product' && !item.serialNumber && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => updateQuantity('product', item.product!.id, -1)}
-                            >
-                              <Minus className="h-3 w-3" />
-                            </Button>
-                            <span className="w-6 text-center text-xs font-medium">{item.quantity}</span>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => updateQuantity('product', item.product!.id, 1)}
-                            >
-                              <Plus className="h-3 w-3" />
-                            </Button>
-                          </>
-                        )}
-                        {item.type === 'service' && item.service?.pricingType !== 'hourly' && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => updateQuantity('service', item.service!.id, -1)}
-                            >
-                              <Minus className="h-3 w-3" />
-                            </Button>
-                            <span className="w-6 text-center text-xs font-medium">{item.quantity}</span>
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-6 w-6"
-                              onClick={() => updateQuantity('service', item.service!.id, 1)}
-                            >
-                              <Plus className="h-3 w-3" />
-                            </Button>
-                          </>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-destructive"
-                          onClick={() => removeFromCart(
-                            item.type,
-                            item.type === 'product' ? item.product!.id : item.service!.id,
-                            item.serialNumber
-                          )}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </div>
 
-          <div className="mt-4 space-y-2 border-t pt-4 flex-shrink-0">
-            <div className="flex justify-between text-sm">
-              <span>Subtotal</span>
-              <span>{formatCurrency(subtotal)}</span>
-            </div>
-            {discount > 0 && (
-              <div className="flex justify-between text-sm text-green-600">
-                <span>Discount</span>
-                <span>-{formatCurrency(discount)}</span>
+                      {/* Qty controls */}
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        {((item.type === 'product' && !item.serialNumber) || (isService && item.service?.pricingType !== 'hourly')) && (
+                          <>
+                            <button
+                              className="flex h-5 w-5 items-center justify-center rounded border border-border/60 text-muted-foreground hover:bg-muted transition-colors"
+                              onClick={() => updateQuantity(item.type, isService ? item.service!.id : item.product!.id, -1)}
+                            >
+                              <Minus className="h-2.5 w-2.5" />
+                            </button>
+                            <span className="w-5 text-center text-[11px] font-bold tabular-nums">{item.quantity}</span>
+                            <button
+                              className="flex h-5 w-5 items-center justify-center rounded border border-border/60 text-muted-foreground hover:bg-muted transition-colors"
+                              onClick={() => updateQuantity(item.type, isService ? item.service!.id : item.product!.id, 1)}
+                            >
+                              <Plus className="h-2.5 w-2.5" />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          className="ml-0.5 flex h-5 w-5 items-center justify-center rounded text-muted-foreground/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          onClick={() => removeFromCart(item.type, isService ? item.service!.id : item.product!.id, item.serialNumber)}
+                        >
+                          <Trash2 className="h-2.5 w-2.5" />
+                        </button>
+                      </div>
+
+                      {/* Line total */}
+                      <span className="w-16 text-right text-[11px] font-semibold tabular-nums shrink-0">
+                        {formatCurrency(lineTotal)}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             )}
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex justify-between text-sm cursor-help group">
-                    <span className="flex items-center gap-1.5">
-                      <Percent className="h-3.5 w-3.5 text-emerald-600" />
-                      <span>{taxSettings.taxName || 'GST'}</span>
-                      {taxRate > 0 && (
-                        <span className="text-xs text-muted-foreground">
-                          ({taxRate}%)
-                        </span>
-                      )}
-                    </span>
-                    <span className="font-medium text-emerald-600 group-hover:text-emerald-700">
-                      {formatCurrency(taxAmount)}
-                    </span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-xs">
-                  <div className="space-y-1.5 text-xs">
-                    <p className="font-semibold">{taxSettings.taxName || 'GST'} Details</p>
-                    <div className="flex justify-between gap-4">
-                      <span className="text-muted-foreground">Rate:</span>
-                      <span>{taxRate}%</span>
-                    </div>
-                    <div className="flex justify-between gap-4">
-                      <span className="text-muted-foreground">Taxable Amount:</span>
-                      <span>{formatCurrency(taxableAmount)}</span>
-                    </div>
-                    {taxSettings.taxNumber && (
-                      <div className="flex justify-between gap-4">
-                        <span className="text-muted-foreground">Tax ID:</span>
-                        <span className="font-mono">{taxSettings.taxNumber}</span>
-                      </div>
-                    )}
-                    <Separator className="my-1" />
-                    <div className="flex justify-between gap-4 font-medium">
-                      <span>Tax Amount:</span>
-                      <span>{formatCurrency(taxAmount)}</span>
-                    </div>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-            <Separator />
-            <div className="flex justify-between text-lg font-bold">
-              <span>Total</span>
-              <span>{formatCurrency(total)}</span>
-            </div>
+          </ScrollArea>
+        </div>
 
-            <div className="grid grid-cols-3 gap-2 pt-2">
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={cart.length === 0}
-                onClick={() => {
-                  setPaymentMethod('cash')
-                  setAddToReceivable(false)
-                  setShowPaymentDialog(true)
-                }}
-              >
-                <Banknote className="mr-2 h-4 w-4" />
-                Cash
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={cart.length === 0}
-                onClick={() => {
-                  setPaymentMethod('card')
-                  setAmountPaid(total.toString())
-                  setAddToReceivable(false)
-                  setShowPaymentDialog(true)
-                }}
-              >
-                <CreditCard className="mr-2 h-4 w-4" />
-                Card
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={cart.length === 0}
-                onClick={() => {
-                  setPaymentMethod('mobile')
-                  setAmountPaid(total.toString())
-                  setAddToReceivable(false)
-                  setShowPaymentDialog(true)
-                }}
-              >
-                <Smartphone className="mr-2 h-4 w-4" />
-                Mobile
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={cart.length === 0}
-                onClick={() => {
-                  setPaymentMethod('cod')
-                  setAmountPaid(total.toString())
-                  setAddToReceivable(false)
-                  setShowPaymentDialog(true)
-                }}
-              >
-                <Package className="mr-2 h-4 w-4" />
-                COD
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                disabled={cart.length === 0}
-                onClick={() => {
-                  setPaymentMethod('receivable')
-                  setAmountPaid('0')
-                  setAddToReceivable(false)
-                  setShowPaymentDialog(true)
-                }}
-                className="col-span-2"
-              >
-                <Clock className="mr-2 h-4 w-4" />
-                Pay Later (Full Receivable)
-              </Button>
-            </div>
+        {/* ─── Totals & Payment ─── */}
+        <div className="border-t border-border bg-muted/20 px-3 py-2 space-y-1 shrink-0">
+          <div className="flex justify-between text-xs text-muted-foreground">
+            <span>Subtotal</span>
+            <span className="tabular-nums">{formatCurrency(subtotal)}</span>
           </div>
-        </CardContent>
-      </Card>
+          {discount > 0 && (
+            <div className="flex justify-between text-xs text-green-600 dark:text-green-400">
+              <span>Discount</span>
+              <span className="tabular-nums">-{formatCurrency(discount)}</span>
+            </div>
+          )}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex justify-between text-xs cursor-help">
+                  <span className="flex items-center gap-1 text-muted-foreground">
+                    {taxSettings.taxName || 'GST'}
+                    {taxRate > 0 && <span className="text-[10px] opacity-60">({taxRate}%)</span>}
+                  </span>
+                  <span className="tabular-nums text-emerald-600 dark:text-emerald-400">{formatCurrency(taxAmount)}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-xs">
+                <div className="space-y-1.5 text-xs">
+                  <p className="font-semibold">{taxSettings.taxName || 'GST'} Details</p>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Rate:</span>
+                    <span>{taxRate}%</span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span className="text-muted-foreground">Taxable Amount:</span>
+                    <span>{formatCurrency(taxableAmount)}</span>
+                  </div>
+                  {taxSettings.taxNumber && (
+                    <div className="flex justify-between gap-4">
+                      <span className="text-muted-foreground">Tax ID:</span>
+                      <span className="font-mono">{taxSettings.taxNumber}</span>
+                    </div>
+                  )}
+                  <Separator className="my-1" />
+                  <div className="flex justify-between gap-4 font-medium">
+                    <span>Tax Amount:</span>
+                    <span>{formatCurrency(taxAmount)}</span>
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          {/* Grand Total */}
+          <div className="flex justify-between items-baseline pt-1 border-t border-border">
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Total</span>
+            <span className="text-lg font-bold tabular-nums">{formatCurrency(total)}</span>
+          </div>
+
+          {/* Payment Buttons — compact 2-row grid */}
+          <div className="grid grid-cols-5 gap-1 pt-1.5">
+            <button
+              disabled={cart.length === 0}
+              onClick={() => { setPaymentMethod('cash'); setAddToReceivable(false); setShowPaymentDialog(true) }}
+              className="flex flex-col items-center gap-0.5 rounded-md border border-border bg-card py-1.5 text-[10px] font-medium hover:border-green-500/50 hover:bg-green-500/5 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <Banknote className="h-4 w-4 text-green-600 dark:text-green-400" />
+              Cash
+            </button>
+            <button
+              disabled={cart.length === 0}
+              onClick={() => { setPaymentMethod('card'); setAmountPaid(total.toString()); setAddToReceivable(false); setShowPaymentDialog(true) }}
+              className="flex flex-col items-center gap-0.5 rounded-md border border-border bg-card py-1.5 text-[10px] font-medium hover:border-blue-500/50 hover:bg-blue-500/5 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <CreditCard className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+              Card
+            </button>
+            <button
+              disabled={cart.length === 0}
+              onClick={() => { setPaymentMethod('mobile'); setAmountPaid(total.toString()); setAddToReceivable(false); setShowPaymentDialog(true) }}
+              className="flex flex-col items-center gap-0.5 rounded-md border border-border bg-card py-1.5 text-[10px] font-medium hover:border-purple-500/50 hover:bg-purple-500/5 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <Smartphone className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+              Mobile
+            </button>
+            <button
+              disabled={cart.length === 0}
+              onClick={() => { setPaymentMethod('cod'); setAmountPaid(total.toString()); setAddToReceivable(false); setShowPaymentDialog(true) }}
+              className="flex flex-col items-center gap-0.5 rounded-md border border-border bg-card py-1.5 text-[10px] font-medium hover:border-amber-500/50 hover:bg-amber-500/5 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <Truck className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              COD
+            </button>
+            <button
+              disabled={cart.length === 0}
+              onClick={() => { setPaymentMethod('receivable'); setAmountPaid('0'); setAddToReceivable(false); setShowPaymentDialog(true) }}
+              className="flex flex-col items-center gap-0.5 rounded-md border border-border bg-card py-1.5 text-[10px] font-medium hover:border-orange-500/50 hover:bg-orange-500/5 disabled:opacity-30 disabled:pointer-events-none transition-colors"
+            >
+              <Clock className="h-4 w-4 text-orange-600 dark:text-orange-400" />
+              Credit
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Customer Selection Dialog */}
       <Dialog open={showCustomerDialog} onOpenChange={(open) => {
@@ -1526,7 +1436,7 @@ export function POSScreen() {
 
       {/* Payment Dialog */}
       <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
-        <DialogContent className="max-w-md p-0 gap-0 border-border/50 overflow-hidden">
+        <DialogContent className="max-w-md p-0 gap-0 border-border overflow-hidden">
           {/* Payment Header */}
           <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 px-5 py-4 text-white">
             <div className="flex items-center justify-between">

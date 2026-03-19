@@ -535,376 +535,260 @@ ${changeRow}${voidedStamp}${notesBlock}
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Sales History</h1>
-          <p className="text-muted-foreground">
-            View and manage all past sales transactions
-          </p>
+    <div className="flex flex-col h-full -m-6 overflow-hidden">
+      {/* ═══ Top Bar: Stats + Search + Filters — single compact strip ═══ */}
+      <div className="shrink-0 border-b border-border bg-card px-4 py-2 space-y-2">
+        {/* Row 1: Title + Stats + Search */}
+        <div className="flex items-center gap-4">
+          <h1 className="text-sm font-bold uppercase tracking-wider shrink-0">Sales History</h1>
+
+          <div className="flex items-center gap-4 shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-muted/50 border border-border">
+              <Receipt className="h-3 w-3 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Total</span>
+              <span className="text-xs font-bold tabular-nums">{summary.totalSales.toLocaleString()}</span>
+              <Separator orientation="vertical" className="h-3 mx-1" />
+              <span className="text-xs font-bold tabular-nums">{formatCurrency(summary.totalRevenue)}</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-muted/50 border border-border">
+              <TrendingUp className="h-3 w-3 text-muted-foreground" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Today</span>
+              <span className="text-xs font-bold tabular-nums">{summary.todaySales.toLocaleString()}</span>
+              <Separator orientation="vertical" className="h-3 mx-1" />
+              <span className="text-xs font-bold tabular-nums">{formatCurrency(summary.todayRevenue)}</span>
+            </div>
+          </div>
+
+          <div className="relative flex-1 max-w-sm ml-auto">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search invoice, customer, cashier..."
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1) }}
+              className="h-8 pl-8 text-xs bg-background"
+            />
+            {searchTerm && (
+              <button onClick={() => { setSearchTerm(''); setCurrentPage(1) }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Row 2: Filters */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <Filter className="h-3 w-3 text-muted-foreground shrink-0" />
+
+          <Select value={filterBranchId} onValueChange={(v) => { setFilterBranchId(v); setCurrentPage(1) }}>
+            <SelectTrigger className="h-7 w-32 text-xs">
+              <SelectValue placeholder="Branch" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Branches</SelectItem>
+              {branches.map((b) => <SelectItem key={b.id} value={b.id.toString()}>{b.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Select value={filterPaymentMethod} onValueChange={(v) => { setFilterPaymentMethod(v); setCurrentPage(1) }}>
+            <SelectTrigger className="h-7 w-28 text-xs">
+              <SelectValue placeholder="Payment" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Methods</SelectItem>
+              {PAYMENT_METHODS.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+
+          <Select value={filterPaymentStatus} onValueChange={(v) => { setFilterPaymentStatus(v); setCurrentPage(1) }}>
+            <SelectTrigger className="h-7 w-24 text-xs">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="partial">Partial</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Separator orientation="vertical" className="h-4" />
+
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">From</span>
+            <Input type="date" value={filterDateFrom} onChange={(e) => { setFilterDateFrom(e.target.value); setCurrentPage(1) }} className="h-7 w-32 text-xs" />
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-muted-foreground">To</span>
+            <Input type="date" value={filterDateTo} onChange={(e) => { setFilterDateTo(e.target.value); setCurrentPage(1) }} className="h-7 w-32 text-xs" />
+          </div>
+
+          <Separator orientation="vertical" className="h-4" />
+
+          <button
+            onClick={() => { setShowVoided(!showVoided); setCurrentPage(1) }}
+            className={cn(
+              "h-7 px-2 rounded text-[10px] font-medium border transition-colors",
+              showVoided ? "bg-destructive/10 border-destructive/30 text-destructive" : "border-border text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Ban className="inline h-3 w-3 mr-1" />
+            Voided
+          </button>
+
+          {hasActiveFilters && (
+            <button onClick={clearFilters} className="h-7 px-2 rounded text-[10px] text-muted-foreground hover:text-foreground border border-border">
+              <X className="inline h-3 w-3 mr-1" />Clear
+            </button>
+          )}
+
+          {/* Filtered total inline */}
+          {hasActiveFilters && (
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              Filtered: <span className="font-semibold text-foreground">{formatCurrency(filteredTotalRevenue)}</span>
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-            <Receipt className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{summary.totalSales.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">All time transactions</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Gross Sales</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(summary.totalRevenue)}</div>
-            <p className="text-xs text-muted-foreground">All time gross sales</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Sales</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{summary.todaySales.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">Transactions today</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Gross Sales</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(summary.todayRevenue)}</div>
-            <p className="text-xs text-muted-foreground">Gross sales today</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col gap-4">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search invoice, customer, branch, cashier..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value)
-                  setCurrentPage(1)
-                }}
-                className="pl-9"
-              />
-            </div>
-
-            {/* Filter Row */}
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">Filters:</span>
-              </div>
-
-              {/* Branch Filter */}
-              <Select value={filterBranchId} onValueChange={(value) => {
-                setFilterBranchId(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-40">
-                  <Building2 className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches</SelectItem>
-                  {branches.map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id.toString()}>
-                      {branch.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Payment Method Filter */}
-              <Select value={filterPaymentMethod} onValueChange={(value) => {
-                setFilterPaymentMethod(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-40">
-                  <CreditCard className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Payment" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Methods</SelectItem>
-                  {PAYMENT_METHODS.map((method) => (
-                    <SelectItem key={method.value} value={method.value}>
-                      {method.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Status Filter */}
-              <Select value={filterPaymentStatus} onValueChange={(value) => {
-                setFilterPaymentStatus(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="paid">Paid</SelectItem>
-                  <SelectItem value="partial">Partial</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                </SelectContent>
-              </Select>
-
-              {/* Date From */}
-              <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">From:</Label>
-                <Input
-                  type="date"
-                  value={filterDateFrom}
-                  onChange={(e) => {
-                    setFilterDateFrom(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  className="w-40"
-                />
-              </div>
-
-              {/* Date To */}
-              <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">To:</Label>
-                <Input
-                  type="date"
-                  value={filterDateTo}
-                  onChange={(e) => {
-                    setFilterDateTo(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  className="w-40"
-                />
-              </div>
-
-              {/* Show Voided */}
-              <Button
-                variant={showVoided ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setShowVoided(!showVoided)
-                  setCurrentPage(1)
-                }}
-              >
-                <Ban className="mr-2 h-4 w-4" />
-                {showVoided ? 'Hiding Voided' : 'Show Voided'}
-              </Button>
-
-              {/* Clear Filters */}
+      {/* ═══ Sales Table — scrollable ═══ */}
+      <div className="flex-1 overflow-auto">
+        {paginatedSales.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            <div className="text-center">
+              <Receipt className="mx-auto mb-2 h-8 w-8 opacity-30" />
+              <p className="text-sm">No sales found</p>
               {hasActiveFilters && (
-                <Button variant="ghost" size="sm" onClick={clearFilters}>
-                  <X className="mr-2 h-4 w-4" />
-                  Clear
-                </Button>
+                <button onClick={clearFilters} className="text-xs text-primary hover:underline mt-1">Clear filters</button>
               )}
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Sales Table */}
-      <Card>
-        <CardContent className="p-0">
-          {paginatedSales.length === 0 ? (
-            <div className="flex h-40 items-center justify-center text-muted-foreground">
-              <div className="text-center">
-                <Receipt className="mx-auto mb-2 h-12 w-12" />
-                <p>No sales found</p>
-                {hasActiveFilters && (
-                  <Button variant="link" size="sm" onClick={clearFilters}>
-                    Clear filters to see all sales
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Invoice</TableHead>
-                  <TableHead>Date/Time</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Branch</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead className="text-right">Tax</TableHead>
-                  <TableHead className="text-right">Discount</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead className="text-right">Paid</TableHead>
-                  <TableHead className="text-right">Outstanding</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="text-[11px]">
+                <TableHead className="py-2">Invoice</TableHead>
+                <TableHead className="py-2">Date/Time</TableHead>
+                <TableHead className="py-2">Customer</TableHead>
+                <TableHead className="py-2">Branch</TableHead>
+                <TableHead className="py-2">Payment</TableHead>
+                <TableHead className="py-2 text-right">Tax</TableHead>
+                <TableHead className="py-2 text-right">Discount</TableHead>
+                <TableHead className="py-2 text-right">Amount</TableHead>
+                <TableHead className="py-2 text-right">Paid</TableHead>
+                <TableHead className="py-2 text-right">Due</TableHead>
+                <TableHead className="py-2">Status</TableHead>
+                <TableHead className="py-2 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paginatedSales.map((sale) => (
+                <TableRow key={sale.id} className={cn("text-xs", sale.isVoided && 'opacity-40 bg-muted/30')}>
+                  <TableCell className="py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[11px] font-medium">{sale.invoiceNumber}</span>
+                      <ReversalStatusBadge entityType="sale" entityId={sale.id} />
+                    </div>
+                  </TableCell>
+                  <TableCell className="py-1.5">
+                    <span className="text-[11px] text-muted-foreground">{formatDateTime(sale.saleDate)}</span>
+                  </TableCell>
+                  <TableCell className="py-1.5">
+                    <span className="text-[11px] font-medium">{getCustomerName(sale.customerId)}</span>
+                  </TableCell>
+                  <TableCell className="py-1.5">
+                    <span className="text-[11px] text-muted-foreground">{getBranchName(sale.branchId)}</span>
+                  </TableCell>
+                  <TableCell className="py-1.5">
+                    <div className="flex items-center gap-1">
+                      {getPaymentMethodIcon(sale.paymentMethod)}
+                      <span className="text-[11px]">{getPaymentMethodLabel(sale.paymentMethod)}</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    <span className={cn('text-[11px] tabular-nums', sale.isVoided && 'line-through')}>
+                      {formatCurrency(sale.taxAmount)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    {sale.discountAmount > 0 ? (
+                      <span className={cn('text-[11px] tabular-nums text-green-600 dark:text-green-400', sale.isVoided && 'line-through')}>
+                        -{formatCurrency(sale.discountAmount)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/40">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    <span className={cn('text-[11px] tabular-nums font-semibold', sale.isVoided && 'line-through')}>
+                      {formatCurrency(sale.totalAmount)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    <span className={cn('text-[11px] tabular-nums', sale.isVoided && 'line-through')}>
+                      {formatCurrency(sale.amountPaid)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    {sale.totalAmount - sale.amountPaid > 0 ? (
+                      <span className={cn('text-[11px] tabular-nums font-medium text-destructive', sale.isVoided && 'line-through')}>
+                        {formatCurrency(sale.totalAmount - sale.amountPaid)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/40">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="py-1.5">{getPaymentStatusBadge(sale.paymentStatus, sale.isVoided)}</TableCell>
+                  <TableCell className="py-1.5 text-right">
+                    <div className="flex justify-end gap-0.5">
+                      <button onClick={() => handleViewSale(sale)} title="View" className="p-1 rounded hover:bg-muted transition-colors">
+                        <Eye className="h-3.5 w-3.5 text-muted-foreground" />
+                      </button>
+                      <button onClick={() => handlePrintReceipt(sale)} title="Print" className="p-1 rounded hover:bg-muted transition-colors">
+                        <Printer className="h-3.5 w-3.5 text-muted-foreground" />
+                      </button>
+                      {!sale.isVoided && (
+                        <button onClick={() => handleOpenVoidDialog(sale)} title="Void" className="p-1 rounded hover:bg-destructive/10 transition-colors">
+                          <Ban className="h-3.5 w-3.5 text-destructive/60" />
+                        </button>
+                      )}
+                      {!sale.isVoided && (
+                        <button onClick={() => { setReversalTargetSale(sale); setIsReversalModalOpen(true) }} title="Reversal" className="p-1 rounded hover:bg-amber-500/10 transition-colors">
+                          <RotateCcw className="h-3.5 w-3.5 text-amber-500/70" />
+                        </button>
+                      )}
+                    </div>
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedSales.map((sale) => (
-                  <TableRow key={sale.id} className={cn(sale.isVoided && 'opacity-50 bg-muted/50')}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-mono text-sm">{sale.invoiceNumber}</span>
-                        <ReversalStatusBadge entityType="sale" entityId={sale.id} />
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm">{formatDateTime(sale.saleDate)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{getCustomerName(sale.customerId)}</p>
-                        <p className="text-xs text-muted-foreground">{getCustomerPhone(sale.customerId)}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>{getBranchName(sale.branchId)}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getPaymentMethodIcon(sale.paymentMethod)}
-                        <span>{getPaymentMethodLabel(sale.paymentMethod)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={cn('text-sm', sale.isVoided && 'line-through')}>
-                        {formatCurrency(sale.taxAmount)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {sale.discountAmount > 0 ? (
-                        <span className={cn('text-sm text-green-600', sale.isVoided && 'line-through')}>
-                          -{formatCurrency(sale.discountAmount)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={cn('font-medium', sale.isVoided && 'line-through')}>
-                        {formatCurrency(sale.totalAmount)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <span className={cn('font-medium', sale.isVoided && 'line-through')}>
-                        {formatCurrency(sale.amountPaid)}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {sale.totalAmount - sale.amountPaid > 0 ? (
-                        <span className={cn('font-medium text-destructive', sale.isVoided && 'line-through')}>
-                          {formatCurrency(sale.totalAmount - sale.amountPaid)}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </TableCell>
-                    <TableCell>{getPaymentStatusBadge(sale.paymentStatus, sale.isVoided)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleViewSale(sale)}
-                          title="View Details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handlePrintReceipt(sale)}
-                          title="Print Receipt"
-                        >
-                          <Printer className="h-4 w-4" />
-                        </Button>
-                        {!sale.isVoided && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenVoidDialog(sale)}
-                            title="Void Sale"
-                          >
-                            <Ban className="h-4 w-4 text-destructive" />
-                          </Button>
-                        )}
-                        {!sale.isVoided && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => {
-                              setReversalTargetSale(sale)
-                              setIsReversalModalOpen(true)
-                            }}
-                            title="Request Reversal"
-                          >
-                            <RotateCcw className="h-4 w-4 text-amber-500" />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </div>
 
-      {/* Pagination & Summary */}
+      {/* ═══ Bottom Bar: Pagination ═══ */}
       {sortedSales.length > 0 && (
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to{' '}
-            {Math.min(currentPage * ITEMS_PER_PAGE, sortedSales.length)} of {sortedSales.length} sales
-            <span className="ml-4 font-medium">
-              Filtered Total: {formatCurrency(filteredTotalRevenue)}
-            </span>
-          </div>
+        <div className="shrink-0 flex items-center justify-between px-4 py-1.5 border-t border-border bg-card text-xs text-muted-foreground">
+          <span>
+            {(currentPage - 1) * ITEMS_PER_PAGE + 1}-{Math.min(currentPage * ITEMS_PER_PAGE, sortedSales.length)} of {sortedSales.length}
+            {!hasActiveFilters && <span className="ml-3">Total: <span className="font-semibold text-foreground">{formatCurrency(filteredTotalRevenue)}</span></span>}
+          </span>
           {totalPages > 1 && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
+            <div className="flex items-center gap-1">
+              <button
                 disabled={currentPage === 1}
                 onClick={() => setCurrentPage((p) => p - 1)}
+                className="h-6 px-2 rounded border border-border text-[10px] font-medium disabled:opacity-30 hover:bg-muted transition-colors"
               >
-                <ChevronLeft className="mr-1 h-4 w-4" />
-                Previous
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
+                <ChevronLeft className="inline h-3 w-3" /> Prev
+              </button>
+              <span className="px-2 text-[10px] tabular-nums">{currentPage}/{totalPages}</span>
+              <button
                 disabled={currentPage === totalPages}
                 onClick={() => setCurrentPage((p) => p + 1)}
+                className="h-6 px-2 rounded border border-border text-[10px] font-medium disabled:opacity-30 hover:bg-muted transition-colors"
               >
-                Next
-                <ChevronRight className="ml-1 h-4 w-4" />
-              </Button>
+                Next <ChevronRight className="inline h-3 w-3" />
+              </button>
             </div>
           )}
         </div>
