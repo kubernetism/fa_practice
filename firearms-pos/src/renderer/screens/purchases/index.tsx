@@ -3,28 +3,24 @@ import {
   Plus,
   Search,
   Eye,
-  Trash2,
   X,
   Package,
   DollarSign,
-  AlertTriangle,
   ChevronLeft,
   ChevronRight,
-  Building2,
   Truck,
   Calendar,
   FileText,
-  CheckCircle,
   Clock,
   PackageCheck,
   RefreshCw,
   CreditCard,
   Banknote,
+  Filter,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -49,6 +45,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { useBranch } from '@/contexts/branch-context'
@@ -594,6 +596,20 @@ export function PurchasesScreen() {
   const hasActiveFilters = searchTerm || filterSupplierId !== 'all' || filterBranchId !== 'all' ||
     filterStatus !== 'all' || filterPaymentStatus !== 'all' || filterDateFrom || filterDateTo
 
+  // Payment method icon helper
+  const getPaymentMethodIcon = (method: string) => {
+    switch (method) {
+      case 'cash':
+        return <Banknote className="h-3.5 w-3.5 text-muted-foreground" />
+      case 'cheque':
+        return <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+      case 'pay_later':
+        return <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+      default:
+        return <CreditCard className="h-3.5 w-3.5 text-muted-foreground" />
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -606,288 +622,340 @@ export function PurchasesScreen() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Purchase Orders</h1>
-          <p className="text-muted-foreground">
-            Manage purchases from suppliers and track inventory
-          </p>
+    <TooltipProvider>
+      <div className="space-y-4">
+
+        {/* ── Header ── */}
+        <div className="flex items-center justify-between gap-4">
+          {/* Title + stat pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold">Purchase Orders</h1>
+
+            {/* Total purchases */}
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+              <Package className="h-3 w-3 text-muted-foreground" />
+              {summary.totalPurchases.toLocaleString()} orders
+            </span>
+
+            {/* Total spent */}
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+              <DollarSign className="h-3 w-3 text-muted-foreground" />
+              {formatCurrency(summary.totalSpent)}
+            </span>
+
+            {/* This month */}
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+              <Calendar className="h-3 w-3 text-muted-foreground" />
+              {summary.thisMonthCount} this month
+              <span className="text-muted-foreground">·</span>
+              {formatCurrency(summary.thisMonthSpent)}
+            </span>
+
+            {/* Pending delivery */}
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium',
+              summary.pendingCount > 0
+                ? 'bg-warning/10 text-warning'
+                : 'bg-muted text-muted-foreground'
+            )}>
+              <Truck className="h-3 w-3" />
+              {summary.pendingCount} pending
+            </span>
+          </div>
+
+          {/* Actions */}
+          <div className="flex shrink-0 items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={fetchData}>
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Refresh</TooltipContent>
+            </Tooltip>
+            <Button size="sm" className="h-8" onClick={handleOpenCreateDialog}>
+              <Plus className="mr-1.5 h-4 w-4" />
+              New Purchase
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={fetchData}>
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-          <Button onClick={handleOpenCreateDialog}>
-            <Plus className="mr-2 h-4 w-4" />
-            New Purchase
-          </Button>
+
+        {/* ── Filter bar ── */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Search */}
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search PO number, supplier, branch..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="h-8 pl-8 pr-8 text-sm"
+            />
+            {searchTerm && (
+              <button
+                onClick={() => { setSearchTerm(''); setCurrentPage(1) }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Supplier filter */}
+          <Select value={filterSupplierId} onValueChange={(value) => {
+            setFilterSupplierId(value)
+            setCurrentPage(1)
+          }}>
+            <SelectTrigger className="h-8 w-40 text-sm">
+              <SelectValue placeholder="Supplier" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Suppliers</SelectItem>
+              {suppliers.map((supplier) => (
+                <SelectItem key={supplier.id} value={supplier.id.toString()}>
+                  {supplier.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Branch filter */}
+          <Select value={filterBranchId} onValueChange={(value) => {
+            setFilterBranchId(value)
+            setCurrentPage(1)
+          }}>
+            <SelectTrigger className="h-8 w-36 text-sm">
+              <Filter className="mr-1.5 h-3.5 w-3.5 text-muted-foreground" />
+              <SelectValue placeholder="Branch" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Branches</SelectItem>
+              {branches.map((branch) => (
+                <SelectItem key={branch.id} value={branch.id.toString()}>
+                  {branch.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Order status filter */}
+          <Select value={filterStatus} onValueChange={(value) => {
+            setFilterStatus(value)
+            setCurrentPage(1)
+          }}>
+            <SelectTrigger className="h-8 w-32 text-sm">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              {ORDER_STATUSES.map((status) => (
+                <SelectItem key={status.value} value={status.value}>
+                  {status.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Payment status filter */}
+          <Select value={filterPaymentStatus} onValueChange={(value) => {
+            setFilterPaymentStatus(value)
+            setCurrentPage(1)
+          }}>
+            <SelectTrigger className="h-8 w-32 text-sm">
+              <SelectValue placeholder="Payment" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Payment</SelectItem>
+              {PAYMENT_STATUSES.map((status) => (
+                <SelectItem key={status.value} value={status.value}>
+                  {status.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Date from */}
+          <div className="flex items-center gap-1.5">
+            <Label className="shrink-0 text-xs text-muted-foreground">From</Label>
+            <Input
+              type="date"
+              value={filterDateFrom}
+              onChange={(e) => {
+                setFilterDateFrom(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="h-8 w-36 text-sm"
+            />
+          </div>
+
+          {/* Date to */}
+          <div className="flex items-center gap-1.5">
+            <Label className="shrink-0 text-xs text-muted-foreground">To</Label>
+            <Input
+              type="date"
+              value={filterDateTo}
+              onChange={(e) => {
+                setFilterDateTo(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="h-8 w-36 text-sm"
+            />
+          </div>
+
+          {/* Clear filters */}
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" className="h-8 px-2 text-xs" onClick={clearFilters}>
+              <X className="mr-1 h-3.5 w-3.5" />
+              Clear
+            </Button>
+          )}
         </div>
-      </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Purchases</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{summary.totalPurchases.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">All time orders</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Spent</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatCurrency(summary.totalSpent)}</div>
-            <p className="text-xs text-muted-foreground">All time spending</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">This Month</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{summary.thisMonthCount}</div>
-            <p className="text-xs text-muted-foreground">{formatCurrency(summary.thisMonthSpent)} spent</p>
-          </CardContent>
-        </Card>
-
-        <Card className={summary.pendingCount > 0 ? 'border-warning' : ''}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Delivery</CardTitle>
-            <Truck className={cn('h-4 w-4', summary.pendingCount > 0 ? 'text-warning' : 'text-muted-foreground')} />
-          </CardHeader>
-          <CardContent>
-            <div className={cn('text-2xl font-bold', summary.pendingCount > 0 && 'text-warning')}>
-              {summary.pendingCount}
-            </div>
-            <p className="text-xs text-muted-foreground">{formatCurrency(summary.pendingAmount)} pending</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col gap-4">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search PO number, supplier, branch..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value)
-                  setCurrentPage(1)
-                }}
-                className="pl-9"
-              />
-            </div>
-
-            {/* Filter Row */}
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Supplier Filter */}
-              <Select value={filterSupplierId} onValueChange={(value) => {
-                setFilterSupplierId(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-44">
-                  <SelectValue placeholder="Supplier" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Suppliers</SelectItem>
-                  {suppliers.map((supplier) => (
-                    <SelectItem key={supplier.id} value={supplier.id.toString()}>
-                      {supplier.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Branch Filter */}
-              <Select value={filterBranchId} onValueChange={(value) => {
-                setFilterBranchId(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-40">
-                  <Building2 className="mr-2 h-4 w-4" />
-                  <SelectValue placeholder="Branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches</SelectItem>
-                  {branches.map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id.toString()}>
-                      {branch.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Status Filter */}
-              <Select value={filterStatus} onValueChange={(value) => {
-                setFilterStatus(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  {ORDER_STATUSES.map((status) => (
-                    <SelectItem key={status.value} value={status.value}>
-                      {status.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Payment Status Filter */}
-              <Select value={filterPaymentStatus} onValueChange={(value) => {
-                setFilterPaymentStatus(value)
-                setCurrentPage(1)
-              }}>
-                <SelectTrigger className="w-36">
-                  <SelectValue placeholder="Payment" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Payment</SelectItem>
-                  {PAYMENT_STATUSES.map((status) => (
-                    <SelectItem key={status.value} value={status.value}>
-                      {status.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {/* Date Filters */}
-              <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">From:</Label>
-                <Input
-                  type="date"
-                  value={filterDateFrom}
-                  onChange={(e) => {
-                    setFilterDateFrom(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  className="w-40"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">To:</Label>
-                <Input
-                  type="date"
-                  value={filterDateTo}
-                  onChange={(e) => {
-                    setFilterDateTo(e.target.value)
-                    setCurrentPage(1)
-                  }}
-                  className="w-40"
-                />
-              </div>
-
-              {/* Clear Filters */}
+        {/* ── Table ── */}
+        {paginatedPurchases.length === 0 ? (
+          <div className="flex h-40 items-center justify-center rounded-lg border border-dashed text-muted-foreground">
+            <div className="text-center">
+              <Package className="mx-auto mb-2 h-10 w-10 opacity-40" />
+              <p className="text-sm">No purchases found</p>
               {hasActiveFilters && (
-                <Button variant="ghost" size="sm" onClick={clearFilters}>
-                  <X className="mr-2 h-4 w-4" />
-                  Clear
+                <Button variant="link" size="sm" className="mt-1 text-xs" onClick={clearFilters}>
+                  Clear filters to see all purchases
                 </Button>
               )}
             </div>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Purchases Table */}
-      <Card>
-        <CardContent className="p-0">
-          {paginatedPurchases.length === 0 ? (
-            <div className="flex h-40 items-center justify-center text-muted-foreground">
-              <div className="text-center">
-                <Package className="mx-auto mb-2 h-12 w-12" />
-                <p>No purchases found</p>
-                {hasActiveFilters && (
-                  <Button variant="link" size="sm" onClick={clearFilters}>
-                    Clear filters to see all purchases
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : (
+        ) : (
+          <div className="overflow-hidden rounded-lg border">
             <Table>
               <TableHeader>
-                <TableRow>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Supplier</TableHead>
-                  <TableHead>Branch</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Payment</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
+                <TableRow className="bg-muted/30 hover:bg-muted/30">
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    PO Number
+                  </TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Date
+                  </TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Supplier
+                  </TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Branch
+                  </TableHead>
+                  <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Amount
+                  </TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Method
+                  </TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Order
+                  </TableHead>
+                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Payment
+                  </TableHead>
+                  <TableHead className="w-[88px] text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Actions
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {paginatedPurchases.map((purchase) => (
-                  <TableRow key={purchase.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <FileText className="h-4 w-4 text-muted-foreground" />
-                        <span className="font-mono text-sm">{purchase.purchaseOrderNumber}</span>
+                  <TableRow key={purchase.id} className="group h-9">
+                    <TableCell className="py-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="font-mono text-xs">{purchase.purchaseOrderNumber}</span>
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <span className="text-sm">{formatDateTime(purchase.createdAt)}</span>
-                      </div>
+                    <TableCell className="py-1.5">
+                      <span className="text-xs text-muted-foreground">
+                        {formatDateTime(purchase.createdAt)}
+                      </span>
                     </TableCell>
-                    <TableCell>{getSupplierName(purchase.supplierId)}</TableCell>
-                    <TableCell>{getBranchName(purchase.branchId)}</TableCell>
-                    <TableCell className="text-right font-medium">
-                      {formatCurrency(purchase.totalAmount)}
+                    <TableCell className="py-1.5">
+                      <span className="text-sm">{getSupplierName(purchase.supplierId)}</span>
                     </TableCell>
-                    <TableCell>{getStatusBadge(purchase.status)}</TableCell>
-                    <TableCell>{getPaymentStatusBadge(purchase.paymentStatus)}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleViewPurchase(purchase)}
-                          title="View Details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        {purchase.status !== 'received' && purchase.status !== 'cancelled' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenReceiveDialog(purchase)}
-                            title="Receive Items"
-                          >
-                            <PackageCheck className="h-4 w-4 text-success" />
-                          </Button>
+                    <TableCell className="py-1.5">
+                      <span className="text-sm">{getBranchName(purchase.branchId)}</span>
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right">
+                      <div className="flex flex-col items-end">
+                        <span className="text-sm font-medium">
+                          {formatCurrency(purchase.totalAmount)}
+                        </span>
+                        {purchase.shippingCost > 0 && (
+                          <span className="text-[10px] text-muted-foreground">
+                            +{formatCurrency(purchase.shippingCost)} ship
+                          </span>
                         )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      <div className="flex items-center gap-1">
+                        {getPaymentMethodIcon(purchase.paymentMethod)}
+                        <span className="text-xs capitalize">
+                          {purchase.paymentMethod?.replace('_', ' ') || 'N/A'}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      {getStatusBadge(purchase.status)}
+                    </TableCell>
+                    <TableCell className="py-1.5">
+                      {getPaymentStatusBadge(purchase.paymentStatus)}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right">
+                      <div className="flex justify-end gap-0.5">
+                        {/* View */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                              onClick={() => handleViewPurchase(purchase)}
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>View Details</TooltipContent>
+                        </Tooltip>
+
+                        {/* Receive */}
+                        {purchase.status !== 'received' && purchase.status !== 'cancelled' && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                                onClick={() => handleOpenReceiveDialog(purchase)}
+                              >
+                                <PackageCheck className="h-3.5 w-3.5 text-success" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Receive Items</TooltipContent>
+                          </Tooltip>
+                        )}
+
+                        {/* Pay off */}
                         {purchase.paymentStatus === 'pending' && purchase.status !== 'cancelled' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleOpenPayOffDialog(purchase)}
-                            title="Pay Off"
-                          >
-                            <Banknote className="h-4 w-4 text-primary" />
-                          </Button>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                                onClick={() => handleOpenPayOffDialog(purchase)}
+                              >
+                                <Banknote className="h-3.5 w-3.5 text-primary" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Pay Off</TooltipContent>
+                          </Tooltip>
                         )}
                       </div>
                     </TableCell>
@@ -895,582 +963,585 @@ export function PurchasesScreen() {
                 ))}
               </TableBody>
             </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Pagination */}
-      {sortedPurchases.length > 0 && (
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1} to{' '}
-            {Math.min(currentPage * ITEMS_PER_PAGE, sortedPurchases.length)} of {sortedPurchases.length} purchases
-            <span className="ml-4 font-medium">
-              Total: {formatCurrency(filteredTotalAmount)}
-            </span>
           </div>
-          {totalPages > 1 && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => p - 1)}
-              >
-                <ChevronLeft className="mr-1 h-4 w-4" />
-                Previous
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                Page {currentPage} of {totalPages}
+        )}
+
+        {/* ── Pagination ── */}
+        {sortedPurchases.length > 0 && (
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
+              {Math.min(currentPage * ITEMS_PER_PAGE, sortedPurchases.length)} of{' '}
+              {sortedPurchases.length} purchases
+              <span className="ml-3 font-medium text-foreground">
+                Total: {formatCurrency(filteredTotalAmount)}
               </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => p + 1)}
-              >
-                Next
-                <ChevronRight className="ml-1 h-4 w-4" />
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
+            </p>
 
-      {/* Create Purchase Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Create Purchase Order
-            </DialogTitle>
-            <DialogDescription>
-              Add a new purchase order from a supplier
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            {/* Supplier and Branch */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Supplier *</Label>
-                <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select supplier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers.map((supplier) => (
-                      <SelectItem key={supplier.id} value={supplier.id.toString()}>
-                        {supplier.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage((p) => p - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="min-w-[80px] text-center text-xs text-muted-foreground">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
               </div>
+            )}
+          </div>
+        )}
 
-              <div className="space-y-2">
-                <Label>Branch *</Label>
-                <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select branch" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {branches.map((branch) => (
-                      <SelectItem key={branch.id} value={branch.id.toString()}>
-                        {branch.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+        {/* ── Create Purchase Dialog ── */}
+        <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                Create Purchase Order
+              </DialogTitle>
+              <DialogDescription>
+                Add a new purchase order from a supplier
+              </DialogDescription>
+            </DialogHeader>
 
-            {/* Shipping and Delivery */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Shipping Cost</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={shippingCost}
-                  onChange={(e) => setShippingCost(e.target.value)}
-                  placeholder="0.00"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Expected Delivery</Label>
-                <Input
-                  type="date"
-                  value={expectedDeliveryDate}
-                  onChange={(e) => setExpectedDeliveryDate(e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Notes */}
-            <div className="space-y-2">
-              <Label>Notes</Label>
-              <Input
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Optional notes..."
-              />
-            </div>
-
-            {/* Payment Method */}
-            <div className="space-y-2">
-              <Label>Payment Method *</Label>
-              <Select value={paymentMethod} onValueChange={setPaymentMethod}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select payment method" />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAYMENT_METHODS.map((method) => (
-                    <SelectItem key={method.value} value={method.value}>
-                      {method.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {paymentMethod === 'pay_later' && (
-                <p className="text-xs text-muted-foreground">
-                  This will create an account payable entry for tracking
-                </p>
-              )}
-            </div>
-
-            <Separator />
-
-            {/* Add Items Section */}
-            <div className="space-y-4">
-              <h4 className="font-medium">Add Items</h4>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <Select value={selectedProductId} onValueChange={handleProductSelect}>
+            <div className="space-y-6">
+              {/* Supplier and Branch */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Supplier *</Label>
+                  <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
                     <SelectTrigger>
-                      <SelectValue placeholder="Select product" />
+                      <SelectValue placeholder="Select supplier" />
                     </SelectTrigger>
                     <SelectContent>
-                      <ScrollArea className="h-60">
-                        {products.map((product) => (
-                          <SelectItem key={product.id} value={product.id.toString()}>
-                            <span className="font-mono text-muted-foreground mr-2">{product.code}</span>
-                            {product.name}
-                          </SelectItem>
-                        ))}
-                      </ScrollArea>
+                      {suppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id.toString()}>
+                          {supplier.name}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="w-24">
-                  <Input
-                    type="number"
-                    min="1"
-                    value={itemQuantity}
-                    onChange={(e) => setItemQuantity(e.target.value)}
-                    placeholder="Qty"
-                  />
+
+                <div className="space-y-2">
+                  <Label>Branch *</Label>
+                  <Select value={selectedBranchId} onValueChange={setSelectedBranchId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select branch" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {branches.map((branch) => (
+                        <SelectItem key={branch.id} value={branch.id.toString()}>
+                          {branch.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="w-32">
+              </div>
+
+              {/* Shipping and Delivery */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Shipping Cost</Label>
                   <Input
                     type="number"
                     step="0.01"
                     min="0"
-                    value={itemUnitCost}
-                    onChange={(e) => setItemUnitCost(e.target.value)}
-                    placeholder="Unit Cost"
+                    value={shippingCost}
+                    onChange={(e) => setShippingCost(e.target.value)}
+                    placeholder="0.00"
                   />
                 </div>
-                <Button onClick={handleAddItem} disabled={!selectedProductId || !itemQuantity || !itemUnitCost}>
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
 
-              {/* Items Table */}
-              {purchaseItems.length > 0 && (
-                <div className="rounded-md border">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-center">Qty</TableHead>
-                        <TableHead className="text-right">Unit Cost</TableHead>
-                        <TableHead className="text-right">Subtotal</TableHead>
-                        <TableHead className="w-10"></TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {purchaseItems.map((item) => (
-                        <TableRow key={item.productId}>
-                          <TableCell>{getProductName(item.productId)}</TableCell>
-                          <TableCell className="text-center">{item.quantity}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.unitCost)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.quantity * item.unitCost)}</TableCell>
-                          <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleRemoveItem(item.productId)}
-                            >
-                              <X className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                <div className="space-y-2">
+                  <Label>Expected Delivery</Label>
+                  <Input
+                    type="date"
+                    value={expectedDeliveryDate}
+                    onChange={(e) => setExpectedDeliveryDate(e.target.value)}
+                  />
                 </div>
-              )}
-
-              {/* Total */}
-              <div className="flex justify-end">
-                <div className="w-64 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Items Subtotal:</span>
-                    <span>{formatCurrency(purchaseItems.reduce((sum, item) => sum + (item.quantity * item.unitCost), 0))}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span>Shipping:</span>
-                    <span>{formatCurrency(parseFloat(shippingCost) || 0)}</span>
-                  </div>
-                  <Separator />
-                  <div className="flex justify-between font-bold">
-                    <span>Total:</span>
-                    <span>{formatCurrency(calculateTotal())}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreatePurchase} disabled={isSaving || purchaseItems.length === 0}>
-              {isSaving ? 'Creating...' : 'Create Purchase'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* View Purchase Dialog */}
-      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Package className="h-5 w-5" />
-              Purchase Order Details
-            </DialogTitle>
-            <DialogDescription>
-              {viewingPurchase?.purchaseOrderNumber}
-            </DialogDescription>
-          </DialogHeader>
-
-          {viewingPurchase && (
-            <div className="space-y-6">
-              {/* Purchase Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">PO Number</p>
-                  <p className="font-mono font-medium">{viewingPurchase.purchaseOrderNumber}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Date</p>
-                  <p className="font-medium">{formatDateTime(viewingPurchase.createdAt)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Supplier</p>
-                  <p className="font-medium">{viewingSupplier?.name || getSupplierName(viewingPurchase.supplierId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Branch</p>
-                  <p className="font-medium">{getBranchName(viewingPurchase.branchId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Order Status</p>
-                  {getStatusBadge(viewingPurchase.status)}
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Payment Method</p>
-                  <p className="font-medium capitalize">
-                    {viewingPurchase.paymentMethod?.replace('_', ' ') || 'N/A'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Payment Status</p>
-                  {getPaymentStatusBadge(viewingPurchase.paymentStatus)}
-                </div>
-                {viewingPurchase.expectedDeliveryDate && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Expected Delivery</p>
-                    <p className="font-medium">{viewingPurchase.expectedDeliveryDate}</p>
-                  </div>
-                )}
-                {viewingPurchase.receivedDate && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Received Date</p>
-                    <p className="font-medium">{formatDateTime(viewingPurchase.receivedDate)}</p>
-                  </div>
-                )}
-              </div>
-
-              <Separator />
-
-              {/* Items */}
-              <div>
-                <h4 className="font-medium mb-3">Items</h4>
-                {isLoadingDetails ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                  </div>
-                ) : viewingItems.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4">No items found</p>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Product</TableHead>
-                        <TableHead className="text-center">Ordered</TableHead>
-                        <TableHead className="text-center">Received</TableHead>
-                        <TableHead className="text-right">Unit Cost</TableHead>
-                        <TableHead className="text-right">Total</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {viewingItems.map((item) => (
-                        <TableRow key={item.id}>
-                          <TableCell>
-                            {item.product?.name || getProductName(item.productId)}
-                          </TableCell>
-                          <TableCell className="text-center">{item.quantity}</TableCell>
-                          <TableCell className="text-center">
-                            <span className={cn(
-                              item.receivedQuantity >= item.quantity ? 'text-success' : 'text-warning'
-                            )}>
-                              {item.receivedQuantity}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.unitCost)}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(item.totalCost)}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </div>
-
-              <Separator />
-
-              {/* Totals */}
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span>{formatCurrency(viewingPurchase.subtotal)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Shipping:</span>
-                  <span>{formatCurrency(viewingPurchase.shippingCost)}</span>
-                </div>
-                <Separator />
-                <div className="flex justify-between font-bold">
-                  <span>Total:</span>
-                  <span>{formatCurrency(viewingPurchase.totalAmount)}</span>
-                </div>
-              </div>
-
-              {/* Notes */}
-              {viewingPurchase.notes && (
-                <>
-                  <Separator />
-                  <div>
-                    <p className="text-sm text-muted-foreground">Notes</p>
-                    <p className="mt-1">{viewingPurchase.notes}</p>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
-              Close
-            </Button>
-            {viewingPurchase && viewingPurchase.paymentStatus === 'pending' && viewingPurchase.status !== 'cancelled' && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setIsViewDialogOpen(false)
-                  handleOpenPayOffDialog(viewingPurchase)
-                }}
-              >
-                <Banknote className="mr-2 h-4 w-4" />
-                Pay Off
-              </Button>
-            )}
-            {viewingPurchase && viewingPurchase.status !== 'received' && viewingPurchase.status !== 'cancelled' && (
-              <Button onClick={() => {
-                setIsViewDialogOpen(false)
-                handleOpenReceiveDialog(viewingPurchase)
-              }}>
-                <PackageCheck className="mr-2 h-4 w-4" />
-                Receive Items
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Receive Items Dialog */}
-      <Dialog open={isReceiveDialogOpen} onOpenChange={setIsReceiveDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <PackageCheck className="h-5 w-5 text-success" />
-              Receive Items
-            </DialogTitle>
-            <DialogDescription>
-              Enter quantities received for {receivingPurchase?.purchaseOrderNumber}
-            </DialogDescription>
-          </DialogHeader>
-
-          {receivingPurchase && (
-            <div className="space-y-4">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Product</TableHead>
-                    <TableHead className="text-center">Ordered</TableHead>
-                    <TableHead className="text-center">Already Received</TableHead>
-                    <TableHead className="text-center">Receive Now</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {receivingItems.map((item) => {
-                    const remaining = item.quantity - item.receivedQuantity
-                    return (
-                      <TableRow key={item.id}>
-                        <TableCell>{item.product?.name || getProductName(item.productId)}</TableCell>
-                        <TableCell className="text-center">{item.quantity}</TableCell>
-                        <TableCell className="text-center">{item.receivedQuantity}</TableCell>
-                        <TableCell className="text-center">
-                          <Input
-                            type="number"
-                            min="0"
-                            max={remaining}
-                            value={receiveQuantities[item.id] || '0'}
-                            onChange={(e) => setReceiveQuantities({
-                              ...receiveQuantities,
-                              [item.id]: e.target.value,
-                            })}
-                            className="w-20 mx-auto text-center"
-                            disabled={remaining <= 0}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-
-              <div className="rounded-lg bg-muted p-4 text-sm">
-                <p className="text-muted-foreground">
-                  Received items will be automatically added to inventory at the selected branch.
-                </p>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsReceiveDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleReceiveItems} disabled={isReceiving}>
-              {isReceiving ? 'Receiving...' : 'Confirm Receipt'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Pay Off Purchase Dialog */}
-      <Dialog open={isPayOffDialogOpen} onOpenChange={setIsPayOffDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Banknote className="h-5 w-5 text-primary" />
-              Pay Off Purchase
-            </DialogTitle>
-            <DialogDescription>
-              Record payment for {payingOffPurchase?.purchaseOrderNumber}
-            </DialogDescription>
-          </DialogHeader>
-
-          {payingOffPurchase && (
-            <div className="space-y-4">
-              {/* Amount Display */}
-              <div className="rounded-lg bg-muted p-4 text-center">
-                <p className="text-sm text-muted-foreground">Amount to Pay</p>
-                <p className="text-2xl font-bold text-primary">
-                  {formatCurrency(payingOffPurchase.totalAmount)}
-                </p>
-              </div>
-
-              {/* Payment Method */}
-              <div className="space-y-2">
-                <Label>Payment Method *</Label>
-                <Select value={payOffMethod} onValueChange={setPayOffMethod}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select payment method" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="cheque">Cheque</SelectItem>
-                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Reference Number */}
-              <div className="space-y-2">
-                <Label>Reference Number</Label>
-                <Input
-                  value={payOffReference}
-                  onChange={(e) => setPayOffReference(e.target.value)}
-                  placeholder={payOffMethod === 'cheque' ? 'Cheque number' : 'Transaction reference'}
-                />
               </div>
 
               {/* Notes */}
               <div className="space-y-2">
                 <Label>Notes</Label>
                 <Input
-                  value={payOffNotes}
-                  onChange={(e) => setPayOffNotes(e.target.value)}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
                   placeholder="Optional notes..."
                 />
               </div>
 
-              <div className="rounded-lg bg-green-50 dark:bg-green-950 p-3 text-sm">
-                <p className="text-green-700 dark:text-green-300">
-                  This will mark the purchase as paid and update the associated payable record.
-                </p>
+              {/* Payment Method */}
+              <div className="space-y-2">
+                <Label>Payment Method *</Label>
+                <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select payment method" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAYMENT_METHODS.map((method) => (
+                      <SelectItem key={method.value} value={method.value}>
+                        {method.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {paymentMethod === 'pay_later' && (
+                  <p className="text-xs text-muted-foreground">
+                    This will create an account payable entry for tracking
+                  </p>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Add Items Section */}
+              <div className="space-y-4">
+                <h4 className="font-medium">Add Items</h4>
+                <div className="flex gap-3">
+                  <div className="flex-1">
+                    <Select value={selectedProductId} onValueChange={handleProductSelect}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select product" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <ScrollArea className="h-60">
+                          {products.map((product) => (
+                            <SelectItem key={product.id} value={product.id.toString()}>
+                              <span className="font-mono text-muted-foreground mr-2">{product.code}</span>
+                              {product.name}
+                            </SelectItem>
+                          ))}
+                        </ScrollArea>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="w-24">
+                    <Input
+                      type="number"
+                      min="1"
+                      value={itemQuantity}
+                      onChange={(e) => setItemQuantity(e.target.value)}
+                      placeholder="Qty"
+                    />
+                  </div>
+                  <div className="w-32">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={itemUnitCost}
+                      onChange={(e) => setItemUnitCost(e.target.value)}
+                      placeholder="Unit Cost"
+                    />
+                  </div>
+                  <Button onClick={handleAddItem} disabled={!selectedProductId || !itemQuantity || !itemUnitCost}>
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {/* Items Table */}
+                {purchaseItems.length > 0 && (
+                  <div className="rounded-md border">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Product</TableHead>
+                          <TableHead className="text-center">Qty</TableHead>
+                          <TableHead className="text-right">Unit Cost</TableHead>
+                          <TableHead className="text-right">Subtotal</TableHead>
+                          <TableHead className="w-10"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {purchaseItems.map((item) => (
+                          <TableRow key={item.productId}>
+                            <TableCell>{getProductName(item.productId)}</TableCell>
+                            <TableCell className="text-center">{item.quantity}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.unitCost)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.quantity * item.unitCost)}</TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleRemoveItem(item.productId)}
+                              >
+                                <X className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+
+                {/* Total */}
+                <div className="flex justify-end">
+                  <div className="w-64 space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span>Items Subtotal:</span>
+                      <span>{formatCurrency(purchaseItems.reduce((sum, item) => sum + (item.quantity * item.unitCost), 0))}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Shipping:</span>
+                      <span>{formatCurrency(parseFloat(shippingCost) || 0)}</span>
+                    </div>
+                    <Separator />
+                    <div className="flex justify-between font-bold">
+                      <span>Total:</span>
+                      <span>{formatCurrency(calculateTotal())}</span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-          )}
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsPayOffDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handlePayOffPurchase} disabled={isPayingOff}>
-              {isPayingOff ? 'Processing...' : 'Confirm Payment'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleCreatePurchase} disabled={isSaving || purchaseItems.length === 0}>
+                {isSaving ? 'Creating...' : 'Create Purchase'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── View Purchase Dialog ── */}
+        <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Package className="h-5 w-5" />
+                Purchase Order Details
+              </DialogTitle>
+              <DialogDescription>
+                {viewingPurchase?.purchaseOrderNumber}
+              </DialogDescription>
+            </DialogHeader>
+
+            {viewingPurchase && (
+              <div className="space-y-6">
+                {/* Purchase Info */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">PO Number</p>
+                    <p className="font-mono font-medium">{viewingPurchase.purchaseOrderNumber}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Date</p>
+                    <p className="font-medium">{formatDateTime(viewingPurchase.createdAt)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Supplier</p>
+                    <p className="font-medium">{viewingSupplier?.name || getSupplierName(viewingPurchase.supplierId)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Branch</p>
+                    <p className="font-medium">{getBranchName(viewingPurchase.branchId)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Order Status</p>
+                    {getStatusBadge(viewingPurchase.status)}
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Payment Method</p>
+                    <p className="font-medium capitalize">
+                      {viewingPurchase.paymentMethod?.replace('_', ' ') || 'N/A'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Payment Status</p>
+                    {getPaymentStatusBadge(viewingPurchase.paymentStatus)}
+                  </div>
+                  {viewingPurchase.expectedDeliveryDate && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Expected Delivery</p>
+                      <p className="font-medium">{viewingPurchase.expectedDeliveryDate}</p>
+                    </div>
+                  )}
+                  {viewingPurchase.receivedDate && (
+                    <div>
+                      <p className="text-sm text-muted-foreground">Received Date</p>
+                      <p className="font-medium">{formatDateTime(viewingPurchase.receivedDate)}</p>
+                    </div>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Items */}
+                <div>
+                  <h4 className="font-medium mb-3">Items</h4>
+                  {isLoadingDetails ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    </div>
+                  ) : viewingItems.length === 0 ? (
+                    <p className="text-muted-foreground text-center py-4">No items found</p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Product</TableHead>
+                          <TableHead className="text-center">Ordered</TableHead>
+                          <TableHead className="text-center">Received</TableHead>
+                          <TableHead className="text-right">Unit Cost</TableHead>
+                          <TableHead className="text-right">Total</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {viewingItems.map((item) => (
+                          <TableRow key={item.id}>
+                            <TableCell>
+                              {item.product?.name || getProductName(item.productId)}
+                            </TableCell>
+                            <TableCell className="text-center">{item.quantity}</TableCell>
+                            <TableCell className="text-center">
+                              <span className={cn(
+                                item.receivedQuantity >= item.quantity ? 'text-success' : 'text-warning'
+                              )}>
+                                {item.receivedQuantity}
+                              </span>
+                            </TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.unitCost)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(item.totalCost)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Totals */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Subtotal:</span>
+                    <span>{formatCurrency(viewingPurchase.subtotal)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span>Shipping:</span>
+                    <span>{formatCurrency(viewingPurchase.shippingCost)}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between font-bold">
+                    <span>Total:</span>
+                    <span>{formatCurrency(viewingPurchase.totalAmount)}</span>
+                  </div>
+                </div>
+
+                {/* Notes */}
+                {viewingPurchase.notes && (
+                  <>
+                    <Separator />
+                    <div>
+                      <p className="text-sm text-muted-foreground">Notes</p>
+                      <p className="mt-1">{viewingPurchase.notes}</p>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsViewDialogOpen(false)}>
+                Close
+              </Button>
+              {viewingPurchase && viewingPurchase.paymentStatus === 'pending' && viewingPurchase.status !== 'cancelled' && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setIsViewDialogOpen(false)
+                    handleOpenPayOffDialog(viewingPurchase)
+                  }}
+                >
+                  <Banknote className="mr-2 h-4 w-4" />
+                  Pay Off
+                </Button>
+              )}
+              {viewingPurchase && viewingPurchase.status !== 'received' && viewingPurchase.status !== 'cancelled' && (
+                <Button onClick={() => {
+                  setIsViewDialogOpen(false)
+                  handleOpenReceiveDialog(viewingPurchase)
+                }}>
+                  <PackageCheck className="mr-2 h-4 w-4" />
+                  Receive Items
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Receive Items Dialog ── */}
+        <Dialog open={isReceiveDialogOpen} onOpenChange={setIsReceiveDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <PackageCheck className="h-5 w-5 text-success" />
+                Receive Items
+              </DialogTitle>
+              <DialogDescription>
+                Enter quantities received for {receivingPurchase?.purchaseOrderNumber}
+              </DialogDescription>
+            </DialogHeader>
+
+            {receivingPurchase && (
+              <div className="space-y-4">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Product</TableHead>
+                      <TableHead className="text-center">Ordered</TableHead>
+                      <TableHead className="text-center">Already Received</TableHead>
+                      <TableHead className="text-center">Receive Now</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {receivingItems.map((item) => {
+                      const remaining = item.quantity - item.receivedQuantity
+                      return (
+                        <TableRow key={item.id}>
+                          <TableCell>{item.product?.name || getProductName(item.productId)}</TableCell>
+                          <TableCell className="text-center">{item.quantity}</TableCell>
+                          <TableCell className="text-center">{item.receivedQuantity}</TableCell>
+                          <TableCell className="text-center">
+                            <Input
+                              type="number"
+                              min="0"
+                              max={remaining}
+                              value={receiveQuantities[item.id] || '0'}
+                              onChange={(e) => setReceiveQuantities({
+                                ...receiveQuantities,
+                                [item.id]: e.target.value,
+                              })}
+                              className="w-20 mx-auto text-center"
+                              disabled={remaining <= 0}
+                            />
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+
+                <div className="rounded-lg bg-muted p-4 text-sm">
+                  <p className="text-muted-foreground">
+                    Received items will be automatically added to inventory at the selected branch.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsReceiveDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleReceiveItems} disabled={isReceiving}>
+                {isReceiving ? 'Receiving...' : 'Confirm Receipt'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* ── Pay Off Purchase Dialog ── */}
+        <Dialog open={isPayOffDialogOpen} onOpenChange={setIsPayOffDialogOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Banknote className="h-5 w-5 text-primary" />
+                Pay Off Purchase
+              </DialogTitle>
+              <DialogDescription>
+                Record payment for {payingOffPurchase?.purchaseOrderNumber}
+              </DialogDescription>
+            </DialogHeader>
+
+            {payingOffPurchase && (
+              <div className="space-y-4">
+                {/* Amount Display */}
+                <div className="rounded-lg bg-muted p-4 text-center">
+                  <p className="text-sm text-muted-foreground">Amount to Pay</p>
+                  <p className="text-2xl font-bold text-primary">
+                    {formatCurrency(payingOffPurchase.totalAmount)}
+                  </p>
+                </div>
+
+                {/* Payment Method */}
+                <div className="space-y-2">
+                  <Label>Payment Method *</Label>
+                  <Select value={payOffMethod} onValueChange={setPayOffMethod}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select payment method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cash">Cash</SelectItem>
+                      <SelectItem value="cheque">Cheque</SelectItem>
+                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Reference Number */}
+                <div className="space-y-2">
+                  <Label>Reference Number</Label>
+                  <Input
+                    value={payOffReference}
+                    onChange={(e) => setPayOffReference(e.target.value)}
+                    placeholder={payOffMethod === 'cheque' ? 'Cheque number' : 'Transaction reference'}
+                  />
+                </div>
+
+                {/* Notes */}
+                <div className="space-y-2">
+                  <Label>Notes</Label>
+                  <Input
+                    value={payOffNotes}
+                    onChange={(e) => setPayOffNotes(e.target.value)}
+                    placeholder="Optional notes..."
+                  />
+                </div>
+
+                <div className="rounded-lg bg-green-50 dark:bg-green-950 p-3 text-sm">
+                  <p className="text-green-700 dark:text-green-300">
+                    This will mark the purchase as paid and update the associated payable record.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsPayOffDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handlePayOffPurchase} disabled={isPayingOff}>
+                {isPayingOff ? 'Processing...' : 'Confirm Payment'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+      </div>
+    </TooltipProvider>
   )
 }
