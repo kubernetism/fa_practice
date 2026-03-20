@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,6 +28,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from '@/components/ui/tooltip'
 import { Textarea } from '@/components/ui/textarea'
 import {
   Landmark,
@@ -47,6 +53,10 @@ import {
   AlertTriangle,
   Calculator,
   Pencil,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  Trash2,
 } from 'lucide-react'
 import { format } from 'date-fns'
 import { useBranch } from '@/contexts/branch-context'
@@ -133,7 +143,7 @@ export default function ChartOfAccountsScreen() {
     }
   }, [branchId])
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
       const [accountsData, balanceSheetData, trialBalanceData] = await Promise.all([
@@ -157,7 +167,7 @@ export default function ChartOfAccountsScreen() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [branchId])
 
   const handleCreateAccount = async () => {
     if (!formData.accountCode || !formData.accountName || !formData.accountType || !formData.normalBalance) {
@@ -336,15 +346,15 @@ export default function ChartOfAccountsScreen() {
   const getAccountTypeIcon = (type: string) => {
     switch (type) {
       case 'asset':
-        return <Building className="h-4 w-4 text-blue-500" />
+        return <Building className="h-4 w-4 text-blue-400" />
       case 'liability':
-        return <CreditCard className="h-4 w-4 text-red-500" />
+        return <CreditCard className="h-4 w-4 text-red-400" />
       case 'equity':
-        return <PiggyBank className="h-4 w-4 text-purple-500" />
+        return <PiggyBank className="h-4 w-4 text-purple-400" />
       case 'revenue':
-        return <TrendingUp className="h-4 w-4 text-green-500" />
+        return <TrendingUp className="h-4 w-4 text-green-400" />
       case 'expense':
-        return <TrendingDown className="h-4 w-4 text-orange-500" />
+        return <TrendingDown className="h-4 w-4 text-orange-400" />
       default:
         return <Wallet className="h-4 w-4" />
     }
@@ -352,29 +362,42 @@ export default function ChartOfAccountsScreen() {
 
   const getAccountTypeBadge = (type: string) => {
     const colors: Record<string, string> = {
-      asset: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-      liability: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-      equity: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
-      revenue: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-      expense: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+      asset: 'bg-blue-500/10 text-blue-400',
+      liability: 'bg-red-500/10 text-red-400',
+      equity: 'bg-purple-500/10 text-purple-400',
+      revenue: 'bg-green-500/10 text-green-400',
+      expense: 'bg-orange-500/10 text-orange-400',
     }
     return (
-      <Badge className={colors[type] || 'bg-gray-100 text-gray-800'}>
+      <Badge className={`${colors[type] || 'bg-muted text-muted-foreground'} text-[10px] px-1.5 py-0`}>
         {type.charAt(0).toUpperCase() + type.slice(1)}
       </Badge>
     )
   }
 
-  const filteredAccounts = typeFilter === 'all'
-    ? accounts
-    : accounts.filter((a) => a.accountType === typeFilter)
+  const filteredAccounts = useMemo(() =>
+    typeFilter === 'all'
+      ? accounts
+      : accounts.filter((a) => a.accountType === typeFilter),
+    [accounts, typeFilter]
+  )
 
-  const groupedAccounts = filteredAccounts.reduce((acc, account) => {
-    const type = account.accountType
-    if (!acc[type]) acc[type] = []
-    acc[type].push(account)
-    return acc
-  }, {} as Record<string, Account[]>)
+  const groupedAccounts = useMemo(() =>
+    filteredAccounts.reduce((acc, account) => {
+      const type = account.accountType
+      if (!acc[type]) acc[type] = []
+      acc[type].push(account)
+      return acc
+    }, {} as Record<string, Account[]>),
+    [filteredAccounts]
+  )
+
+  const accountStats = useMemo(() => ({
+    assets: balanceSheet?.assets.total || 0,
+    liabilities: balanceSheet?.liabilities.total || 0,
+    equity: balanceSheet?.equity.total || 0,
+    netIncome: incomeStatement?.netIncome || 0,
+  }), [balanceSheet, incomeStatement])
 
   if (loading) {
     return (
@@ -385,207 +408,198 @@ export default function ChartOfAccountsScreen() {
   }
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Chart of Accounts</h1>
-          <p className="text-muted-foreground">
-            Manage your accounting structure and view financial reports
-            {currentBranch && <span className="text-primary font-medium"> - {currentBranch.name}</span>}
-          </p>
+    <TooltipProvider>
+      <div className="space-y-3">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-xl font-semibold">Chart of Accounts</h1>
+            {currentBranch && (
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                {currentBranch.name}
+              </span>
+            )}
+            <span className="rounded-full bg-blue-500/10 px-2.5 py-0.5 text-xs font-medium text-blue-400">
+              Assets {formatCurrency(accountStats.assets)}
+            </span>
+            <span className="rounded-full bg-red-500/10 px-2.5 py-0.5 text-xs font-medium text-red-400">
+              Liabilities {formatCurrency(accountStats.liabilities)}
+            </span>
+            <span className="rounded-full bg-purple-500/10 px-2.5 py-0.5 text-xs font-medium text-purple-400">
+              Equity {formatCurrency(accountStats.equity)}
+            </span>
+            <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+              accountStats.netIncome >= 0
+                ? 'bg-green-500/10 text-green-400'
+                : 'bg-red-500/10 text-red-400'
+            }`}>
+              Net Income {formatCurrency(accountStats.netIncome)}
+            </span>
+          </div>
+          <div className="flex gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={handleRecalculateBalances} variant="outline" size="sm" disabled={recalculating}>
+                  <Calculator className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{recalculating ? 'Recalculating...' : 'Recalculate Balances'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={() => loadData()} variant="outline" size="sm">
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Refresh</TooltipContent>
+            </Tooltip>
+            <Button onClick={() => setCreateDialog(true)} size="sm">
+              <Plus className="h-4 w-4 mr-1" />
+              Add Account
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={handleRecalculateBalances} variant="outline" disabled={recalculating}>
-            <Calculator className="h-4 w-4 mr-2" />
-            {recalculating ? 'Recalculating...' : 'Recalculate Balances'}
-          </Button>
-          <Button onClick={() => loadData()} variant="outline">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-          <Button onClick={() => setCreateDialog(true)}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Account
-          </Button>
-        </div>
-      </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Assets</CardTitle>
-            <Building className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-blue-600">
-              {formatCurrency(balanceSheet?.assets.total || 0)}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Liabilities</CardTitle>
-            <CreditCard className="h-4 w-4 text-red-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">
-              {formatCurrency(balanceSheet?.liabilities.total || 0)}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Equity</CardTitle>
-            <PiggyBank className="h-4 w-4 text-purple-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-purple-600">
-              {formatCurrency(balanceSheet?.equity.total || 0)}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Net Income (MTD)</CardTitle>
-            <TrendingUp className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className={`text-2xl font-bold ${(incomeStatement?.netIncome || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatCurrency(incomeStatement?.netIncome || 0)}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Balance Check */}
-      {balanceSheet && !balanceSheet.isBalanced && (
-        <Card className="border-yellow-500 bg-yellow-50 dark:bg-yellow-950">
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300">
-              <AlertTriangle className="h-5 w-5" />
+        {/* Balance Check Warning */}
+        {balanceSheet && !balanceSheet.isBalanced && (
+          <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2">
+            <div className="flex items-center gap-2 text-yellow-400 text-sm">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
               <span className="font-medium">Balance Sheet is not balanced!</span>
-              <span className="text-sm">
+              <span className="text-xs text-yellow-400/80">
                 Assets ({formatCurrency(balanceSheet.assets.total)}) should equal Liabilities + Equity ({formatCurrency(balanceSheet.totalLiabilitiesAndEquity)})
               </span>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          <TabsTrigger value="balance-sheet">Balance Sheet</TabsTrigger>
-          <TabsTrigger value="income-statement">Income Statement</TabsTrigger>
-          <TabsTrigger value="trial-balance">Trial Balance</TabsTrigger>
-        </TabsList>
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="h-8">
+            <TabsTrigger value="accounts" className="h-6 px-2 text-xs">Accounts</TabsTrigger>
+            <TabsTrigger value="balance-sheet" className="h-6 px-2 text-xs">Balance Sheet</TabsTrigger>
+            <TabsTrigger value="income-statement" className="h-6 px-2 text-xs">Income Statement</TabsTrigger>
+            <TabsTrigger value="trial-balance" className="h-6 px-2 text-xs">Trial Balance</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="accounts" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>All Accounts</CardTitle>
-                  <CardDescription>Chart of accounts organized by type</CardDescription>
-                </div>
-                <Select value={typeFilter} onValueChange={setTypeFilter}>
-                  <SelectTrigger className="w-40">
-                    <SelectValue placeholder="Filter by type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Types</SelectItem>
-                    <SelectItem value="asset">Assets</SelectItem>
-                    <SelectItem value="liability">Liabilities</SelectItem>
-                    <SelectItem value="equity">Equity</SelectItem>
-                    <SelectItem value="revenue">Revenue</SelectItem>
-                    <SelectItem value="expense">Expenses</SelectItem>
-                  </SelectContent>
-                </Select>
+          {/* Accounts Tab */}
+          <TabsContent value="accounts" className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-muted-foreground">
+                  {filteredAccounts.length} account{filteredAccounts.length !== 1 ? 's' : ''}
+                </span>
               </div>
-            </CardHeader>
-            <CardContent>
-              {Object.entries(groupedAccounts).map(([type, typeAccounts]) => (
-                <div key={type} className="mb-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    {getAccountTypeIcon(type)}
-                    <h3 className="text-lg font-semibold capitalize">{type}s</h3>
-                    <span className="text-sm text-muted-foreground">({typeAccounts.length})</span>
-                  </div>
+              <Select value={typeFilter} onValueChange={setTypeFilter}>
+                <SelectTrigger className="w-36 h-8 text-xs">
+                  <SelectValue placeholder="Filter by type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="asset">Assets</SelectItem>
+                  <SelectItem value="liability">Liabilities</SelectItem>
+                  <SelectItem value="equity">Equity</SelectItem>
+                  <SelectItem value="revenue">Revenue</SelectItem>
+                  <SelectItem value="expense">Expenses</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {Object.entries(groupedAccounts).map(([type, typeAccounts]) => (
+              <div key={type}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  {getAccountTypeIcon(type)}
+                  <h3 className="text-sm font-semibold capitalize">{type}s</h3>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                    {typeAccounts.length}
+                  </span>
+                </div>
+                <div className="rounded-md border overflow-hidden">
                   <Table>
                     <TableHeader>
-                      <TableRow>
-                        <TableHead>Code</TableHead>
-                        <TableHead>Account Name</TableHead>
-                        <TableHead>Sub Type</TableHead>
-                        <TableHead>Normal Balance</TableHead>
-                        <TableHead className="text-right">Current Balance</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
+                      <TableRow className="bg-muted/30">
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Code</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account Name</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Sub Type</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Normal Balance</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Current Balance</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Status</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {typeAccounts
                         .sort((a, b) => a.accountCode.localeCompare(b.accountCode))
                         .map((account) => (
-                          <TableRow key={account.id}>
-                            <TableCell className="font-mono">{account.accountCode}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
+                          <TableRow key={account.id} className="h-9 group">
+                            <TableCell className="py-1.5 font-mono text-xs">{account.accountCode}</TableCell>
+                            <TableCell className="py-1.5">
+                              <div className="flex items-center gap-1.5 text-sm">
                                 {account.accountName}
                                 {account.isSystemAccount && (
-                                  <Badge variant="secondary" className="text-xs">System</Badge>
+                                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">System</Badge>
                                 )}
                               </div>
                             </TableCell>
-                            <TableCell className="capitalize">
+                            <TableCell className="py-1.5 capitalize text-xs text-muted-foreground">
                               {account.accountSubType?.replace(/_/g, ' ') || '-'}
                             </TableCell>
-                            <TableCell>
-                              <Badge variant="outline">{account.normalBalance}</Badge>
+                            <TableCell className="py-1.5">
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0">{account.normalBalance}</Badge>
                             </TableCell>
-                            <TableCell className={`text-right font-medium ${
-                              account.currentBalance >= 0 ? 'text-foreground' : 'text-red-600'
+                            <TableCell className={`py-1.5 text-right text-sm font-medium ${
+                              account.currentBalance >= 0 ? 'text-foreground' : 'text-red-500'
                             }`}>
                               {formatCurrency(account.currentBalance)}
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="py-1.5">
                               {account.isActive ? (
-                                <Badge className="bg-green-100 text-green-800">Active</Badge>
+                                <Badge className="bg-green-500/10 text-green-400 text-[10px] px-1.5 py-0">Active</Badge>
                               ) : (
-                                <Badge variant="secondary">Inactive</Badge>
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Inactive</Badge>
                               )}
                             </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => openAdjustDialog(account)}
-                                  title="Adjust balance"
-                                >
-                                  <Pencil className="h-3 w-3 mr-1" />
-                                  Adjust
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => openEditDialog(account)}
-                                >
-                                  Edit
-                                </Button>
+                            <TableCell className="py-1.5 text-right">
+                              <div className="flex justify-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => openAdjustDialog(account)}
+                                    >
+                                      <DollarSign className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Adjust Balance</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      onClick={() => openEditDialog(account)}
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Edit Account</TooltipContent>
+                                </Tooltip>
                                 {!account.isSystemAccount && (
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="text-red-600"
-                                    onClick={() => handleDeleteAccount(account)}
-                                  >
-                                    Delete
-                                  </Button>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-7 w-7 text-red-500 hover:text-red-400"
+                                        onClick={() => handleDeleteAccount(account)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Delete Account</TooltipContent>
+                                  </Tooltip>
                                 )}
                               </div>
                             </TableCell>
@@ -594,501 +608,550 @@ export default function ChartOfAccountsScreen() {
                     </TableBody>
                   </Table>
                 </div>
-              ))}
-            </CardContent>
-          </Card>
-        </TabsContent>
+              </div>
+            ))}
+          </TabsContent>
 
-        <TabsContent value="balance-sheet" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Balance Sheet
-              </CardTitle>
-              <CardDescription>
-                As of {format(new Date(), 'MMMM d, yyyy')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                {/* Assets */}
-                <div>
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <Building className="h-5 w-5 text-blue-500" />
-                    Assets
-                  </h3>
-                  <Table>
-                    <TableBody>
-                      {balanceSheet?.assets.accounts.map((account) => (
-                        <TableRow key={account.id}>
-                          <TableCell>{account.accountName}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatCurrency(account.currentBalance)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="border-t-2">
-                        <TableCell className="font-bold">Total Assets</TableCell>
-                        <TableCell className="text-right font-bold text-blue-600">
-                          {formatCurrency(balanceSheet?.assets.total || 0)}
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-
-                {/* Liabilities & Equity */}
-                <div>
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <CreditCard className="h-5 w-5 text-red-500" />
-                    Liabilities
-                  </h3>
-                  <Table>
-                    <TableBody>
-                      {balanceSheet?.liabilities.accounts.map((account) => (
-                        <TableRow key={account.id}>
-                          <TableCell>{account.accountName}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatCurrency(account.currentBalance)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="border-t-2">
-                        <TableCell className="font-bold">Total Liabilities</TableCell>
-                        <TableCell className="text-right font-bold text-red-600">
-                          {formatCurrency(balanceSheet?.liabilities.total || 0)}
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-
-                  <h3 className="text-lg font-semibold mb-4 mt-6 flex items-center gap-2">
-                    <PiggyBank className="h-5 w-5 text-purple-500" />
-                    Equity
-                  </h3>
-                  <Table>
-                    <TableBody>
-                      {balanceSheet?.equity.accounts.map((account) => (
-                        <TableRow key={account.id}>
-                          <TableCell>{account.accountName}</TableCell>
-                          <TableCell className="text-right font-medium">
-                            {formatCurrency(account.currentBalance)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="border-t-2">
-                        <TableCell className="font-bold">Total Equity</TableCell>
-                        <TableCell className="text-right font-bold text-purple-600">
-                          {formatCurrency(balanceSheet?.equity.total || 0)}
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-
-                  <div className="mt-4 pt-4 border-t-2">
-                    <div className="flex justify-between text-lg font-bold">
-                      <span>Total Liabilities + Equity</span>
-                      <span>{formatCurrency(balanceSheet?.totalLiabilitiesAndEquity || 0)}</span>
+          {/* Balance Sheet Tab */}
+          <TabsContent value="balance-sheet" className="space-y-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <FileText className="h-4 w-4" />
+                  Balance Sheet
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  As of {format(new Date(), 'MMMM d, yyyy')}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Assets */}
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                      <Building className="h-4 w-4 text-blue-400" />
+                      Assets
+                    </h3>
+                    <div className="rounded-md border overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/30">
+                            <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account</TableHead>
+                            <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Balance</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {balanceSheet?.assets.accounts.map((account) => (
+                            <TableRow key={account.id} className="h-9">
+                              <TableCell className="py-1.5 text-sm">{account.accountName}</TableCell>
+                              <TableCell className="py-1.5 text-right text-sm font-medium">
+                                {formatCurrency(account.currentBalance)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow className="border-t-2 h-9">
+                            <TableCell className="py-1.5 font-bold text-sm">Total Assets</TableCell>
+                            <TableCell className="py-1.5 text-right font-bold text-sm text-blue-500">
+                              {formatCurrency(balanceSheet?.assets.total || 0)}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
                     </div>
-                    <div className="flex items-center gap-2 mt-2">
-                      {balanceSheet?.isBalanced ? (
-                        <>
-                          <CheckCircle className="h-5 w-5 text-green-500" />
-                          <span className="text-green-600">Balanced</span>
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="h-5 w-5 text-red-500" />
-                          <span className="text-red-600">Not Balanced</span>
-                        </>
-                      )}
+                  </div>
+
+                  {/* Liabilities & Equity */}
+                  <div className="space-y-4">
+                    <div>
+                      <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-red-400" />
+                        Liabilities
+                      </h3>
+                      <div className="rounded-md border overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/30">
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Balance</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {balanceSheet?.liabilities.accounts.map((account) => (
+                              <TableRow key={account.id} className="h-9">
+                                <TableCell className="py-1.5 text-sm">{account.accountName}</TableCell>
+                                <TableCell className="py-1.5 text-right text-sm font-medium">
+                                  {formatCurrency(account.currentBalance)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            <TableRow className="border-t-2 h-9">
+                              <TableCell className="py-1.5 font-bold text-sm">Total Liabilities</TableCell>
+                              <TableCell className="py-1.5 text-right font-bold text-sm text-red-500">
+                                {formatCurrency(balanceSheet?.liabilities.total || 0)}
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                        <PiggyBank className="h-4 w-4 text-purple-400" />
+                        Equity
+                      </h3>
+                      <div className="rounded-md border overflow-hidden">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/30">
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Balance</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {balanceSheet?.equity.accounts.map((account) => (
+                              <TableRow key={account.id} className="h-9">
+                                <TableCell className="py-1.5 text-sm">{account.accountName}</TableCell>
+                                <TableCell className="py-1.5 text-right text-sm font-medium">
+                                  {formatCurrency(account.currentBalance)}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            <TableRow className="border-t-2 h-9">
+                              <TableCell className="py-1.5 font-bold text-sm">Total Equity</TableCell>
+                              <TableCell className="py-1.5 text-right font-bold text-sm text-purple-500">
+                                {formatCurrency(balanceSheet?.equity.total || 0)}
+                              </TableCell>
+                            </TableRow>
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t-2">
+                      <div className="flex justify-between text-sm font-bold">
+                        <span>Total Liabilities + Equity</span>
+                        <span>{formatCurrency(balanceSheet?.totalLiabilitiesAndEquity || 0)}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1.5">
+                        {balanceSheet?.isBalanced ? (
+                          <>
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                            <span className="text-green-500 text-sm">Balanced</span>
+                          </>
+                        ) : (
+                          <>
+                            <XCircle className="h-4 w-4 text-red-500" />
+                            <span className="text-red-500 text-sm">Not Balanced</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
-        <TabsContent value="income-statement" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5" />
-                Income Statement (Profit & Loss)
-              </CardTitle>
-              <CardDescription>
-                For the period {incomeStatement?.startDate} to {incomeStatement?.endDate}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="max-w-2xl mx-auto">
-                {/* Revenue */}
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <TrendingUp className="h-5 w-5 text-green-500" />
-                    Revenue
-                  </h3>
-                  <Table>
-                    <TableBody>
-                      {incomeStatement?.revenue.accounts.map((account) => (
-                        <TableRow key={account.id}>
-                          <TableCell>{account.accountName}</TableCell>
-                          <TableCell className="text-right font-medium text-green-600">
-                            {formatCurrency(account.currentBalance)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="border-t-2 bg-green-50 dark:bg-green-950">
-                        <TableCell className="font-bold">Total Revenue</TableCell>
-                        <TableCell className="text-right font-bold text-green-600">
-                          {formatCurrency(incomeStatement?.revenue.total || 0)}
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
+          {/* Income Statement Tab */}
+          <TabsContent value="income-statement" className="space-y-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Receipt className="h-4 w-4" />
+                  Income Statement (Profit & Loss)
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  For the period {incomeStatement?.startDate} to {incomeStatement?.endDate}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="max-w-2xl mx-auto space-y-4">
+                  {/* Revenue */}
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4 text-green-400" />
+                      Revenue
+                    </h3>
+                    <div className="rounded-md border overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/30">
+                            <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account</TableHead>
+                            <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Amount</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {incomeStatement?.revenue.accounts.map((account) => (
+                            <TableRow key={account.id} className="h-9">
+                              <TableCell className="py-1.5 text-sm">{account.accountName}</TableCell>
+                              <TableCell className="py-1.5 text-right text-sm font-medium text-green-500">
+                                {formatCurrency(account.currentBalance)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow className="border-t-2 bg-green-500/10 h-9">
+                            <TableCell className="py-1.5 font-bold text-sm">Total Revenue</TableCell>
+                            <TableCell className="py-1.5 text-right font-bold text-sm text-green-500">
+                              {formatCurrency(incomeStatement?.revenue.total || 0)}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
 
-                {/* Expenses */}
-                <div className="mb-6">
-                  <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                    <TrendingDown className="h-5 w-5 text-red-500" />
-                    Expenses
-                  </h3>
-                  <Table>
-                    <TableBody>
-                      {incomeStatement?.expenses.accounts.map((account) => (
-                        <TableRow key={account.id}>
-                          <TableCell>{account.accountName}</TableCell>
-                          <TableCell className="text-right font-medium text-red-600">
-                            {formatCurrency(account.currentBalance)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      <TableRow className="border-t-2 bg-red-50 dark:bg-red-950">
-                        <TableCell className="font-bold">Total Expenses</TableCell>
-                        <TableCell className="text-right font-bold text-red-600">
-                          {formatCurrency(incomeStatement?.expenses.total || 0)}
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
+                  {/* Expenses */}
+                  <div>
+                    <h3 className="text-sm font-semibold mb-2 flex items-center gap-2">
+                      <TrendingDown className="h-4 w-4 text-red-400" />
+                      Expenses
+                    </h3>
+                    <div className="rounded-md border overflow-hidden">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/30">
+                            <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account</TableHead>
+                            <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Amount</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {incomeStatement?.expenses.accounts.map((account) => (
+                            <TableRow key={account.id} className="h-9">
+                              <TableCell className="py-1.5 text-sm">{account.accountName}</TableCell>
+                              <TableCell className="py-1.5 text-right text-sm font-medium text-red-500">
+                                {formatCurrency(account.currentBalance)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          <TableRow className="border-t-2 bg-red-500/10 h-9">
+                            <TableCell className="py-1.5 font-bold text-sm">Total Expenses</TableCell>
+                            <TableCell className="py-1.5 text-right font-bold text-sm text-red-500">
+                              {formatCurrency(incomeStatement?.expenses.total || 0)}
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
 
-                {/* Net Income */}
-                <div className="p-6 rounded-lg bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950 dark:to-purple-950">
-                  <div className="flex justify-between items-center">
-                    <span className="text-xl font-bold">Net Income</span>
-                    <span className={`text-2xl font-bold ${(incomeStatement?.netIncome || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {formatCurrency(incomeStatement?.netIncome || 0)}
-                    </span>
+                  {/* Net Income */}
+                  <div className="p-4 rounded-lg bg-blue-500/5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-base font-bold">Net Income</span>
+                      <span className={`text-lg font-bold ${(incomeStatement?.netIncome || 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                        {formatCurrency(incomeStatement?.netIncome || 0)}
+                      </span>
+                    </div>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Trial Balance Tab */}
+          <TabsContent value="trial-balance" className="space-y-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <DollarSign className="h-4 w-4" />
+                  Trial Balance
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  As of {trialBalance?.asOfDate || format(new Date(), 'yyyy-MM-dd')}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="rounded-md border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/30">
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Code</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Account Name</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Type</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Debit</TableHead>
+                        <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Credit</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {trialBalance?.accounts.map((account) => (
+                        <TableRow key={account.id} className="h-9">
+                          <TableCell className="py-1.5 font-mono text-xs">{account.accountCode}</TableCell>
+                          <TableCell className="py-1.5 text-sm">{account.accountName}</TableCell>
+                          <TableCell className="py-1.5">{getAccountTypeBadge(account.accountType)}</TableCell>
+                          <TableCell className="py-1.5 text-right text-sm">
+                            {account.debit > 0 ? formatCurrency(account.debit) : '-'}
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right text-sm">
+                            {account.credit > 0 ? formatCurrency(account.credit) : '-'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="border-t-2 font-bold bg-muted h-9">
+                        <TableCell colSpan={3} className="py-1.5 text-sm">Total</TableCell>
+                        <TableCell className="py-1.5 text-right text-sm">{formatCurrency(trialBalance?.totalDebits || 0)}</TableCell>
+                        <TableCell className="py-1.5 text-right text-sm">{formatCurrency(trialBalance?.totalCredits || 0)}</TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  {trialBalance?.isBalanced ? (
+                    <>
+                      <CheckCircle className="h-4 w-4 text-green-500" />
+                      <span className="text-green-500 font-medium text-sm">Trial Balance is balanced</span>
+                    </>
+                  ) : (
+                    <>
+                      <XCircle className="h-4 w-4 text-red-500" />
+                      <span className="text-red-500 font-medium text-sm">
+                        Trial Balance is NOT balanced (Difference: {formatCurrency(Math.abs((trialBalance?.totalDebits || 0) - (trialBalance?.totalCredits || 0)))})
+                      </span>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+
+        {/* Create Account Dialog */}
+        <Dialog open={createDialog} onOpenChange={setCreateDialog}>
+          <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle>Create New Account</DialogTitle>
+              <DialogDescription>
+                Add a new account to the chart of accounts
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Account Code *</Label>
+                  <Input
+                    placeholder="e.g., 1100"
+                    value={formData.accountCode}
+                    onChange={(e) => setFormData({ ...formData, accountCode: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Account Type *</Label>
+                  <Select
+                    value={formData.accountType}
+                    onValueChange={(v) => setFormData({
+                      ...formData,
+                      accountType: v as typeof formData.accountType,
+                      normalBalance: ['asset', 'expense'].includes(v) ? 'debit' : 'credit',
+                    })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="asset">Asset</SelectItem>
+                      <SelectItem value="liability">Liability</SelectItem>
+                      <SelectItem value="equity">Equity</SelectItem>
+                      <SelectItem value="revenue">Revenue</SelectItem>
+                      <SelectItem value="expense">Expense</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
-        <TabsContent value="trial-balance" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <DollarSign className="h-5 w-5" />
-                Trial Balance
-              </CardTitle>
-              <CardDescription>
-                As of {trialBalance?.asOfDate || format(new Date(), 'yyyy-MM-dd')}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Code</TableHead>
-                    <TableHead>Account Name</TableHead>
-                    <TableHead>Type</TableHead>
-                    <TableHead className="text-right">Debit</TableHead>
-                    <TableHead className="text-right">Credit</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {trialBalance?.accounts.map((account) => (
-                    <TableRow key={account.id}>
-                      <TableCell className="font-mono">{account.accountCode}</TableCell>
-                      <TableCell>{account.accountName}</TableCell>
-                      <TableCell>{getAccountTypeBadge(account.accountType)}</TableCell>
-                      <TableCell className="text-right">
-                        {account.debit > 0 ? formatCurrency(account.debit) : '-'}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {account.credit > 0 ? formatCurrency(account.credit) : '-'}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow className="border-t-2 font-bold bg-muted">
-                    <TableCell colSpan={3}>Total</TableCell>
-                    <TableCell className="text-right">{formatCurrency(trialBalance?.totalDebits || 0)}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(trialBalance?.totalCredits || 0)}</TableCell>
-                  </TableRow>
-                </TableBody>
-              </Table>
-
-              <div className="mt-4 flex items-center justify-center gap-2">
-                {trialBalance?.isBalanced ? (
-                  <>
-                    <CheckCircle className="h-5 w-5 text-green-500" />
-                    <span className="text-green-600 font-medium">Trial Balance is balanced</span>
-                  </>
-                ) : (
-                  <>
-                    <XCircle className="h-5 w-5 text-red-500" />
-                    <span className="text-red-600 font-medium">
-                      Trial Balance is NOT balanced (Difference: {formatCurrency(Math.abs((trialBalance?.totalDebits || 0) - (trialBalance?.totalCredits || 0)))})
-                    </span>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      {/* Create Account Dialog */}
-      <Dialog open={createDialog} onOpenChange={setCreateDialog}>
-        <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>Create New Account</DialogTitle>
-            <DialogDescription>
-              Add a new account to the chart of accounts
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Account Code *</Label>
+                <Label>Account Name *</Label>
                 <Input
-                  placeholder="e.g., 1100"
-                  value={formData.accountCode}
-                  onChange={(e) => setFormData({ ...formData, accountCode: e.target.value })}
+                  placeholder="e.g., Accounts Receivable"
+                  value={formData.accountName}
+                  onChange={(e) => setFormData({ ...formData, accountName: e.target.value })}
                 />
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Sub Type</Label>
+                  <Input
+                    placeholder="e.g., accounts_receivable"
+                    value={formData.accountSubType}
+                    onChange={(e) => setFormData({ ...formData, accountSubType: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <Label>Normal Balance *</Label>
+                  <Select
+                    value={formData.normalBalance}
+                    onValueChange={(v) => setFormData({ ...formData, normalBalance: v as 'debit' | 'credit' })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="debit">Debit</SelectItem>
+                      <SelectItem value="credit">Credit</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               <div>
-                <Label>Account Type *</Label>
+                <Label>Parent Account (Optional)</Label>
                 <Select
-                  value={formData.accountType}
-                  onValueChange={(v) => setFormData({
-                    ...formData,
-                    accountType: v as typeof formData.accountType,
-                    normalBalance: ['asset', 'expense'].includes(v) ? 'debit' : 'credit',
-                  })}
+                  value={formData.parentAccountId}
+                  onValueChange={(v) => setFormData({ ...formData, parentAccountId: v })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select type" />
+                    <SelectValue placeholder="Select parent account" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="asset">Asset</SelectItem>
-                    <SelectItem value="liability">Liability</SelectItem>
-                    <SelectItem value="equity">Equity</SelectItem>
-                    <SelectItem value="revenue">Revenue</SelectItem>
-                    <SelectItem value="expense">Expense</SelectItem>
+                    <SelectItem value="none">None</SelectItem>
+                    {accounts
+                      .filter((a) => a.accountType === formData.accountType)
+                      .map((account) => (
+                        <SelectItem key={account.id} value={account.id.toString()}>
+                          {account.accountCode} - {account.accountName}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
-            </div>
 
-            <div>
-              <Label>Account Name *</Label>
-              <Input
-                placeholder="e.g., Accounts Receivable"
-                value={formData.accountName}
-                onChange={(e) => setFormData({ ...formData, accountName: e.target.value })}
-              />
+              <div>
+                <Label>Description</Label>
+                <Textarea
+                  placeholder="Account description..."
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                />
+              </div>
             </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setCreateDialog(false); resetForm(); }}>
+                Cancel
+              </Button>
+              <Button onClick={handleCreateAccount}>
+                Create Account
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-            <div className="grid grid-cols-2 gap-4">
+        {/* Edit Account Dialog */}
+        <Dialog open={editDialog} onOpenChange={setEditDialog}>
+          <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle>Edit Account</DialogTitle>
+              <DialogDescription>
+                Update account details
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Account Code</Label>
+                  <Input value={formData.accountCode} disabled />
+                </div>
+                <div>
+                  <Label>Account Type</Label>
+                  <Input value={formData.accountType} disabled className="capitalize" />
+                </div>
+              </div>
+
+              <div>
+                <Label>Account Name</Label>
+                <Input
+                  value={formData.accountName}
+                  onChange={(e) => setFormData({ ...formData, accountName: e.target.value })}
+                />
+              </div>
+
               <div>
                 <Label>Sub Type</Label>
                 <Input
-                  placeholder="e.g., accounts_receivable"
                   value={formData.accountSubType}
                   onChange={(e) => setFormData({ ...formData, accountSubType: e.target.value })}
                 />
               </div>
+
               <div>
-                <Label>Normal Balance *</Label>
-                <Select
-                  value={formData.normalBalance}
-                  onValueChange={(v) => setFormData({ ...formData, normalBalance: v as 'debit' | 'credit' })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="debit">Debit</SelectItem>
-                    <SelectItem value="credit">Credit</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label>Description</Label>
+                <Textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                />
               </div>
             </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setEditDialog(false); setSelectedAccount(null); resetForm(); }}>
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateAccount}>
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-            <div>
-              <Label>Parent Account (Optional)</Label>
-              <Select
-                value={formData.parentAccountId}
-                onValueChange={(v) => setFormData({ ...formData, parentAccountId: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select parent account" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">None</SelectItem>
-                  {accounts
-                    .filter((a) => a.accountType === formData.accountType)
-                    .map((account) => (
-                      <SelectItem key={account.id} value={account.id.toString()}>
-                        {account.accountCode} - {account.accountName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label>Description</Label>
-              <Textarea
-                placeholder="Account description..."
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setCreateDialog(false); resetForm(); }}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreateAccount}>
-              Create Account
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Account Dialog */}
-      <Dialog open={editDialog} onOpenChange={setEditDialog}>
-        <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>Edit Account</DialogTitle>
-            <DialogDescription>
-              Update account details
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Account Code</Label>
-                <Input value={formData.accountCode} disabled />
+        {/* Adjust Balance Dialog */}
+        <Dialog open={adjustDialog} onOpenChange={setAdjustDialog}>
+          <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle>Adjust Account Balance</DialogTitle>
+              <DialogDescription>
+                {selectedAccount && (
+                  <>Set the actual balance for <strong>{selectedAccount.accountCode} - {selectedAccount.accountName}</strong>. An adjusting journal entry will be created automatically.</>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Current Balance</Label>
+                  <Input
+                    value={selectedAccount ? formatCurrency(selectedAccount.currentBalance) : ''}
+                    disabled
+                  />
+                </div>
+                <div>
+                  <Label>Target Balance *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="Enter actual balance"
+                    value={adjustTarget}
+                    onChange={(e) => setAdjustTarget(e.target.value)}
+                  />
+                </div>
               </div>
-              <div>
-                <Label>Account Type</Label>
-                <Input value={formData.accountType} disabled className="capitalize" />
-              </div>
-            </div>
-
-            <div>
-              <Label>Account Name</Label>
-              <Input
-                value={formData.accountName}
-                onChange={(e) => setFormData({ ...formData, accountName: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <Label>Sub Type</Label>
-              <Input
-                value={formData.accountSubType}
-                onChange={(e) => setFormData({ ...formData, accountSubType: e.target.value })}
-              />
-            </div>
-
-            <div>
-              <Label>Description</Label>
-              <Textarea
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setEditDialog(false); setSelectedAccount(null); resetForm(); }}>
-              Cancel
-            </Button>
-            <Button onClick={handleUpdateAccount}>
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Adjust Balance Dialog */}
-      <Dialog open={adjustDialog} onOpenChange={setAdjustDialog}>
-        <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>Adjust Account Balance</DialogTitle>
-            <DialogDescription>
-              {selectedAccount && (
-                <>Set the actual balance for <strong>{selectedAccount.accountCode} - {selectedAccount.accountName}</strong>. An adjusting journal entry will be created automatically.</>
+              {selectedAccount && adjustTarget && !isNaN(parseFloat(adjustTarget)) && (
+                <div className={`p-3 rounded-lg text-sm ${
+                  parseFloat(adjustTarget) - selectedAccount.currentBalance >= 0
+                    ? 'bg-green-500/10 text-green-400'
+                    : 'bg-red-500/10 text-red-400'
+                }`}>
+                  Adjustment: {formatCurrency(parseFloat(adjustTarget) - selectedAccount.currentBalance)}
+                </div>
               )}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Current Balance</Label>
-                <Input
-                  value={selectedAccount ? formatCurrency(selectedAccount.currentBalance) : ''}
-                  disabled
-                />
-              </div>
-              <div>
-                <Label>Target Balance *</Label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  placeholder="Enter actual balance"
-                  value={adjustTarget}
-                  onChange={(e) => setAdjustTarget(e.target.value)}
+                <Label>Reason *</Label>
+                <Textarea
+                  placeholder="e.g., Bank reconciliation, opening balance correction, physical count adjustment..."
+                  value={adjustReason}
+                  onChange={(e) => setAdjustReason(e.target.value)}
                 />
               </div>
             </div>
-            {selectedAccount && adjustTarget && !isNaN(parseFloat(adjustTarget)) && (
-              <div className={`p-3 rounded-lg ${
-                parseFloat(adjustTarget) - selectedAccount.currentBalance >= 0
-                  ? 'bg-green-50 text-green-800 dark:bg-green-950 dark:text-green-200'
-                  : 'bg-red-50 text-red-800 dark:bg-red-950 dark:text-red-200'
-              }`}>
-                Adjustment: {formatCurrency(parseFloat(adjustTarget) - selectedAccount.currentBalance)}
-              </div>
-            )}
-            <div>
-              <Label>Reason *</Label>
-              <Textarea
-                placeholder="e.g., Bank reconciliation, opening balance correction, physical count adjustment..."
-                value={adjustReason}
-                onChange={(e) => setAdjustReason(e.target.value)}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setAdjustDialog(false); setSelectedAccount(null); }}>
-              Cancel
-            </Button>
-            <Button onClick={handleAdjustBalance}>
-              Apply Adjustment
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setAdjustDialog(false); setSelectedAccount(null); }}>
+                Cancel
+              </Button>
+              <Button onClick={handleAdjustBalance}>
+                Apply Adjustment
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </TooltipProvider>
   )
 }

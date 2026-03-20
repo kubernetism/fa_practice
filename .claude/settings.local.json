@@ -71,7 +71,8 @@
       "Bash(for f:*)",
       "Bash(do)",
       "Read(//home/safdaralishah/Documents/github/fa_practice/firearms-pos/src/renderer/screens/$f/**)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(do echo:*)"
     ]
   }
 }

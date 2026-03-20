@@ -1,23 +1,20 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Search,
   RefreshCw,
   Settings,
-  TrendingUp,
-  TrendingDown,
-  DollarSign,
-  Calendar,
-  Filter,
-  Download,
+  X,
+  ChevronLeft,
+  ChevronRight,
   Percent,
   AlertCircle,
   CheckCircle,
   Clock,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
   Table,
@@ -42,10 +39,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from '@/components/ui/tooltip'
 import { useBranch } from '@/contexts/branch-context'
 import { useCurrentBranchSettings } from '@/contexts/settings-context'
 import { formatCurrency, formatDateTime, cn } from '@/lib/utils'
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const ITEMS_PER_PAGE = 15
+
+// ─── Interfaces ──────────────────────────────────────────────────────────────
 
 interface TaxSummary {
   totalCollected: number
@@ -97,6 +105,7 @@ export function TaxCollectionsScreen() {
     showTaxOnReceipt: true,
   })
   const [isSaving, setIsSaving] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
 
   // Load tax data
   const fetchTaxData = useCallback(async () => {
@@ -189,232 +198,233 @@ export function TaxCollectionsScreen() {
   }
 
   // Filter records
-  const filteredRecords = taxRecords.filter((record) => {
-    const matchesSearch =
-      record.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (record.customerName?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
-    const matchesStatus = statusFilter === 'all' || record.paymentStatus === statusFilter
-    return matchesSearch && matchesStatus
-  })
+  const filteredRecords = useMemo(() => {
+    return taxRecords.filter((record) => {
+      const matchesSearch =
+        record.invoiceNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (record.customerName?.toLowerCase().includes(searchTerm.toLowerCase()) ?? false)
+      const matchesStatus = statusFilter === 'all' || record.paymentStatus === statusFilter
+      return matchesSearch && matchesStatus
+    })
+  }, [taxRecords, searchTerm, statusFilter])
+
+  // Pagination
+  const { totalPages, safePage, pageStart, pageRecords } = useMemo(() => {
+    const totalPages = Math.max(1, Math.ceil(filteredRecords.length / ITEMS_PER_PAGE))
+    const safePage = Math.min(currentPage, totalPages)
+    const pageStart = (safePage - 1) * ITEMS_PER_PAGE
+    const pageRecords = filteredRecords.slice(pageStart, pageStart + ITEMS_PER_PAGE)
+    return { totalPages, safePage, pageStart, pageRecords }
+  }, [filteredRecords, currentPage])
+
+  // ─── Loading state ────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-lg">Loading tax collections...</p>
+      <div className="flex h-full items-center justify-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+        <p className="text-sm text-muted-foreground">Loading tax collections...</p>
       </div>
     )
   }
 
+  // ─── Render ─────────────────────────────────────────────────────────────────
+
   return (
-    <div className="flex flex-col h-full p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Tax Collections</h1>
-          <p className="text-muted-foreground">
-            Track collected and pending taxes • {currentBranch?.name || 'Select a branch'}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchTaxData}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-          <Button onClick={() => setShowSettingsDialog(true)}>
-            <Settings className="h-4 w-4 mr-2" />
-            Tax Settings
-          </Button>
-        </div>
-      </div>
-
-      {/* Current Tax Rate Display */}
-      <Card className="border-primary/20 bg-primary/5">
-        <CardContent className="pt-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-full bg-primary/10">
-                <Percent className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                <p className="text-sm text-muted-foreground">Current Tax Rate</p>
-                <p className="text-2xl font-bold">
-                  {taxSettings.taxName}: {taxSettings.taxRate}%
-                  {taxSettings.secondaryTaxRate > 0 && (
-                    <span className="text-lg ml-2">
-                      + {taxSettings.secondaryTaxName || 'Secondary'}: {taxSettings.secondaryTaxRate}%
-                    </span>
-                  )}
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-4 text-sm">
-              <Badge variant={taxSettings.isTaxInclusive ? 'default' : 'secondary'}>
-                {taxSettings.isTaxInclusive ? 'Tax Inclusive' : 'Tax Exclusive'}
-              </Badge>
-              <Badge variant={taxSettings.showTaxOnReceipt ? 'default' : 'secondary'}>
-                {taxSettings.showTaxOnReceipt ? 'Shown on Receipt' : 'Hidden on Receipt'}
-              </Badge>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Collected</CardTitle>
-            <CheckCircle className="h-4 w-4 text-green-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">
-              {formatCurrency(taxSummary?.totalCollected || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              From {taxSummary?.paidSales || 0} paid sales
+    <TooltipProvider>
+      <div className="space-y-3">
+        {/* ── Header ── */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold leading-tight">Tax Collections</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {currentBranch?.name || 'Select a branch'}
             </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pending Collection</CardTitle>
-            <Clock className="h-4 w-4 text-yellow-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-600">
-              {formatCurrency(taxSummary?.totalPending || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              From {taxSummary?.pendingSales || 0} pending sales
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Tax Amount</CardTitle>
-            <DollarSign className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrency((taxSummary?.totalCollected || 0) + (taxSummary?.totalPending || 0))}
-            </div>
-            <p className="text-xs text-muted-foreground">Collected + Pending</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg Tax Per Sale</CardTitle>
-            <TrendingUp className="h-4 w-4 text-purple-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {formatCurrency(taxSummary?.averageTaxPerSale || 0)}
-            </div>
-            <p className="text-xs text-muted-foreground">Per transaction</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap gap-4 items-end">
-            <div className="flex-1 min-w-[200px]">
-              <Label htmlFor="search">Search</Label>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  id="search"
-                  placeholder="Search by invoice or customer..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-            <div className="w-[150px]">
-              <Label htmlFor="startDate">Start Date</Label>
-              <Input
-                id="startDate"
-                type="date"
-                value={dateRange.startDate}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, startDate: e.target.value }))}
-              />
-            </div>
-            <div className="w-[150px]">
-              <Label htmlFor="endDate">End Date</Label>
-              <Input
-                id="endDate"
-                type="date"
-                value={dateRange.endDate}
-                onChange={(e) => setDateRange((prev) => ({ ...prev, endDate: e.target.value }))}
-              />
-            </div>
-            <div className="w-[150px]">
-              <Label htmlFor="status">Status</Label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Status</SelectItem>
-                  <SelectItem value="paid">Paid</SelectItem>
-                  <SelectItem value="partial">Partial</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                </SelectContent>
-              </Select>
+            {/* Stat pills */}
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                Collected: {formatCurrency(taxSummary?.totalCollected || 0)}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-yellow-500" />
+                Pending: {formatCurrency(taxSummary?.totalPending || 0)}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                Total: {formatCurrency((taxSummary?.totalCollected || 0) + (taxSummary?.totalPending || 0))}
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                Avg/Sale: {formatCurrency(taxSummary?.averageTaxPerSale || 0)}
+              </span>
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* Tax Records Table */}
-      <Card className="flex-1">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Tax Records</CardTitle>
-              <CardDescription>
-                Showing {filteredRecords.length} of {taxRecords.length} records
-              </CardDescription>
+          {/* Action buttons */}
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setShowSettingsDialog(true)}>
+              <Settings className="h-3.5 w-3.5 mr-1.5" />
+              Tax Settings
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Tax Rate Banner ── */}
+        <div className="rounded-md border border-primary/20 bg-primary/5 p-2.5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5">
+              <Percent className="h-4 w-4 text-primary shrink-0" />
+              <span className="text-sm font-medium">
+                {taxSettings.taxName}: {taxSettings.taxRate}%
+                {taxSettings.secondaryTaxRate > 0 && (
+                  <span className="text-muted-foreground ml-2">
+                    + {taxSettings.secondaryTaxName || 'Secondary'}: {taxSettings.secondaryTaxRate}%
+                  </span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge
+                variant={taxSettings.isTaxInclusive ? 'default' : 'secondary'}
+                className="text-[10px] px-1.5 py-0"
+              >
+                {taxSettings.isTaxInclusive ? 'Inclusive' : 'Exclusive'}
+              </Badge>
+              <Badge
+                variant={taxSettings.showTaxOnReceipt ? 'default' : 'secondary'}
+                className="text-[10px] px-1.5 py-0"
+              >
+                {taxSettings.showTaxOnReceipt ? 'On Receipt' : 'Hidden'}
+              </Badge>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
+        </div>
+
+        {/* ── Filters Row ── */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+            <Input
+              placeholder="Search by invoice or customer..."
+              value={searchTerm}
+              onChange={(e) => {
+                setSearchTerm(e.target.value)
+                setCurrentPage(1)
+              }}
+              className="h-8 pl-8 pr-8 text-sm"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => { setSearchTerm(''); setCurrentPage(1) }}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                aria-label="Clear search"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <Input
+            type="date"
+            value={dateRange.startDate}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, startDate: e.target.value }))}
+            className="h-8 w-[140px] text-sm"
+          />
+          <Input
+            type="date"
+            value={dateRange.endDate}
+            onChange={(e) => setDateRange((prev) => ({ ...prev, endDate: e.target.value }))}
+            className="h-8 w-[140px] text-sm"
+          />
+          <Select
+            value={statusFilter}
+            onValueChange={(value) => {
+              setStatusFilter(value)
+              setCurrentPage(1)
+            }}
+          >
+            <SelectTrigger className="h-8 w-[120px] text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="partial">Partial</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+            </SelectContent>
+          </Select>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                onClick={fetchTaxData}
+                aria-label="Refresh tax data"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh</TooltipContent>
+          </Tooltip>
+        </div>
+
+        {/* ── Table ── */}
+        <div className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Invoice</TableHead>
-                <TableHead>Date</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead className="text-right">Subtotal</TableHead>
-                <TableHead className="text-right">Tax Amount</TableHead>
-                <TableHead className="text-right">Total</TableHead>
-                <TableHead>Status</TableHead>
+              <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0">
+                  Invoice
+                </TableHead>
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0">
+                  Date
+                </TableHead>
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0">
+                  Customer
+                </TableHead>
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0 text-right">
+                  Subtotal
+                </TableHead>
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0 text-right">
+                  Tax Amount
+                </TableHead>
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0 text-right">
+                  Total
+                </TableHead>
+                <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0">
+                  Status
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredRecords.length === 0 ? (
+              {pageRecords.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
+                  <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
                     No tax records found for the selected period
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredRecords.map((record) => (
-                  <TableRow key={record.id}>
-                    <TableCell className="font-medium">{record.invoiceNumber}</TableCell>
-                    <TableCell>{formatDateTime(record.saleDate)}</TableCell>
-                    <TableCell>{record.customerName || 'Walk-in'}</TableCell>
-                    <TableCell className="text-right">{formatCurrency(record.subtotal)}</TableCell>
-                    <TableCell className="text-right font-medium text-primary">
+                pageRecords.map((record) => (
+                  <TableRow key={record.id} className="h-9 group">
+                    <TableCell className="py-1.5 text-xs font-medium">
+                      {record.invoiceNumber}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs text-muted-foreground">
+                      {formatDateTime(record.saleDate)}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs">
+                      {record.customerName || <span className="text-muted-foreground/50">Walk-in</span>}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs text-right tabular-nums">
+                      {formatCurrency(record.subtotal)}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-xs text-right tabular-nums font-medium text-primary">
                       {formatCurrency(record.taxAmount)}
                     </TableCell>
-                    <TableCell className="text-right">{formatCurrency(record.totalAmount)}</TableCell>
-                    <TableCell>
+                    <TableCell className="py-1.5 text-xs text-right tabular-nums">
+                      {formatCurrency(record.totalAmount)}
+                    </TableCell>
+                    <TableCell className="py-1.5">
                       <Badge
                         variant={
                           record.paymentStatus === 'paid'
@@ -423,10 +433,11 @@ export function TaxCollectionsScreen() {
                             ? 'secondary'
                             : 'destructive'
                         }
+                        className="text-[10px] px-1.5 py-0"
                       >
-                        {record.paymentStatus === 'paid' && <CheckCircle className="h-3 w-3 mr-1" />}
-                        {record.paymentStatus === 'pending' && <Clock className="h-3 w-3 mr-1" />}
-                        {record.paymentStatus === 'partial' && <AlertCircle className="h-3 w-3 mr-1" />}
+                        {record.paymentStatus === 'paid' && <CheckCircle className="h-2.5 w-2.5 mr-0.5" />}
+                        {record.paymentStatus === 'pending' && <Clock className="h-2.5 w-2.5 mr-0.5" />}
+                        {record.paymentStatus === 'partial' && <AlertCircle className="h-2.5 w-2.5 mr-0.5" />}
                         {record.paymentStatus.charAt(0).toUpperCase() + record.paymentStatus.slice(1)}
                       </Badge>
                     </TableCell>
@@ -435,110 +446,145 @@ export function TaxCollectionsScreen() {
               )}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        </div>
 
-      {/* Tax Settings Dialog */}
-      <Dialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Tax Settings</DialogTitle>
-            <DialogDescription>
-              Configure tax rates. Changes will sync with Settings.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="taxName">Primary Tax Name</Label>
-                <Input
-                  id="taxName"
-                  value={taxSettings.taxName}
-                  onChange={(e) => setTaxSettings((prev) => ({ ...prev, taxName: e.target.value }))}
-                  placeholder="e.g., GST, VAT"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="taxRate">Tax Rate (%)</Label>
-                <Input
-                  id="taxRate"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="100"
-                  value={taxSettings.taxRate}
-                  onChange={(e) =>
-                    setTaxSettings((prev) => ({ ...prev, taxRate: parseFloat(e.target.value) || 0 }))
-                  }
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="secondaryTaxName">Secondary Tax Name</Label>
-                <Input
-                  id="secondaryTaxName"
-                  value={taxSettings.secondaryTaxName || ''}
-                  onChange={(e) =>
-                    setTaxSettings((prev) => ({ ...prev, secondaryTaxName: e.target.value || null }))
-                  }
-                  placeholder="Optional"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="secondaryTaxRate">Secondary Rate (%)</Label>
-                <Input
-                  id="secondaryTaxRate"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  max="100"
-                  value={taxSettings.secondaryTaxRate}
-                  onChange={(e) =>
-                    setTaxSettings((prev) => ({
-                      ...prev,
-                      secondaryTaxRate: parseFloat(e.target.value) || 0,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="isTaxInclusive">Tax Inclusive Pricing</Label>
-              <input
-                id="isTaxInclusive"
-                type="checkbox"
-                checked={taxSettings.isTaxInclusive}
-                onChange={(e) =>
-                  setTaxSettings((prev) => ({ ...prev, isTaxInclusive: e.target.checked }))
-                }
-                className="h-4 w-4"
-              />
-            </div>
-            <div className="flex items-center justify-between">
-              <Label htmlFor="showTaxOnReceipt">Show Tax on Receipt</Label>
-              <input
-                id="showTaxOnReceipt"
-                type="checkbox"
-                checked={taxSettings.showTaxOnReceipt}
-                onChange={(e) =>
-                  setTaxSettings((prev) => ({ ...prev, showTaxOnReceipt: e.target.checked }))
-                }
-                className="h-4 w-4"
-              />
+        {/* ── Pagination ── */}
+        {filteredRecords.length > ITEMS_PER_PAGE && (
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {pageStart + 1}–{Math.min(pageStart + ITEMS_PER_PAGE, filteredRecords.length)} of{' '}
+              {filteredRecords.length}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <span className="px-1 tabular-nums">
+                {safePage} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                aria-label="Next page"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowSettingsDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveSettings} disabled={isSaving}>
-              {isSaving ? 'Saving...' : 'Save Changes'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        )}
+
+        {/* ── Tax Settings Dialog ── */}
+        <Dialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Tax Settings</DialogTitle>
+              <DialogDescription>
+                Configure tax rates. Changes will sync with Settings.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="taxName">Primary Tax Name</Label>
+                  <Input
+                    id="taxName"
+                    value={taxSettings.taxName}
+                    onChange={(e) => setTaxSettings((prev) => ({ ...prev, taxName: e.target.value }))}
+                    placeholder="e.g., GST, VAT"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="taxRate">Tax Rate (%)</Label>
+                  <Input
+                    id="taxRate"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={taxSettings.taxRate}
+                    onChange={(e) =>
+                      setTaxSettings((prev) => ({ ...prev, taxRate: parseFloat(e.target.value) || 0 }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="secondaryTaxName">Secondary Tax Name</Label>
+                  <Input
+                    id="secondaryTaxName"
+                    value={taxSettings.secondaryTaxName || ''}
+                    onChange={(e) =>
+                      setTaxSettings((prev) => ({ ...prev, secondaryTaxName: e.target.value || null }))
+                    }
+                    placeholder="Optional"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="secondaryTaxRate">Secondary Rate (%)</Label>
+                  <Input
+                    id="secondaryTaxRate"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={taxSettings.secondaryTaxRate}
+                    onChange={(e) =>
+                      setTaxSettings((prev) => ({
+                        ...prev,
+                        secondaryTaxRate: parseFloat(e.target.value) || 0,
+                      }))
+                    }
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="isTaxInclusive">Tax Inclusive Pricing</Label>
+                <input
+                  id="isTaxInclusive"
+                  type="checkbox"
+                  checked={taxSettings.isTaxInclusive}
+                  onChange={(e) =>
+                    setTaxSettings((prev) => ({ ...prev, isTaxInclusive: e.target.checked }))
+                  }
+                  className="h-4 w-4"
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="showTaxOnReceipt">Show Tax on Receipt</Label>
+                <input
+                  id="showTaxOnReceipt"
+                  type="checkbox"
+                  checked={taxSettings.showTaxOnReceipt}
+                  onChange={(e) =>
+                    setTaxSettings((prev) => ({ ...prev, showTaxOnReceipt: e.target.checked }))
+                  }
+                  className="h-4 w-4"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowSettingsDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSaveSettings} disabled={isSaving}>
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </TooltipProvider>
   )
 }
 
