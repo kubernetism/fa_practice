@@ -8,7 +8,6 @@ import {
   CardContent,
   CardHeader,
   CardTitle,
-  CardDescription,
 } from '@/components/ui/card'
 import {
   Select,
@@ -35,8 +34,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import {
   RefreshCw,
-  Filter,
   AlertTriangle,
   XCircle,
   RotateCcw,
@@ -47,6 +51,13 @@ import {
   ThumbsDown,
   FileX,
   ArrowLeftRight,
+  ChevronLeft,
+  ChevronRight,
+  Info,
+  Zap,
+  ShieldAlert,
+  User,
+  Calendar,
 } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
@@ -100,7 +111,7 @@ const ENTITY_TYPE_LABELS: Record<string, string> = {
   journal_entry: 'Journal Entry',
   ar_payment: 'AR Payment',
   ap_payment: 'AP Payment',
-  stock_adjustment: 'Stock Adjustment',
+  stock_adjustment: 'Stock Adj.',
   stock_transfer: 'Stock Transfer',
   commission: 'Commission',
   return: 'Return',
@@ -130,31 +141,35 @@ const PRIORITY_OPTIONS = [
 // ---------------------------------------------------------------------------
 
 function getPriorityBadge(priority: ReversalRequest['priority']) {
-  const map: Record<typeof priority, { label: string; className: string }> = {
-    urgent: { label: 'Urgent', className: 'bg-red-600 text-white border-transparent' },
-    high: { label: 'High', className: 'bg-orange-500 text-white border-transparent' },
-    medium: { label: 'Medium', className: 'bg-yellow-500 text-black border-transparent' },
-    low: { label: 'Low', className: 'bg-zinc-500 text-white border-transparent' },
+  const map: Record<typeof priority, { label: string; className: string; icon: React.ElementType }> = {
+    urgent: { label: 'Urgent', className: 'bg-red-600/15 text-red-600 dark:text-red-400 border-red-600/20', icon: Zap },
+    high: { label: 'High', className: 'bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/20', icon: ShieldAlert },
+    medium: { label: 'Medium', className: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 border-yellow-500/20', icon: Info },
+    low: { label: 'Low', className: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/20', icon: Info },
   }
-  const cfg = map[priority] ?? { label: priority, className: 'bg-zinc-500 text-white border-transparent' }
+  const cfg = map[priority] ?? { label: priority, className: 'bg-zinc-500/15 text-zinc-500 border-zinc-500/20', icon: Info }
+  const Icon = cfg.icon
   return (
-    <Badge className={cfg.className}>
+    <Badge variant="outline" className={`${cfg.className} text-[11px] font-medium gap-1 px-1.5 py-0`}>
+      <Icon className="w-3 h-3" />
       {cfg.label}
     </Badge>
   )
 }
 
 function getStatusBadge(status: ReversalRequest['status']) {
-  const map: Record<typeof status, { label: string; className: string }> = {
-    pending: { label: 'Pending', className: 'bg-yellow-500 text-black border-transparent' },
-    approved: { label: 'Approved', className: 'bg-blue-500 text-white border-transparent' },
-    completed: { label: 'Completed', className: 'bg-green-600 text-white border-transparent' },
-    failed: { label: 'Failed', className: 'bg-red-600 text-white border-transparent' },
-    rejected: { label: 'Rejected', className: 'bg-zinc-500 text-white border-transparent' },
+  const map: Record<typeof status, { label: string; className: string; icon: React.ElementType }> = {
+    pending: { label: 'Pending', className: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 border-yellow-500/20', icon: Clock },
+    approved: { label: 'Approved', className: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20', icon: ThumbsUp },
+    completed: { label: 'Completed', className: 'bg-green-600/15 text-green-600 dark:text-green-400 border-green-600/20', icon: CheckCircle2 },
+    failed: { label: 'Failed', className: 'bg-red-600/15 text-red-600 dark:text-red-400 border-red-600/20', icon: FileX },
+    rejected: { label: 'Rejected', className: 'bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/20', icon: Ban },
   }
-  const cfg = map[status] ?? { label: status, className: 'bg-zinc-500 text-white border-transparent' }
+  const cfg = map[status] ?? { label: status, className: 'bg-zinc-500/15 text-zinc-500 border-zinc-500/20', icon: Info }
+  const Icon = cfg.icon
   return (
-    <Badge className={cfg.className}>
+    <Badge variant="outline" className={`${cfg.className} text-[11px] font-medium gap-1 px-1.5 py-0`}>
+      <Icon className="w-3 h-3" />
       {cfg.label}
     </Badge>
   )
@@ -237,7 +252,7 @@ function RejectDialog({
           </DialogTitle>
           <DialogDescription>
             Reject reversal request <span className="font-semibold text-foreground">{requestNumber}</span>.
-            Please provide a reason so the requester understands.
+            Please provide a reason.
           </DialogDescription>
         </DialogHeader>
 
@@ -248,7 +263,7 @@ function RejectDialog({
             value={rejectionReason}
             onChange={(e) => onReasonChange(e.target.value)}
             placeholder="Enter the reason for rejection..."
-            rows={4}
+            rows={3}
           />
         </div>
 
@@ -294,7 +309,6 @@ function RetryDialog({ open, isSubmitting, onConfirm, onCancel, requestNumber }:
           <DialogDescription>
             Retry the failed reversal request{' '}
             <span className="font-semibold text-foreground">{requestNumber}</span>?
-            This will re-attempt the reversal execution.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -320,12 +334,17 @@ function RetryDialog({ open, isSubmitting, onConfirm, onCancel, requestNumber }:
 }
 
 // ---------------------------------------------------------------------------
-// Stats summary counts
+// Stat helpers
 // ---------------------------------------------------------------------------
 
 function getStatusCount(stats: ReversalStats | null, status: string): number {
   if (!stats) return 0
   return stats.byStatus[status] ?? 0
+}
+
+function getTotalCount(stats: ReversalStats | null): number {
+  if (!stats) return 0
+  return Object.values(stats.byStatus).reduce((a, b) => a + b, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -334,10 +353,6 @@ function getStatusCount(stats: ReversalStats | null, status: string): number {
 
 export function ReversalsScreen() {
   const { user } = useAuth()
-
-  // -------------------------------------------------------------------
-  // State (hooks must be called before any early return)
-  // -------------------------------------------------------------------
 
   const [requests, setRequests] = useState<ReversalRequest[]>([])
   const [stats, setStats] = useState<ReversalStats | null>(null)
@@ -361,10 +376,10 @@ export function ReversalsScreen() {
   const [rejectionReason, setRejectionReason] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  // -------------------------------------------------------------------
-  // Data fetching
-  // -------------------------------------------------------------------
+  // Expanded row for details
+  const [expandedRow, setExpandedRow] = useState<number | null>(null)
 
+  // Data fetching
   const fetchStats = useCallback(async () => {
     try {
       const result = await window.api.reversals.stats()
@@ -398,27 +413,12 @@ export function ReversalsScreen() {
     }
   }, [filterStatus, filterEntityType, filterPriority, pagination.limit])
 
-  // Initial load
   useEffect(() => {
     fetchStats()
     fetchRequests(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Re-fetch when filters change, always reset to page 1
-  const applyFilters = () => {
-    fetchRequests(1)
-    fetchStats()
-  }
-
-  const clearFilters = () => {
-    setFilterStatus('all')
-    setFilterEntityType('all')
-    setFilterPriority('all')
-  }
-
-  // When filter state resets we need to re-fetch. Use a dedicated effect
-  // keyed to the filter values so clearing re-fetches automatically.
   useEffect(() => {
     fetchRequests(1)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -429,10 +429,13 @@ export function ReversalsScreen() {
     fetchRequests(pagination.page)
   }
 
-  // -------------------------------------------------------------------
-  // Dialog helpers
-  // -------------------------------------------------------------------
+  const clearFilters = () => {
+    setFilterStatus('all')
+    setFilterEntityType('all')
+    setFilterPriority('all')
+  }
 
+  // Dialog helpers
   const openDialog = (kind: DialogKind, req: ReversalRequest) => {
     setSelectedRequest(req)
     setRejectionReason('')
@@ -445,10 +448,7 @@ export function ReversalsScreen() {
     setRejectionReason('')
   }
 
-  // -------------------------------------------------------------------
   // Actions
-  // -------------------------------------------------------------------
-
   const handleApprove = async () => {
     if (!selectedRequest) return
     setIsSubmitting(true)
@@ -509,15 +509,21 @@ export function ReversalsScreen() {
     }
   }
 
-  // -------------------------------------------------------------------
   // Formatters
-  // -------------------------------------------------------------------
-
   const formatDate = (iso: string) => {
     try {
-      return new Date(iso).toLocaleString()
+      const d = new Date(iso)
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     } catch {
       return iso
+    }
+  }
+
+  const formatTime = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    } catch {
+      return ''
     }
   }
 
@@ -532,25 +538,23 @@ export function ReversalsScreen() {
   const hasActiveFilters =
     filterStatus !== 'all' || filterEntityType !== 'all' || filterPriority !== 'all'
 
-  // -------------------------------------------------------------------
-  // Admin access guard (after all hooks)
-  // -------------------------------------------------------------------
-
+  // Admin guard
   if (user?.role !== 'admin') {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <Card className="border-red-200 bg-red-50 max-w-md">
+        <Card className="border-destructive/30 max-w-md">
           <CardContent className="pt-6">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle className="h-8 w-8 text-red-600" />
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg bg-destructive/10">
+                <AlertTriangle className="h-6 w-6 text-destructive" />
+              </div>
               <div>
-                <p className="text-red-700 font-semibold text-lg">Access Denied</p>
-                <p className="text-red-600 text-sm">Admin Only Access</p>
+                <p className="font-semibold text-lg">Access Denied</p>
+                <p className="text-muted-foreground text-sm">Admin privileges required</p>
               </div>
             </div>
-            <p className="text-red-600 text-sm">
-              You do not have permission to access the reversal dashboard. Only administrators can
-              review and action reversal requests.
+            <p className="text-muted-foreground text-sm">
+              Only administrators can review and action reversal requests.
             </p>
           </CardContent>
         </Card>
@@ -558,356 +562,416 @@ export function ReversalsScreen() {
     )
   }
 
-  // -------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------
+  const pendingCount = getStatusCount(stats, 'pending')
+  const completedCount = getStatusCount(stats, 'completed')
+  const failedCount = getStatusCount(stats, 'failed')
+  const rejectedCount = getStatusCount(stats, 'rejected')
+  const approvedCount = getStatusCount(stats, 'approved')
+  const totalCount = getTotalCount(stats)
 
   return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* ------------------------------------------------------------------ */}
-      {/* Header                                                               */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <ArrowLeftRight className="w-8 h-8" />
-            Reversal Requests
-          </h1>
-          <p className="text-muted-foreground">
-            Review and action transaction reversal requests
-          </p>
-        </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={isLoading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Stats Cards                                                          */}
-      {/* ------------------------------------------------------------------ */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="border-yellow-500/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Clock className="w-4 h-4 text-yellow-500" />
-              Pending
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-yellow-500">
-              {getStatusCount(stats, 'pending').toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-green-500/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-green-500" />
-              Completed
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-500">
-              {getStatusCount(stats, 'completed').toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-red-500/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <FileX className="w-4 h-4 text-red-500" />
-              Failed
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-500">
-              {getStatusCount(stats, 'failed').toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-zinc-500/30">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Ban className="w-4 h-4 text-zinc-400" />
-              Rejected
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-zinc-400">
-              {getStatusCount(stats, 'rejected').toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Filter Bar                                                           */}
-      {/* ------------------------------------------------------------------ */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Filter className="w-5 h-5" />
-            Filters
-          </CardTitle>
-          <CardDescription>Narrow the list by status, entity type, or priority</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap gap-4 items-end">
-            {/* Status */}
-            <div className="space-y-2 min-w-[160px]">
-              <Label>Status</Label>
-              <Select value={filterStatus} onValueChange={setFilterStatus}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  {STATUS_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Entity Type */}
-            <div className="space-y-2 min-w-[180px]">
-              <Label>Entity Type</Label>
-              <Select value={filterEntityType} onValueChange={setFilterEntityType}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Types" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  {ENTITY_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {ENTITY_TYPE_LABELS[type]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Priority */}
-            <div className="space-y-2 min-w-[160px]">
-              <Label>Priority</Label>
-              <Select value={filterPriority} onValueChange={setFilterPriority}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Priorities" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Priorities</SelectItem>
-                  {PRIORITY_OPTIONS.map((opt) => (
-                    <SelectItem key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-2 pt-[1.625rem]">
-              <Button onClick={applyFilters} disabled={isLoading}>
-                <Filter className="w-4 h-4 mr-2" />
-                Apply
-              </Button>
-              {hasActiveFilters && (
-                <Button variant="outline" onClick={clearFilters} disabled={isLoading}>
-                  <XCircle className="w-4 h-4 mr-2" />
-                  Clear
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Table                                                                */}
-      {/* ------------------------------------------------------------------ */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Requests</span>
-            <span className="text-sm font-normal text-muted-foreground">
-              {pagination.total > 0
-                ? `${(pagination.page - 1) * pagination.limit + 1}–${Math.min(
-                    pagination.page * pagination.limit,
-                    pagination.total
-                  )} of ${pagination.total.toLocaleString()}`
-                : '0 results'}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : requests.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-              <ArrowLeftRight className="w-12 h-12 mb-4 opacity-30" />
-              <p className="font-medium">No reversal requests found</p>
-              <p className="text-sm mt-1">Try adjusting your filters</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-40">Request #</TableHead>
-                  <TableHead>Entity Type</TableHead>
-                  <TableHead className="max-w-xs">Reason</TableHead>
-                  <TableHead className="w-28">Priority</TableHead>
-                  <TableHead className="w-28">Status</TableHead>
-                  <TableHead>Requested By</TableHead>
-                  <TableHead className="w-44">Date</TableHead>
-                  <TableHead className="text-right w-36">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {requests.map((req) => (
-                  <TableRow key={req.id}>
-                    {/* Request # */}
-                    <TableCell className="font-mono text-xs font-semibold">
-                      {req.requestNumber}
-                    </TableCell>
-
-                    {/* Entity Type */}
-                    <TableCell>
-                      {ENTITY_TYPE_LABELS[req.entityType] ?? req.entityType}
-                    </TableCell>
-
-                    {/* Reason */}
-                    <TableCell className="text-sm text-muted-foreground max-w-xs">
-                      <span title={req.reason}>{truncate(req.reason, 50)}</span>
-                    </TableCell>
-
-                    {/* Priority */}
-                    <TableCell>{getPriorityBadge(req.priority)}</TableCell>
-
-                    {/* Status */}
-                    <TableCell>{getStatusBadge(req.status)}</TableCell>
-
-                    {/* Requested By */}
-                    <TableCell className="text-sm">
-                      {getUserDisplay(req.requestedByUser)}
-                    </TableCell>
-
-                    {/* Date */}
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {formatDate(req.createdAt)}
-                    </TableCell>
-
-                    {/* Actions */}
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {req.status === 'pending' && (
-                          <>
-                            <Button
-                              size="sm"
-                              className="h-7 px-2 text-xs bg-green-600 hover:bg-green-700 text-white"
-                              onClick={() => openDialog('approve', req)}
-                            >
-                              <ThumbsUp className="w-3 h-3 mr-1" />
-                              Approve
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              className="h-7 px-2 text-xs"
-                              onClick={() => openDialog('reject', req)}
-                            >
-                              <ThumbsDown className="w-3 h-3 mr-1" />
-                              Reject
-                            </Button>
-                          </>
-                        )}
-                        {req.status === 'failed' && (
-                          <Button
-                            size="sm"
-                            className="h-7 px-2 text-xs bg-amber-500 hover:bg-amber-600 text-black"
-                            onClick={() => openDialog('retry', req)}
-                          >
-                            <RotateCcw className="w-3 h-3 mr-1" />
-                            Retry
-                          </Button>
-                        )}
-                        {req.status !== 'pending' && req.status !== 'failed' && (
-                          <span className="text-xs text-muted-foreground px-1">—</span>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* ------------------------------------------------------------------ */}
-      {/* Pagination                                                           */}
-      {/* ------------------------------------------------------------------ */}
-      {pagination.totalPages > 1 && (
+    <TooltipProvider>
+      <div className="flex flex-col h-full p-4 space-y-4">
+        {/* Header Row */}
         <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Page {pagination.page} of {pagination.totalPages}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchRequests(pagination.page - 1)}
-              disabled={pagination.page <= 1 || isLoading}
-            >
-              Previous
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <ArrowLeftRight className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold leading-tight">Reversal Requests</h1>
+              <p className="text-xs text-muted-foreground">Review and action transaction reversals</p>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isLoading}>
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
+
+        {/* Stats Row - Compact inline */}
+        <div className="grid grid-cols-6 gap-3">
+          <Card className="border-border/50">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Total</span>
+                <ArrowLeftRight className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+              <p className="text-xl font-bold mt-1">{totalCount.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-yellow-500/20">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Pending</span>
+                <Clock className="w-3.5 h-3.5 text-yellow-500" />
+              </div>
+              <p className="text-xl font-bold text-yellow-600 dark:text-yellow-400 mt-1">{pendingCount.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-blue-500/20">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Approved</span>
+                <ThumbsUp className="w-3.5 h-3.5 text-blue-500" />
+              </div>
+              <p className="text-xl font-bold text-blue-600 dark:text-blue-400 mt-1">{approvedCount.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-green-500/20">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Completed</span>
+                <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+              </div>
+              <p className="text-xl font-bold text-green-600 dark:text-green-400 mt-1">{completedCount.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-red-500/20">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Failed</span>
+                <FileX className="w-3.5 h-3.5 text-red-500" />
+              </div>
+              <p className="text-xl font-bold text-red-600 dark:text-red-400 mt-1">{failedCount.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="border-zinc-500/20">
+            <CardContent className="p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Rejected</span>
+                <Ban className="w-3.5 h-3.5 text-zinc-400" />
+              </div>
+              <p className="text-xl font-bold text-zinc-500 dark:text-zinc-400 mt-1">{rejectedCount.toLocaleString()}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Pending by Type & Priority - mini breakdown */}
+        {stats && pendingCount > 0 && (
+          <div className="grid grid-cols-2 gap-3">
+            <Card className="border-border/50">
+              <CardContent className="p-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2">Pending by Type</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(stats.pendingByType)
+                    .filter(([, count]) => count > 0)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([type, count]) => (
+                      <Badge key={type} variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
+                        {ENTITY_TYPE_LABELS[type] || type}: {count}
+                      </Badge>
+                    ))}
+                </div>
+              </CardContent>
+            </Card>
+            <Card className="border-border/50">
+              <CardContent className="p-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2">Pending by Priority</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(stats.pendingByPriority)
+                    .filter(([, count]) => count > 0)
+                    .map(([priority, count]) => (
+                      <span key={priority} className="inline-flex items-center gap-1">
+                        {getPriorityBadge(priority as ReversalRequest['priority'])}
+                        <span className="text-[10px] font-mono text-muted-foreground">({count})</span>
+                      </span>
+                    ))}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Filter Bar - Inline */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Status:</span>
+            <Select value={filterStatus} onValueChange={setFilterStatus}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                {STATUS_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Type:</span>
+            <Select value={filterEntityType} onValueChange={setFilterEntityType}>
+              <SelectTrigger className="h-8 w-[140px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                {ENTITY_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>{ENTITY_TYPE_LABELS[type]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Priority:</span>
+            <Select value={filterPriority} onValueChange={setFilterPriority}>
+              <SelectTrigger className="h-8 w-[120px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All</SelectItem>
+                {PRIORITY_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {hasActiveFilters && (
+            <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 text-xs text-muted-foreground">
+              <XCircle className="w-3.5 h-3.5 mr-1" />
+              Clear
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchRequests(pagination.page + 1)}
-              disabled={pagination.page >= pagination.totalPages || isLoading}
-            >
-              Next
-            </Button>
+          )}
+
+          <div className="ml-auto text-xs text-muted-foreground">
+            {pagination.total > 0
+              ? `${(pagination.page - 1) * pagination.limit + 1}–${Math.min(pagination.page * pagination.limit, pagination.total)} of ${pagination.total.toLocaleString()}`
+              : '0 results'}
           </div>
         </div>
-      )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Dialogs                                                              */}
-      {/* ------------------------------------------------------------------ */}
-      <ApproveDialog
-        open={activeDialog === 'approve'}
-        isSubmitting={isSubmitting}
-        requestNumber={selectedRequest?.requestNumber ?? ''}
-        onConfirm={handleApprove}
-        onCancel={closeDialog}
-      />
+        {/* Table */}
+        <Card className="flex-1 overflow-hidden">
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : requests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                <ArrowLeftRight className="w-10 h-10 mb-3 opacity-20" />
+                <p className="font-medium text-sm">No reversal requests found</p>
+                <p className="text-xs mt-1">Try adjusting your filters</p>
+              </div>
+            ) : (
+              <div className="overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="w-32 text-xs">Request #</TableHead>
+                      <TableHead className="text-xs w-24">Type</TableHead>
+                      <TableHead className="text-xs w-16">ID</TableHead>
+                      <TableHead className="text-xs">Reason</TableHead>
+                      <TableHead className="text-xs w-24">Priority</TableHead>
+                      <TableHead className="text-xs w-24">Status</TableHead>
+                      <TableHead className="text-xs w-28">Requested By</TableHead>
+                      <TableHead className="text-xs w-28">Reviewed By</TableHead>
+                      <TableHead className="text-xs w-32">Date</TableHead>
+                      <TableHead className="text-xs text-right w-32">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {requests.map((req) => (
+                      <>
+                        <TableRow
+                          key={req.id}
+                          className="cursor-pointer"
+                          onClick={() => setExpandedRow(expandedRow === req.id ? null : req.id)}
+                        >
+                          <TableCell className="font-mono text-[11px] font-semibold py-2">
+                            {req.requestNumber}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-normal">
+                              {ENTITY_TYPE_LABELS[req.entityType] ?? req.entityType}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-mono text-[11px] text-muted-foreground py-2">
+                            #{req.entityId}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground py-2 max-w-[200px]">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="cursor-default">{truncate(req.reason, 40)}</span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-sm">
+                                <p className="text-xs">{req.reason}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell className="py-2">{getPriorityBadge(req.priority)}</TableCell>
+                          <TableCell className="py-2">{getStatusBadge(req.status)}</TableCell>
+                          <TableCell className="text-xs py-2">
+                            <div className="flex items-center gap-1">
+                              <User className="w-3 h-3 text-muted-foreground" />
+                              {getUserDisplay(req.requestedByUser)}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-xs py-2">
+                            {req.reviewedByUser ? (
+                              <div className="flex items-center gap-1">
+                                <User className="w-3 h-3 text-muted-foreground" />
+                                {getUserDisplay(req.reviewedByUser)}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground/50">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-2">
+                            <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                              <Calendar className="w-3 h-3" />
+                              <span>{formatDate(req.createdAt)}</span>
+                            </div>
+                            <span className="text-[10px] text-muted-foreground/60 ml-4">{formatTime(req.createdAt)}</span>
+                          </TableCell>
+                          <TableCell className="text-right py-2" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center justify-end gap-1">
+                              {req.status === 'pending' && (
+                                <>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 w-7 p-0 text-green-600 hover:text-green-700 hover:bg-green-500/10"
+                                        onClick={() => openDialog('approve', req)}
+                                      >
+                                        <ThumbsUp className="w-3.5 h-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Approve</TooltipContent>
+                                  </Tooltip>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7 w-7 p-0 text-red-600 hover:text-red-700 hover:bg-red-500/10"
+                                        onClick={() => openDialog('reject', req)}
+                                      >
+                                        <ThumbsDown className="w-3.5 h-3.5" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent>Reject</TooltipContent>
+                                  </Tooltip>
+                                </>
+                              )}
+                              {req.status === 'failed' && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 w-7 p-0 text-amber-600 hover:text-amber-700 hover:bg-amber-500/10"
+                                      onClick={() => openDialog('retry', req)}
+                                    >
+                                      <RotateCcw className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Retry</TooltipContent>
+                                </Tooltip>
+                              )}
+                              {req.status !== 'pending' && req.status !== 'failed' && (
+                                <span className="text-xs text-muted-foreground/40 px-1">—</span>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                        {/* Expanded detail row */}
+                        {expandedRow === req.id && (
+                          <TableRow key={`${req.id}-detail`} className="bg-muted/30 hover:bg-muted/30">
+                            <TableCell colSpan={10} className="py-2 px-4">
+                              <div className="grid grid-cols-3 gap-4 text-xs">
+                                <div>
+                                  <span className="text-muted-foreground font-medium">Full Reason:</span>
+                                  <p className="mt-0.5">{req.reason}</p>
+                                </div>
+                                {req.rejectionReason && (
+                                  <div>
+                                    <span className="text-muted-foreground font-medium">Rejection Reason:</span>
+                                    <p className="mt-0.5 text-red-600 dark:text-red-400">{req.rejectionReason}</p>
+                                  </div>
+                                )}
+                                <div>
+                                  <span className="text-muted-foreground font-medium">Last Updated:</span>
+                                  <p className="mt-0.5">{formatDate(req.updatedAt)} at {formatTime(req.updatedAt)}</p>
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
-      <RejectDialog
-        open={activeDialog === 'reject'}
-        isSubmitting={isSubmitting}
-        requestNumber={selectedRequest?.requestNumber ?? ''}
-        rejectionReason={rejectionReason}
-        onReasonChange={setRejectionReason}
-        onConfirm={handleReject}
-        onCancel={closeDialog}
-      />
+        {/* Pagination */}
+        {pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">
+              Page {pagination.page} of {pagination.totalPages}
+            </p>
+            <div className="flex gap-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => fetchRequests(pagination.page - 1)}
+                disabled={pagination.page <= 1 || isLoading}
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => fetchRequests(pagination.page + 1)}
+                disabled={pagination.page >= pagination.totalPages || isLoading}
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+        )}
 
-      <RetryDialog
-        open={activeDialog === 'retry'}
-        isSubmitting={isSubmitting}
-        requestNumber={selectedRequest?.requestNumber ?? ''}
-        onConfirm={handleRetry}
-        onCancel={closeDialog}
-      />
-    </div>
+        {/* Dialogs */}
+        <ApproveDialog
+          open={activeDialog === 'approve'}
+          isSubmitting={isSubmitting}
+          requestNumber={selectedRequest?.requestNumber ?? ''}
+          onConfirm={handleApprove}
+          onCancel={closeDialog}
+        />
+        <RejectDialog
+          open={activeDialog === 'reject'}
+          isSubmitting={isSubmitting}
+          requestNumber={selectedRequest?.requestNumber ?? ''}
+          rejectionReason={rejectionReason}
+          onReasonChange={setRejectionReason}
+          onConfirm={handleReject}
+          onCancel={closeDialog}
+        />
+        <RetryDialog
+          open={activeDialog === 'retry'}
+          isSubmitting={isSubmitting}
+          requestNumber={selectedRequest?.requestNumber ?? ''}
+          onConfirm={handleRetry}
+          onCancel={closeDialog}
+        />
+      </div>
+    </TooltipProvider>
   )
 }

@@ -3,13 +3,9 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
-  CardDescription,
 } from '@/components/ui/card'
 import {
   Select,
@@ -41,16 +37,17 @@ import {
   Eye,
   Calendar,
   User,
-  Building2,
   Clock,
   Activity,
   AlertTriangle,
   FileText,
-  Trash2,
   XCircle,
-  RotateCcw,
-  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
+  ShieldAlert,
 } from 'lucide-react'
+
+// ─── Interfaces ───────────────────────────────────────────────────────────────
 
 interface AuditLogEntry {
   auditLog: {
@@ -83,6 +80,8 @@ interface AuditStats {
   dailyActivity: Array<{ date: string; count: number }>
 }
 
+// ─── Module-level constants ───────────────────────────────────────────────────
+
 const ACTIONS = [
   { value: 'create', label: 'Create', color: 'bg-green-100 text-green-800' },
   { value: 'update', label: 'Update', color: 'bg-blue-100 text-blue-800' },
@@ -95,7 +94,7 @@ const ACTIONS = [
   { value: 'transfer', label: 'Transfer', color: 'bg-cyan-100 text-cyan-800' },
   { value: 'export', label: 'Export', color: 'bg-teal-100 text-teal-800' },
   { value: 'view', label: 'View', color: 'bg-slate-100 text-slate-800' },
-]
+] as const
 
 const ENTITY_TYPES = [
   'user',
@@ -112,37 +111,32 @@ const ENTITY_TYPES = [
   'commission',
   'setting',
   'auth',
-]
+] as const
 
-const CRITICAL_ACTIONS = ['delete', 'void', 'refund']
+const CRITICAL_ACTIONS = ['delete', 'void', 'refund'] as const
+
+/** Dark-mode-compatible badge styles keyed by action value */
+const ACTION_BADGE_STYLES: Record<string, string> = {
+  create:     'bg-emerald-500/15 text-emerald-500 border border-emerald-500/20',
+  update:     'bg-blue-500/15 text-blue-500 border border-blue-500/20',
+  delete:     'bg-red-500/15 text-red-500 border border-red-500/20',
+  login:      'bg-purple-500/15 text-purple-500 border border-purple-500/20',
+  logout:     'bg-zinc-500/15 text-zinc-400 border border-zinc-500/20',
+  void:       'bg-orange-500/15 text-orange-500 border border-orange-500/20',
+  refund:     'bg-amber-500/15 text-amber-500 border border-amber-500/20',
+  adjustment: 'bg-indigo-500/15 text-indigo-500 border border-indigo-500/20',
+  transfer:   'bg-cyan-500/15 text-cyan-500 border border-cyan-500/20',
+  export:     'bg-teal-500/15 text-teal-500 border border-teal-500/20',
+  view:       'bg-slate-500/15 text-slate-400 border border-slate-500/20',
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export function AuditLogsScreen() {
   const { user } = useAuth()
   const { currentBranch } = useBranch()
 
-  // Admin access check
-  if (user?.role !== 'admin') {
-    return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Card className="border-red-200 bg-red-50 max-w-md">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3 mb-4">
-              <AlertTriangle className="h-8 w-8 text-red-600" />
-              <div>
-                <p className="text-red-700 font-semibold text-lg">Access Denied</p>
-                <p className="text-red-600 text-sm">Admin Only Access</p>
-              </div>
-            </div>
-            <p className="text-red-600 text-sm">
-              You do not have permission to access the audit logs. Only administrators can view system activity logs.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  // State
+  // ── State ──────────────────────────────────────────────────────────────────
   const [logs, setLogs] = useState<AuditLogEntry[]>([])
   const [stats, setStats] = useState<AuditStats | null>(null)
   const [branches, setBranches] = useState<Array<{ id: number; name: string; code: string }>>([])
@@ -167,7 +161,8 @@ export function AuditLogsScreen() {
   const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
 
-  // Fetch branches and users
+  // ── Data fetchers ─────────────────────────────────────────────────────────
+
   const fetchMetadata = useCallback(async () => {
     try {
       const [branchesResult, usersResult] = await Promise.all([
@@ -186,7 +181,6 @@ export function AuditLogsScreen() {
     }
   }, [])
 
-  // Fetch logs
   const fetchLogs = useCallback(async () => {
     setIsLoading(true)
     try {
@@ -220,7 +214,6 @@ export function AuditLogsScreen() {
     }
   }, [page, limit, searchQuery, currentBranch, selectedUser, selectedAction, selectedEntityType, startDate, endDate])
 
-  // Fetch statistics
   const fetchStats = useCallback(async () => {
     try {
       const params: any = {}
@@ -241,25 +234,30 @@ export function AuditLogsScreen() {
     }
   }, [currentBranch, startDate, endDate])
 
-  // Initial load
+  // ── Effects ───────────────────────────────────────────────────────────────
+
   useEffect(() => {
     fetchMetadata()
   }, [fetchMetadata])
 
-  // Fetch data when filters change
   useEffect(() => {
     fetchLogs()
     fetchStats()
   }, [fetchLogs, fetchStats])
 
-  // Apply filters
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleRefresh = () => {
+    fetchLogs()
+    fetchStats()
+  }
+
   const handleApplyFilters = () => {
     setPage(1)
     fetchLogs()
     fetchStats()
   }
 
-  // Reset filters
   const handleResetFilters = () => {
     setSearchQuery('')
     setSelectedUser('all')
@@ -272,7 +270,6 @@ export function AuditLogsScreen() {
     fetchStats()
   }
 
-  // Export logs
   const handleExport = async (format: 'csv' | 'json') => {
     setIsExporting(true)
     try {
@@ -294,7 +291,6 @@ export function AuditLogsScreen() {
 
       if (result.success) {
         if (format === 'csv') {
-          // Download CSV
           const blob = new Blob([result.data], { type: 'text/csv' })
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
@@ -305,7 +301,6 @@ export function AuditLogsScreen() {
           document.body.removeChild(a)
           URL.revokeObjectURL(url)
         } else {
-          // Download JSON
           const blob = new Blob([JSON.stringify(result.data, null, 2)], { type: 'application/json' })
           const url = URL.createObjectURL(blob)
           const a = document.createElement('a')
@@ -326,32 +321,32 @@ export function AuditLogsScreen() {
     }
   }
 
-  // View log details
   const handleViewDetails = (log: AuditLogEntry) => {
     setSelectedLog(log)
     setIsDetailOpen(true)
   }
 
-  // Get action badge
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
   const getActionBadge = (action: string) => {
     const actionInfo = ACTIONS.find((a) => a.value === action)
+    const styles = ACTION_BADGE_STYLES[action] ?? 'bg-zinc-500/15 text-zinc-400 border border-zinc-500/20'
     return (
-      <Badge className={actionInfo?.color || 'bg-gray-100'}>
+      <Badge className={`${styles} font-medium text-[11px] px-2 py-0.5 rounded-md`}>
         {actionInfo?.label || action}
       </Badge>
     )
   }
 
-  // Get entity type badge
-  const getEntityBadge = (entityType: string) => {
-    return (
-      <Badge variant="outline" className="font-mono text-xs">
-        {entityType}
-      </Badge>
-    )
-  }
+  const getEntityBadge = (entityType: string) => (
+    <Badge
+      variant="outline"
+      className="font-mono text-[11px] px-2 py-0.5 border-primary/20 text-primary/80 bg-primary/5"
+    >
+      {entityType}
+    </Badge>
+  )
 
-  // Get user display name
   const getUserDisplay = (log: AuditLogEntry) => {
     if (!log.user) return 'System'
     return log.user.fullName || log.user.username || 'Unknown'
@@ -359,428 +354,614 @@ export function AuditLogsScreen() {
 
   const totalPages = Math.ceil(total / limit)
 
-  return (
-    <div className="p-6 space-y-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <FileText className="w-8 h-8" />
-            Activity Logs
-          </h1>
-          <p className="text-muted-foreground">
-            Comprehensive audit trail of all system operations
-            {currentBranch && (
-              <span className="text-primary font-medium"> - {currentBranch.name}</span>
-            )}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { fetchLogs(); fetchStats() }}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Refresh
-          </Button>
-          <Button variant="outline" onClick={() => handleExport('csv')} disabled={isExporting}>
-            <Download className="w-4 h-4 mr-2" />
-            Export CSV
-          </Button>
-          <Button variant="outline" onClick={() => handleExport('json')} disabled={isExporting}>
-            <FileText className="w-4 h-4 mr-2" />
-            Export JSON
-          </Button>
-        </div>
-      </div>
-
-      {/* Statistics Cards */}
-      {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Activity className="w-4 h-4" />
-                Total Logs
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalLogs.toLocaleString()}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <Clock className="w-4 h-4" />
-                Today's Activity
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600">{stats.todayLogs.toLocaleString()}</div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <User className="w-4 h-4" />
-                Active Users
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.activeUsers.length}</div>
-            </CardContent>
-          </Card>
-
-          <Card className={stats.criticalEvents.length > 0 ? 'border-red-200' : ''}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />
-                Critical Events
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${stats.criticalEvents.length > 0 ? 'text-red-600' : ''}`}>
-                {stats.criticalEvents.length}
+  // ── Admin access guard ────────────────────────────────────────────────────
+  // Rendered inside return so all hooks above are always called unconditionally.
+  if (user?.role !== 'admin') {
+    return (
+      <div className="flex items-center justify-center h-[60vh]">
+        <Card className="border-red-500/30 bg-red-500/5 max-w-md">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg bg-red-500/10">
+                <ShieldAlert className="h-6 w-6 text-red-500" />
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+              <div>
+                <p className="text-foreground font-semibold text-base">Access Denied</p>
+                <p className="text-red-500 text-xs font-mono uppercase tracking-wider">Admin Only</p>
+              </div>
+            </div>
+            <p className="text-muted-foreground text-sm leading-relaxed">
+              You do not have permission to access the audit logs. Only administrators can view system activity logs.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
 
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Filter className="w-5 h-5" />
-            Filters
-          </CardTitle>
-          <CardDescription>Filter audit logs by various criteria</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Search Row */}
-          <div className="flex gap-4">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+  // ── Derived values for detail dialog diff view ────────────────────────────
+  const diffKeys: string[] =
+    selectedLog?.auditLog.oldValues && selectedLog?.auditLog.newValues
+      ? Object.keys(selectedLog.auditLog.newValues).filter((key) => {
+          const oldVal = (selectedLog.auditLog.oldValues as Record<string, unknown>)[key]
+          const newVal = (selectedLog.auditLog.newValues as Record<string, unknown>)[key]
+          return JSON.stringify(oldVal) !== JSON.stringify(newVal)
+        })
+      : []
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="flex flex-col h-full max-w-7xl mx-auto">
+      {/* Primary accent top-line */}
+      <div className="h-0.5 w-full bg-gradient-to-r from-transparent via-primary/60 to-transparent" />
+
+      <div className="p-5 space-y-4 flex-1 overflow-auto">
+
+        {/* ── Header ──────────────────────────────────────────────── */}
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+              <FileText className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold leading-tight tracking-tight">
+                Activity Logs
+              </h1>
+              <p className="text-xs text-muted-foreground leading-none mt-0.5">
+                Audit trail · all system operations
+                {currentBranch && (
+                  <span className="text-primary font-medium"> — {currentBranch.name}</span>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+              onClick={handleRefresh}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Refresh
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-3 text-xs gap-1.5 border-primary/20 hover:border-primary/40 hover:bg-primary/5"
+              onClick={() => handleExport('csv')}
+              disabled={isExporting}
+            >
+              <Download className="w-3.5 h-3.5 text-primary" />
+              CSV
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 px-3 text-xs gap-1.5 border-primary/20 hover:border-primary/40 hover:bg-primary/5"
+              onClick={() => handleExport('json')}
+              disabled={isExporting}
+            >
+              <FileText className="w-3.5 h-3.5 text-primary" />
+              JSON
+            </Button>
+          </div>
+        </div>
+
+        {/* ── Statistics Bar ───────────────────────────────────────── */}
+        {stats && (
+          <div className="grid grid-cols-4 gap-3">
+            {/* Total Logs */}
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 border-l-2 border-l-primary/50">
+              <div className="p-1.5 rounded-md bg-primary/10">
+                <Activity className="w-4 h-4 text-primary" />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Total Logs</p>
+                <p className="text-xl font-bold leading-tight">{stats.totalLogs.toLocaleString()}</p>
+              </div>
+            </div>
+
+            {/* Today's Activity */}
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 border-l-2 border-l-emerald-500/50">
+              <div className="p-1.5 rounded-md bg-emerald-500/10">
+                <Clock className="w-4 h-4 text-emerald-500" />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Today</p>
+                <p className="text-xl font-bold leading-tight text-emerald-500">{stats.todayLogs.toLocaleString()}</p>
+              </div>
+            </div>
+
+            {/* Active Users */}
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 border-l-2 border-l-blue-500/50">
+              <div className="p-1.5 rounded-md bg-blue-500/10">
+                <User className="w-4 h-4 text-blue-500" />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Active Users</p>
+                <p className="text-xl font-bold leading-tight">{stats.activeUsers.length}</p>
+              </div>
+            </div>
+
+            {/* Critical Events */}
+            <div className={`flex items-center gap-3 rounded-lg border bg-card px-4 py-3 border-l-2 ${
+              stats.criticalEvents.length > 0
+                ? 'border-red-500/30 border-l-red-500/60'
+                : 'border-border border-l-zinc-500/30'
+            }`}>
+              <div className={`p-1.5 rounded-md ${stats.criticalEvents.length > 0 ? 'bg-red-500/10' : 'bg-zinc-500/10'}`}>
+                <AlertTriangle className={`w-4 h-4 ${stats.criticalEvents.length > 0 ? 'text-red-500' : 'text-zinc-500'}`} />
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Critical Events</p>
+                <p className={`text-xl font-bold leading-tight ${stats.criticalEvents.length > 0 ? 'text-red-500' : ''}`}>
+                  {stats.criticalEvents.length}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Filter Bar ───────────────────────────────────────────── */}
+        <div className="rounded-lg border border-border bg-card">
+          {/* Filter header row */}
+          <div className="flex items-center gap-3 px-4 py-2.5 border-b border-border">
+            <Filter className="w-3.5 h-3.5 text-primary/70" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Filters</span>
+          </div>
+
+          {/* Filter controls */}
+          <div className="px-4 py-3 flex flex-wrap items-center gap-3">
+            {/* Search */}
+            <div className="relative flex-1 min-w-48">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <Input
-                placeholder="Search logs by user, action, entity, or description..."
+                placeholder="Search user, action, description..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
+                className="pl-8 h-8 text-xs"
               />
             </div>
-          </div>
 
-          {/* Filter Rows */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {/* User */}
-            <div className="space-y-2">
-              <Label>User</Label>
-              <Select value={selectedUser} onValueChange={setSelectedUser}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Users" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Users</SelectItem>
-                  {users.map((u) => (
-                    <SelectItem key={u.id} value={u.id.toString()}>
-                      {u.fullName || u.username}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* User select */}
+            <Select value={selectedUser} onValueChange={setSelectedUser}>
+              <SelectTrigger className="h-8 w-36 text-xs">
+                <SelectValue placeholder="All Users" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Users</SelectItem>
+                {users.map((u) => (
+                  <SelectItem key={u.id} value={u.id.toString()}>
+                    {u.fullName || u.username}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-            {/* Action */}
-            <div className="space-y-2">
-              <Label>Action</Label>
-              <Select value={selectedAction} onValueChange={setSelectedAction}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Actions" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Actions</SelectItem>
-                  {ACTIONS.map((action) => (
-                    <SelectItem key={action.value} value={action.value}>
-                      {action.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Action select */}
+            <Select value={selectedAction} onValueChange={setSelectedAction}>
+              <SelectTrigger className="h-8 w-36 text-xs">
+                <SelectValue placeholder="All Actions" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Actions</SelectItem>
+                {ACTIONS.map((action) => (
+                  <SelectItem key={action.value} value={action.value}>
+                    {action.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-            {/* Entity Type */}
-            <div className="space-y-2">
-              <Label>Entity Type</Label>
-              <Select value={selectedEntityType} onValueChange={setSelectedEntityType}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Entities" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Entities</SelectItem>
-                  {ENTITY_TYPES.map((type) => (
-                    <SelectItem key={type} value={type}>
-                      {type.charAt(0).toUpperCase() + type.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
+            {/* Entity type select */}
+            <Select value={selectedEntityType} onValueChange={setSelectedEntityType}>
+              <SelectTrigger className="h-8 w-36 text-xs">
+                <SelectValue placeholder="All Entities" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Entities</SelectItem>
+                {ENTITY_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type.charAt(0).toUpperCase() + type.slice(1)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
-          {/* Date Range */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Start Date</Label>
+            {/* Date range */}
+            <div className="flex items-center gap-1.5">
+              <Calendar className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
               <Input
                 type="date"
                 value={startDate}
                 onChange={(e) => setStartDate(e.target.value)}
+                className="h-8 w-34 text-xs"
+                aria-label="Start date"
               />
-            </div>
-            <div className="space-y-2">
-              <Label>End Date</Label>
+              <span className="text-muted-foreground text-xs">—</span>
               <Input
                 type="date"
                 value={endDate}
                 onChange={(e) => setEndDate(e.target.value)}
+                className="h-8 w-34 text-xs"
+                aria-label="End date"
               />
             </div>
-          </div>
 
-          {/* Action Buttons */}
-          <div className="flex gap-2">
-            <Button onClick={handleApplyFilters}>
-              <Filter className="w-4 h-4 mr-2" />
-              Apply Filters
+            {/* Action buttons */}
+            <Button
+              size="sm"
+              className="h-8 px-3 text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+              onClick={handleApplyFilters}
+            >
+              Apply
             </Button>
-            <Button variant="outline" onClick={handleResetFilters}>
-              <XCircle className="w-4 h-4 mr-2" />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 px-3 text-xs text-muted-foreground"
+              onClick={handleResetFilters}
+            >
+              <XCircle className="w-3.5 h-3.5 mr-1" />
               Reset
             </Button>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Logs Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center justify-between">
-            <span>Audit Logs</span>
-            <span className="text-sm font-normal text-muted-foreground">
-              Showing {logs.length > 0 ? (page - 1) * limit + 1 : 0} - {Math.min(page * limit, total)} of {total.toLocaleString()}
-            </span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : logs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <FileText className="w-12 h-12 mb-4 opacity-50" />
-              <p>No audit logs found</p>
-              <p className="text-sm">Try adjusting your filters</p>
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-48">Date & Time</TableHead>
-                  <TableHead>User</TableHead>
-                  <TableHead>Action</TableHead>
-                  <TableHead>Entity</TableHead>
-                  <TableHead className="hidden lg:table-cell">Description</TableHead>
-                  <TableHead className="text-right w-24">View</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {logs.map((log) => (
-                  <TableRow
-                    key={log.auditLog.id}
-                    className={CRITICAL_ACTIONS.includes(log.auditLog.action) ? 'bg-red-50/50' : ''}
-                  >
-                    <TableCell className="font-mono text-xs">
-                      {new Date(log.auditLog.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <User className="w-4 h-4 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium text-sm">{getUserDisplay(log)}</p>
-                          {log.user?.role && (
-                            <p className="text-xs text-muted-foreground capitalize">{log.user.role}</p>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>{getActionBadge(log.auditLog.action)}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {getEntityBadge(log.auditLog.entityType)}
-                        {log.auditLog.entityId && (
-                          <span className="text-xs text-muted-foreground">#{log.auditLog.entityId}</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell max-w-xs truncate">
-                      {log.auditLog.description || '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleViewDetails(log)}
-                      >
-                        <Eye className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Pagination */}
-      {logs.length > 0 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Page {page} of {totalPages || 1}
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page === 1}
-            >
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-            >
-              Next
-            </Button>
-          </div>
         </div>
-      )}
 
-      {/* Active Users Stats */}
-      {stats && stats.activeUsers.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <User className="w-5 h-5" />
-              Most Active Users
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        {/* ── Logs Table Card ──────────────────────────────────────── */}
+        <Card className="overflow-hidden">
+          {/* Table header row */}
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Activity className="w-3.5 h-3.5 text-primary/70" />
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Audit Logs
+              </span>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {logs.length > 0
+                ? `${(page - 1) * limit + 1}–${Math.min(page * limit, total)} of ${total.toLocaleString()}`
+                : `0 of ${total.toLocaleString()}`}
+            </span>
+          </div>
+
+          <CardContent className="p-0">
+            {isLoading ? (
+              <div className="flex items-center justify-center py-16">
+                <RefreshCw className="w-6 h-6 animate-spin text-primary/50" />
+                <span className="ml-2 text-sm text-muted-foreground">Loading logs...</span>
+              </div>
+            ) : logs.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                <FileText className="w-10 h-10 mb-3 opacity-20" />
+                <p className="text-sm font-medium">No audit logs found</p>
+                <p className="text-xs opacity-60 mt-0.5">Try adjusting your filters</p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent border-b border-border">
+                    <TableHead className="w-40 text-[11px] uppercase tracking-wider text-muted-foreground font-semibold py-2">
+                      Date & Time
+                    </TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold py-2">
+                      User
+                    </TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold py-2">
+                      Action
+                    </TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold py-2">
+                      Entity
+                    </TableHead>
+                    <TableHead className="hidden lg:table-cell text-[11px] uppercase tracking-wider text-muted-foreground font-semibold py-2">
+                      Description
+                    </TableHead>
+                    <TableHead className="text-right w-16 text-[11px] uppercase tracking-wider text-muted-foreground font-semibold py-2">
+                      Details
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logs.map((log, idx) => {
+                    const isCritical = CRITICAL_ACTIONS.includes(log.auditLog.action as typeof CRITICAL_ACTIONS[number])
+                    return (
+                      <TableRow
+                        key={log.auditLog.id}
+                        className={[
+                          'border-b border-border/50 transition-colors',
+                          isCritical
+                            ? 'bg-red-500/5 border-l-2 border-l-red-500/40 hover:bg-red-500/8'
+                            : idx % 2 === 0
+                              ? 'bg-transparent hover:bg-muted/40'
+                              : 'bg-muted/20 hover:bg-muted/40',
+                        ].join(' ')}
+                      >
+                        {/* Date & Time */}
+                        <TableCell className="py-2 pr-4">
+                          <span className="font-mono text-[11px] text-muted-foreground">
+                            {new Date(log.auditLog.createdAt).toLocaleString(undefined, {
+                              month: 'short',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })}
+                          </span>
+                        </TableCell>
+
+                        {/* User */}
+                        <TableCell className="py-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-6 h-6 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                              <User className="w-3 h-3 text-primary/70" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium leading-tight truncate max-w-28">
+                                {getUserDisplay(log)}
+                              </p>
+                              {log.user?.role && (
+                                <p className="text-[10px] text-muted-foreground capitalize leading-none mt-0.5">
+                                  {log.user.role}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+
+                        {/* Action badge */}
+                        <TableCell className="py-2">
+                          {getActionBadge(log.auditLog.action)}
+                        </TableCell>
+
+                        {/* Entity */}
+                        <TableCell className="py-2">
+                          <div className="flex items-center gap-1.5">
+                            {getEntityBadge(log.auditLog.entityType)}
+                            {log.auditLog.entityId && (
+                              <span className="text-[10px] text-muted-foreground font-mono">
+                                #{log.auditLog.entityId}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+
+                        {/* Description */}
+                        <TableCell className="hidden lg:table-cell py-2 max-w-xs">
+                          <span
+                            className="text-xs text-muted-foreground truncate block max-w-64"
+                            title={log.auditLog.description ?? ''}
+                          >
+                            {log.auditLog.description || <span className="opacity-30">—</span>}
+                          </span>
+                        </TableCell>
+
+                        {/* View */}
+                        <TableCell className="text-right py-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0 hover:bg-primary/10 hover:text-primary"
+                            onClick={() => handleViewDetails(log)}
+                            aria-label="View log details"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+
+            {/* Inline Pagination */}
+            {logs.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-2.5 border-t border-border bg-muted/10">
+                <p className="text-xs text-muted-foreground">
+                  Page <span className="font-medium text-foreground">{page}</span> of{' '}
+                  <span className="font-medium text-foreground">{totalPages || 1}</span>
+                </p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0 border-border"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    aria-label="Previous page"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </Button>
+                  {/* Page number chips — show at most 5 around current page */}
+                  {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                    const startPage = Math.max(1, Math.min(page - 2, totalPages - 4))
+                    return startPage + i
+                  }).map((p) => (
+                    <Button
+                      key={p}
+                      variant={p === page ? 'default' : 'ghost'}
+                      size="sm"
+                      className={`h-7 w-7 p-0 text-xs ${
+                        p === page
+                          ? 'bg-primary hover:bg-primary/90 text-primary-foreground font-bold'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 w-7 p-0 border-border"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page >= totalPages}
+                    aria-label="Next page"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ── Most Active Users Bar ────────────────────────────────── */}
+        {stats && stats.activeUsers.length > 0 && (
+          <div className="rounded-lg border border-border bg-card px-4 py-3">
+            <div className="flex items-center gap-2 mb-3">
+              <User className="w-3.5 h-3.5 text-primary/70" />
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Most Active Users
+              </span>
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
               {stats.activeUsers.slice(0, 5).map((u, idx) => (
-                <div key={u.userId} className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-semibold text-sm">
+                <div
+                  key={u.userId}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted/40 border border-border/50"
+                >
+                  <div className="w-5 h-5 rounded-full bg-primary/15 border border-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">
                     {idx + 1}
                   </div>
                   <div>
-                    <p className="font-medium text-sm">{u.fullName || u.username || 'Unknown'}</p>
-                    <p className="text-xs text-muted-foreground">{u.count} actions</p>
+                    <p className="text-xs font-medium leading-tight">{u.fullName || u.username || 'Unknown'}</p>
+                    <p className="text-[10px] text-muted-foreground leading-none mt-0.5">
+                      {u.count.toLocaleString()} actions
+                    </p>
                   </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+      </div>
 
-      {/* Detail Dialog */}
+      {/* ── Detail Dialog ────────────────────────────────────────── */}
       <Dialog open={isDetailOpen} onOpenChange={setIsDetailOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Audit Log Details - #{selectedLog?.auditLog.id}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <div className="p-1.5 rounded-md bg-primary/10">
+                <FileText className="w-4 h-4 text-primary" />
+              </div>
+              Log Details
+              <span className="font-mono text-xs text-muted-foreground font-normal ml-1">
+                #{selectedLog?.auditLog.id}
+              </span>
+            </DialogTitle>
           </DialogHeader>
+
           {selectedLog && (
-            <div className="space-y-6">
-              {/* Header Info */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-muted-foreground text-xs">Date & Time</Label>
-                  <p className="font-mono text-sm">{new Date(selectedLog.auditLog.createdAt).toLocaleString()}</p>
+            <div className="space-y-4 mt-1">
+              {/* Core metadata grid */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-3 sm:col-span-1 rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Date & Time</p>
+                  <p className="font-mono text-xs leading-tight">
+                    {new Date(selectedLog.auditLog.createdAt).toLocaleString()}
+                  </p>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Action</Label>
-                  <div className="mt-1">{getActionBadge(selectedLog.auditLog.action)}</div>
+
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1.5">Action</p>
+                  {getActionBadge(selectedLog.auditLog.action)}
                 </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">User</Label>
-                  <p className="font-medium">{getUserDisplay(selectedLog)}</p>
+
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1.5">Entity</p>
+                  <div className="flex items-center gap-1.5">
+                    {getEntityBadge(selectedLog.auditLog.entityType)}
+                    {selectedLog.auditLog.entityId && (
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        #{selectedLog.auditLog.entityId}
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Role</Label>
-                  <p className="capitalize">{selectedLog.user?.role || 'System'}</p>
+
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">User</p>
+                  <p className="text-xs font-medium">{getUserDisplay(selectedLog)}</p>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Entity Type</Label>
-                  <div className="mt-1">{getEntityBadge(selectedLog.auditLog.entityType)}</div>
+
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Role</p>
+                  <p className="text-xs capitalize">{selectedLog.user?.role || 'System'}</p>
                 </div>
-                <div>
-                  <Label className="text-muted-foreground text-xs">Entity ID</Label>
-                  <p className="font-mono">{selectedLog.auditLog.entityId || 'N/A'}</p>
+
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Username</p>
+                  <p className="text-xs font-mono">{selectedLog.user?.username || '—'}</p>
                 </div>
               </div>
 
               {/* Description */}
               {selectedLog.auditLog.description && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Description</Label>
-                  <p className="mt-1">{selectedLog.auditLog.description}</p>
+                <div className="rounded-md bg-muted/30 border border-border px-3 py-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1">Description</p>
+                  <p className="text-xs leading-relaxed">{selectedLog.auditLog.description}</p>
                 </div>
               )}
 
-              {/* Old Values */}
-              {selectedLog.auditLog.oldValues && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Old Values</Label>
-                  <pre className="mt-1 p-3 bg-muted rounded-lg text-xs overflow-x-auto">
-                    {JSON.stringify(selectedLog.auditLog.oldValues, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              {/* New Values */}
-              {selectedLog.auditLog.newValues && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">New Values</Label>
-                  <pre className="mt-1 p-3 bg-muted rounded-lg text-xs overflow-x-auto">
-                    {JSON.stringify(selectedLog.auditLog.newValues, null, 2)}
-                  </pre>
-                </div>
-              )}
-
-              {/* Change Diff */}
-              {selectedLog.auditLog.oldValues && selectedLog.auditLog.newValues && (
-                <div>
-                  <Label className="text-muted-foreground text-xs">Changes</Label>
-                  <div className="mt-2 space-y-1">
-                    {Object.keys(selectedLog.auditLog.newValues).map((key) => {
-                      const oldVal = (selectedLog.auditLog.oldValues as Record<string, unknown>)?.[key]
-                      const newVal = (selectedLog.auditLog.newValues as Record<string, unknown>)?.[key]
-                      if (JSON.stringify(oldVal) !== JSON.stringify(newVal)) {
-                        return (
-                          <div key={key} className="flex items-center gap-2 text-sm">
-                            <span className="font-mono text-muted-foreground w-32 truncate">{key}:</span>
-                            <span className="line-through text-red-500">{String(oldVal ?? '')}</span>
-                            <span className="mx-1">→</span>
-                            <span className="text-green-600">{String(newVal ?? '')}</span>
+              {/* Change Diff — derived outside JSX to avoid IIFE pattern */}
+              {diffKeys.length > 0 && (
+                <div className="rounded-md border border-border overflow-hidden">
+                  <div className="px-3 py-2 bg-muted/40 border-b border-border">
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+                      Changes ({diffKeys.length} field{diffKeys.length !== 1 ? 's' : ''})
+                    </p>
+                  </div>
+                  <div className="divide-y divide-border/50">
+                    {diffKeys.map((key) => {
+                      const oldVal = (selectedLog.auditLog.oldValues as Record<string, unknown>)[key]
+                      const newVal = (selectedLog.auditLog.newValues as Record<string, unknown>)[key]
+                      return (
+                        <div key={key} className="flex items-start gap-3 px-3 py-2 text-xs">
+                          <span className="font-mono text-muted-foreground w-28 shrink-0 truncate pt-0.5">{key}</span>
+                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                            <span className="line-through text-red-500 bg-red-500/8 px-1.5 py-0.5 rounded text-[11px] max-w-32 truncate">
+                              {String(oldVal ?? '')}
+                            </span>
+                            <span className="text-muted-foreground text-[10px]">→</span>
+                            <span className="text-emerald-500 bg-emerald-500/8 px-1.5 py-0.5 rounded text-[11px] max-w-32 truncate">
+                              {String(newVal ?? '')}
+                            </span>
                           </div>
-                        )
-                      }
-                      return null
+                        </div>
+                      )
                     })}
                   </div>
+                </div>
+              )}
+
+              {/* Raw values — side by side */}
+              {(selectedLog.auditLog.oldValues || selectedLog.auditLog.newValues) && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {selectedLog.auditLog.oldValues && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1.5 px-1">
+                        Old Values
+                      </p>
+                      <pre className="p-3 bg-red-500/5 border border-red-500/15 rounded-md text-[11px] overflow-x-auto leading-relaxed max-h-48">
+                        {JSON.stringify(selectedLog.auditLog.oldValues, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {selectedLog.auditLog.newValues && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium mb-1.5 px-1">
+                        New Values
+                      </p>
+                      <pre className="p-3 bg-emerald-500/5 border border-emerald-500/15 rounded-md text-[11px] overflow-x-auto leading-relaxed max-h-48">
+                        {JSON.stringify(selectedLog.auditLog.newValues, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

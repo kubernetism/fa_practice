@@ -1,14 +1,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { Shield, Copy, Key, Power, RefreshCw, Terminal, AlertTriangle } from 'lucide-react'
+import { Shield, Copy, Key, Power, RefreshCw, Terminal, AlertTriangle, CheckCircle2, Clock, XCircle } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { ActivateLicenseDialog } from '@/components/license/activate-license-dialog'
 import { LicenseHistory } from '@/components/license/license-history'
+
+// Static — defined at module level to avoid recreating on every render
+const DEACTIVATION_CONSEQUENCES = [
+  'Remove your full license from this machine',
+  'Revert the application to trial mode (30 days)',
+  'Require you to generate a new license key to continue',
+] as const
 
 type LicenseStatus =
   | 'TRIAL_ACTIVE'
@@ -51,11 +56,16 @@ export function LicenseSettingsScreen() {
   const [isDeactivating, setIsDeactivating] = useState(false)
   const [showActivateDialog, setShowActivateDialog] = useState(false)
   const [machineId, setMachineId] = useState<string>('')
-  const [instructions, setInstructions] = useState<string>('')
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
   const [deactivateConfirmOpen, setDeactivateConfirmOpen] = useState(false)
   const [deactivateClickCount, setDeactivateClickCount] = useState(0)
   const [showFinalWarning, setShowFinalWarning] = useState(false)
+
+  // Defined before fetchLicenseInfo so it is in scope when the callback runs
+  const showToast = useCallback((message: string, type: 'success' | 'error') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }, [])
 
   const fetchLicenseInfo = useCallback(async () => {
     try {
@@ -76,7 +86,6 @@ export function LicenseSettingsScreen() {
 
       if (requestResult.success && requestResult.data) {
         setMachineId(requestResult.data.machineId || '')
-        setInstructions(requestResult.data.instructions || '')
       }
     } catch (error) {
       console.error('Failed to fetch license info:', error)
@@ -84,16 +93,11 @@ export function LicenseSettingsScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [showToast])
 
   useEffect(() => {
     fetchLicenseInfo()
   }, [fetchLicenseInfo])
-
-  const showToast = (message: string, type: 'success' | 'error') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
-  }
 
   const handleCopyMachineId = () => {
     if (machineId) {
@@ -175,16 +179,18 @@ export function LicenseSettingsScreen() {
   if (user?.role?.toLowerCase() !== 'admin') {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <Card className="max-w-md">
+        <Card className="max-w-md border border-red-500/30 bg-zinc-900">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3 mb-4">
-              <Shield className="h-8 w-8 text-red-600" />
+              <div className="p-2 rounded-lg bg-red-500/10">
+                <Shield className="h-7 w-7 text-red-500" />
+              </div>
               <div>
-                <p className="text-red-700 font-semibold text-lg">Access Denied</p>
-                <p className="text-red-600 text-sm">Admin Only Access</p>
+                <p className="text-red-400 font-semibold text-lg tracking-wide">Access Denied</p>
+                <p className="text-red-500/70 text-sm">Administrator clearance required</p>
               </div>
             </div>
-            <p className="text-red-600 text-sm">
+            <p className="text-zinc-400 text-sm border-l-2 border-red-500/50 pl-3">
               You do not have permission to access the license settings. Only administrators can manage application licensing.
             </p>
           </CardContent>
@@ -195,349 +201,476 @@ export function LicenseSettingsScreen() {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-3">
+        <RefreshCw className="w-7 h-7 animate-spin text-primary" />
+        <p className="text-zinc-500 text-sm tracking-widest uppercase text-xs">Loading License Data</p>
       </div>
     )
   }
 
+  // Dark-mode compatible status configurations
   const getStatusConfig = () => {
     switch (licenseInfo?.status) {
       case 'TRIAL_ACTIVE':
-        return { color: 'text-yellow-600', bg: 'bg-yellow-100', label: 'Trial Period', icon: Shield }
+        return {
+          color: 'text-amber-500',
+          bg: 'bg-amber-500/10',
+          border: 'border-amber-500',
+          label: 'Trial Active',
+          icon: Clock,
+          progressColor: 'bg-amber-500',
+        }
       case 'TRIAL_EXPIRED':
-        return { color: 'text-orange-600', bg: 'bg-orange-100', label: 'Trial Expired', icon: Shield }
+        return {
+          color: 'text-orange-500',
+          bg: 'bg-orange-500/10',
+          border: 'border-orange-500',
+          label: 'Trial Expired',
+          icon: XCircle,
+          progressColor: 'bg-orange-500',
+        }
       case 'LICENSE_ACTIVE':
-        return { color: 'text-green-600', bg: 'bg-green-100', label: 'Licensed', icon: Shield }
+        return {
+          color: 'text-emerald-500',
+          bg: 'bg-emerald-500/10',
+          border: 'border-emerald-500',
+          label: 'Licensed',
+          icon: CheckCircle2,
+          progressColor: 'bg-emerald-500',
+        }
       case 'LICENSE_EXPIRED':
-        return { color: 'text-red-600', bg: 'bg-red-100', label: 'License Expired', icon: Shield }
+        return {
+          color: 'text-red-500',
+          bg: 'bg-red-500/10',
+          border: 'border-red-500',
+          label: 'License Expired',
+          icon: XCircle,
+          progressColor: 'bg-red-500',
+        }
       default:
-        return { color: 'text-gray-600', bg: 'bg-gray-100', label: 'Unknown', icon: Shield }
+        return {
+          color: 'text-zinc-400',
+          bg: 'bg-zinc-500/10',
+          border: 'border-zinc-500',
+          label: 'Unknown',
+          icon: Shield,
+          progressColor: 'bg-zinc-500',
+        }
     }
   }
 
   const statusConfig = getStatusConfig()
   const StatusIcon = statusConfig.icon
 
+  // Calculate progress bar width for days remaining (cap at 365)
+  const maxDays = 365
+  const daysRemaining = licenseInfo?.daysRemaining ?? 0
+  const progressPct = Math.min(Math.max((daysRemaining / maxDays) * 100, 0), 100)
+
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-2">
-            <Shield className="w-8 h-8" />
-            Application Licence Settings
-          </h1>
-          <p className="text-muted-foreground">
-            Manage your application license and trial status
-          </p>
+    <div className="border-t-2 border-primary/30">
+      <div className="p-5 max-w-7xl mx-auto space-y-5">
+
+        {/* Toast */}
+        {toast && (
+          <div
+            className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-2xl text-sm font-medium border transition-all ${
+              toast.type === 'success'
+                ? 'bg-zinc-900 border-primary/50 text-primary shadow-primary/10'
+                : 'bg-zinc-900 border-red-500/50 text-red-400 shadow-red-500/10'
+            }`}
+          >
+            {toast.type === 'success'
+              ? <CheckCircle2 className="w-4 h-4 shrink-0" />
+              : <AlertTriangle className="w-4 h-4 shrink-0" />
+            }
+            {toast.message}
+          </div>
+        )}
+
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+              <Shield className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold text-zinc-100 tracking-wide">
+                License Settings
+              </h1>
+              <p className="text-xs text-zinc-500">Manage application licensing and trial status</p>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchLicenseInfo}
+            disabled={isLoading}
+            className="border-zinc-700 text-zinc-400 hover:text-primary hover:border-primary/50 bg-transparent text-xs"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </div>
-        <Button variant="outline" onClick={fetchLicenseInfo} disabled={isLoading}>
-          <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
-      </div>
 
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed top-4 right-4 z-50 p-4 rounded-md shadow-lg ${
-            toast.type === 'success'
-              ? 'bg-green-500 text-white'
-              : 'bg-red-500 text-white'
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
+        {/* Main 2-column layout */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-5">
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* License Status Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <StatusIcon className={`w-5 h-5 ${statusConfig.color}`} />
-              License Status
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <Badge className={`${statusConfig.bg} ${statusConfig.color}`}>
-                {statusConfig.label}
-              </Badge>
-              {licenseInfo?.daysRemaining !== undefined && licenseInfo.daysRemaining > 0 && (
-                <span className="text-sm text-muted-foreground">
-                  {licenseInfo.daysRemaining} days remaining
-                </span>
-              )}
-            </div>
+          {/* LEFT COLUMN — Status + Machine ID */}
+          <div className="lg:col-span-2 flex flex-col gap-4">
 
-            <div className="p-4 rounded-lg bg-muted">
-              <p className="text-sm font-medium">{licenseInfo?.message}</p>
-              {licenseInfo?.expiresAt && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Expires: {new Date(licenseInfo.expiresAt).toLocaleDateString()}
-                </p>
-              )}
-            </div>
-
-            {/* Machine ID */}
-            <div className="space-y-2">
-              <Label>Machine ID</Label>
-              <div className="flex gap-2">
-                <code className="flex-1 p-2 rounded bg-muted text-xs font-mono break-all">
-                  {machineId.substring(0, 20)}...
-                </code>
-                <Button variant="outline" size="sm" onClick={handleCopyMachineId}>
-                  <Copy className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-
-            {/* Generate License Button */}
-            <Button variant="outline" className="w-full" onClick={handleGenerateRequest}>
-              <Terminal className="w-4 h-4 mr-2" />
-              Copy Machine ID & Generate License
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* License Details */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>License Details</CardTitle>
-            <CardDescription>
-              {licenseInfo?.isActivated ? 'Your full license information' : 'Current license information and actions'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Full License Details - Show when licensed */}
-            {licenseInfo?.isActivated && licenseInfo.status === 'LICENSE_ACTIVE' ? (
-              <div className="space-y-6">
-                <div className="flex items-center gap-3 p-4 rounded-lg bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800">
-                  <Shield className="w-8 h-8 text-green-600" />
-                  <div>
-                    <p className="font-semibold text-green-800 dark:text-green-200">Full License Activated</p>
-                    <p className="text-sm text-green-600 dark:text-green-300">
-                      Your license is valid and active
-                    </p>
+            {/* License Status Panel */}
+            <Card className={`border-l-4 ${statusConfig.border} border-zinc-800 bg-zinc-900/80`}>
+              <CardContent className="pt-5 pb-5 space-y-4">
+                {/* Status header */}
+                <div className="flex items-center justify-between">
+                  <div className={`flex items-center gap-2 ${statusConfig.color}`}>
+                    <div className={`p-1.5 rounded-md ${statusConfig.bg}`}>
+                      <StatusIcon className="w-4 h-4" />
+                    </div>
+                    <span className="font-semibold text-sm tracking-wide">{statusConfig.label}</span>
                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">License Key</p>
-                    <code className="flex items-center gap-2 p-2 rounded bg-muted text-xs font-mono break-all">
-                      {licenseInfo.licenseStartDate ? '••••••••••••••••' : '-'}
-                    </code>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">License Type</p>
-                    <p className="font-medium">Subscription License</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Installation Date</p>
-                    <p className="font-medium">
-                      {licenseInfo.installationDate
-                        ? new Date(licenseInfo.installationDate).toLocaleDateString()
-                        : '-'}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">License Start Date</p>
-                    <p className="font-medium">
-                      {licenseInfo.licenseStartDate
-                        ? new Date(licenseInfo.licenseStartDate).toLocaleDateString()
-                        : '-'}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">License End Date</p>
-                    <p className="font-medium">
-                      {licenseInfo.licenseEndDate
-                        ? new Date(licenseInfo.licenseEndDate).toLocaleDateString()
-                        : '-'}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Days Remaining</p>
-                    <p className="font-medium text-green-600">
-                      {licenseInfo.daysRemaining} days
-                    </p>
-                  </div>
-                  <div className="space-y-1 col-span-2">
-                    <p className="text-sm text-muted-foreground">Machine ID</p>
-                    <code className="flex items-center gap-2 p-2 rounded bg-muted text-xs font-mono break-all">
-                      {machineId}
-                    </code>
-                  </div>
-                </div>
-
-                <div className="flex gap-2 pt-4">
-                  <Button
-                    variant="destructive"
-                    onClick={handleDeactivate}
-                    disabled={isDeactivating}
-                    className="gap-2"
+                  <Badge
+                    className={`text-xs font-medium border ${statusConfig.bg} ${statusConfig.color} ${statusConfig.border} bg-opacity-10`}
                   >
-                    <Power className="w-4 h-4" />
-                    {isDeactivating ? 'Deactivating...' : 'Deactivate License'}
-                  </Button>
+                    {licenseInfo?.isActivated ? 'ACTIVATED' : licenseInfo?.isTrial ? 'TRIAL' : 'INACTIVE'}
+                  </Badge>
                 </div>
-              </div>
-            ) : (
-              /* Trial Details */
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Installation Date</p>
-                    <p className="font-medium">
-                      {licenseInfo?.installationDate
-                        ? new Date(licenseInfo.installationDate).toLocaleDateString()
-                        : '-'}
+
+                {/* Status message */}
+                <div className={`px-3 py-2.5 rounded-md ${statusConfig.bg} border ${statusConfig.border} border-opacity-30`}>
+                  <p className={`text-xs font-medium ${statusConfig.color}`}>{licenseInfo?.message}</p>
+                  {licenseInfo?.expiresAt && (
+                    <p className="text-xs text-zinc-500 mt-0.5">
+                      Expires {new Date(licenseInfo.expiresAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                     </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-sm text-muted-foreground">Trial End Date</p>
-                    <p className="font-medium">
-                      {licenseInfo?.trialEndDate
-                        ? new Date(licenseInfo.trialEndDate).toLocaleDateString()
-                        : '-'}
-                    </p>
-                  </div>
-                  {licenseInfo?.isActivated && (
-                    <>
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">License Start</p>
-                        <p className="font-medium">
-                          {licenseInfo.licenseStartDate
-                            ? new Date(licenseInfo.licenseStartDate).toLocaleDateString()
-                            : '-'}
-                        </p>
-                      </div>
-                      <div className="space-y-1">
-                        <p className="text-sm text-muted-foreground">License End</p>
-                        <p className="font-medium">
-                          {licenseInfo.licenseEndDate
-                            ? new Date(licenseInfo.licenseEndDate).toLocaleDateString()
-                            : '-'}
-                        </p>
-                      </div>
-                    </>
                   )}
                 </div>
 
-                {/* Instructions */}
-                <div className="p-4 rounded-lg bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800">
-                  <p className="text-sm font-medium text-blue-800 dark:text-blue-200 mb-2">
-                    How to Generate License Key:
-                  </p>
-                  <ol className="text-sm text-blue-700 dark:text-blue-300 list-decimal list-inside space-y-1">
-                    <li>Click "Copy Machine ID" button above</li>
-                    <li>Open terminal in the application folder</li>
-                    <li>Run: <code className="px-1 bg-blue-100 dark:bg-blue-900 rounded">node key.js [paste_machine_id] [months]</code></li>
-                    <li>Copy the generated license key</li>
-                    <li>Paste it in the Activate License dialog below</li>
-                  </ol>
-                </div>
+                {/* Days remaining progress bar */}
+                {daysRemaining > 0 && (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs text-zinc-500">Days Remaining</span>
+                      <span className={`text-xs font-semibold tabular-nums ${statusConfig.color}`}>
+                        {daysRemaining}d
+                      </span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all ${statusConfig.progressColor}`}
+                        style={{ width: `${progressPct}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
-                {/* Action Buttons */}
-                <div className="flex gap-2 pt-4">
-                  {licenseInfo?.isTrial ? (
-                    <Button onClick={() => setShowActivateDialog(true)}>
-                      <Key className="w-4 h-4 mr-2" />
-                      Activate License
-                    </Button>
-                  ) : licenseInfo?.isActivated ? (
-                    <>
-                      <Button variant="outline" onClick={handleDeactivate} disabled={isDeactivating}>
-                        <Power className="w-4 h-4 mr-2" />
+            {/* Machine ID Card */}
+            <Card className="border-zinc-800 bg-zinc-900/80">
+              <CardHeader className="pb-2 pt-4 px-4">
+                <CardTitle className="text-xs font-semibold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Terminal className="w-3.5 h-3.5 text-primary" />
+                  Machine Identifier
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="px-4 pb-4 space-y-3">
+                <div className="relative group">
+                  <code className="block w-full p-2.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-300 break-all leading-relaxed pr-9">
+                    {machineId || '—'}
+                  </code>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleCopyMachineId}
+                    className="absolute top-1.5 right-1.5 h-6 w-6 text-zinc-500 hover:text-primary hover:bg-primary/10"
+                    title="Copy Machine ID"
+                  >
+                    <Copy className="w-3 h-3" />
+                  </Button>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full text-xs border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50 bg-transparent"
+                  onClick={handleGenerateRequest}
+                >
+                  <Copy className="w-3.5 h-3.5 mr-1.5" />
+                  Copy ID &amp; Generate License
+                </Button>
+              </CardContent>
+            </Card>
+
+          </div>
+
+          {/* RIGHT COLUMN — Details + Actions */}
+          <div className="lg:col-span-3 flex flex-col gap-4">
+
+            {licenseInfo?.isActivated && licenseInfo.status === 'LICENSE_ACTIVE' ? (
+              /* Full License Details */
+              <>
+                <Card className="border-zinc-800 bg-zinc-900/80">
+                  <CardHeader className="pb-3 pt-4 px-5">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-md bg-emerald-500/10">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-sm font-semibold text-zinc-100">Full License Active</CardTitle>
+                        <CardDescription className="text-xs text-zinc-500">Your license is valid and operational</CardDescription>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="px-5 pb-5 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Key</p>
+                        <code className="block p-1.5 rounded bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-400 break-all">
+                          {licenseInfo.licenseStartDate ? '••••  ••••  ••••  ••••' : '—'}
+                        </code>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Type</p>
+                        <span className="text-sm font-medium text-zinc-200">Subscription License</span>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Installation Date</p>
+                        <span className="text-sm font-medium text-zinc-200">
+                          {licenseInfo.installationDate
+                            ? new Date(licenseInfo.installationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Days Remaining</p>
+                        <span className="text-sm font-semibold text-emerald-400">
+                          {licenseInfo.daysRemaining} days
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Start Date</p>
+                        <span className="text-sm font-medium text-zinc-200">
+                          {licenseInfo.licenseStartDate
+                            ? new Date(licenseInfo.licenseStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License End Date</p>
+                        <span className="text-sm font-medium text-zinc-200">
+                          {licenseInfo.licenseEndDate
+                            ? new Date(licenseInfo.licenseEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="space-y-1 col-span-2">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Machine ID</p>
+                        <code className="block p-1.5 rounded bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-400 break-all">
+                          {machineId}
+                        </code>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-zinc-800">
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={handleDeactivate}
+                        disabled={isDeactivating}
+                        className="gap-2 text-xs"
+                      >
+                        <Power className="w-3.5 h-3.5" />
                         {isDeactivating ? 'Deactivating...' : 'Deactivate License'}
                       </Button>
-                    </>
-                  ) : null}
-                </div>
-              </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            ) : (
+              /* Trial / Non-activated Details */
+              <>
+                <Card className="border-zinc-800 bg-zinc-900/80">
+                  <CardHeader className="pb-3 pt-4 px-5">
+                    <CardTitle className="text-sm font-semibold text-zinc-100">License Details</CardTitle>
+                    <CardDescription className="text-xs text-zinc-500">Current license and trial information</CardDescription>
+                  </CardHeader>
+                  <CardContent className="px-5 pb-5 space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Installation Date</p>
+                        <span className="text-sm font-medium text-zinc-200">
+                          {licenseInfo?.installationDate
+                            ? new Date(licenseInfo.installationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                            : '—'}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Trial End Date</p>
+                        <span className="text-sm font-medium text-zinc-200">
+                          {licenseInfo?.trialEndDate
+                            ? new Date(licenseInfo.trialEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                            : '—'}
+                        </span>
+                      </div>
+
+                      {licenseInfo?.isActivated && (
+                        <>
+                          <div className="space-y-1">
+                            <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Start</p>
+                            <span className="text-sm font-medium text-zinc-200">
+                              {licenseInfo.licenseStartDate
+                                ? new Date(licenseInfo.licenseStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '—'}
+                            </span>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License End</p>
+                            <span className="text-sm font-medium text-zinc-200">
+                              {licenseInfo.licenseEndDate
+                                ? new Date(licenseInfo.licenseEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+                                : '—'}
+                            </span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="pt-2 border-t border-zinc-800 flex gap-2">
+                      {licenseInfo?.isTrial ? (
+                        <Button
+                          size="sm"
+                          onClick={() => setShowActivateDialog(true)}
+                          className="gap-2 text-xs bg-primary hover:bg-primary/80 text-primary-foreground font-semibold"
+                        >
+                          <Key className="w-3.5 h-3.5" />
+                          Activate License
+                        </Button>
+                      ) : licenseInfo?.isActivated ? (
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleDeactivate}
+                          disabled={isDeactivating}
+                          className="gap-2 text-xs"
+                        >
+                          <Power className="w-3.5 h-3.5" />
+                          {isDeactivating ? 'Deactivating...' : 'Deactivate License'}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={() => setShowActivateDialog(true)}
+                          className="gap-2 text-xs bg-primary hover:bg-primary/80 text-primary-foreground font-semibold"
+                        >
+                          <Key className="w-3.5 h-3.5" />
+                          Activate License
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </div>
+
+        {/* License History */}
+        <div>
+          <LicenseHistory history={licenseHistory} />
+        </div>
+
+        {/* Activate License Dialog */}
+        <ActivateLicenseDialog
+          open={showActivateDialog}
+          onOpenChange={setShowActivateDialog}
+          onActivate={handleActivate}
+          isActivating={isActivating}
+          machineId={machineId}
+        />
+
+        {/* Deactivate Confirmation Dialog */}
+        <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
+          <AlertDialogContent className="bg-zinc-900 border border-zinc-700">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-primary">
+                <div className="p-1.5 rounded-md bg-primary/10">
+                  <AlertTriangle className="w-4 h-4 text-primary" />
+                </div>
+                Deactivate License?
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-zinc-400 text-sm">
+                Are you sure you want to deactivate the license? This will revert the application
+                to trial mode and you will need to activate a new license to continue using all features.
+                <br /><br />
+                <span className="text-primary/80 font-medium">
+                  Click the button {5 - deactivateClickCount} more time(s) before deactivation proceeds.
+                </span>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={cancelDeactivate}
+                className="border-zinc-700 text-zinc-400 hover:text-zinc-200 bg-transparent"
+              >
+                Cancel
+              </Button>
+              <Button variant="destructive" size="sm" onClick={confirmDeactivate}>
+                Yes, Deactivate
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Final Warning Dialog (5th click) */}
+        <AlertDialog open={showFinalWarning} onOpenChange={handleFinalWarningClose}>
+          <AlertDialogContent className="max-w-md bg-zinc-900 border border-red-500/40">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-400">
+                <div className="p-1.5 rounded-md bg-red-500/10">
+                  <AlertTriangle className="w-5 h-5 text-red-500" />
+                </div>
+                WARNING: Final Confirmation Required
+              </AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3 text-zinc-400 text-sm">
+                  <p className="font-medium text-zinc-200">
+                    You are about to deactivate your license!
+                  </p>
+                  <p>This action will:</p>
+                  <ul className="space-y-1.5 pl-1">
+                    {DEACTIVATION_CONSEQUENCES.map((item) => (
+                      <li key={item} className="flex items-start gap-2 text-zinc-400">
+                        <span className="mt-1 w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="font-medium text-zinc-200 pt-1">
+                    Are you absolutely sure you want to proceed?
+                  </p>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleFinalWarningClose}
+                className="border-zinc-700 text-zinc-400 hover:text-zinc-200 bg-transparent"
+              >
+                No, Keep License
+              </Button>
+              <Button variant="destructive" size="sm" onClick={confirmDeactivate}>
+                Yes, Deactivate License
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
-
-      {/* License History */}
-      <div className="mt-6">
-        <LicenseHistory history={licenseHistory} />
-      </div>
-
-      {/* Activate License Dialog */}
-      <ActivateLicenseDialog
-        open={showActivateDialog}
-        onOpenChange={setShowActivateDialog}
-        onActivate={handleActivate}
-        isActivating={isActivating}
-        machineId={machineId}
-      />
-
-      {/* Deactivate Confirmation Dialog */}
-      <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle className="w-5 h-5" />
-              Deactivate License?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to deactivate the license? This will revert the application
-              to trial mode and you will need to activate a new license to continue using all features.
-              <br /><br />
-              You have clicked the button {5 - deactivateClickCount} more time(s) before deactivation.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button variant="outline" onClick={cancelDeactivate}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={confirmDeactivate}>
-              Yes, Deactivate
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Final Warning Dialog (5th click) */}
-      <AlertDialog open={showFinalWarning} onOpenChange={handleFinalWarningClose}>
-        <AlertDialogContent className="max-w-md">
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 text-red-600">
-              <AlertTriangle className="w-6 h-6" />
-              WARNING: Final Confirmation Required
-            </AlertDialogTitle>
-            <AlertDialogDescription className="space-y-3">
-              <p className="text-base font-medium text-foreground">
-                You are about to deactivate your license!
-              </p>
-              <p>
-                This action will:
-              </p>
-              <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                <li>Remove your full license from this machine</li>
-                <li>Revert the application to trial mode (30 days)</li>
-                <li>Require you to generate a new license key to continue</li>
-              </ul>
-              <p className="text-sm font-medium text-foreground pt-2">
-                Are you absolutely sure you want to proceed?
-              </p>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <Button variant="outline" onClick={handleFinalWarningClose}>
-              No, Keep License
-            </Button>
-            <Button variant="destructive" onClick={confirmDeactivate}>
-              Yes, Deactivate License
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   )
 }
