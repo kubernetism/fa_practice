@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import {
   Search,
-  Filter,
   DollarSign,
   Clock,
   CheckCircle2,
@@ -14,8 +13,9 @@ import {
   Calendar,
   FileText,
   TrendingDown,
-  Plus,
   RotateCcw,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,6 +47,7 @@ import {
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useBranch } from '@/contexts/branch-context'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
@@ -307,170 +308,134 @@ export function AccountPayablesScreen() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Account Payables</h1>
-          <p className="text-muted-foreground">Manage supplier invoices and payments</p>
+    <TooltipProvider>
+      <div className="space-y-3">
+        {/* Header with inline pills */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold">Account Payables</h1>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                {summary?.totalPayables ?? 0} Payables
+              </span>
+              <span className="rounded-full bg-destructive/10 text-destructive px-2.5 py-0.5 text-xs font-medium">
+                {formatCurrency(summary?.totalRemaining ?? 0)} Owed
+              </span>
+              <span className="rounded-full bg-green-500/10 text-green-500 px-2.5 py-0.5 text-xs font-medium">
+                {formatCurrency(summary?.totalPaid ?? 0)} Paid
+              </span>
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                DPO: {agingData?.dpo ?? 0}d
+              </span>
+            </div>
+          </div>
+          <Button variant="outline" size="sm" className="h-8" onClick={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}>
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+            Refresh
+          </Button>
         </div>
-        <Button variant="outline" onClick={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
-      </div>
 
-      {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Payables</CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{summary?.totalPayables ?? 0}</div>
-            <p className="text-xs text-muted-foreground">Active payables</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Total Owed</CardTitle>
-            <TrendingDown className="h-4 w-4 text-red-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-red-600">{formatCurrency(summary?.totalRemaining ?? 0)}</div>
-            <p className="text-xs text-muted-foreground">Outstanding amount</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">Amount Paid</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-green-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-green-600">{formatCurrency(summary?.totalPaid ?? 0)}</div>
-            <p className="text-xs text-muted-foreground">Payments made</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium">DPO</CardTitle>
-            <Calendar className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{agingData?.dpo ?? 0} days</div>
-            <p className="text-xs text-muted-foreground">Days Payable Outstanding</p>
-          </CardContent>
-        </Card>
-      </div>
+        {/* Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList>
+            <TabsTrigger value="list">All Payables</TabsTrigger>
+            <TabsTrigger value="aging">Aging Report</TabsTrigger>
+          </TabsList>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="list">All Payables</TabsTrigger>
-          <TabsTrigger value="aging">Aging Report</TabsTrigger>
-        </TabsList>
+          <TabsContent value="list" className="space-y-3">
+            {/* Compact filter row — no Card wrapper */}
+            <div className="flex items-center gap-2">
+              <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as PayableStatus | 'all'); setPage(1); }}>
+                <SelectTrigger className="h-8 w-[130px] text-xs">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-        <TabsContent value="list" className="space-y-4">
-          {/* Filters */}
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <Filter className="h-4 w-4 text-muted-foreground" />
-                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v as PayableStatus | 'all'); setPage(1); }}>
-                    <SelectTrigger className="w-40">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="partial">Partial</SelectItem>
-                      <SelectItem value="overdue">Overdue</SelectItem>
-                      <SelectItem value="paid">Paid</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Table */}
-          <Card>
-            <CardContent className="p-0">
+            {/* Compact table — no Card wrapper */}
+            <div className="rounded-md border overflow-hidden">
               {isLoading ? (
-                <div className="flex h-60 items-center justify-center">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                <div className="flex h-32 items-center justify-center">
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
                 </div>
               ) : payables.length === 0 ? (
-                <div className="flex h-60 flex-col items-center justify-center text-muted-foreground">
-                  <FileText className="mb-4 h-12 w-12" />
-                  <p>No payables found</p>
-                </div>
+                <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">No payables found</div>
               ) : (
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Invoice</TableHead>
-                      <TableHead>Supplier</TableHead>
-                      <TableHead>Total</TableHead>
-                      <TableHead>Paid</TableHead>
-                      <TableHead>Remaining</TableHead>
-                      <TableHead>Due Date</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                    <TableRow className="bg-muted/30 hover:bg-muted/30">
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Invoice</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Supplier</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Total</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Paid</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Remaining</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Due Date</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Status</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-[120px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {payables.map((payable) => (
-                      <TableRow key={payable.id}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2">
-                            {payable.invoiceNumber}
+                      <TableRow key={payable.id} className="group h-9">
+                        <TableCell className="py-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-medium">{payable.invoiceNumber}</span>
                             <ReversalStatusBadge entityType="payable" entityId={payable.id} />
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{payable.supplier?.name}</p>
-                            <p className="text-sm text-muted-foreground">{payable.supplier?.phone}</p>
-                          </div>
+                        <TableCell className="py-1.5">
+                          <span className="text-sm">{payable.supplier?.name}</span>
+                          {payable.supplier?.phone && (
+                            <span className="block text-[11px] text-muted-foreground">{payable.supplier.phone}</span>
+                          )}
                         </TableCell>
-                        <TableCell>{formatCurrency(payable.totalAmount)}</TableCell>
-                        <TableCell className="text-green-600">{formatCurrency(payable.paidAmount)}</TableCell>
-                        <TableCell className="font-medium text-red-600">
-                          {formatCurrency(payable.remainingAmount)}
-                        </TableCell>
-                        <TableCell>
-                          {payable.dueDate ? formatDate(payable.dueDate) : '-'}
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge status={payable.status} />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => viewDetails(payable)}>
-                              <Eye className="h-4 w-4" />
-                            </Button>
+                        <TableCell className="py-1.5 text-right text-sm tabular-nums">{formatCurrency(payable.totalAmount)}</TableCell>
+                        <TableCell className="py-1.5 text-right text-sm tabular-nums text-green-600">{formatCurrency(payable.paidAmount)}</TableCell>
+                        <TableCell className="py-1.5 text-right text-sm tabular-nums font-medium text-red-600">{formatCurrency(payable.remainingAmount)}</TableCell>
+                        <TableCell className="py-1.5 text-sm">{payable.dueDate ? formatDate(payable.dueDate) : '—'}</TableCell>
+                        <TableCell className="py-1.5"><StatusBadge status={payable.status} /></TableCell>
+                        <TableCell className="py-1.5">
+                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => viewDetails(payable)}>
+                                  <Eye className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Details</TooltipContent>
+                            </Tooltip>
                             {payable.status !== 'cancelled' && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => {
-                                  setReversalTarget(payable)
-                                  setIsReversalModalOpen(true)
-                                }}
-                                title="Request Reversal"
-                              >
-                                <RotateCcw className="h-4 w-4 text-amber-500" />
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => { setReversalTarget(payable); setIsReversalModalOpen(true) }}
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5 text-amber-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Reversal</TooltipContent>
+                              </Tooltip>
                             )}
                             {payable.status !== 'paid' && payable.status !== 'cancelled' && (
-                              <Button variant="outline" size="sm" onClick={() => openPaymentDialog(payable)}>
-                                <CreditCard className="mr-1 h-4 w-4" />
-                                Pay
-                              </Button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openPaymentDialog(payable)}>
+                                    <CreditCard className="h-3.5 w-3.5" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Record Payment</TooltipContent>
+                              </Tooltip>
                             )}
                           </div>
                         </TableCell>
@@ -479,316 +444,320 @@ export function AccountPayablesScreen() {
                   </TableBody>
                 </Table>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-              >
-                Previous
-              </Button>
-              <span className="text-sm text-muted-foreground">
-                Page {page} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-              >
-                Next
-              </Button>
             </div>
-          )}
-        </TabsContent>
 
-        <TabsContent value="aging" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Aging Buckets */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Aging Breakdown</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {agingData && (
-                  <>
-                    <AgingBar
-                      label="Current (Not Due)"
-                      amount={agingData.aging.current.amount}
-                      total={agingData.totalOutstanding}
-                      count={agingData.aging.current.count}
-                    />
-                    <AgingBar
-                      label="1-30 Days Overdue"
-                      amount={agingData.aging.days1to30.amount}
-                      total={agingData.totalOutstanding}
-                      count={agingData.aging.days1to30.count}
-                    />
-                    <AgingBar
-                      label="31-60 Days Overdue"
-                      amount={agingData.aging.days31to60.amount}
-                      total={agingData.totalOutstanding}
-                      count={agingData.aging.days31to60.count}
-                    />
-                    <AgingBar
-                      label="61-90 Days Overdue"
-                      amount={agingData.aging.days61to90.amount}
-                      total={agingData.totalOutstanding}
-                      count={agingData.aging.days61to90.count}
-                    />
-                    <AgingBar
-                      label="90+ Days Overdue"
-                      amount={agingData.aging.days90plus.amount}
-                      total={agingData.totalOutstanding}
-                      count={agingData.aging.days90plus.count}
-                    />
-                  </>
-                )}
-              </CardContent>
-            </Card>
+            {/* Compact pagination — chevron-only */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Page {page} of {totalPages}</span>
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={page === 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <span className="min-w-[3rem] text-center">{page} / {totalPages}</span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={page === totalPages}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </TabsContent>
 
-            {/* Upcoming Payments */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Upcoming Payments (Next 7 Days)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {agingData?.upcomingPayments && agingData.upcomingPayments.length > 0 ? (
-                  <div className="space-y-3">
-                    {agingData.upcomingPayments.map((payment, idx) => (
-                      <div key={idx} className="flex items-center justify-between rounded-lg border p-3">
-                        <div>
-                          <p className="font-medium">{payment.supplier}</p>
-                          <p className="text-sm text-muted-foreground">
-                            Due: {formatDate(payment.dueDate)} ({payment.daysUntilDue} days)
-                          </p>
-                        </div>
-                        <p className="font-bold">{formatCurrency(payment.amount)}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-center text-muted-foreground py-8">No upcoming payments</p>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Top Overdue Suppliers */}
-            <Card className="md:col-span-2">
-              <CardHeader>
-                <CardTitle>Top Overdue Suppliers</CardTitle>
-              </CardHeader>
-              <CardContent>
-                {agingData?.topOverdue && agingData.topOverdue.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Supplier</TableHead>
-                        <TableHead>Amount Overdue</TableHead>
-                        <TableHead>Oldest Due Date</TableHead>
-                        <TableHead>Days Overdue</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {agingData.topOverdue.map((item, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell className="font-medium">{item.supplier}</TableCell>
-                          <TableCell className="text-red-600 font-bold">{formatCurrency(item.amount)}</TableCell>
-                          <TableCell>{formatDate(item.oldestDueDate)}</TableCell>
-                          <TableCell>
-                            <Badge variant="destructive">{item.daysOverdue} days</Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <p className="text-center text-muted-foreground py-8">No overdue payables</p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-      </Tabs>
-
-      {/* Reversal Request Modal */}
-      {reversalTarget && (
-        <ReversalRequestModal
-          open={isReversalModalOpen}
-          onClose={() => {
-            setIsReversalModalOpen(false)
-            setReversalTarget(null)
-          }}
-          entityType="payable"
-          entityId={reversalTarget.id}
-          entityLabel={`Payable #${reversalTarget.invoiceNumber}`}
-          branchId={reversalTarget.branchId}
-          onSuccess={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}
-        />
-      )}
-
-      {/* Payment Dialog */}
-      <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Record Payment</DialogTitle>
-            <DialogDescription>
-              Invoice: {selectedPayable?.invoiceNumber} | Outstanding: {formatCurrency(selectedPayable?.remainingAmount ?? 0)}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="payment-amount">Payment Amount *</Label>
-              <Input
-                id="payment-amount"
-                type="number"
-                step="0.01"
-                value={paymentAmount}
-                onChange={(e) => setPaymentAmount(e.target.value)}
-                placeholder="Enter amount"
-              />
-            </div>
-            <div>
-              <Label htmlFor="payment-method">Payment Method *</Label>
-              <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="cheque">Cheque</SelectItem>
-                  <SelectItem value="card">Card</SelectItem>
-                  <SelectItem value="mobile">Mobile Payment</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label htmlFor="payment-reference">Reference Number</Label>
-              <Input
-                id="payment-reference"
-                value={paymentReference}
-                onChange={(e) => setPaymentReference(e.target.value)}
-                placeholder="Transaction ID, cheque number, etc."
-              />
-            </div>
-            <div>
-              <Label htmlFor="payment-notes">Notes</Label>
-              <Input
-                id="payment-notes"
-                value={paymentNotes}
-                onChange={(e) => setPaymentNotes(e.target.value)}
-                placeholder="Optional notes"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPaymentDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleRecordPayment} disabled={isProcessing}>
-              {isProcessing ? 'Processing...' : 'Record Payment'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Details Dialog */}
-      <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Payable Details</DialogTitle>
-            <DialogDescription>
-              Invoice: {detailsPayable?.invoiceNumber}
-            </DialogDescription>
-          </DialogHeader>
-          {detailsPayable && (
-            <div className="space-y-6">
-              {/* Supplier Info */}
-              <div className="flex items-start gap-4 rounded-lg bg-muted p-4">
-                <Building2 className="h-10 w-10 rounded-full bg-primary/10 p-2 text-primary" />
-                <div>
-                  <p className="font-medium">{detailsPayable.supplier?.name}</p>
-                  <p className="text-sm text-muted-foreground">{detailsPayable.supplier?.phone}</p>
-                  {detailsPayable.supplier?.email && (
-                    <p className="text-sm text-muted-foreground">{detailsPayable.supplier?.email}</p>
+          {/* Aging Report tab — keeps Card-based layout */}
+          <TabsContent value="aging" className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              {/* Aging Buckets */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Aging Breakdown</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {agingData && (
+                    <>
+                      <AgingBar
+                        label="Current (Not Due)"
+                        amount={agingData.aging.current.amount}
+                        total={agingData.totalOutstanding}
+                        count={agingData.aging.current.count}
+                      />
+                      <AgingBar
+                        label="1-30 Days Overdue"
+                        amount={agingData.aging.days1to30.amount}
+                        total={agingData.totalOutstanding}
+                        count={agingData.aging.days1to30.count}
+                      />
+                      <AgingBar
+                        label="31-60 Days Overdue"
+                        amount={agingData.aging.days31to60.amount}
+                        total={agingData.totalOutstanding}
+                        count={agingData.aging.days31to60.count}
+                      />
+                      <AgingBar
+                        label="61-90 Days Overdue"
+                        amount={agingData.aging.days61to90.amount}
+                        total={agingData.totalOutstanding}
+                        count={agingData.aging.days61to90.count}
+                      />
+                      <AgingBar
+                        label="90+ Days Overdue"
+                        amount={agingData.aging.days90plus.amount}
+                        total={agingData.totalOutstanding}
+                        count={agingData.aging.days90plus.count}
+                      />
+                    </>
                   )}
-                </div>
-              </div>
+                </CardContent>
+              </Card>
 
-              {/* Amount Summary */}
-              <div className="grid grid-cols-3 gap-4">
-                <div className="rounded-lg border p-4 text-center">
-                  <p className="text-sm text-muted-foreground">Total Amount</p>
-                  <p className="text-2xl font-bold">{formatCurrency(detailsPayable.totalAmount)}</p>
-                </div>
-                <div className="rounded-lg border p-4 text-center">
-                  <p className="text-sm text-muted-foreground">Amount Paid</p>
-                  <p className="text-2xl font-bold text-green-600">{formatCurrency(detailsPayable.paidAmount)}</p>
-                </div>
-                <div className="rounded-lg border p-4 text-center">
-                  <p className="text-sm text-muted-foreground">Remaining</p>
-                  <p className="text-2xl font-bold text-red-600">{formatCurrency(detailsPayable.remainingAmount)}</p>
-                </div>
-              </div>
-
-              {/* Payment History */}
-              <div>
-                <h3 className="mb-3 font-semibold">Payment History</h3>
-                {detailsPayable.payments && detailsPayable.payments.length > 0 ? (
-                  <ScrollArea className="h-48">
+              {/* Upcoming Payments */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Upcoming Payments (Next 7 Days)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {agingData?.upcomingPayments && agingData.upcomingPayments.length > 0 ? (
                     <div className="space-y-3">
-                      {detailsPayable.payments.map((payment) => (
-                        <div key={payment.id} className="flex items-center justify-between rounded-lg border p-3">
+                      {agingData.upcomingPayments.map((payment, idx) => (
+                        <div key={idx} className="flex items-center justify-between rounded-lg border p-3">
                           <div>
-                            <p className="font-medium">{formatCurrency(payment.amount)}</p>
+                            <p className="font-medium">{payment.supplier}</p>
                             <p className="text-sm text-muted-foreground">
-                              {payment.paymentMethod.replace('_', ' ')} - {formatDate(payment.paymentDate)}
+                              Due: {formatDate(payment.dueDate)} ({payment.daysUntilDue} days)
                             </p>
-                            {payment.referenceNumber && (
-                              <p className="text-xs text-muted-foreground">Ref: {payment.referenceNumber}</p>
-                            )}
                           </div>
-                          <div className="text-right text-sm text-muted-foreground">
-                            {payment.paidByUser?.fullName}
-                          </div>
+                          <p className="font-bold">{formatCurrency(payment.amount)}</p>
                         </div>
                       ))}
                     </div>
-                  </ScrollArea>
-                ) : (
-                  <p className="text-center text-muted-foreground">No payments recorded yet</p>
+                  ) : (
+                    <p className="text-center text-muted-foreground py-8">No upcoming payments</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Top Overdue Suppliers */}
+              <Card className="md:col-span-2">
+                <CardHeader>
+                  <CardTitle>Top Overdue Suppliers</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {agingData?.topOverdue && agingData.topOverdue.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Supplier</TableHead>
+                          <TableHead>Amount Overdue</TableHead>
+                          <TableHead>Oldest Due Date</TableHead>
+                          <TableHead>Days Overdue</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {agingData.topOverdue.map((item, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell className="font-medium">{item.supplier}</TableCell>
+                            <TableCell className="text-red-600 font-bold">{formatCurrency(item.amount)}</TableCell>
+                            <TableCell>{formatDate(item.oldestDueDate)}</TableCell>
+                            <TableCell>
+                              <Badge variant="destructive">{item.daysOverdue} days</Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <p className="text-center text-muted-foreground py-8">No overdue payables</p>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        {/* Reversal Request Modal */}
+        {reversalTarget && (
+          <ReversalRequestModal
+            open={isReversalModalOpen}
+            onClose={() => {
+              setIsReversalModalOpen(false)
+              setReversalTarget(null)
+            }}
+            entityType="payable"
+            entityId={reversalTarget.id}
+            entityLabel={`Payable #${reversalTarget.invoiceNumber}`}
+            branchId={reversalTarget.branchId}
+            onSuccess={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}
+          />
+        )}
+
+        {/* Payment Dialog */}
+        <Dialog open={showPaymentDialog} onOpenChange={setShowPaymentDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Record Payment</DialogTitle>
+              <DialogDescription>
+                Invoice: {selectedPayable?.invoiceNumber} | Outstanding: {formatCurrency(selectedPayable?.remainingAmount ?? 0)}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="payment-amount">Payment Amount *</Label>
+                <Input
+                  id="payment-amount"
+                  type="number"
+                  step="0.01"
+                  value={paymentAmount}
+                  onChange={(e) => setPaymentAmount(e.target.value)}
+                  placeholder="Enter amount"
+                />
+              </div>
+              <div>
+                <Label htmlFor="payment-method">Payment Method *</Label>
+                <Select value={paymentMethod} onValueChange={(v) => setPaymentMethod(v as PaymentMethod)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="cheque">Cheque</SelectItem>
+                    <SelectItem value="card">Card</SelectItem>
+                    <SelectItem value="mobile">Mobile Payment</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="payment-reference">Reference Number</Label>
+                <Input
+                  id="payment-reference"
+                  value={paymentReference}
+                  onChange={(e) => setPaymentReference(e.target.value)}
+                  placeholder="Transaction ID, cheque number, etc."
+                />
+              </div>
+              <div>
+                <Label htmlFor="payment-notes">Notes</Label>
+                <Input
+                  id="payment-notes"
+                  value={paymentNotes}
+                  onChange={(e) => setPaymentNotes(e.target.value)}
+                  placeholder="Optional notes"
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowPaymentDialog(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleRecordPayment} disabled={isProcessing}>
+                {isProcessing ? 'Processing...' : 'Record Payment'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Details Dialog */}
+        <Dialog open={showDetailsDialog} onOpenChange={setShowDetailsDialog}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Payable Details</DialogTitle>
+              <DialogDescription>
+                Invoice: {detailsPayable?.invoiceNumber}
+              </DialogDescription>
+            </DialogHeader>
+            {detailsPayable && (
+              <div className="space-y-6">
+                {/* Supplier Info */}
+                <div className="flex items-start gap-4 rounded-lg bg-muted p-4">
+                  <Building2 className="h-10 w-10 rounded-full bg-primary/10 p-2 text-primary" />
+                  <div>
+                    <p className="font-medium">{detailsPayable.supplier?.name}</p>
+                    <p className="text-sm text-muted-foreground">{detailsPayable.supplier?.phone}</p>
+                    {detailsPayable.supplier?.email && (
+                      <p className="text-sm text-muted-foreground">{detailsPayable.supplier?.email}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Amount Summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="rounded-lg border p-4 text-center">
+                    <p className="text-sm text-muted-foreground">Total Amount</p>
+                    <p className="text-2xl font-bold">{formatCurrency(detailsPayable.totalAmount)}</p>
+                  </div>
+                  <div className="rounded-lg border p-4 text-center">
+                    <p className="text-sm text-muted-foreground">Amount Paid</p>
+                    <p className="text-2xl font-bold text-green-600">{formatCurrency(detailsPayable.paidAmount)}</p>
+                  </div>
+                  <div className="rounded-lg border p-4 text-center">
+                    <p className="text-sm text-muted-foreground">Remaining</p>
+                    <p className="text-2xl font-bold text-red-600">{formatCurrency(detailsPayable.remainingAmount)}</p>
+                  </div>
+                </div>
+
+                {/* Payment History */}
+                <div>
+                  <h3 className="mb-3 font-semibold">Payment History</h3>
+                  {detailsPayable.payments && detailsPayable.payments.length > 0 ? (
+                    <ScrollArea className="h-48">
+                      <div className="space-y-3">
+                        {detailsPayable.payments.map((payment) => (
+                          <div key={payment.id} className="flex items-center justify-between rounded-lg border p-3">
+                            <div>
+                              <p className="font-medium">{formatCurrency(payment.amount)}</p>
+                              <p className="text-sm text-muted-foreground">
+                                {payment.paymentMethod.replace('_', ' ')} - {formatDate(payment.paymentDate)}
+                              </p>
+                              {payment.referenceNumber && (
+                                <p className="text-xs text-muted-foreground">Ref: {payment.referenceNumber}</p>
+                              )}
+                            </div>
+                            <div className="text-right text-sm text-muted-foreground">
+                              {payment.paidByUser?.fullName}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  ) : (
+                    <p className="text-center text-muted-foreground">No payments recorded yet</p>
+                  )}
+                </div>
+
+                {/* Notes */}
+                {detailsPayable.notes && (
+                  <div>
+                    <h3 className="mb-2 font-semibold">Notes</h3>
+                    <p className="text-sm text-muted-foreground">{detailsPayable.notes}</p>
+                  </div>
                 )}
               </div>
-
-              {/* Notes */}
-              {detailsPayable.notes && (
-                <div>
-                  <h3 className="mb-2 font-semibold">Notes</h3>
-                  <p className="text-sm text-muted-foreground">{detailsPayable.notes}</p>
-                </div>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            {detailsPayable && detailsPayable.status !== 'paid' && detailsPayable.status !== 'cancelled' && (
-              <Button onClick={() => { setShowDetailsDialog(false); openPaymentDialog(detailsPayable); }}>
-                <CreditCard className="mr-2 h-4 w-4" />
-                Record Payment
-              </Button>
             )}
-            <Button variant="outline" onClick={() => setShowDetailsDialog(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+            <DialogFooter>
+              {detailsPayable && detailsPayable.status !== 'paid' && detailsPayable.status !== 'cancelled' && (
+                <Button onClick={() => { setShowDetailsDialog(false); openPaymentDialog(detailsPayable); }}>
+                  <CreditCard className="mr-2 h-4 w-4" />
+                  Record Payment
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setShowDetailsDialog(false)}>
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </TooltipProvider>
   )
 }

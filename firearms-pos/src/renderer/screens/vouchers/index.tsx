@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Plus, Search, Trash2, Ticket, RefreshCw, Copy, Calendar } from 'lucide-react'
+import { Plus, Search, Trash2, RefreshCw, Copy, Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -22,6 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { useCurrency } from '@/contexts/settings-context'
 
 interface Voucher {
@@ -145,21 +145,21 @@ export function VouchersScreen() {
     }
   }
 
-  const copyCode = (code: string) => {
+  const copyCode = useCallback((code: string) => {
     navigator.clipboard.writeText(code)
-  }
+  }, [])
 
   const getStatusBadge = (voucher: Voucher) => {
     if (voucher.isUsed) {
-      return <Badge variant="secondary">Used</Badge>
+      return <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Used</Badge>
     }
     if (!voucher.isActive) {
-      return <Badge variant="destructive">Inactive</Badge>
+      return <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Inactive</Badge>
     }
     if (voucher.expiresAt && new Date(voucher.expiresAt) < new Date()) {
-      return <Badge variant="destructive">Expired</Badge>
+      return <Badge variant="destructive" className="text-[10px] px-1.5 py-0">Expired</Badge>
     }
-    return <Badge className="bg-green-100 text-green-800 hover:bg-green-100">Active</Badge>
+    return <Badge className="bg-green-100 text-green-800 hover:bg-green-100 text-[10px] px-1.5 py-0">Active</Badge>
   }
 
   const formatDate = (dateStr: string | null) => {
@@ -172,121 +172,146 @@ export function VouchersScreen() {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Vouchers</h1>
-          <p className="text-muted-foreground">Create and manage discount vouchers</p>
-        </div>
-        <Button onClick={handleOpenCreateDialog}>
-          <Plus className="mr-2 h-4 w-4" />
-          Create Voucher
-        </Button>
-      </div>
-
-      {/* Filters */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Search by code or description..."
-                className="pl-10"
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value)
-                  setPage(1)
-                }}
-              />
+    <TooltipProvider>
+      <div className="space-y-3 p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold">Vouchers</h1>
+            <div className="flex items-center gap-1.5">
+              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
+                {total} Total
+              </span>
             </div>
-            <Tabs
-              value={filter}
-              onValueChange={(v) => {
-                setFilter(v as typeof filter)
+          </div>
+          <Button size="sm" className="h-8" onClick={handleOpenCreateDialog}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            Create Voucher
+          </Button>
+        </div>
+
+        {/* Search + Filter tabs */}
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by code or description..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value)
                 setPage(1)
               }}
-            >
-              <TabsList>
-                <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="active">Active</TabsTrigger>
-                <TabsTrigger value="used">Used</TabsTrigger>
-                <TabsTrigger value="expired">Expired</TabsTrigger>
-              </TabsList>
-            </Tabs>
+              className="h-8 pl-8 text-sm"
+            />
+            {searchQuery && (
+              <button
+                aria-label="Clear search"
+                onClick={() => {
+                  setSearchQuery('')
+                  setPage(1)
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
-        </CardContent>
-      </Card>
+          <Tabs
+            value={filter}
+            onValueChange={(v) => {
+              setFilter(v as typeof filter)
+              setPage(1)
+            }}
+          >
+            <TabsList className="h-8">
+              <TabsTrigger value="all" className="text-xs h-6 px-2">All</TabsTrigger>
+              <TabsTrigger value="active" className="text-xs h-6 px-2">Active</TabsTrigger>
+              <TabsTrigger value="used" className="text-xs h-6 px-2">Used</TabsTrigger>
+              <TabsTrigger value="expired" className="text-xs h-6 px-2">Expired</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
 
-      {/* Table */}
-      <Card>
-        <CardContent className="p-0">
+        {/* Table */}
+        <div className="rounded-md border overflow-hidden">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Code</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="text-right">Amount</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Expiry</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+              <TableRow className="bg-muted/30 hover:bg-muted/30">
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Code</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Description</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Amount</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Status</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Expiry</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Created</TableHead>
+                <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-[80px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {isLoading ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center">
+                  <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
                     Loading...
                   </TableCell>
                 </TableRow>
               ) : vouchers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="h-24 text-center">
-                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                      <Ticket className="h-8 w-8" />
-                      <p>No vouchers found</p>
-                    </div>
+                  <TableCell colSpan={7} className="h-24 text-center text-sm text-muted-foreground">
+                    No vouchers found
                   </TableCell>
                 </TableRow>
               ) : (
                 vouchers.map((voucher) => (
-                  <TableRow key={voucher.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <code className="rounded bg-muted px-2 py-1 text-sm font-mono font-semibold">
+                  <TableRow key={voucher.id} className="group h-9">
+                    <TableCell className="py-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono font-semibold">
                           {voucher.code}
                         </code>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6"
-                          onClick={() => copyCode(voucher.code)}
-                        >
-                          <Copy className="h-3 w-3" />
-                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={() => copyCode(voucher.code)}
+                            >
+                              <Copy className="h-3 w-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Copy Code</TooltipContent>
+                        </Tooltip>
                       </div>
                     </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {voucher.description || '-'}
+                    <TableCell className="py-1.5 text-sm text-muted-foreground truncate max-w-[180px]">
+                      {voucher.description || '—'}
                     </TableCell>
-                    <TableCell className="text-right font-medium">
+                    <TableCell className="py-1.5 text-right text-sm font-medium tabular-nums">
                       {formatCurrency(voucher.discountAmount)}
                     </TableCell>
-                    <TableCell>{getStatusBadge(voucher)}</TableCell>
-                    <TableCell>{formatDate(voucher.expiresAt)}</TableCell>
-                    <TableCell>{formatDate(voucher.createdAt)}</TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="py-1.5">{getStatusBadge(voucher)}</TableCell>
+                    <TableCell className="py-1.5 text-sm text-muted-foreground">
+                      {formatDate(voucher.expiresAt)}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-sm text-muted-foreground">
+                      {formatDate(voucher.createdAt)}
+                    </TableCell>
+                    <TableCell className="py-1.5">
                       {!voucher.isUsed && voucher.isActive && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:text-destructive"
-                          onClick={() => handleDelete(voucher.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                        <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                onClick={() => handleDelete(voucher.id)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Deactivate</TooltipContent>
+                          </Tooltip>
+                        </div>
                       )}
                     </TableCell>
                   </TableRow>
@@ -294,124 +319,127 @@ export function VouchersScreen() {
               )}
             </TableBody>
           </Table>
+        </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between border-t px-4 py-3">
-              <p className="text-sm text-muted-foreground">
-                Showing {(page - 1) * 20 + 1}-{Math.min(page * 20, total)} of {total}
-              </p>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Create Voucher Dialog */}
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create Voucher</DialogTitle>
-            <DialogDescription>
-              Create a new discount voucher with a unique code.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            {/* Code */}
-            <div className="space-y-2">
-              <Label htmlFor="voucher-code">Voucher Code</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="voucher-code"
-                  value={formCode}
-                  onChange={(e) => setFormCode(e.target.value.toUpperCase())}
-                  placeholder="10-digit code"
-                  maxLength={10}
-                  className="font-mono"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  onClick={handleGenerateCode}
-                  title="Regenerate Code"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
-
-            {/* Description */}
-            <div className="space-y-2">
-              <Label htmlFor="voucher-desc">Description (Optional)</Label>
-              <Input
-                id="voucher-desc"
-                value={formDescription}
-                onChange={(e) => setFormDescription(e.target.value)}
-                placeholder="e.g., Eid Sale, Loyalty Reward"
-              />
-            </div>
-
-            {/* Amount */}
-            <div className="space-y-2">
-              <Label htmlFor="voucher-amount">Discount Amount (Rs)</Label>
-              <Input
-                id="voucher-amount"
-                type="number"
-                step="0.01"
-                min="1"
-                value={formAmount}
-                onChange={(e) => setFormAmount(e.target.value)}
-                placeholder="Enter discount amount"
-              />
-            </div>
-
-            {/* Expiry Date */}
-            <div className="space-y-2">
-              <Label htmlFor="voucher-expiry">Expiry Date (Optional)</Label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="voucher-expiry"
-                  type="date"
-                  className="pl-10"
-                  value={formExpiresAt}
-                  onChange={(e) => setFormExpiresAt(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
-                />
-              </div>
+        {/* Pagination — outside table border */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              {(page - 1) * 20 + 1}–{Math.min(page * 20, total)} of {total}
+            </span>
+            <div className="flex items-center gap-1.5">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </Button>
+              <span className="min-w-[3rem] text-center">{page} / {totalPages}</span>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-7 w-7"
+                disabled={page >= totalPages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={handleCreate}
-              disabled={isSaving || !formCode.trim() || !formAmount || parseFloat(formAmount) <= 0}
-            >
-              {isSaving ? 'Creating...' : 'Create Voucher'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
+        )}
+
+        {/* Create Voucher Dialog */}
+        <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Create Voucher</DialogTitle>
+              <DialogDescription>
+                Create a new discount voucher with a unique code.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              {/* Code */}
+              <div className="space-y-2">
+                <Label htmlFor="voucher-code">Voucher Code</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="voucher-code"
+                    value={formCode}
+                    onChange={(e) => setFormCode(e.target.value.toUpperCase())}
+                    placeholder="10-digit code"
+                    maxLength={10}
+                    className="font-mono"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={handleGenerateCode}
+                    title="Regenerate Code"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Description */}
+              <div className="space-y-2">
+                <Label htmlFor="voucher-desc">Description (Optional)</Label>
+                <Input
+                  id="voucher-desc"
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  placeholder="e.g., Eid Sale, Loyalty Reward"
+                />
+              </div>
+
+              {/* Amount */}
+              <div className="space-y-2">
+                <Label htmlFor="voucher-amount">Discount Amount (Rs)</Label>
+                <Input
+                  id="voucher-amount"
+                  type="number"
+                  step="0.01"
+                  min="1"
+                  value={formAmount}
+                  onChange={(e) => setFormAmount(e.target.value)}
+                  placeholder="Enter discount amount"
+                />
+              </div>
+
+              {/* Expiry Date */}
+              <div className="space-y-2">
+                <Label htmlFor="voucher-expiry">Expiry Date (Optional)</Label>
+                <div className="relative">
+                  <Calendar className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="voucher-expiry"
+                    type="date"
+                    className="pl-10"
+                    value={formExpiresAt}
+                    onChange={(e) => setFormExpiresAt(e.target.value)}
+                    min={new Date().toISOString().split('T')[0]}
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowCreateDialog(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreate}
+                disabled={isSaving || !formCode.trim() || !formAmount || parseFloat(formAmount) <= 0}
+              >
+                {isSaving ? 'Creating...' : 'Create Voucher'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </TooltipProvider>
   )
 }
