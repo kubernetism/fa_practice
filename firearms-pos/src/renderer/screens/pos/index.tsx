@@ -1460,19 +1460,19 @@ export function POSScreen() {
 
           <div className="p-5 space-y-4 max-h-[60vh] overflow-y-auto">
             {/* Voucher Code Input */}
-            <div className="rounded-lg border p-3 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-800/50">
+            <div className="rounded-lg border border-amber-500/20 p-3 bg-amber-500/10">
               <div className="flex items-center gap-2 mb-2">
-                <Ticket className="h-4 w-4 text-amber-600" />
-                <Label htmlFor="voucher-code" className="font-medium text-amber-800 dark:text-amber-300">Voucher Code</Label>
+                <Ticket className="h-4 w-4 text-amber-500" />
+                <Label htmlFor="voucher-code" className="font-medium text-amber-400">Voucher Code</Label>
               </div>
               {appliedVoucher ? (
-                <div className="flex items-center justify-between rounded-md bg-amber-100 px-3 py-2">
+                <div className="flex items-center justify-between rounded-md bg-amber-500/15 px-3 py-2">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="h-4 w-4 text-green-600" />
-                    <span className="text-sm font-medium">
+                    <span className="text-sm font-medium text-foreground">
                       Voucher Applied: <code className="font-mono">{appliedVoucher.code}</code>
                     </span>
-                    <Badge variant="secondary" className="text-xs">
+                    <Badge variant="secondary" className="text-xs bg-amber-500/20 text-amber-400 border-amber-500/30">
                       {formatCurrency(appliedVoucher.discountAmount)} off
                     </Badge>
                   </div>
@@ -1501,7 +1501,7 @@ export function POSScreen() {
                       }
                     }}
                     placeholder="Enter voucher code"
-                    className="bg-white font-mono"
+                    className="bg-background font-mono"
                     maxLength={10}
                   />
                   <Button
@@ -1519,10 +1519,10 @@ export function POSScreen() {
             </div>
 
             {/* Discount Input - shown for all payment methods */}
-            <div className="rounded-lg border p-3 bg-green-50 dark:bg-green-950/20 dark:border-green-800/50">
+            <div className="rounded-lg border border-green-500/20 p-3 bg-green-500/10">
               <div className="flex items-center gap-2 mb-2">
-                <Percent className="h-4 w-4 text-green-600" />
-                <Label htmlFor="discount" className="font-medium text-green-800 dark:text-green-300">Apply Discount</Label>
+                <Percent className="h-4 w-4 text-green-500" />
+                <Label htmlFor="discount" className="font-medium text-green-400">Apply Discount</Label>
               </div>
               <Input
                 id="discount"
@@ -1538,11 +1538,11 @@ export function POSScreen() {
                   }
                 }}
                 placeholder="Enter discount amount"
-                className="bg-white"
+                className="bg-background"
                 disabled={!!appliedVoucher}
               />
               {discount > 0 && (
-                <p className="text-sm text-green-700 mt-2">
+                <p className="text-sm text-green-400 mt-2">
                   Discount: {formatCurrency(discount)} | New Total: {formatCurrency(total)}
                 </p>
               )}
@@ -1565,12 +1565,12 @@ export function POSScreen() {
                   </p>
                 )}
                 {parseFloat(amountPaid) > 0 && parseFloat(amountPaid) < total && (
-                  <div className="mt-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                  <div className="mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3">
                     <div className="flex items-start gap-2 text-sm">
-                      <AlertCircle className="h-4 w-4 mt-0.5 text-amber-600 flex-shrink-0" />
+                      <AlertCircle className="h-4 w-4 mt-0.5 text-amber-500 flex-shrink-0" />
                       <div>
-                        <p className="font-medium text-amber-800">Partial Payment</p>
-                        <p className="text-amber-700">
+                        <p className="font-medium text-amber-400">Partial Payment</p>
+                        <p className="text-amber-400/80">
                           Remaining: <strong>{formatCurrency(total - parseFloat(amountPaid))}</strong> will be added to Account Receivables.
                         </p>
                         {!selectedCustomer && (
@@ -1682,13 +1682,13 @@ export function POSScreen() {
               </div>
             )}
             {paymentMethod === 'cod' && !addToReceivable && (
-              <div className="rounded-xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 dark:border-amber-800 p-4 space-y-3">
+              <div className="rounded-xl border-2 border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500 text-white">
                       <Truck className="h-4 w-4" />
                     </div>
-                    <span className="font-semibold text-amber-900 dark:text-amber-100">
+                    <span className="font-semibold text-foreground">
                       Cash on Delivery
                     </span>
                   </div>
@@ -1696,7 +1696,7 @@ export function POSScreen() {
                     variant="outline"
                     size="sm"
                     onClick={() => setShowCodDialog(true)}
-                    className="border-amber-300 hover:bg-amber-100 dark:border-amber-700 dark:hover:bg-amber-900/50"
+                    className="border-amber-500/30 hover:bg-amber-500/10"
                   >
                     {isCodFormValid ? 'Edit Details' : 'Add Details'}
                   </Button>
@@ -1705,30 +1705,30 @@ export function POSScreen() {
                 {isCodFormValid ? (
                   <div className="space-y-2 text-sm">
                     <div className="flex items-start gap-2">
-                      <User className="h-4 w-4 text-amber-600 mt-0.5" />
-                      <span className="text-amber-900 dark:text-amber-100">{codName}</span>
+                      <User className="h-4 w-4 text-amber-500 mt-0.5" />
+                      <span className="text-foreground">{codName}</span>
                     </div>
                     <div className="flex items-start gap-2">
-                      <Phone className="h-4 w-4 text-amber-600 mt-0.5" />
-                      <span className="text-amber-900 dark:text-amber-100">{codPhone}</span>
+                      <Phone className="h-4 w-4 text-amber-500 mt-0.5" />
+                      <span className="text-foreground">{codPhone}</span>
                     </div>
                     <div className="flex items-start gap-2">
-                      <MapPin className="h-4 w-4 text-amber-600 mt-0.5" />
-                      <span className="text-amber-900 dark:text-amber-100">
+                      <MapPin className="h-4 w-4 text-amber-500 mt-0.5" />
+                      <span className="text-foreground">
                         {codAddress}, {codCity}
                       </span>
                     </div>
                     {codChargesNum > 0 && (
-                      <div className="flex items-start gap-2 pt-1 border-t border-amber-200 dark:border-amber-800">
-                        <DollarSign className="h-4 w-4 text-amber-600 mt-0.5" />
-                        <span className="text-amber-900 dark:text-amber-100 font-medium">
+                      <div className="flex items-start gap-2 pt-1 border-t border-amber-500/20">
+                        <DollarSign className="h-4 w-4 text-amber-500 mt-0.5" />
+                        <span className="text-foreground font-medium">
                           Delivery: {formatCurrency(codChargesNum)}
                         </span>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300">
+                  <div className="flex items-center gap-2 text-sm text-amber-400">
                     <AlertCircle className="h-4 w-4" />
                     <span>Please add delivery details to continue</span>
                   </div>
@@ -1848,7 +1848,7 @@ export function POSScreen() {
                 value={codCharges}
                 onChange={(e) => setCodCharges(e.target.value)}
                 placeholder="0.00"
-                className="text-lg font-semibold bg-white dark:bg-gray-950 border-blue-200 dark:border-blue-800 focus:ring-blue-500"
+                className="text-lg font-semibold bg-background border-blue-500/20 focus:ring-blue-500"
               />
               <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 flex items-start gap-1">
                 <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
