@@ -67,7 +67,11 @@
       "Bash(git status:*)",
       "Bash(npm ls:*)",
       "Bash(npm --version)",
-      "Read(//home/safdaralishah/Documents/github/fa_practice/**)"
+      "Read(//home/safdaralishah/Documents/github/fa_practice/**)",
+      "Bash(for f:*)",
+      "Bash(do)",
+      "Read(//home/safdaralishah/Documents/github/fa_practice/firearms-pos/src/renderer/screens/$f/**)",
+      "Bash(done)"
     ]
   }
 }

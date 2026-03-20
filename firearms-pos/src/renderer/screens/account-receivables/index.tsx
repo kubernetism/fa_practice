@@ -345,6 +345,8 @@ export function AccountReceivablesScreen() {
             />
             {searchQuery && (
               <button
+                type="button"
+                aria-label="Clear search"
                 onClick={() => setSearchQuery('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
