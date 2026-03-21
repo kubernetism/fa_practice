@@ -122,6 +122,7 @@ function NavSection({ title, items }: { title: string; items: NavItem[] }) {
           <NavLink
             key={item.href}
             to={item.href}
+            end={item.href === '/settings'}
             className={({ isActive }) =>
               cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
@@ -150,8 +151,16 @@ export function Sidebar() {
 
   return (
     <aside className="flex h-full w-64 flex-col border-r bg-card">
-      <div className="flex h-16 items-center border-b px-6">
-        <h1 className="text-xl font-bold">{businessName}</h1>
+      <div className="flex h-14 items-center border-b border-border px-5">
+        <h1
+          className="text-lg font-bold tracking-wide bg-clip-text text-transparent animate-shimmer"
+          style={{
+            backgroundImage: 'linear-gradient(110deg, var(--color-foreground) 35%, var(--color-primary) 50%, var(--color-foreground) 65%)',
+            backgroundSize: '200% 100%',
+          }}
+        >
+          {businessName}
+        </h1>
       </div>
       <ScrollArea className="flex-1 py-4">
         <NavSection title="Main" items={mainNavItems} />

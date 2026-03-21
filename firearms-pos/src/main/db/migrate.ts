@@ -1186,7 +1186,7 @@ async function fixCommissionsUserIdNullable(): Promise<void> {
       FOREIGN KEY ("referral_person_id") REFERENCES "referral_persons"("id") ON UPDATE no action ON DELETE no action,
       FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
     )`,
-    'INSERT INTO "commissions_new" SELECT * FROM "commissions"',
+    `INSERT INTO "commissions_new" ("id", "sale_id", "user_id", "referral_person_id", "branch_id", "commission_type", "base_amount", "rate", "commission_amount", "status", "paid_date", "notes", "created_at", "updated_at") SELECT "id", "sale_id", "user_id", "referral_person_id", "branch_id", COALESCE("commission_type", 'sale'), "base_amount", "rate", "commission_amount", COALESCE("status", 'pending'), "paid_date", "notes", "created_at", "updated_at" FROM "commissions"`,
     'DROP TABLE "commissions"',
     'ALTER TABLE "commissions_new" RENAME TO "commissions"',
   ]

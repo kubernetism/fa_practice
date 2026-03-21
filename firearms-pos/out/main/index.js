@@ -18206,14 +18206,20 @@ async function restoreBackup(backupPath) {
       return { success: false, message: "Backup file not found" };
     }
     const dbPath = getDbPath();
-    closeDatabase();
     const backupDir = getBackupDir();
     const safetyBackupName = `pre-restore-backup-${Date.now()}.db`;
     const safetyBackupPath = node_path.join(backupDir, safetyBackupName);
+    try {
+      const rawDb = getRawDatabase();
+      rawDb.pragma("wal_checkpoint(TRUNCATE)");
+    } catch (walErr) {
+      console.warn("Could not checkpoint WAL before restore:", walErr);
+    }
     if (node_fs.existsSync(dbPath)) {
       node_fs.copyFileSync(dbPath, safetyBackupPath);
       console.log("Safety backup created before restore:", safetyBackupPath);
     }
+    closeDatabase();
     const walPath = dbPath + "-wal";
     const shmPath = dbPath + "-shm";
     if (node_fs.existsSync(dbPath)) node_fs.unlinkSync(dbPath);
@@ -18226,16 +18232,19 @@ async function restoreBackup(backupPath) {
     if (node_fs.existsSync(backupPath + "-shm")) {
       node_fs.copyFileSync(backupPath + "-shm", shmPath);
     }
-    initDatabase();
+    reinitializeDatabase();
     console.log("Database restored successfully from:", backupPath);
+    for (const win of electron.BrowserWindow.getAllWindows()) {
+      win.webContents.reload();
+    }
     return {
       success: true,
-      message: "Database restored successfully. Please restart the application."
+      message: "Database restored successfully."
     };
   } catch (err) {
     console.error("Restore failed:", err);
     try {
-      initDatabase();
+      reinitializeDatabase();
     } catch (_initErr) {
     }
     return {

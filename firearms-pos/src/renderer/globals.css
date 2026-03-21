@@ -25,6 +25,7 @@
   --color-warning: oklch(79.48% 0.165 86.05);
   --color-info: oklch(62.3% 0.214 259.15);
   --radius: 0.5rem;
+  --animate-shimmer: shimmer 6s ease-in-out infinite;
 }
 
 @layer base {
@@ -87,6 +88,16 @@
     --color-success: oklch(65% 0.18 150);
     --color-warning: oklch(75% 0.15 80);
     --color-info: oklch(65% 0.18 270);
+  }
+}
+
+/* Business name shimmer animation */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 

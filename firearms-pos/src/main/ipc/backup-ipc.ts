@@ -1,5 +1,5 @@
 import { ipcMain, app, dialog, BrowserWindow } from 'electron'
-import { getDbPath, closeDatabase, initDatabase, getRawDatabase, getDatabase } from '../db'
+import { getDbPath, closeDatabase, initDatabase, reinitializeDatabase, getRawDatabase, getDatabase } from '../db'
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, unlinkSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import Database from 'better-sqlite3-multiple-ciphers'
@@ -190,18 +190,26 @@ async function restoreBackup(backupPath: string): Promise<{ success: boolean; me
 
     const dbPath = getDbPath()
 
-    // Close the current database connection
-    closeDatabase()
-
-    // Create a pre-restore backup (safety backup)
+    // Create a pre-restore backup BEFORE closing the database
     const backupDir = getBackupDir()
     const safetyBackupName = `pre-restore-backup-${Date.now()}.db`
     const safetyBackupPath = join(backupDir, safetyBackupName)
+
+    // Checkpoint WAL while DB is still open
+    try {
+      const rawDb = getRawDatabase()
+      rawDb.pragma('wal_checkpoint(TRUNCATE)')
+    } catch (walErr) {
+      console.warn('Could not checkpoint WAL before restore:', walErr)
+    }
 
     if (existsSync(dbPath)) {
       copyFileSync(dbPath, safetyBackupPath)
       console.log('Safety backup created before restore:', safetyBackupPath)
     }
+
+    // Close the current database connection
+    closeDatabase()
 
     // Remove existing database files
     const walPath = dbPath + '-wal'
@@ -222,20 +230,25 @@ async function restoreBackup(backupPath: string): Promise<{ success: boolean; me
       copyFileSync(backupPath + '-shm', shmPath)
     }
 
-    // Reinitialize database
-    initDatabase()
+    // Reinitialize database with fresh connection (updates the shared db reference)
+    reinitializeDatabase()
 
     console.log('Database restored successfully from:', backupPath)
 
+    // Reload all renderer windows so they pick up the new database state
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.reload()
+    }
+
     return {
       success: true,
-      message: 'Database restored successfully. Please restart the application.'
+      message: 'Database restored successfully.'
     }
   } catch (err) {
     console.error('Restore failed:', err)
     // Try to reinitialize database anyway
     try {
-      initDatabase()
+      reinitializeDatabase()
     } catch (_initErr) {
       // ignore
     }

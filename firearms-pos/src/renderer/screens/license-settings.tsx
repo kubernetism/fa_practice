@@ -179,18 +179,18 @@ export function LicenseSettingsScreen() {
   if (user?.role?.toLowerCase() !== 'admin') {
     return (
       <div className="flex items-center justify-center h-[60vh]">
-        <Card className="max-w-md border border-red-500/30 bg-zinc-900">
+        <Card className="max-w-md border border-red-500/30 bg-card">
           <CardContent className="pt-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 rounded-lg bg-red-500/10">
                 <Shield className="h-7 w-7 text-red-500" />
               </div>
               <div>
-                <p className="text-red-400 font-semibold text-lg tracking-wide">Access Denied</p>
+                <p className="text-red-500 dark:text-red-400 font-semibold text-lg tracking-wide">Access Denied</p>
                 <p className="text-red-500/70 text-sm">Administrator clearance required</p>
               </div>
             </div>
-            <p className="text-zinc-400 text-sm border-l-2 border-red-500/50 pl-3">
+            <p className="text-muted-foreground text-sm border-l-2 border-red-500/50 pl-3">
               You do not have permission to access the license settings. Only administrators can manage application licensing.
             </p>
           </CardContent>
@@ -203,7 +203,7 @@ export function LicenseSettingsScreen() {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] gap-3">
         <RefreshCw className="w-7 h-7 animate-spin text-primary" />
-        <p className="text-zinc-500 text-sm tracking-widest uppercase text-xs">Loading License Data</p>
+        <p className="text-muted-foreground text-sm tracking-widest uppercase text-xs">Loading License Data</p>
       </div>
     )
   }
@@ -249,7 +249,7 @@ export function LicenseSettingsScreen() {
         }
       default:
         return {
-          color: 'text-zinc-400',
+          color: 'text-muted-foreground',
           bg: 'bg-zinc-500/10',
           border: 'border-zinc-500',
           label: 'Unknown',
@@ -276,8 +276,8 @@ export function LicenseSettingsScreen() {
           <div
             className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-lg shadow-2xl text-sm font-medium border transition-all ${
               toast.type === 'success'
-                ? 'bg-zinc-900 border-primary/50 text-primary shadow-primary/10'
-                : 'bg-zinc-900 border-red-500/50 text-red-400 shadow-red-500/10'
+                ? 'bg-card border-primary/50 text-primary shadow-primary/10'
+                : 'bg-card border-red-500/50 text-red-500 dark:text-red-400 shadow-red-500/10'
             }`}
           >
             {toast.type === 'success'
@@ -295,10 +295,10 @@ export function LicenseSettingsScreen() {
               <Shield className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-zinc-100 tracking-wide">
+              <h1 className="text-lg font-semibold text-foreground tracking-wide">
                 License Settings
               </h1>
-              <p className="text-xs text-zinc-500">Manage application licensing and trial status</p>
+              <p className="text-xs text-muted-foreground">Manage application licensing and trial status</p>
             </div>
           </div>
           <Button
@@ -306,7 +306,7 @@ export function LicenseSettingsScreen() {
             size="sm"
             onClick={fetchLicenseInfo}
             disabled={isLoading}
-            className="border-zinc-700 text-zinc-400 hover:text-primary hover:border-primary/50 bg-transparent text-xs"
+            className="border-border text-muted-foreground hover:text-primary hover:border-primary/50 bg-transparent text-xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isLoading ? 'animate-spin' : ''}`} />
             Refresh
@@ -320,7 +320,7 @@ export function LicenseSettingsScreen() {
           <div className="lg:col-span-2 flex flex-col gap-4">
 
             {/* License Status Panel */}
-            <Card className={`border-l-4 ${statusConfig.border} border-zinc-800 bg-zinc-900/80`}>
+            <Card className={`border-l-4 ${statusConfig.border} border-border bg-card`}>
               <CardContent className="pt-5 pb-5 space-y-4">
                 {/* Status header */}
                 <div className="flex items-center justify-between">
@@ -341,7 +341,7 @@ export function LicenseSettingsScreen() {
                 <div className={`px-3 py-2.5 rounded-md ${statusConfig.bg} border ${statusConfig.border} border-opacity-30`}>
                   <p className={`text-xs font-medium ${statusConfig.color}`}>{licenseInfo?.message}</p>
                   {licenseInfo?.expiresAt && (
-                    <p className="text-xs text-zinc-500 mt-0.5">
+                    <p className="text-xs text-muted-foreground mt-0.5">
                       Expires {new Date(licenseInfo.expiresAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
                     </p>
                   )}
@@ -351,12 +351,12 @@ export function LicenseSettingsScreen() {
                 {daysRemaining > 0 && (
                   <div className="space-y-1.5">
                     <div className="flex justify-between items-center">
-                      <span className="text-xs text-zinc-500">Days Remaining</span>
+                      <span className="text-xs text-muted-foreground">Days Remaining</span>
                       <span className={`text-xs font-semibold tabular-nums ${statusConfig.color}`}>
                         {daysRemaining}d
                       </span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                    <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all ${statusConfig.progressColor}`}
                         style={{ width: `${progressPct}%` }}
@@ -368,23 +368,23 @@ export function LicenseSettingsScreen() {
             </Card>
 
             {/* Machine ID Card */}
-            <Card className="border-zinc-800 bg-zinc-900/80">
+            <Card className="border-border bg-card">
               <CardHeader className="pb-2 pt-4 px-4">
-                <CardTitle className="text-xs font-semibold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-1.5">
                   <Terminal className="w-3.5 h-3.5 text-primary" />
                   Machine Identifier
                 </CardTitle>
               </CardHeader>
               <CardContent className="px-4 pb-4 space-y-3">
                 <div className="relative group">
-                  <code className="block w-full p-2.5 rounded-md bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-300 break-all leading-relaxed pr-9">
+                  <code className="block w-full p-2.5 rounded-md bg-muted border border-border text-xs font-mono text-foreground break-all leading-relaxed pr-9">
                     {machineId || '—'}
                   </code>
                   <Button
                     variant="ghost"
                     size="icon"
                     onClick={handleCopyMachineId}
-                    className="absolute top-1.5 right-1.5 h-6 w-6 text-zinc-500 hover:text-primary hover:bg-primary/10"
+                    className="absolute top-1.5 right-1.5 h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
                     title="Copy Machine ID"
                   >
                     <Copy className="w-3 h-3" />
@@ -410,69 +410,69 @@ export function LicenseSettingsScreen() {
             {licenseInfo?.isActivated && licenseInfo.status === 'LICENSE_ACTIVE' ? (
               /* Full License Details */
               <>
-                <Card className="border-zinc-800 bg-zinc-900/80">
+                <Card className="border-border bg-card">
                   <CardHeader className="pb-3 pt-4 px-5">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 rounded-md bg-emerald-500/10">
                         <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                       </div>
                       <div>
-                        <CardTitle className="text-sm font-semibold text-zinc-100">Full License Active</CardTitle>
-                        <CardDescription className="text-xs text-zinc-500">Your license is valid and operational</CardDescription>
+                        <CardTitle className="text-sm font-semibold text-foreground">Full License Active</CardTitle>
+                        <CardDescription className="text-xs text-muted-foreground">Your license is valid and operational</CardDescription>
                       </div>
                     </div>
                   </CardHeader>
                   <CardContent className="px-5 pb-5 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Key</p>
-                        <code className="block p-1.5 rounded bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-400 break-all">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">License Key</p>
+                        <code className="block p-1.5 rounded bg-muted border border-border text-xs font-mono text-muted-foreground break-all">
                           {licenseInfo.licenseStartDate ? '••••  ••••  ••••  ••••' : '—'}
                         </code>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Type</p>
-                        <span className="text-sm font-medium text-zinc-200">Subscription License</span>
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">License Type</p>
+                        <span className="text-sm font-medium text-foreground">Subscription License</span>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Installation Date</p>
-                        <span className="text-sm font-medium text-zinc-200">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Installation Date</p>
+                        <span className="text-sm font-medium text-foreground">
                           {licenseInfo.installationDate
                             ? new Date(licenseInfo.installationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                             : '—'}
                         </span>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Days Remaining</p>
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Days Remaining</p>
                         <span className="text-sm font-semibold text-emerald-400">
                           {licenseInfo.daysRemaining} days
                         </span>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Start Date</p>
-                        <span className="text-sm font-medium text-zinc-200">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">License Start Date</p>
+                        <span className="text-sm font-medium text-foreground">
                           {licenseInfo.licenseStartDate
                             ? new Date(licenseInfo.licenseStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                             : '—'}
                         </span>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License End Date</p>
-                        <span className="text-sm font-medium text-zinc-200">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">License End Date</p>
+                        <span className="text-sm font-medium text-foreground">
                           {licenseInfo.licenseEndDate
                             ? new Date(licenseInfo.licenseEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                             : '—'}
                         </span>
                       </div>
                       <div className="space-y-1 col-span-2">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Machine ID</p>
-                        <code className="block p-1.5 rounded bg-zinc-950 border border-zinc-800 text-xs font-mono text-zinc-400 break-all">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Machine ID</p>
+                        <code className="block p-1.5 rounded bg-muted border border-border text-xs font-mono text-muted-foreground break-all">
                           {machineId}
                         </code>
                       </div>
                     </div>
 
-                    <div className="pt-2 border-t border-zinc-800">
+                    <div className="pt-2 border-t border-border">
                       <Button
                         variant="destructive"
                         size="sm"
@@ -490,24 +490,24 @@ export function LicenseSettingsScreen() {
             ) : (
               /* Trial / Non-activated Details */
               <>
-                <Card className="border-zinc-800 bg-zinc-900/80">
+                <Card className="border-border bg-card">
                   <CardHeader className="pb-3 pt-4 px-5">
-                    <CardTitle className="text-sm font-semibold text-zinc-100">License Details</CardTitle>
-                    <CardDescription className="text-xs text-zinc-500">Current license and trial information</CardDescription>
+                    <CardTitle className="text-sm font-semibold text-foreground">License Details</CardTitle>
+                    <CardDescription className="text-xs text-muted-foreground">Current license and trial information</CardDescription>
                   </CardHeader>
                   <CardContent className="px-5 pb-5 space-y-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Installation Date</p>
-                        <span className="text-sm font-medium text-zinc-200">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Installation Date</p>
+                        <span className="text-sm font-medium text-foreground">
                           {licenseInfo?.installationDate
                             ? new Date(licenseInfo.installationDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                             : '—'}
                         </span>
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">Trial End Date</p>
-                        <span className="text-sm font-medium text-zinc-200">
+                        <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">Trial End Date</p>
+                        <span className="text-sm font-medium text-foreground">
                           {licenseInfo?.trialEndDate
                             ? new Date(licenseInfo.trialEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                             : '—'}
@@ -517,16 +517,16 @@ export function LicenseSettingsScreen() {
                       {licenseInfo?.isActivated && (
                         <>
                           <div className="space-y-1">
-                            <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License Start</p>
-                            <span className="text-sm font-medium text-zinc-200">
+                            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">License Start</p>
+                            <span className="text-sm font-medium text-foreground">
                               {licenseInfo.licenseStartDate
                                 ? new Date(licenseInfo.licenseStartDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                                 : '—'}
                             </span>
                           </div>
                           <div className="space-y-1">
-                            <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-medium">License End</p>
-                            <span className="text-sm font-medium text-zinc-200">
+                            <p className="text-[10px] uppercase tracking-widest text-muted-foreground font-medium">License End</p>
+                            <span className="text-sm font-medium text-foreground">
                               {licenseInfo.licenseEndDate
                                 ? new Date(licenseInfo.licenseEndDate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
                                 : '—'}
@@ -537,7 +537,7 @@ export function LicenseSettingsScreen() {
                     </div>
 
                     {/* Action Buttons */}
-                    <div className="pt-2 border-t border-zinc-800 flex gap-2">
+                    <div className="pt-2 border-t border-border flex gap-2">
                       {licenseInfo?.isTrial ? (
                         <Button
                           size="sm"
@@ -592,7 +592,7 @@ export function LicenseSettingsScreen() {
 
         {/* Deactivate Confirmation Dialog */}
         <AlertDialog open={deactivateConfirmOpen} onOpenChange={setDeactivateConfirmOpen}>
-          <AlertDialogContent className="bg-zinc-900 border border-zinc-700">
+          <AlertDialogContent className="bg-card border border-border">
             <AlertDialogHeader>
               <AlertDialogTitle className="flex items-center gap-2 text-primary">
                 <div className="p-1.5 rounded-md bg-primary/10">
@@ -600,7 +600,7 @@ export function LicenseSettingsScreen() {
                 </div>
                 Deactivate License?
               </AlertDialogTitle>
-              <AlertDialogDescription className="text-zinc-400 text-sm">
+              <AlertDialogDescription className="text-muted-foreground text-sm">
                 Are you sure you want to deactivate the license? This will revert the application
                 to trial mode and you will need to activate a new license to continue using all features.
                 <br /><br />
@@ -614,7 +614,7 @@ export function LicenseSettingsScreen() {
                 variant="outline"
                 size="sm"
                 onClick={cancelDeactivate}
-                className="border-zinc-700 text-zinc-400 hover:text-zinc-200 bg-transparent"
+                className="border-border text-muted-foreground hover:text-foreground bg-transparent"
               >
                 Cancel
               </Button>
@@ -627,7 +627,7 @@ export function LicenseSettingsScreen() {
 
         {/* Final Warning Dialog (5th click) */}
         <AlertDialog open={showFinalWarning} onOpenChange={handleFinalWarningClose}>
-          <AlertDialogContent className="max-w-md bg-zinc-900 border border-red-500/40">
+          <AlertDialogContent className="max-w-md bg-card border border-red-500/40">
             <AlertDialogHeader>
               <AlertDialogTitle className="flex items-center gap-2 text-red-400">
                 <div className="p-1.5 rounded-md bg-red-500/10">
@@ -636,20 +636,20 @@ export function LicenseSettingsScreen() {
                 WARNING: Final Confirmation Required
               </AlertDialogTitle>
               <AlertDialogDescription asChild>
-                <div className="space-y-3 text-zinc-400 text-sm">
-                  <p className="font-medium text-zinc-200">
+                <div className="space-y-3 text-muted-foreground text-sm">
+                  <p className="font-medium text-foreground">
                     You are about to deactivate your license!
                   </p>
                   <p>This action will:</p>
                   <ul className="space-y-1.5 pl-1">
                     {DEACTIVATION_CONSEQUENCES.map((item) => (
-                      <li key={item} className="flex items-start gap-2 text-zinc-400">
+                      <li key={item} className="flex items-start gap-2 text-muted-foreground">
                         <span className="mt-1 w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
                         {item}
                       </li>
                     ))}
                   </ul>
-                  <p className="font-medium text-zinc-200 pt-1">
+                  <p className="font-medium text-foreground pt-1">
                     Are you absolutely sure you want to proceed?
                   </p>
                 </div>
@@ -660,7 +660,7 @@ export function LicenseSettingsScreen() {
                 variant="outline"
                 size="sm"
                 onClick={handleFinalWarningClose}
-                className="border-zinc-700 text-zinc-400 hover:text-zinc-200 bg-transparent"
+                className="border-border text-muted-foreground hover:text-foreground bg-transparent"
               >
                 No, Keep License
               </Button>

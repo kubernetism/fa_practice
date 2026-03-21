@@ -1,10 +1,31 @@
 import React, { useState, useEffect, useMemo } from 'react'
-import { Plus, Search, Pencil, Trash2, DollarSign, TrendingUp, UserPlus, RotateCcw, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import {
+  Plus,
+  Search,
+  Pencil,
+  Trash2,
+  DollarSign,
+  TrendingUp,
+  UserPlus,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  CheckCircle2,
+  Clock,
+  Ban,
+  ArrowUpRight,
+  Receipt,
+  Users,
+  Wallet,
+  BadgePercent,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -29,6 +50,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useBranch } from '@/contexts/branch-context'
+import { useCurrency } from '@/contexts/settings-context'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
 import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
@@ -47,7 +69,6 @@ interface Commission {
   notes: string | null
   createdAt: string
   updatedAt: string
-  // Joined data
   user?: {
     id: number
     username: string
@@ -100,10 +121,11 @@ const initialFormData: CommissionFormData = {
   notes: '',
 }
 
-const ITEMS_PER_PAGE = 10
+const ITEMS_PER_PAGE = 12
 
 export default function CommissionsScreen() {
   const { currentBranch } = useBranch()
+  const { formatCurrency } = useCurrency()
   const [commissions, setCommissions] = useState<Commission[]>([])
   const [referralPersons, setReferralPersons] = useState<ReferralPerson[]>([])
   const [availableInvoices, setAvailableInvoices] = useState<Sale[]>([])
@@ -125,7 +147,6 @@ export default function CommissionsScreen() {
     }
   }, [currentBranch])
 
-  // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, statusFilter, typeFilter])
@@ -142,7 +163,6 @@ export default function CommissionsScreen() {
       const response = await window.api.commissions.getAll({ page: 1, limit: 100, branchId: currentBranch.id })
 
       if (response?.success && response?.data) {
-        // Filter by branch on client side as well
         const filteredData = response.data.filter((item: any) =>
           item.commission.branchId === currentBranch.id
         )
@@ -209,9 +229,7 @@ export default function CommissionsScreen() {
       })
     }
 
-    // Fetch ALL available invoices when opening dialog
     fetchAvailableInvoices()
-
     setIsDialogOpen(true)
   }
 
@@ -224,7 +242,6 @@ export default function CommissionsScreen() {
 
   const handleReferralPersonChange = (referralPersonId: string) => {
     setFormData({ ...formData, referralPersonId })
-    // Invoices are already loaded - no need to refetch
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -342,16 +359,6 @@ export default function CommissionsScreen() {
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-      approved: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-      paid: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-      cancelled: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-    }
-    return colors[status] || colors.pending
-  }
-
   const filteredCommissions = useMemo(() => commissions.filter((commission) => {
     const matchesSearch =
       commission.sale?.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -364,12 +371,23 @@ export default function CommissionsScreen() {
     return matchesSearch && matchesStatus && matchesType
   }), [commissions, searchTerm, statusFilter, typeFilter])
 
-  // Calculate statistics
-  const totalCommission = filteredCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
-  const paidCommissions = filteredCommissions.filter((c) => c.status === 'paid')
-  const totalPaid = paidCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
-  const pendingCommissions = filteredCommissions.filter((c) => c.status === 'pending')
-  const totalPending = pendingCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
+  // Statistics
+  const stats = useMemo(() => {
+    const total = filteredCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const paid = filteredCommissions.filter((c) => c.status === 'paid')
+    const paidAmt = paid.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const pending = filteredCommissions.filter((c) => c.status === 'pending')
+    const pendingAmt = pending.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const approved = filteredCommissions.filter((c) => c.status === 'approved')
+    const approvedAmt = approved.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const cancelled = filteredCommissions.filter((c) => c.status === 'cancelled')
+    const referralCount = filteredCommissions.filter((c) => c.commissionType === 'referral').length
+    const employeeCount = filteredCommissions.filter((c) => c.commissionType === 'sale').length
+    const avgRate = filteredCommissions.length > 0
+      ? filteredCommissions.reduce((sum, c) => sum + c.rate, 0) / filteredCommissions.length
+      : 0
+    return { total, paid, paidAmt, pending, pendingAmt, approved, approvedAmt, cancelled, referralCount, employeeCount, avgRate }
+  }, [filteredCommissions])
 
   // Pagination
   const paginatedCommissions = useMemo(() => {
@@ -379,265 +397,413 @@ export default function CommissionsScreen() {
 
   const totalPages = Math.ceil(filteredCommissions.length / ITEMS_PER_PAGE) || 1
 
+  // Status config
+  const statusConfig: Record<string, { icon: React.ElementType; color: string; bg: string; border: string }> = {
+    pending: { icon: Clock, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/30' },
+    approved: { icon: TrendingUp, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+    paid: { icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
+    cancelled: { icon: Ban, color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' },
+  }
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-lg">Loading commissions...</p>
+        <div className="text-center">
+          <BadgePercent className="w-6 h-6 animate-pulse text-primary mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">Loading commissions...</p>
+        </div>
       </div>
     )
   }
 
   return (
     <TooltipProvider>
-      <div className="space-y-3 p-4">
-        {/* Header row with inline stat pills */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold">Commissions</h1>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
-                {filteredCommissions.length} Total
-              </span>
-              <span className="rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium">
-                Rs. {totalCommission.toFixed(2)}
-              </span>
-              <span className="rounded-full bg-green-500/10 text-green-500 px-2.5 py-0.5 text-xs font-medium">
-                Rs. {totalPaid.toFixed(2)} Paid
-              </span>
-              {totalPending > 0 && (
-                <span className="rounded-full bg-yellow-500/10 text-yellow-500 px-2.5 py-0.5 text-xs font-medium">
-                  Rs. {totalPending.toFixed(2)} Pending
-                </span>
-              )}
+      <div className="flex flex-col h-full">
+        {/* Header Bar */}
+        <div className="border-t-2 border-primary/30 bg-background border-b border-border px-5 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-1.5 rounded bg-primary/10 border border-primary/20 shrink-0">
+              <BadgePercent className="w-4 h-4 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base font-bold leading-tight tracking-wide">
+                Commission Management
+              </h1>
+              <p className="text-[11px] text-muted-foreground leading-tight">
+                Track referral &amp; employee commissions across sales
+              </p>
             </div>
           </div>
-          <Button size="sm" className="h-8" onClick={() => handleOpenDialog(undefined, 'referral')}>
+          <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => handleOpenDialog(undefined, 'referral')}>
             <Plus className="mr-1.5 h-3.5 w-3.5" />
-            Create Commission
+            New Commission
           </Button>
         </div>
 
-        {/* Compact search + filters row */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search commissions..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-8 pl-8 text-sm"
-            />
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto px-5 pt-4 pb-4 space-y-4">
+
+          {/* Summary Cards Row */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Total Commissions */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total</span>
+                  <div className="p-1 rounded bg-primary/10">
+                    <DollarSign className="w-3 h-3 text-primary" />
+                  </div>
+                </div>
+                <p className="text-lg font-bold tabular-nums tracking-tight">{formatCurrency(stats.total)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-muted-foreground">{filteredCommissions.length} entries</span>
+                  <span className="text-[10px] text-muted-foreground">·</span>
+                  <span className="text-[10px] text-muted-foreground">Avg {stats.avgRate.toFixed(1)}%</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Paid */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paid</span>
+                  <div className="p-1 rounded bg-emerald-500/10">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  </div>
+                </div>
+                <p className="text-lg font-bold tabular-nums tracking-tight text-emerald-600 dark:text-emerald-400">{formatCurrency(stats.paidAmt)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{stats.paid.length} paid</span>
+                  {stats.total > 0 && (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <span className="text-[10px] text-muted-foreground">{((stats.paidAmt / stats.total) * 100).toFixed(0)}% of total</span>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Pending */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Pending</span>
+                  <div className="p-1 rounded bg-amber-500/10">
+                    <Clock className="w-3 h-3 text-amber-500" />
+                  </div>
+                </div>
+                <p className="text-lg font-bold tabular-nums tracking-tight text-amber-600 dark:text-amber-400">{formatCurrency(stats.pendingAmt)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400">{stats.pending.length} awaiting</span>
+                  {stats.approvedAmt > 0 && (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <span className="text-[10px] text-blue-500">{formatCurrency(stats.approvedAmt)} approved</span>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Breakdown */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Breakdown</span>
+                  <div className="p-1 rounded bg-blue-500/10">
+                    <Users className="w-3 h-3 text-blue-500" />
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-3">
+                  <div>
+                    <p className="text-lg font-bold tabular-nums tracking-tight">{stats.referralCount}</p>
+                    <span className="text-[10px] text-muted-foreground">Referral</span>
+                  </div>
+                  <div className="h-6 w-px bg-border" />
+                  <div>
+                    <p className="text-lg font-bold tabular-nums tracking-tight">{stats.employeeCount}</p>
+                    <span className="text-[10px] text-muted-foreground">Employee</span>
+                  </div>
+                  {stats.cancelled.length > 0 && (
+                    <>
+                      <div className="h-6 w-px bg-border" />
+                      <div>
+                        <p className="text-lg font-bold tabular-nums tracking-tight text-red-500">{stats.cancelled.length}</p>
+                        <span className="text-[10px] text-muted-foreground">Cancelled</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Search + Filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by invoice, person, or employee..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-8 pl-8 text-sm"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="referral">Referral</SelectItem>
+                <SelectItem value="sale">Employee</SelectItem>
+                <SelectItem value="bonus">Bonus</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Table */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            {filteredCommissions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="p-3 rounded-full bg-muted mb-3">
+                  <Receipt className="w-5 h-5 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium text-foreground">No commissions found</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {searchTerm || statusFilter !== 'all' || typeFilter !== 'all'
+                    ? 'Try adjusting your filters'
+                    : 'Create your first commission to get started'}
+                </p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-[40px]">#</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Invoice</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Person / Type</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Sale Amt</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Rate</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Commission</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Status</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedCommissions.map((commission, idx) => {
+                    const sc = statusConfig[commission.status] || statusConfig.pending
+                    const StatusIcon = sc.icon
+                    return (
+                      <TableRow key={commission.id} className="group">
+                        <TableCell className="py-2 text-[11px] text-muted-foreground tabular-nums">
+                          {(currentPage - 1) * ITEMS_PER_PAGE + idx + 1}
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1 rounded bg-muted shrink-0">
+                              <Receipt className="w-3 h-3 text-muted-foreground" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {commission.sale?.invoiceNumber || `Sale #${commission.saleId}`}
+                              </p>
+                              {commission.sale?.saleDate && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  {new Date(commission.sale.saleDate).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {commission.commissionType === 'referral'
+                                ? commission.referralPerson?.name || '—'
+                                : commission.user?.fullName || '—'}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className={`text-[9px] px-1.5 py-0 mt-0.5 ${
+                                commission.commissionType === 'referral'
+                                  ? 'border-violet-500/30 text-violet-600 dark:text-violet-400'
+                                  : commission.commissionType === 'bonus'
+                                  ? 'border-amber-500/30 text-amber-600 dark:text-amber-400'
+                                  : 'border-blue-500/30 text-blue-600 dark:text-blue-400'
+                              }`}
+                            >
+                              {commission.commissionType}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-2 text-right">
+                          <span className="text-sm tabular-nums text-muted-foreground">
+                            {formatCurrency(commission.baseAmount)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-2 text-center">
+                          <span className="inline-flex items-center gap-0.5 text-sm tabular-nums font-medium">
+                            {commission.rate}
+                            <span className="text-[10px] text-muted-foreground">%</span>
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-2 text-right">
+                          <span className="text-sm font-semibold tabular-nums text-primary">
+                            {formatCurrency(commission.commissionAmount)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] px-1.5 py-0 gap-1 ${sc.color} ${sc.bg} ${sc.border}`}
+                            >
+                              <StatusIcon className="w-2.5 h-2.5" />
+                              {commission.status}
+                            </Badge>
+                            <ReversalStatusBadge entityType="commission" entityId={commission.id} />
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <div className="flex items-center justify-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {commission.status === 'pending' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => handleApprove(commission.id)}
+                                  >
+                                    <TrendingUp className="h-3.5 w-3.5 text-blue-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Approve</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {commission.status === 'approved' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => handleMarkPaid(commission.id)}
+                                  >
+                                    <DollarSign className="h-3.5 w-3.5 text-emerald-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Mark Paid</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {commission.status !== 'cancelled' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => {
+                                      setReversalTarget(commission)
+                                      setIsReversalModalOpen(true)
+                                    }}
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5 text-amber-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Reversal</TooltipContent>
+                              </Tooltip>
+                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => handleOpenDialog(commission)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">Edit</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => handleDelete(commission.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">Delete</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
             )}
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="h-8 w-[130px] text-xs">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="approved">Approved</SelectItem>
-              <SelectItem value="paid">Paid</SelectItem>
-              <SelectItem value="cancelled">Cancelled</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="h-8 w-[130px] text-xs">
-              <SelectValue placeholder="Type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Types</SelectItem>
-              <SelectItem value="referral">Referral</SelectItem>
-              <SelectItem value="sale">Employee</SelectItem>
-              <SelectItem value="bonus">Bonus</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
 
-        {/* Table */}
-        <div className="rounded-md border overflow-hidden">
-          {filteredCommissions.length === 0 ? (
-            <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-              No commissions found
+          {/* Pagination */}
+          {filteredCommissions.length > ITEMS_PER_PAGE && (
+            <div className="flex items-center justify-between text-xs text-muted-foreground pb-2">
+              <span>
+                Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredCommissions.length)} of {filteredCommissions.length}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage((p) => p - 1)}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <span className="min-w-[3rem] text-center tabular-nums">{currentPage} / {totalPages}</span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-muted/30 hover:bg-muted/30">
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Invoice</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Type / Person</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Base Amt</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Rate</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Commission</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Status</TableHead>
-                  <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-[120px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paginatedCommissions.map((commission) => (
-                  <TableRow key={commission.id} className="group h-9">
-                    <TableCell className="py-1.5">
-                      <span className="text-sm font-medium">
-                        {commission.sale?.invoiceNumber || `Sale #${commission.saleId}`}
-                      </span>
-                      {commission.sale?.saleDate && (
-                        <span className="block text-[11px] text-muted-foreground">
-                          {new Date(commission.sale.saleDate).toLocaleDateString()}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className="py-1.5">
-                      <div className="flex items-center gap-1.5">
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                          {commission.commissionType}
-                        </Badge>
-                        {commission.commissionType === 'referral' && commission.referralPerson && (
-                          <span className="text-xs">{commission.referralPerson.name}</span>
-                        )}
-                        {commission.commissionType === 'sale' && commission.user && (
-                          <span className="text-xs">{commission.user.fullName}</span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-1.5 text-right text-sm tabular-nums">
-                      Rs. {commission.baseAmount.toFixed(2)}
-                    </TableCell>
-                    <TableCell className="py-1.5 text-right text-sm tabular-nums">
-                      {commission.rate}%
-                    </TableCell>
-                    <TableCell className="py-1.5 text-right text-sm font-medium tabular-nums text-primary">
-                      Rs. {commission.commissionAmount.toFixed(2)}
-                    </TableCell>
-                    <TableCell className="py-1.5">
-                      <div className="flex items-center gap-1">
-                        <Badge className={`text-[10px] px-1.5 py-0 ${getStatusBadge(commission.status)}`}>
-                          {commission.status}
-                        </Badge>
-                        <ReversalStatusBadge entityType="commission" entityId={commission.id} />
-                      </div>
-                    </TableCell>
-                    <TableCell className="py-1.5">
-                      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        {commission.status === 'pending' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => handleApprove(commission.id)}
-                              >
-                                <TrendingUp className="h-3.5 w-3.5 text-blue-500" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Approve</TooltipContent>
-                          </Tooltip>
-                        )}
-                        {commission.status === 'approved' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => handleMarkPaid(commission.id)}
-                              >
-                                <DollarSign className="h-3.5 w-3.5 text-green-500" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Mark Paid</TooltipContent>
-                          </Tooltip>
-                        )}
-                        {commission.status !== 'cancelled' && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                onClick={() => {
-                                  setReversalTarget(commission)
-                                  setIsReversalModalOpen(true)
-                                }}
-                              >
-                                <RotateCcw className="h-3.5 w-3.5 text-amber-500" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Reversal</TooltipContent>
-                          </Tooltip>
-                        )}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => handleOpenDialog(commission)}
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Edit</TooltipContent>
-                        </Tooltip>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              onClick={() => handleDelete(commission.id)}
-                            >
-                              <Trash2 className="h-3.5 w-3.5 text-destructive" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>Delete</TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
           )}
         </div>
-
-        {/* Pagination */}
-        {filteredCommissions.length > ITEMS_PER_PAGE && (
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              {filteredCommissions.length} commission{filteredCommissions.length !== 1 ? 's' : ''}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-7 w-7"
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((p) => p - 1)}
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </Button>
-              <span className="min-w-[3rem] text-center">{currentPage} / {totalPages}</span>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-7 w-7"
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((p) => p + 1)}
-              >
-                <ChevronRight className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        )}
 
         {/* Add/Edit Dialog */}
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
@@ -709,7 +875,7 @@ export default function CommissionsScreen() {
                               <div className="flex justify-between w-full pr-2">
                                 <span>{sale.invoiceNumber}</span>
                                 <span className="text-muted-foreground">
-                                  Rs. {(sale.totalAmount || 0).toFixed(2)}
+                                  {formatCurrency(sale.totalAmount || 0)}
                                 </span>
                               </div>
                             </SelectItem>
@@ -726,7 +892,7 @@ export default function CommissionsScreen() {
                     {formData.saleId && (
                       <>
                         <div className="space-y-2">
-                          <Label htmlFor="baseAmount-referral">Base Amount (Rs.) *</Label>
+                          <Label htmlFor="baseAmount-referral">Base Amount *</Label>
                           <Input
                             id="baseAmount-referral"
                             type="number"
@@ -738,7 +904,7 @@ export default function CommissionsScreen() {
                             required
                           />
                           <p className="text-xs text-muted-foreground">
-                            Amount from sale invoice that commission is based on
+                            Amount from sale that commission is based on
                           </p>
                         </div>
 
@@ -780,7 +946,7 @@ export default function CommissionsScreen() {
                       <div className="col-span-2 p-4 bg-muted rounded-md">
                         <p className="text-sm text-muted-foreground">Commission Amount:</p>
                         <p className="text-2xl font-bold text-primary">
-                          Rs. {((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100).toFixed(2)}
+                          {formatCurrency((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100)}
                         </p>
                       </div>
                     )}
@@ -851,7 +1017,7 @@ export default function CommissionsScreen() {
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="baseAmount-employee">Base Amount (Rs.) *</Label>
+                        <Label htmlFor="baseAmount-employee">Base Amount *</Label>
                         <Input
                           id="baseAmount-employee"
                           type="number"
@@ -884,7 +1050,7 @@ export default function CommissionsScreen() {
                       <div className="p-4 bg-muted rounded-md">
                         <p className="text-sm text-muted-foreground">Commission Amount:</p>
                         <p className="text-2xl font-bold text-primary">
-                          Rs. {((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100).toFixed(2)}
+                          {formatCurrency((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100)}
                         </p>
                       </div>
                     )}

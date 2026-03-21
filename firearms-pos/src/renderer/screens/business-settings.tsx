@@ -68,6 +68,12 @@ import {
   FolderOpen,
   Calendar,
   FileArchive,
+  Type,
+  Eye,
+  EyeOff,
+  FileText,
+  Wrench,
+  User,
 } from 'lucide-react'
 import type { Branch, BusinessSettings } from '@shared/types'
 
@@ -670,7 +676,7 @@ export function BusinessSettingsScreen() {
 
       {/* ── Main Content ── */}
       {currentSettings && (
-        <form onSubmit={handleSaveSettings} className="flex flex-col flex-1 min-h-0">
+        <form onSubmit={handleSaveSettings} className="relative flex flex-col flex-1 min-h-0">
           <div className="flex-1 overflow-y-auto px-5 pt-4 pb-20">
             <Tabs defaultValue="business" className="w-full">
               {/* ── Tab Navigation ── */}
@@ -1100,226 +1106,388 @@ export function BusinessSettingsScreen() {
                   RECEIPT CUSTOMIZATION TAB
               ══════════════════════════════════════ */}
               <TabsContent value="customize">
-                <Card className="border-l-2 border-l-primary/20 border-border">
-                  <CardHeader className="py-3 px-4 border-b border-border">
-                    <CardTitle className="text-sm font-semibold flex items-center gap-2">
-                      <Printer className="w-4 h-4 text-primary" />
-                      Receipt Customization
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      Configure receipt appearance and auto-generation settings
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="p-4 space-y-4">
-                    <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                      <div>
-                        <Label htmlFor="receiptFormat" className="text-xs font-medium mb-1 block">Receipt Format</Label>
-                        <Select
-                          value={currentSettings.receiptFormat || 'pdf'}
-                          onValueChange={(val) =>
-                            setCurrentSettings({ ...currentSettings, receiptFormat: val })
-                          }
-                        >
-                          <SelectTrigger className="h-8 text-sm">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="pdf">PDF (A4/Letter)</SelectItem>
-                            <SelectItem value="thermal">Thermal (80mm)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label htmlFor="receiptPrimaryColor" className="text-xs font-medium mb-1 block">Primary Color</Label>
-                        <div className="flex gap-2">
+                <div className="space-y-4">
+                  {/* ── Toolbar ── */}
+                  <Card className="border-border">
+                    <CardContent className="p-3">
+                      <div className="flex flex-wrap items-center gap-3">
+                        {/* Format */}
+                        <div className="flex items-center gap-1.5">
+                          <Printer className="w-3.5 h-3.5 text-muted-foreground" />
+                          <Select
+                            value={currentSettings.receiptFormat || 'pdf'}
+                            onValueChange={(val) =>
+                              setCurrentSettings({ ...currentSettings, receiptFormat: val })
+                            }
+                          >
+                            <SelectTrigger className="h-7 text-xs w-[120px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="pdf">PDF (A4)</SelectItem>
+                              <SelectItem value="thermal">Thermal (80mm)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <Separator orientation="vertical" className="h-5" />
+
+                        {/* Primary Color */}
+                        <div className="flex items-center gap-1.5">
                           <Input
-                            id="receiptPrimaryColor"
                             type="color"
                             value={currentSettings.receiptPrimaryColor || '#1e40af'}
                             onChange={(e) =>
                               setCurrentSettings({ ...currentSettings, receiptPrimaryColor: e.target.value })
                             }
-                            className="w-10 h-8 p-1 cursor-pointer"
+                            className="w-7 h-7 p-0.5 cursor-pointer rounded border-border"
+                            title="Primary Color"
                           />
                           <Input
                             value={currentSettings.receiptPrimaryColor || '#1e40af'}
                             onChange={(e) =>
                               setCurrentSettings({ ...currentSettings, receiptPrimaryColor: e.target.value })
                             }
-                            placeholder="#1e40af"
-                            className="flex-1 h-8 text-sm font-mono"
+                            className="h-7 text-[10px] font-mono w-[72px]"
                           />
                         </div>
-                      </div>
-                      <div>
-                        <Label htmlFor="receiptSecondaryColor" className="text-xs font-medium mb-1 block">Secondary Color</Label>
-                        <div className="flex gap-2">
+
+                        {/* Secondary Color */}
+                        <div className="flex items-center gap-1.5">
                           <Input
-                            id="receiptSecondaryColor"
                             type="color"
                             value={currentSettings.receiptSecondaryColor || '#64748b'}
                             onChange={(e) =>
                               setCurrentSettings({ ...currentSettings, receiptSecondaryColor: e.target.value })
                             }
-                            className="w-10 h-8 p-1 cursor-pointer"
+                            className="w-7 h-7 p-0.5 cursor-pointer rounded border-border"
+                            title="Secondary Color"
                           />
                           <Input
                             value={currentSettings.receiptSecondaryColor || '#64748b'}
                             onChange={(e) =>
                               setCurrentSettings({ ...currentSettings, receiptSecondaryColor: e.target.value })
                             }
-                            placeholder="#64748b"
-                            className="flex-1 h-8 text-sm font-mono"
+                            className="h-7 text-[10px] font-mono w-[72px]"
                           />
                         </div>
-                      </div>
-                      <div>
-                        <Label htmlFor="receiptFontSize" className="text-xs font-medium mb-1 block">Font Size</Label>
-                        <Select
-                          value={currentSettings.receiptFontSize || 'medium'}
-                          onValueChange={(val) =>
-                            setCurrentSettings({ ...currentSettings, receiptFontSize: val })
-                          }
+
+                        <Separator orientation="vertical" className="h-5" />
+
+                        {/* Font Size */}
+                        <div className="flex items-center gap-1.5">
+                          <Type className="w-3.5 h-3.5 text-muted-foreground" />
+                          <Select
+                            value={currentSettings.receiptFontSize || 'medium'}
+                            onValueChange={(val) =>
+                              setCurrentSettings({ ...currentSettings, receiptFontSize: val })
+                            }
+                          >
+                            <SelectTrigger className="h-7 text-xs w-[90px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="small">Small</SelectItem>
+                              <SelectItem value="medium">Medium</SelectItem>
+                              <SelectItem value="large">Large</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+
+                        <Separator orientation="vertical" className="h-5" />
+
+                        {/* Toggles */}
+                        <button
+                          type="button"
+                          onClick={() => setCurrentSettings({ ...currentSettings, receiptShowBusinessLogo: !currentSettings.receiptShowBusinessLogo })}
+                          className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors ${
+                            currentSettings.receiptShowBusinessLogo !== false
+                              ? 'bg-primary/10 border-primary/30 text-primary'
+                              : 'bg-muted border-border text-muted-foreground'
+                          }`}
+                          title="Toggle business logo"
                         >
-                          <SelectTrigger className="h-8 text-sm">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="small">Small</SelectItem>
-                            <SelectItem value="medium">Medium</SelectItem>
-                            <SelectItem value="large">Large</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          {currentSettings.receiptShowBusinessLogo !== false ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                          Logo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentSettings({ ...currentSettings, receiptAutoDownload: !currentSettings.receiptAutoDownload })}
+                          className={`flex items-center gap-1 px-2 py-1 rounded text-xs border transition-colors ${
+                            currentSettings.receiptAutoDownload !== false
+                              ? 'bg-primary/10 border-primary/30 text-primary'
+                              : 'bg-muted border-border text-muted-foreground'
+                          }`}
+                          title="Auto-download after sale"
+                        >
+                          <Download className="w-3 h-3" />
+                          Auto
+                        </button>
                       </div>
-                      <div className="flex items-center gap-2 pt-5">
-                        <input
-                          type="checkbox"
-                          id="receiptAutoDownload"
-                          checked={currentSettings.receiptAutoDownload !== false}
-                          onChange={(e) =>
-                            setCurrentSettings({ ...currentSettings, receiptAutoDownload: e.target.checked })
-                          }
-                          className="h-4 w-4 rounded border-gray-300 accent-primary"
-                        />
-                        <Label htmlFor="receiptAutoDownload" className="text-xs cursor-pointer">Auto-download receipt after sale</Label>
-                      </div>
-                      <div className="flex items-center gap-2 pt-5">
-                        <input
-                          type="checkbox"
-                          id="receiptShowBusinessLogo"
-                          checked={currentSettings.receiptShowBusinessLogo !== false}
-                          onChange={(e) =>
-                            setCurrentSettings({ ...currentSettings, receiptShowBusinessLogo: e.target.checked })
-                          }
-                          className="h-4 w-4 rounded border-gray-300 accent-primary"
-                        />
-                        <Label htmlFor="receiptShowBusinessLogo" className="text-xs cursor-pointer">Show business logo on receipt</Label>
-                      </div>
-                    </div>
+                    </CardContent>
+                  </Card>
 
-                    {/* Custom Fields */}
-                    <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="h-px flex-1 bg-border" />
-                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-2">Custom Fields</span>
-                        <div className="h-px flex-1 bg-border" />
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-3">
-                        <div>
-                          <Label htmlFor="receiptCustomField1Label" className="text-xs font-medium mb-1 block">Field 1 Label</Label>
-                          <Input
-                            id="receiptCustomField1Label"
-                            className="h-8 text-sm"
-                            value={currentSettings.receiptCustomField1Label || ''}
-                            onChange={(e) =>
-                              setCurrentSettings({ ...currentSettings, receiptCustomField1Label: e.target.value })
-                            }
-                            placeholder="e.g., License Number"
-                          />
-                        </div>
-                        <div className="md:col-span-2">
-                          <Label htmlFor="receiptCustomField1Value" className="text-xs font-medium mb-1 block">Field 1 Value</Label>
-                          <Input
-                            id="receiptCustomField1Value"
-                            className="h-8 text-sm"
-                            value={currentSettings.receiptCustomField1Value || ''}
-                            onChange={(e) =>
-                              setCurrentSettings({ ...currentSettings, receiptCustomField1Value: e.target.value })
-                            }
-                            placeholder="e.g., FFL-12345678"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="receiptCustomField2Label" className="text-xs font-medium mb-1 block">Field 2 Label</Label>
-                          <Input
-                            id="receiptCustomField2Label"
-                            className="h-8 text-sm"
-                            value={currentSettings.receiptCustomField2Label || ''}
-                            onChange={(e) =>
-                              setCurrentSettings({ ...currentSettings, receiptCustomField2Label: e.target.value })
-                            }
-                            placeholder="e.g., Store Hours"
-                          />
-                        </div>
-                        <div className="md:col-span-2">
-                          <Label htmlFor="receiptCustomField2Value" className="text-xs font-medium mb-1 block">Field 2 Value</Label>
-                          <Input
-                            id="receiptCustomField2Value"
-                            className="h-8 text-sm"
-                            value={currentSettings.receiptCustomField2Value || ''}
-                            onChange={(e) =>
-                              setCurrentSettings({ ...currentSettings, receiptCustomField2Value: e.target.value })
-                            }
-                            placeholder="e.g., Mon-Sat 9AM-6PM"
-                          />
-                        </div>
-                        <div>
-                          <Label htmlFor="receiptCustomField3Label" className="text-xs font-medium mb-1 block">Field 3 Label</Label>
-                          <Input
-                            id="receiptCustomField3Label"
-                            className="h-8 text-sm"
-                            value={currentSettings.receiptCustomField3Label || ''}
-                            onChange={(e) =>
-                              setCurrentSettings({ ...currentSettings, receiptCustomField3Label: e.target.value })
-                            }
-                            placeholder="e.g., Return Policy"
-                          />
-                        </div>
-                        <div className="md:col-span-2">
-                          <Label htmlFor="receiptCustomField3Value" className="text-xs font-medium mb-1 block">Field 3 Value</Label>
-                          <Input
-                            id="receiptCustomField3Value"
-                            className="h-8 text-sm"
-                            value={currentSettings.receiptCustomField3Value || ''}
-                            onChange={(e) =>
-                              setCurrentSettings({ ...currentSettings, receiptCustomField3Value: e.target.value })
-                            }
-                            placeholder="e.g., 30 days with receipt"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                  {/* ── Live Receipt Preview + Editable Fields Side-by-Side ── */}
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
-                    {/* Terms and Conditions */}
-                    <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        <div className="h-px flex-1 bg-border" />
-                        <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider px-2">Terms &amp; Conditions</span>
-                        <div className="h-px flex-1 bg-border" />
-                      </div>
-                      <Textarea
-                        id="receiptTermsAndConditions"
-                        className="text-sm resize-none"
-                        value={currentSettings.receiptTermsAndConditions || ''}
-                        onChange={(e) =>
-                          setCurrentSettings({ ...currentSettings, receiptTermsAndConditions: e.target.value })
-                        }
-                        placeholder="Return policy, warranty information, legal disclaimers, etc."
-                        rows={3}
-                      />
+                    {/* LEFT: Live Receipt Preview */}
+                    <Card className="border-border overflow-hidden">
+                      <CardHeader className="py-2 px-4 border-b border-border bg-muted/30">
+                        <CardTitle className="text-xs font-semibold flex items-center gap-2 text-muted-foreground">
+                          <Eye className="w-3.5 h-3.5" />
+                          Live Preview
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-4 flex justify-center">
+                        <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Pinyon+Script&display=swap" rel="stylesheet" />
+                        <div
+                          className="w-full max-w-[480px] shadow-lg border rounded-sm"
+                          style={{
+                            background: '#f5f5f5',
+                            borderColor: '#e5e5e5',
+                            fontFamily: "'IBM Plex Mono', 'Consolas', 'Monaco', monospace",
+                          }}
+                        >
+                          {(() => {
+                            const primaryColor = currentSettings.receiptPrimaryColor || '#1e40af'
+                            const secondaryColor = currentSettings.receiptSecondaryColor || '#64748b'
+                            const fontSize = currentSettings.receiptFontSize || 'medium'
+                            const sizes = fontSize === 'small'
+                              ? { base: 10, header: 15, title: 28, caption: 8 }
+                              : fontSize === 'large'
+                              ? { base: 13, header: 19, title: 36, caption: 10 }
+                              : { base: 11, header: 17, title: 32, caption: 9 }
+                            const currencySymbol = currentSettings.currencySymbol || 'Rs.'
+                            const subtotal = 97200
+                            const taxAmt = Math.round(subtotal * ((currentSettings.taxRate ?? 0) / 100))
+                            const total = subtotal + taxAmt
+
+                            const fmtCurrency = (amt: number) =>
+                              `${currencySymbol} ${amt.toLocaleString('en-PK', { minimumFractionDigits: currentSettings.decimalPlaces ?? 2, maximumFractionDigits: currentSettings.decimalPlaces ?? 2 })}`
+
+                            const today = new Date()
+                            const formattedDate = today.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })
+                            const dueDate = new Date(today)
+                            dueDate.setDate(dueDate.getDate() + 7)
+                            const formattedDueDate = dueDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: '2-digit' })
+
+                            return (
+                              <div style={{ padding: '24px 28px', color: '#1a1a1a', fontSize: `${sizes.base}px`, lineHeight: 1.5 }}>
+                                {/* Header — Business Name + Tagline */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+                                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                    {currentSettings.receiptShowBusinessLogo !== false && currentSettings.businessLogo && (
+                                      <img
+                                        src={currentSettings.businessLogo}
+                                        alt="Logo"
+                                        style={{ width: 40, height: 40, objectFit: 'contain' }}
+                                      />
+                                    )}
+                                    <div>
+                                      <div style={{ fontSize: `${sizes.header}px`, fontWeight: 700, letterSpacing: 0.5, color: '#1a1a1a' }}>
+                                        {currentSettings.businessName || 'Business Name'}
+                                      </div>
+                                      {currentSettings.receiptHeader ? (
+                                        <div style={{ fontSize: `${sizes.caption}px`, color: '#444', lineHeight: 1.3 }}>
+                                          {currentSettings.receiptHeader}
+                                        </div>
+                                      ) : (
+                                        <div style={{ fontSize: `${sizes.caption}px`, color: '#444', lineHeight: 1.3 }}>
+                                          Point of Sales<br />Inventory Management<br />System
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Invoice Title + Customer */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                                  <div style={{ fontSize: `${sizes.title}px`, fontWeight: 400, fontStyle: 'italic', letterSpacing: 2, color: '#1a1a1a' }}>
+                                    Invoice
+                                  </div>
+                                  <div style={{ textAlign: 'right', fontSize: `${sizes.base}px`, lineHeight: 1.4 }}>
+                                    <div style={{ fontWeight: 600 }}>Walk-in Customer</div>
+                                    <div style={{ color: '#666' }}>03001234567</div>
+                                  </div>
+                                </div>
+
+                                {/* Invoice Details Row */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12, fontSize: `${sizes.base}px` }}>
+                                  <div>
+                                    <div>No: {currentSettings.invoicePrefix || 'INV'}-00001</div>
+                                    <div>To: Walk-in Customer</div>
+                                  </div>
+                                  <div style={{ textAlign: 'right' }}>
+                                    <div>Date: {formattedDate}</div>
+                                    <div>Due Date: {formattedDueDate}</div>
+                                  </div>
+                                </div>
+
+                                {/* Thick Divider */}
+                                <div style={{ borderTop: '2px solid #1a1a1a', margin: '8px 0' }} />
+
+                                {/* Items Table */}
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: `${sizes.base}px` }}>
+                                  <thead>
+                                    <tr style={{ borderBottom: '2px solid #1a1a1a' }}>
+                                      <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 600, width: 28 }}>No</th>
+                                      <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 600 }}>Description</th>
+                                      <th style={{ padding: '6px 4px', textAlign: 'left', fontWeight: 600, width: 70 }}>Price</th>
+                                      <th style={{ padding: '6px 4px', textAlign: 'center', fontWeight: 600, width: 34 }}>Qty</th>
+                                      <th style={{ padding: '6px 4px', textAlign: 'right', fontWeight: 600, width: 76 }}>Total</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {[
+                                      { name: 'Glock 19 Gen5', sn: 'SN: GLK19-28374', price: 85000, qty: 1 },
+                                      { name: '9mm Ammo Box (50)', price: 4500, qty: 2 },
+                                      { name: 'Cleaning Kit Pro', price: 3200, qty: 1, isSvc: true },
+                                    ].map((item, i) => (
+                                      <tr key={i} style={item.isSvc ? { background: 'rgba(37, 99, 235, 0.05)' } : undefined}>
+                                        <td style={{ padding: '8px 4px', verticalAlign: 'top' }}>{i + 1}.</td>
+                                        <td style={{ padding: '8px 4px', verticalAlign: 'top' }}>
+                                          <div style={{ fontWeight: 500 }}>
+                                            {item.name}
+                                            {item.isSvc && (
+                                              <span style={{ fontSize: `${sizes.caption - 1}px`, color: primaryColor, fontWeight: 600, marginLeft: 4 }}>[SERVICE]</span>
+                                            )}
+                                          </div>
+                                          {item.sn && <div style={{ fontSize: `${sizes.caption}px`, color: '#666', marginTop: 1 }}>{item.sn}</div>}
+                                        </td>
+                                        <td style={{ padding: '8px 4px', textAlign: 'left', verticalAlign: 'top' }}>{fmtCurrency(item.price)}</td>
+                                        <td style={{ padding: '8px 4px', textAlign: 'center', verticalAlign: 'top' }}>{item.qty}</td>
+                                        <td style={{ padding: '8px 4px', textAlign: 'right', verticalAlign: 'top', fontWeight: 500 }}>{fmtCurrency(item.price * item.qty)}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+
+                                {/* Totals Section */}
+                                <div style={{ borderTop: '2px solid #1a1a1a', marginTop: 8, paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                  {/* Left: Important Notice / Terms */}
+                                  <div style={{ flex: 1, fontStyle: 'italic', fontSize: `${sizes.caption + 1}px`, lineHeight: 1.4, maxWidth: 200, paddingRight: 16, color: '#333' }}>
+                                    {currentSettings.receiptTermsAndConditions || (
+                                      <><strong style={{ fontStyle: 'italic' }}>Important:</strong> The invoice amount must be paid no later than 7 business days after issuance.</>
+                                    )}
+                                  </div>
+                                  {/* Right: Totals */}
+                                  <div style={{ textAlign: 'right', fontSize: `${sizes.base}px` }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 3 }}>
+                                      <span>SUBTOTAL</span>
+                                      <span>: {fmtCurrency(subtotal)}</span>
+                                    </div>
+                                    {currentSettings.showTaxOnReceipt !== false && (currentSettings.taxRate ?? 0) > 0 && (
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 3 }}>
+                                        <span>TAX ({currentSettings.taxRate}%)</span>
+                                        <span>: {fmtCurrency(taxAmt)}</span>
+                                      </div>
+                                    )}
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, fontWeight: 700, fontSize: `${sizes.base + 1}px`, marginTop: 6, paddingTop: 6, borderTop: '1px solid #1a1a1a' }}>
+                                      <span>TOTAL</span>
+                                      <span>: {fmtCurrency(total)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Payment Section */}
+                                <div style={{ borderTop: '2px solid #1a1a1a', marginTop: 16, paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+                                  <div style={{ fontSize: `${sizes.base}px`, lineHeight: 1.5 }}>
+                                    <div style={{ fontWeight: 700, marginBottom: 3 }}>Payment Information:</div>
+                                    <div style={{ color: '#333' }}>Payment Method: Cash</div>
+                                    {currentSettings.receiptCustomField1Label && currentSettings.receiptCustomField1Value && (
+                                      <div style={{ color: '#333' }}>{currentSettings.receiptCustomField1Label}: {currentSettings.receiptCustomField1Value}</div>
+                                    )}
+                                    {currentSettings.receiptCustomField2Label && currentSettings.receiptCustomField2Value && (
+                                      <div style={{ color: '#333' }}>{currentSettings.receiptCustomField2Label}: {currentSettings.receiptCustomField2Value}</div>
+                                    )}
+                                    <div style={{ color: '#333' }}>Amount Paid: {fmtCurrency(total)}</div>
+                                  </div>
+                                  <div style={{ fontFamily: "'Pinyon Script', cursive", fontSize: 30, color: '#1a1a1a' }}>
+                                    Thank You
+                                  </div>
+                                </div>
+
+                                {/* Custom Field 3 if exists */}
+                                {currentSettings.receiptCustomField3Label && currentSettings.receiptCustomField3Value && (
+                                  <div style={{ marginTop: 8, fontSize: `${sizes.caption + 1}px`, color: '#666' }}>
+                                    {currentSettings.receiptCustomField3Label}: {currentSettings.receiptCustomField3Value}
+                                  </div>
+                                )}
+
+                                {/* Footer */}
+                                {currentSettings.receiptFooter && (
+                                  <div style={{ marginTop: 20, paddingTop: 12, borderTop: '1px solid #ccc', textAlign: 'center', fontSize: `${sizes.caption}px`, color: '#888', lineHeight: 1.4 }}>
+                                    {currentSettings.receiptFooter}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* RIGHT: Editable Fields */}
+                    <div className="space-y-4">
+                      {/* Custom Fields */}
+                      <Card className="border-border">
+                        <CardHeader className="py-2 px-4 border-b border-border">
+                          <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                            <Pencil className="w-3.5 h-3.5 text-primary" />
+                            Custom Fields
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-4 space-y-3">
+                          {[1, 2, 3].map((n) => {
+                            const labelKey = `receiptCustomField${n}Label` as keyof typeof currentSettings
+                            const valueKey = `receiptCustomField${n}Value` as keyof typeof currentSettings
+                            return (
+                              <div key={n} className="grid grid-cols-[1fr_2fr] gap-2">
+                                <Input
+                                  className="h-8 text-sm"
+                                  value={(currentSettings[labelKey] as string) || ''}
+                                  onChange={(e) =>
+                                    setCurrentSettings({ ...currentSettings, [labelKey]: e.target.value })
+                                  }
+                                  placeholder={`Field ${n} Label`}
+                                />
+                                <Input
+                                  className="h-8 text-sm"
+                                  value={(currentSettings[valueKey] as string) || ''}
+                                  onChange={(e) =>
+                                    setCurrentSettings({ ...currentSettings, [valueKey]: e.target.value })
+                                  }
+                                  placeholder={`Field ${n} Value`}
+                                />
+                              </div>
+                            )
+                          })}
+                        </CardContent>
+                      </Card>
+
+                      {/* Terms & Conditions */}
+                      <Card className="border-border">
+                        <CardHeader className="py-2 px-4 border-b border-border">
+                          <CardTitle className="text-xs font-semibold flex items-center gap-2">
+                            <FileText className="w-3.5 h-3.5 text-primary" />
+                            Terms &amp; Conditions
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-4">
+                          <Textarea
+                            className="text-sm resize-none"
+                            value={currentSettings.receiptTermsAndConditions || ''}
+                            onChange={(e) =>
+                              setCurrentSettings({ ...currentSettings, receiptTermsAndConditions: e.target.value })
+                            }
+                            placeholder="Return policy, warranty information, legal disclaimers, etc."
+                            rows={3}
+                          />
+                        </CardContent>
+                      </Card>
                     </div>
-                  </CardContent>
-                </Card>
+                  </div>
+                </div>
               </TabsContent>
 
               {/* ══════════════════════════════════════
