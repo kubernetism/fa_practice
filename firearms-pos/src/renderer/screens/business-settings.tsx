@@ -588,9 +588,9 @@ export function BusinessSettingsScreen() {
   return (
     <div className="flex flex-col h-full">
       {/* ── Header Bar ── */}
-      <div className="border-t-2 border-amber-500/30 bg-background border-b border-border px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="border-t-2 border-primary/30 bg-background border-b border-border px-5 py-3 flex flex-col sm:flex-row sm:items-center gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <div className="p-1.5 rounded bg-amber-500/10 border border-amber-500/20 shrink-0">
+          <div className="p-1.5 rounded bg-primary/10 border border-primary/20 shrink-0">
             <SettingsIcon className="w-4 h-4 text-primary" />
           </div>
           <div className="min-w-0">
@@ -610,7 +610,7 @@ export function BusinessSettingsScreen() {
             value={selectedBranchId === null ? 'global' : selectedBranchId.toString()}
             onValueChange={(val) => handleBranchChange(val === 'global' ? null : parseInt(val))}
           >
-            <SelectTrigger className="h-7 text-xs w-[200px] border-amber-500/20 bg-amber-500/5 focus:ring-amber-500/30">
+            <SelectTrigger className="h-7 text-xs w-[200px] border-primary/20 bg-primary/5 focus:ring-primary/30">
               <SelectValue placeholder="Select branch or global" />
             </SelectTrigger>
             <SelectContent>
@@ -637,7 +637,7 @@ export function BusinessSettingsScreen() {
           <Button
             variant="outline"
             size="sm"
-            className="h-7 text-xs border-amber-500/20 hover:border-amber-500/40 hover:bg-amber-500/5"
+            className="h-7 text-xs border-primary/20 hover:border-primary/40 hover:bg-primary/5"
             onClick={() => {
               setDialogMode('clone')
               setIsDialogOpen(true)
@@ -648,7 +648,7 @@ export function BusinessSettingsScreen() {
           </Button>
           <Button
             size="sm"
-            className="h-7 text-xs bg-amber-600 hover:bg-amber-700 text-white border-0"
+            className="h-7 text-xs bg-primary hover:bg-primary/90 text-primary-foreground border-0"
             onClick={() => {
               setDialogMode('create')
               setIsDialogOpen(true)
@@ -677,63 +677,63 @@ export function BusinessSettingsScreen() {
               <TabsList className="h-8 bg-muted/50 border border-border p-0.5 mb-5 w-full grid grid-cols-5 lg:grid-cols-10 gap-0.5">
                 <TabsTrigger
                   value="business"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <Building2 className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Business</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="tax"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <DollarSign className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Tax</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="receipt"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <Receipt className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Receipt</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="customize"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <Printer className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Customize</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="inventory"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <Package className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Inventory</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="sales"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Sales</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="hours"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <Clock className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">Hours</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="system"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <SettingsIcon className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">System</span>
                 </TabsTrigger>
                 <TabsTrigger
                   value="all"
-                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-amber-500 rounded-none"
+                  className="h-7 text-[11px] px-2 flex items-center gap-1.5 data-[state=active]:bg-background data-[state=active]:text-primary data-[state=active]:shadow-none data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none"
                 >
                   <List className="w-3.5 h-3.5 shrink-0" />
                   <span className="hidden lg:inline">All</span>
@@ -751,7 +751,7 @@ export function BusinessSettingsScreen() {
                   BUSINESS INFO TAB
               ══════════════════════════════════════ */}
               <TabsContent value="business">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <Building2 className="w-4 h-4 text-primary" />
@@ -892,7 +892,7 @@ export function BusinessSettingsScreen() {
                   TAX & CURRENCY TAB
               ══════════════════════════════════════ */}
               <TabsContent value="tax">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <DollarSign className="w-4 h-4 text-primary" />
@@ -1009,7 +1009,7 @@ export function BusinessSettingsScreen() {
                   RECEIPT / INVOICE TAB
               ══════════════════════════════════════ */}
               <TabsContent value="receipt">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <Receipt className="w-4 h-4 text-primary" />
@@ -1100,7 +1100,7 @@ export function BusinessSettingsScreen() {
                   RECEIPT CUSTOMIZATION TAB
               ══════════════════════════════════════ */}
               <TabsContent value="customize">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <Printer className="w-4 h-4 text-primary" />
@@ -1199,7 +1199,7 @@ export function BusinessSettingsScreen() {
                           onChange={(e) =>
                             setCurrentSettings({ ...currentSettings, receiptAutoDownload: e.target.checked })
                           }
-                          className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+                          className="h-4 w-4 rounded border-gray-300 accent-primary"
                         />
                         <Label htmlFor="receiptAutoDownload" className="text-xs cursor-pointer">Auto-download receipt after sale</Label>
                       </div>
@@ -1211,7 +1211,7 @@ export function BusinessSettingsScreen() {
                           onChange={(e) =>
                             setCurrentSettings({ ...currentSettings, receiptShowBusinessLogo: e.target.checked })
                           }
-                          className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+                          className="h-4 w-4 rounded border-gray-300 accent-primary"
                         />
                         <Label htmlFor="receiptShowBusinessLogo" className="text-xs cursor-pointer">Show business logo on receipt</Label>
                       </div>
@@ -1326,7 +1326,7 @@ export function BusinessSettingsScreen() {
                   INVENTORY TAB
               ══════════════════════════════════════ */}
               <TabsContent value="inventory">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <Package className="w-4 h-4 text-primary" />
@@ -1397,7 +1397,7 @@ export function BusinessSettingsScreen() {
                   SALES & PAYMENT TAB
               ══════════════════════════════════════ */}
               <TabsContent value="sales">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <ShoppingCart className="w-4 h-4 text-primary" />
@@ -1474,7 +1474,7 @@ export function BusinessSettingsScreen() {
                   WORKING HOURS TAB
               ══════════════════════════════════════ */}
               <TabsContent value="hours">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <Clock className="w-4 h-4 text-primary" />
@@ -1557,7 +1557,7 @@ export function BusinessSettingsScreen() {
               <TabsContent value="system">
                 <div className="space-y-4">
                   {/* System Prefs */}
-                  <Card className="border-l-2 border-l-amber-500/20 border-border">
+                  <Card className="border-l-2 border-l-primary/20 border-border">
                     <CardHeader className="py-3 px-4 border-b border-border">
                       <CardTitle className="text-sm font-semibold flex items-center gap-2">
                         <SettingsIcon className="w-4 h-4 text-primary" />
@@ -1639,7 +1639,7 @@ export function BusinessSettingsScreen() {
                   </Card>
 
                   {/* Backup & Restore */}
-                  <Card className="border-l-2 border-l-amber-500/20 border-border">
+                  <Card className="border-l-2 border-l-primary/20 border-border">
                     <CardHeader className="py-3 px-4 border-b border-border">
                       <CardTitle className="text-sm font-semibold flex items-center gap-2">
                         <HardDrive className="w-4 h-4 text-primary" />
@@ -1657,7 +1657,7 @@ export function BusinessSettingsScreen() {
                           <Button
                             type="button"
                             size="sm"
-                            className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white border-0"
+                            className="h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground border-0"
                             onClick={handleCreateBackup}
                             disabled={isBackingUp}
                           >
@@ -1708,7 +1708,7 @@ export function BusinessSettingsScreen() {
                               id="autoBackupOnClose"
                               checked={backupConfig.autoBackupOnClose}
                               onChange={(e) => handleUpdateBackupConfig({ autoBackupOnClose: e.target.checked })}
-                              className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+                              className="h-4 w-4 rounded border-gray-300 accent-primary"
                             />
                             <Label htmlFor="autoBackupOnClose" className="text-xs cursor-pointer">
                               Create backup when application closes
@@ -1720,7 +1720,7 @@ export function BusinessSettingsScreen() {
                               id="autoBackupEnabled"
                               checked={backupConfig.autoBackupEnabled}
                               onChange={(e) => handleUpdateBackupConfig({ autoBackupEnabled: e.target.checked })}
-                              className="h-4 w-4 rounded border-gray-300 accent-amber-500"
+                              className="h-4 w-4 rounded border-gray-300 accent-primary"
                             />
                             <Label htmlFor="autoBackupEnabled" className="text-xs cursor-pointer">
                               Enable scheduled automatic backups
@@ -1870,7 +1870,7 @@ export function BusinessSettingsScreen() {
                               </TableHeader>
                               <TableBody>
                                 {backupList.map((backup) => (
-                                  <TableRow key={backup.path} className="hover:bg-amber-500/5">
+                                  <TableRow key={backup.path} className="hover:bg-primary/5">
                                     <TableCell className="py-1.5 font-mono text-xs">{backup.name}</TableCell>
                                     <TableCell className="py-1.5 text-xs text-muted-foreground">{formatDate(backup.createdAt)}</TableCell>
                                     <TableCell className="py-1.5 text-xs text-muted-foreground">{formatFileSize(backup.size)}</TableCell>
@@ -1915,7 +1915,7 @@ export function BusinessSettingsScreen() {
                   ALL SETTINGS TAB
               ══════════════════════════════════════ */}
               <TabsContent value="all">
-                <Card className="border-l-2 border-l-amber-500/20 border-border">
+                <Card className="border-l-2 border-l-primary/20 border-border">
                   <CardHeader className="py-3 px-4 border-b border-border">
                     <CardTitle className="text-sm font-semibold flex items-center gap-2">
                       <List className="w-4 h-4 text-primary" />
@@ -1941,12 +1941,12 @@ export function BusinessSettingsScreen() {
                         {allSettings.map((setting) => (
                           <TableRow
                             key={setting.settingId}
-                            className={`hover:bg-amber-500/5 ${setting.branchId === selectedBranchId ? 'bg-amber-500/10' : ''}`}
+                            className={`hover:bg-primary/5 ${setting.branchId === selectedBranchId ? 'bg-primary/10' : ''}`}
                           >
                             <TableCell className="py-2 text-xs font-medium pl-4">{setting.businessName || '—'}</TableCell>
                             <TableCell className="py-2 text-xs">
                               {setting.branchId === null ? (
-                                <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-amber-500/40 text-amber-600">
+                                <Badge variant="outline" className="text-[10px] h-5 px-1.5 border-primary/40 text-primary">
                                   <Globe className="w-3 h-3 mr-1" />
                                   Global
                                 </Badge>
@@ -2106,7 +2106,7 @@ export function BusinessSettingsScreen() {
             <Button
               type="submit"
               size="sm"
-              className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white border-0"
+              className="h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground border-0"
               disabled={isSaving}
             >
               <Save className="w-3.5 h-3.5 mr-1.5" />
@@ -2120,7 +2120,7 @@ export function BusinessSettingsScreen() {
           CLONE / CREATE DIALOG
       ══════════════════════════════════════ */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="border-amber-500/20">
+        <DialogContent className="border-primary/20">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm">
               {dialogMode === 'clone' ? (
@@ -2215,7 +2215,7 @@ export function BusinessSettingsScreen() {
             </Button>
             <Button
               size="sm"
-              className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white border-0"
+              className="h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground border-0"
               onClick={dialogMode === 'clone' ? handleCloneSettings : handleCreateSettings}
               disabled={
                 dialogMode === 'clone'
@@ -2233,7 +2233,7 @@ export function BusinessSettingsScreen() {
           RESTORE BACKUP CONFIRMATION DIALOG
       ══════════════════════════════════════ */}
       <Dialog open={isRestoreDialogOpen} onOpenChange={setIsRestoreDialogOpen}>
-        <DialogContent className="border-amber-500/20">
+        <DialogContent className="border-primary/20">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-sm text-primary">
               <AlertTriangle className="w-4 h-4" />
@@ -2284,7 +2284,7 @@ export function BusinessSettingsScreen() {
             </Button>
             <Button
               size="sm"
-              className="h-8 text-xs bg-amber-600 hover:bg-amber-700 text-white border-0"
+              className="h-8 text-xs bg-primary hover:bg-primary/90 text-primary-foreground border-0"
               onClick={confirmRestoreBackup}
               disabled={isRestoring}
             >
