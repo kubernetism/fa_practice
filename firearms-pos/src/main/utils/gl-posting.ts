@@ -23,6 +23,8 @@ export const ACCOUNT_CODES = {
   ACCOUNTS_PAYABLE: '2000',
   SALES_TAX_PAYABLE: '2100',
   COD_CHARGES_PAYABLE: '2150', // COD charges collected - liability until paid to courier
+  OWNERS_CAPITAL: '3000',
+  RETAINED_EARNINGS: '3100',
   SALES_REVENUE: '4000',
   INVENTORY_ADJUSTMENT: '4900', // Income from inventory surplus
   COGS: '5000',
@@ -133,6 +135,18 @@ const DEFAULT_ACCOUNTS: Record<string, {
     accountType: 'liability',
     normalBalance: 'credit',
     description: 'COD charges collected - liability until paid to courier',
+  },
+  '3000': {
+    accountName: "Owner's Capital",
+    accountType: 'equity',
+    normalBalance: 'credit',
+    description: "Owner's invested capital and initial funding",
+  },
+  '3100': {
+    accountName: 'Retained Earnings',
+    accountType: 'equity',
+    normalBalance: 'credit',
+    description: 'Accumulated net income retained in the business',
   },
   '4000': {
     accountName: 'Sales Revenue',
@@ -894,9 +908,10 @@ export async function postVoidSaleToGL(
  * DR Inventory Shrinkage (5400)  $value
  *     CR Inventory (1200)            $value
  *
- * For inventory addition (surplus found):
- * DR Inventory (1200)            $value
- *     CR Inventory Adjustment (4900) $value
+ * For inventory addition:
+ *   fundingSource = 'owner_capital':  DR Inventory / CR Owner's Capital (3000)
+ *   fundingSource = 'accounts_payable': DR Inventory / CR Accounts Payable (2000)
+ *   fundingSource = 'surplus' (default): DR Inventory / CR Inventory Adjustment Income (4900)
  */
 export async function postStockAdjustmentToGL(
   adjustment: {
@@ -907,6 +922,7 @@ export async function postStockAdjustmentToGL(
     unitCost: number
     reason: string
     reference?: string
+    fundingSource?: 'owner_capital' | 'accounts_payable' | 'surplus'
   },
   userId: number
 ): Promise<number> {
@@ -932,18 +948,39 @@ export async function postStockAdjustmentToGL(
       description: `Inventory reduction: ${adjustment.reason}`,
     })
   } else {
-    // Addition: DR Inventory, CR Inventory Adjustment Income
+    // Addition: DR Inventory
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: totalValue,
       creditAmount: 0,
       description: `Inventory increase: ${adjustment.reason}`,
     })
+
+    // CR based on funding source
+    let creditAccount: string
+    let creditDescription: string
+
+    switch (adjustment.fundingSource) {
+      case 'owner_capital':
+        creditAccount = ACCOUNT_CODES.OWNERS_CAPITAL
+        creditDescription = `Owner capital investment: ${adjustment.reason}`
+        break
+      case 'accounts_payable':
+        creditAccount = ACCOUNT_CODES.ACCOUNTS_PAYABLE
+        creditDescription = `Supplier payable: ${adjustment.reason}`
+        break
+      case 'surplus':
+      default:
+        creditAccount = ACCOUNT_CODES.INVENTORY_ADJUSTMENT
+        creditDescription = `Inventory adjustment income: ${adjustment.reason}`
+        break
+    }
+
     lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+      accountCode: creditAccount,
       debitAmount: 0,
       creditAmount: totalValue,
-      description: `Inventory adjustment income: ${adjustment.reason}`,
+      description: creditDescription,
     })
   }
 

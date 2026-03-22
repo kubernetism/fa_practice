@@ -45,6 +45,7 @@ const KEEP_ALIVE_PATHS = [
   "settings",
   "database",
   "settings/license",
+  "settings/theme",
   "tax-collections",
   "categories-management",
   "discount-management",

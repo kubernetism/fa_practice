@@ -26,9 +26,16 @@
   --color-info: oklch(62.3% 0.214 259.15);
   --radius: 0.5rem;
   --animate-shimmer: shimmer 6s ease-in-out infinite;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
 }
 
 @layer base {
+  :root {
+    --base-font-size: 14px;
+    --btn-size-scale: 1;
+  }
+
   * {
     @apply border-border;
   }
@@ -36,6 +43,23 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    font-size: var(--base-font-size, 14px);
+  }
+
+  /* Button density: compact */
+  html[data-btn-size="compact"] button,
+  html[data-btn-size="compact"] [role="button"] {
+    padding-block: 0.2rem;
+    padding-inline: 0.5rem;
+    font-size: calc(var(--base-font-size, 14px) - 1px);
+  }
+
+  /* Button density: large */
+  html[data-btn-size="large"] button,
+  html[data-btn-size="large"] [role="button"] {
+    padding-block: 0.6rem;
+    padding-inline: 1.25rem;
+    font-size: calc(var(--base-font-size, 14px) + 1px);
   }
 
   /* Dark theme */
@@ -101,6 +125,24 @@
   }
 }
 
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
 /* Custom scrollbar - Light */
 ::-webkit-scrollbar {
   width: 8px;
@@ -153,6 +195,7 @@
 
 /* Smooth theme transitions */
 html {
+  font-size: var(--base-font-size, 14px);
   transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 

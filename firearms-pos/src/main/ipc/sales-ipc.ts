@@ -454,6 +454,12 @@ export function registerSalesHandlers(): void {
                 recordedBy: session?.userId ?? 0,
               })
             }
+          } else if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
+            // No open session — cash sale without register tracking
+            console.warn(
+              `Cash sale ${invoiceNumber} completed without an open register session. ` +
+              `Cash transaction not recorded in register. Branch: ${data.branchId}`
+            )
           }
         }
 

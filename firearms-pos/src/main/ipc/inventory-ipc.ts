@@ -112,6 +112,7 @@ export function registerInventoryHandlers(): void {
         reason: string
         serialNumber?: string
         reference?: string
+        fundingSource?: 'owner_capital' | 'accounts_payable' | 'surplus'
       }
     ) => {
       try {
@@ -186,6 +187,7 @@ export function registerInventoryHandlers(): void {
                 unitCost: product.costPrice,
                 reason: data.reason,
                 reference: data.reference,
+                fundingSource: data.fundingSource,
               },
               session?.userId ?? 0
             )

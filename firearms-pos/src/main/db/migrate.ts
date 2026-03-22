@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { migrateToBusinessSettings } from './migrations/migrate_to_business_settings'
 import { addPhoneToUsers } from './migrations/add_phone_to_users'
+import { fixFinancialIntegrity } from './migrations/fix_financial_integrity'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -195,6 +196,14 @@ export async function runMigrations(): Promise<void> {
     await ensureReturnItemsCostPrice()
   } catch (error) {
     console.error('Return items cost_price migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Financial integrity fix: create equity accounts, reclassify phantom revenue, post cash float
+  try {
+    await fixFinancialIntegrity()
+  } catch (error) {
+    console.error('Financial integrity fix error:', error)
     // Don't throw - log error but continue
   }
 }

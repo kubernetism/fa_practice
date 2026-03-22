@@ -72,7 +72,13 @@
       "Bash(do)",
       "Read(//home/safdaralishah/Documents/github/fa_practice/firearms-pos/src/renderer/screens/$f/**)",
       "Bash(done)",
-      "Bash(do echo:*)"
+      "Bash(do echo:*)",
+      "Bash(dpkg -l)",
+      "Bash(npm list:*)",
+      "Bash(sudo apt:*)",
+      "Bash(apt list:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(pip3 show:*)"
     ]
   }
 }

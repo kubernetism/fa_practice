@@ -9,6 +9,7 @@ import {
   type NewCashTransaction,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
+import { createJournalEntry, ACCOUNT_CODES } from '../utils/gl-posting'
 import { getCurrentSession } from './auth-ipc'
 
 interface OpenSessionData {
@@ -151,6 +152,36 @@ export function registerCashRegisterHandlers(): void {
           notes: data.notes,
         })
         .returning()
+
+      // Post journal entry for capital injection portion of opening float
+      if (data.openingBalance > 0) {
+        const previousClosing = previousSession?.closingBalance ?? 0
+        const capitalInjection = data.openingBalance - previousClosing
+
+        if (capitalInjection > 0) {
+          await createJournalEntry({
+            description: `Cash register capital injection for ${today}`,
+            referenceType: 'cash_register_session',
+            referenceId: newSession.id,
+            branchId: data.branchId,
+            userId: userSession.userId,
+            lines: [
+              {
+                accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+                debitAmount: capitalInjection,
+                creditAmount: 0,
+                description: `Cash float injection for session ${today}`,
+              },
+              {
+                accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+                debitAmount: 0,
+                creditAmount: capitalInjection,
+                description: `Capital contribution: cash float ${today}`,
+              },
+            ],
+          })
+        }
+      }
 
       await createAuditLog({
         userId: userSession.userId,

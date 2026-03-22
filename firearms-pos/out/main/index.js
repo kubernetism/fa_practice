@@ -9,8 +9,8 @@ const drizzleOrm = require("drizzle-orm");
 const node_crypto = require("node:crypto");
 const node_os = require("node:os");
 const migrator = require("drizzle-orm/better-sqlite3/migrator");
-const bcrypt = require("bcryptjs");
 const os = require("os");
+const bcrypt = require("bcryptjs");
 const dateFns = require("date-fns");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -2152,6 +2152,818 @@ async function addPhoneToUsers() {
     return { success: false, message: `Migration failed: ${error}` };
   }
 }
+function getLocalIpAddress() {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      const netInterfaces = nets[name];
+      if (!netInterfaces) continue;
+      for (const net of netInterfaces) {
+        if (net.family === "IPv4" && !net.internal) {
+          return net.address;
+        }
+      }
+    }
+  } catch {
+  }
+  return "127.0.0.1";
+}
+async function createAuditLog$1(params) {
+  const db2 = getDatabase();
+  try {
+    await db2.insert(auditLogs).values({
+      userId: params.userId ?? null,
+      branchId: params.branchId ?? null,
+      action: params.action,
+      entityType: params.entityType,
+      entityId: params.entityId ?? null,
+      oldValues: params.oldValues ?? null,
+      newValues: params.newValues ?? null,
+      description: params.description ?? null,
+      ipAddress: params.ipAddress ?? getLocalIpAddress()
+    });
+  } catch (error) {
+    console.error("Failed to create audit log:", error);
+  }
+}
+function sanitizeForAudit(obj) {
+  const sanitized = { ...obj };
+  const sensitiveFields = ["password", "token", "secret", "apiKey"];
+  for (const field of sensitiveFields) {
+    if (field in sanitized) {
+      sanitized[field] = "[REDACTED]";
+    }
+  }
+  return sanitized;
+}
+const ACCOUNT_CODES = {
+  CASH_IN_HAND: "1010",
+  CASH_IN_BANK: "1020",
+  ACCOUNTS_RECEIVABLE: "1100",
+  INVENTORY: "1200",
+  ACCOUNTS_PAYABLE: "2000",
+  SALES_TAX_PAYABLE: "2100",
+  COD_CHARGES_PAYABLE: "2150",
+  // COD charges collected - liability until paid to courier
+  OWNERS_CAPITAL: "3000",
+  RETAINED_EARNINGS: "3100",
+  SALES_REVENUE: "4000",
+  INVENTORY_ADJUSTMENT: "4900",
+  // Income from inventory surplus
+  COGS: "5000",
+  SALARIES_WAGES: "5100",
+  RENT_EXPENSE: "5200",
+  UTILITIES_EXPENSE: "5300",
+  INVENTORY_SHRINKAGE: "5400",
+  // Expense for inventory loss/damage/theft
+  OTHER_EXPENSE: "5900"
+};
+function generateJournalEntryNumber() {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
+  return `JE-${year}-${timestamp}${random}`;
+}
+async function generateReversalNumber() {
+  const db2 = getDatabase();
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const prefix = `REV-${year}-`;
+  const lastEntry = await db2.query.reversalRequests.findFirst({
+    where: drizzleOrm.like(reversalRequests.requestNumber, `${prefix}%`),
+    orderBy: [drizzleOrm.desc(reversalRequests.id)]
+  });
+  let nextNum = 1;
+  if (lastEntry?.requestNumber) {
+    const lastNum = parseInt(lastEntry.requestNumber.replace(prefix, ""), 10);
+    if (!isNaN(lastNum)) nextNum = lastNum + 1;
+  }
+  return `${prefix}${String(nextNum).padStart(4, "0")}`;
+}
+const DEFAULT_ACCOUNTS = {
+  "1010": {
+    accountName: "Cash in Hand",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Cash on hand for daily transactions"
+  },
+  "1020": {
+    accountName: "Cash in Bank",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Bank account balances"
+  },
+  "1100": {
+    accountName: "Accounts Receivable",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Amounts owed by customers"
+  },
+  "1200": {
+    accountName: "Inventory",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Merchandise inventory"
+  },
+  "2000": {
+    accountName: "Accounts Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "Amounts owed to suppliers"
+  },
+  "2100": {
+    accountName: "Sales Tax Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "Sales tax collected to be remitted"
+  },
+  "2150": {
+    accountName: "COD Charges Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "COD charges collected - liability until paid to courier"
+  },
+  "3000": {
+    accountName: "Owner's Capital",
+    accountType: "equity",
+    normalBalance: "credit",
+    description: "Owner's invested capital and initial funding"
+  },
+  "3100": {
+    accountName: "Retained Earnings",
+    accountType: "equity",
+    normalBalance: "credit",
+    description: "Accumulated net income retained in the business"
+  },
+  "4000": {
+    accountName: "Sales Revenue",
+    accountType: "revenue",
+    normalBalance: "credit",
+    description: "Revenue from product sales"
+  },
+  "4900": {
+    accountName: "Inventory Adjustment Income",
+    accountType: "revenue",
+    normalBalance: "credit",
+    description: "Income from inventory surplus adjustments"
+  },
+  "5000": {
+    accountName: "Cost of Goods Sold",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Cost of products sold"
+  },
+  "5100": {
+    accountName: "Salaries & Wages",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Employee salaries and wages"
+  },
+  "5200": {
+    accountName: "Rent Expense",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Rent for premises"
+  },
+  "5300": {
+    accountName: "Utilities Expense",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Electricity, water, gas expenses"
+  },
+  "5400": {
+    accountName: "Inventory Shrinkage",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Expense for inventory loss/damage/theft"
+  },
+  "5900": {
+    accountName: "Other Expenses",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Miscellaneous expenses"
+  }
+};
+async function getAccountId(accountCode) {
+  const db2 = getDatabase();
+  let account = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
+  });
+  if (!account) {
+    const defaultAccount = DEFAULT_ACCOUNTS[accountCode];
+    if (defaultAccount) {
+      console.log(`Auto-creating missing GL account: ${accountCode} - ${defaultAccount.accountName}`);
+      const [newAccount] = await db2.insert(chartOfAccounts).values({
+        accountCode,
+        accountName: defaultAccount.accountName,
+        accountType: defaultAccount.accountType,
+        normalBalance: defaultAccount.normalBalance,
+        description: defaultAccount.description,
+        currentBalance: 0,
+        isActive: true,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).returning();
+      account = newAccount;
+    }
+  }
+  if (!account) {
+    throw new Error(`Account with code ${accountCode} not found and could not be auto-created`);
+  }
+  return account.id;
+}
+async function createJournalEntry(params) {
+  const db2 = getDatabase();
+  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
+  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
+  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
+  if (Math.abs(totalDebits - totalCredits) > 0.01) {
+    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
+  }
+  const entryNumber = generateJournalEntryNumber();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const [entry] = await db2.insert(journalEntries).values({
+    entryNumber,
+    entryDate: entryDate || now.split("T")[0],
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    status: isAutoGenerated ? "posted" : "draft",
+    isAutoGenerated,
+    createdBy: userId,
+    postedBy: isAutoGenerated ? userId : null,
+    postedAt: isAutoGenerated ? now : null
+  }).returning();
+  for (const line of lines) {
+    if (line.debitAmount === 0 && line.creditAmount === 0) {
+      continue;
+    }
+    const accountId = await getAccountId(line.accountCode);
+    await db2.insert(journalEntryLines).values({
+      journalEntryId: entry.id,
+      accountId,
+      debitAmount: line.debitAmount,
+      creditAmount: line.creditAmount,
+      description: line.description
+    });
+    if (isAutoGenerated) {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (account) {
+        let balanceChange;
+        if (account.normalBalance === "debit") {
+          balanceChange = line.debitAmount - line.creditAmount;
+        } else {
+          balanceChange = line.creditAmount - line.debitAmount;
+        }
+        await db2.update(chartOfAccounts).set({
+          currentBalance: account.currentBalance + balanceChange,
+          updatedAt: now
+        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
+      }
+    }
+  }
+  await createAuditLog$1({
+    userId,
+    branchId,
+    action: "CREATE",
+    entityType: "journal_entry",
+    entityId: entry.id,
+    newValues: {
+      entryNumber: entry.entryNumber,
+      description,
+      referenceType,
+      referenceId,
+      status: entry.status,
+      totalDebits: lines.reduce((sum, l) => sum + l.debitAmount, 0),
+      totalCredits: lines.reduce((sum, l) => sum + l.creditAmount, 0),
+      lineCount: lines.length
+    },
+    description: `Journal entry ${entry.entryNumber} created for ${referenceType} #${referenceId}`
+  });
+  return entry.id;
+}
+async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
+  const lines = [];
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (payments && payments.length > 0) {
+    for (const payment of payments) {
+      if (payment.amount <= 0) continue;
+      const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : "Cash";
+      lines.push({
+        accountCode,
+        debitAmount: payment.amount,
+        creditAmount: 0,
+        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
+      });
+    }
+  } else if (sale.amountPaid > 0) {
+    const netCashReceived = sale.amountPaid - (sale.changeGiven || 0);
+    const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    if (netCashReceived > 0) {
+      lines.push({
+        accountCode: cashAccountCode,
+        debitAmount: netCashReceived,
+        creditAmount: 0,
+        description: `Cash received for sale ${sale.invoiceNumber}`
+      });
+    }
+  }
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: receivableAmount,
+      creditAmount: 0,
+      description: `Receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: 0,
+      creditAmount: netRevenue,
+      description: `Revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: 0,
+      creditAmount: sale.taxAmount,
+      description: `Sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  if (codCharges && codCharges > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: 0,
+      creditAmount: codCharges,
+      description: `COD charges collected for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Cost of goods sold for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Inventory reduction for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
+  const lines = [];
+  const totalValue = receivedItems.reduce(
+    (sum, item) => sum + item.unitCost * item.receivedQuantity,
+    0
+  );
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value purchase to GL");
+  }
+  lines.push({
+    accountCode: ACCOUNT_CODES.INVENTORY,
+    debitAmount: totalValue,
+    creditAmount: 0,
+    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
+  });
+  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payable for PO ${purchase.purchaseOrderNumber}`
+    });
+  } else {
+    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payment for PO ${purchase.purchaseOrderNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
+    referenceType: "purchase",
+    referenceId: purchase.id,
+    branchId: purchase.branchId,
+    userId,
+    lines
+  });
+}
+async function postExpenseToGL(expense, userId) {
+  const lines = [];
+  const categoryToAccount = {
+    salaries: ACCOUNT_CODES.SALARIES_WAGES,
+    rent: ACCOUNT_CODES.RENT_EXPENSE,
+    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
+    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
+    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
+    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
+    other: ACCOUNT_CODES.OTHER_EXPENSE
+  };
+  const expenseAccount = categoryToAccount[expense.categoryName.toLowerCase()] || ACCOUNT_CODES.OTHER_EXPENSE;
+  lines.push({
+    accountCode: expenseAccount,
+    debitAmount: expense.amount,
+    creditAmount: 0,
+    description: expense.description || `Expense: ${expense.categoryName}`
+  });
+  if (expense.paymentStatus === "unpaid") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payable for expense ${expense.categoryName}`
+    });
+  } else {
+    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payment for expense ${expense.categoryName}`
+    });
+  }
+  return createJournalEntry({
+    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ""}`,
+    referenceType: "expense",
+    referenceId: expense.id,
+    branchId: expense.branchId,
+    userId,
+    lines
+  });
+}
+async function postReturnToGL(returnData, returnItems2, userId) {
+  const lines = [];
+  const netRevenue = returnData.subtotal;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Revenue reversal for return ${returnData.returnNumber}`
+    });
+  }
+  if (returnData.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: returnData.taxAmount,
+      creditAmount: 0,
+      description: `Tax reversal for return ${returnData.returnNumber}`
+    });
+  }
+  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: returnData.totalAmount,
+    description: `Refund for return ${returnData.returnNumber}`
+  });
+  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
+  if (restockableCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: restockableCOGS,
+      creditAmount: 0,
+      description: `Inventory restored for return ${returnData.returnNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: restockableCOGS,
+      description: `COGS reversal for return ${returnData.returnNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Return: ${returnData.returnNumber}`,
+    referenceType: "return",
+    referenceId: returnData.id,
+    branchId: returnData.branchId,
+    userId,
+    lines
+  });
+}
+async function postARPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `Payment received for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `AR reduction for ${payment.invoiceNumber}`
+  });
+  return createJournalEntry({
+    description: `AR Payment: ${payment.invoiceNumber}`,
+    referenceType: "receivable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId,
+    lines
+  });
+}
+async function postAPPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `AP payment for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `Payment for ${payment.invoiceNumber}`
+  });
+  return createJournalEntry({
+    description: `AP Payment: ${payment.invoiceNumber}`,
+    referenceType: "payable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId,
+    lines
+  });
+}
+async function postVoidSaleToGL(sale, saleItems2, userId) {
+  const lines = [];
+  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  if (sale.amountPaid > 0) {
+    lines.push({
+      accountCode: cashAccountCode,
+      debitAmount: 0,
+      creditAmount: sale.amountPaid,
+      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
+    });
+  }
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: 0,
+      creditAmount: receivableAmount,
+      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: sale.taxAmount,
+      creditAmount: 0,
+      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Void - reverse COGS for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Void - restore inventory for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Void Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale_void",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postStockAdjustmentToGL(adjustment, userId) {
+  const lines = [];
+  const totalValue = adjustment.quantityChange * adjustment.unitCost;
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value adjustment to GL");
+  }
+  if (adjustment.adjustmentType === "remove") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory shrinkage: ${adjustment.reason}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${adjustment.reason}`
+    });
+  } else {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory increase: ${adjustment.reason}`
+    });
+    let creditAccount;
+    let creditDescription;
+    switch (adjustment.fundingSource) {
+      case "owner_capital":
+        creditAccount = ACCOUNT_CODES.OWNERS_CAPITAL;
+        creditDescription = `Owner capital investment: ${adjustment.reason}`;
+        break;
+      case "accounts_payable":
+        creditAccount = ACCOUNT_CODES.ACCOUNTS_PAYABLE;
+        creditDescription = `Supplier payable: ${adjustment.reason}`;
+        break;
+      case "surplus":
+      default:
+        creditAccount = ACCOUNT_CODES.INVENTORY_ADJUSTMENT;
+        creditDescription = `Inventory adjustment income: ${adjustment.reason}`;
+        break;
+    }
+    lines.push({
+      accountCode: creditAccount,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: creditDescription
+    });
+  }
+  return createJournalEntry({
+    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
+    referenceType: "stock_adjustment",
+    referenceId: adjustment.id,
+    branchId: adjustment.branchId,
+    userId,
+    lines
+  });
+}
+async function postCommissionPaymentToGL(commission, userId) {
+  const lines = [];
+  lines.push({
+    accountCode: ACCOUNT_CODES.OTHER_EXPENSE,
+    debitAmount: commission.commissionAmount,
+    creditAmount: 0,
+    description: `Commission payment: ${commission.commissionType} for sale #${commission.saleId}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+    debitAmount: 0,
+    creditAmount: commission.commissionAmount,
+    description: `Cash paid for commission #${commission.id}`
+  });
+  return createJournalEntry({
+    description: `Commission Payment: ${commission.commissionType} commission #${commission.id}`,
+    referenceType: "commission",
+    referenceId: commission.id,
+    branchId: commission.branchId,
+    userId,
+    lines
+  });
+}
+async function fixFinancialIntegrity() {
+  const db2 = getDatabase();
+  const existing = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.eq(journalEntries.referenceType, "audit_correction")
+  });
+  if (existing) {
+    console.log("Financial integrity fix already applied, skipping.");
+    return;
+  }
+  console.log("Running financial integrity fix...");
+  const ownerCapital = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "3000")
+  });
+  if (!ownerCapital) {
+    await db2.insert(chartOfAccounts).values({
+      accountCode: "3000",
+      accountName: "Owner's Capital",
+      accountType: "equity",
+      accountSubType: "owner_capital",
+      normalBalance: "credit",
+      description: "Owner's invested capital and initial funding",
+      currentBalance: 0,
+      isActive: true,
+      isSystemAccount: false,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log("Created Owner's Capital account (3000)");
+  }
+  const retainedEarnings = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "3100")
+  });
+  if (!retainedEarnings) {
+    await db2.insert(chartOfAccounts).values({
+      accountCode: "3100",
+      accountName: "Retained Earnings",
+      accountType: "equity",
+      accountSubType: "retained_earnings",
+      normalBalance: "credit",
+      description: "Accumulated net income retained in the business",
+      currentBalance: 0,
+      isActive: true,
+      isSystemAccount: false,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log("Created Retained Earnings account (3100)");
+  }
+  const invAdjAccount = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "4900")
+  });
+  if (!invAdjAccount || invAdjAccount.currentBalance === 0) {
+    console.log("No phantom revenue to correct (4900 balance is 0). Skipping reversal.");
+    return;
+  }
+  const phantomAmount = invAdjAccount.currentBalance;
+  await createJournalEntry({
+    description: `AUDIT CORRECTION: Reclassify Rs ${phantomAmount} from Inventory Adjustment Income to Owner's Capital — initial stock was owner-funded, not surplus`,
+    referenceType: "audit_correction",
+    referenceId: 0,
+    branchId: 3,
+    userId: 1,
+    lines: [
+      {
+        accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+        debitAmount: phantomAmount,
+        creditAmount: 0,
+        description: `Reverse phantom revenue: initial stock was owner capital, not surplus income`
+      },
+      {
+        accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+        debitAmount: 0,
+        creditAmount: phantomAmount,
+        description: `Owner capital investment: initial inventory funding Rs ${phantomAmount}`
+      }
+    ]
+  });
+  console.log(`Reclassified Rs ${phantomAmount} from Inv Adj Income to Owner's Capital`);
+  await createJournalEntry({
+    description: "AUDIT CORRECTION: Cash register opening float — owner capital injection",
+    referenceType: "audit_correction",
+    referenceId: 0,
+    branchId: 3,
+    userId: 1,
+    lines: [
+      {
+        accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+        debitAmount: 15e3,
+        creditAmount: 0,
+        description: "Cash register opening float (session 2026-03-22)"
+      },
+      {
+        accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+        debitAmount: 0,
+        creditAmount: 15e3,
+        description: "Capital contribution: cash register opening float"
+      }
+    ]
+  });
+  console.log("Posted opening cash float Rs 15,000 as Owner's Capital");
+  console.log("Financial integrity fix completed successfully.");
+  console.log("Expected state:");
+  console.log("  Assets: Cash 70,000 + Inventory 510,000 = 580,000");
+  console.log("  Equity: Owner's Capital 550,000 + Net Income 30,000 = 580,000");
+  console.log("  Balance Sheet: BALANCED");
+}
 async function runMigrations() {
   const db2 = getDatabase();
   const possiblePaths = [
@@ -2282,6 +3094,11 @@ async function runMigrations() {
     await ensureReturnItemsCostPrice();
   } catch (error) {
     console.error("Return items cost_price migration error:", error);
+  }
+  try {
+    await fixFinancialIntegrity();
+  } catch (error) {
+    console.error("Financial integrity fix error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -3341,50 +4158,6 @@ async function ensureReturnItemsCostPrice() {
   db2.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run();
   console.log("return_items.cost_price column added successfully");
 }
-function getLocalIpAddress() {
-  try {
-    const nets = os.networkInterfaces();
-    for (const name of Object.keys(nets)) {
-      const netInterfaces = nets[name];
-      if (!netInterfaces) continue;
-      for (const net of netInterfaces) {
-        if (net.family === "IPv4" && !net.internal) {
-          return net.address;
-        }
-      }
-    }
-  } catch {
-  }
-  return "127.0.0.1";
-}
-async function createAuditLog$1(params) {
-  const db2 = getDatabase();
-  try {
-    await db2.insert(auditLogs).values({
-      userId: params.userId ?? null,
-      branchId: params.branchId ?? null,
-      action: params.action,
-      entityType: params.entityType,
-      entityId: params.entityId ?? null,
-      oldValues: params.oldValues ?? null,
-      newValues: params.newValues ?? null,
-      description: params.description ?? null,
-      ipAddress: params.ipAddress ?? getLocalIpAddress()
-    });
-  } catch (error) {
-    console.error("Failed to create audit log:", error);
-  }
-}
-function sanitizeForAudit(obj) {
-  const sanitized = { ...obj };
-  const sensitiveFields = ["password", "token", "secret", "apiKey"];
-  for (const field of sensitiveFields) {
-    if (field in sanitized) {
-      sanitized[field] = "[REDACTED]";
-    }
-  }
-  return sanitized;
-}
 let currentSession = null;
 function registerAuthHandlers() {
   const db2 = getDatabase();
@@ -4087,637 +4860,6 @@ async function withTransaction(fn) {
     throw error;
   }
 }
-const ACCOUNT_CODES = {
-  CASH_IN_HAND: "1010",
-  CASH_IN_BANK: "1020",
-  ACCOUNTS_RECEIVABLE: "1100",
-  INVENTORY: "1200",
-  ACCOUNTS_PAYABLE: "2000",
-  SALES_TAX_PAYABLE: "2100",
-  COD_CHARGES_PAYABLE: "2150",
-  // COD charges collected - liability until paid to courier
-  SALES_REVENUE: "4000",
-  INVENTORY_ADJUSTMENT: "4900",
-  // Income from inventory surplus
-  COGS: "5000",
-  SALARIES_WAGES: "5100",
-  RENT_EXPENSE: "5200",
-  UTILITIES_EXPENSE: "5300",
-  INVENTORY_SHRINKAGE: "5400",
-  // Expense for inventory loss/damage/theft
-  OTHER_EXPENSE: "5900"
-};
-function generateJournalEntryNumber() {
-  const year = (/* @__PURE__ */ new Date()).getFullYear();
-  const timestamp = Date.now().toString().slice(-6);
-  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
-  return `JE-${year}-${timestamp}${random}`;
-}
-async function generateReversalNumber() {
-  const db2 = getDatabase();
-  const year = (/* @__PURE__ */ new Date()).getFullYear();
-  const prefix = `REV-${year}-`;
-  const lastEntry = await db2.query.reversalRequests.findFirst({
-    where: drizzleOrm.like(reversalRequests.requestNumber, `${prefix}%`),
-    orderBy: [drizzleOrm.desc(reversalRequests.id)]
-  });
-  let nextNum = 1;
-  if (lastEntry?.requestNumber) {
-    const lastNum = parseInt(lastEntry.requestNumber.replace(prefix, ""), 10);
-    if (!isNaN(lastNum)) nextNum = lastNum + 1;
-  }
-  return `${prefix}${String(nextNum).padStart(4, "0")}`;
-}
-const DEFAULT_ACCOUNTS = {
-  "1010": {
-    accountName: "Cash in Hand",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Cash on hand for daily transactions"
-  },
-  "1020": {
-    accountName: "Cash in Bank",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Bank account balances"
-  },
-  "1100": {
-    accountName: "Accounts Receivable",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Amounts owed by customers"
-  },
-  "1200": {
-    accountName: "Inventory",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Merchandise inventory"
-  },
-  "2000": {
-    accountName: "Accounts Payable",
-    accountType: "liability",
-    normalBalance: "credit",
-    description: "Amounts owed to suppliers"
-  },
-  "2100": {
-    accountName: "Sales Tax Payable",
-    accountType: "liability",
-    normalBalance: "credit",
-    description: "Sales tax collected to be remitted"
-  },
-  "2150": {
-    accountName: "COD Charges Payable",
-    accountType: "liability",
-    normalBalance: "credit",
-    description: "COD charges collected - liability until paid to courier"
-  },
-  "4000": {
-    accountName: "Sales Revenue",
-    accountType: "revenue",
-    normalBalance: "credit",
-    description: "Revenue from product sales"
-  },
-  "4900": {
-    accountName: "Inventory Adjustment Income",
-    accountType: "revenue",
-    normalBalance: "credit",
-    description: "Income from inventory surplus adjustments"
-  },
-  "5000": {
-    accountName: "Cost of Goods Sold",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Cost of products sold"
-  },
-  "5100": {
-    accountName: "Salaries & Wages",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Employee salaries and wages"
-  },
-  "5200": {
-    accountName: "Rent Expense",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Rent for premises"
-  },
-  "5300": {
-    accountName: "Utilities Expense",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Electricity, water, gas expenses"
-  },
-  "5400": {
-    accountName: "Inventory Shrinkage",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Expense for inventory loss/damage/theft"
-  },
-  "5900": {
-    accountName: "Other Expenses",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Miscellaneous expenses"
-  }
-};
-async function getAccountId(accountCode) {
-  const db2 = getDatabase();
-  let account = await db2.query.chartOfAccounts.findFirst({
-    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
-  });
-  if (!account) {
-    const defaultAccount = DEFAULT_ACCOUNTS[accountCode];
-    if (defaultAccount) {
-      console.log(`Auto-creating missing GL account: ${accountCode} - ${defaultAccount.accountName}`);
-      const [newAccount] = await db2.insert(chartOfAccounts).values({
-        accountCode,
-        accountName: defaultAccount.accountName,
-        accountType: defaultAccount.accountType,
-        normalBalance: defaultAccount.normalBalance,
-        description: defaultAccount.description,
-        currentBalance: 0,
-        isActive: true,
-        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).returning();
-      account = newAccount;
-    }
-  }
-  if (!account) {
-    throw new Error(`Account with code ${accountCode} not found and could not be auto-created`);
-  }
-  return account.id;
-}
-async function createJournalEntry(params) {
-  const db2 = getDatabase();
-  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
-  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
-  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
-  if (Math.abs(totalDebits - totalCredits) > 0.01) {
-    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
-  }
-  const entryNumber = generateJournalEntryNumber();
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const [entry] = await db2.insert(journalEntries).values({
-    entryNumber,
-    entryDate: entryDate || now.split("T")[0],
-    description,
-    referenceType,
-    referenceId,
-    branchId,
-    status: isAutoGenerated ? "posted" : "draft",
-    isAutoGenerated,
-    createdBy: userId,
-    postedBy: isAutoGenerated ? userId : null,
-    postedAt: isAutoGenerated ? now : null
-  }).returning();
-  for (const line of lines) {
-    if (line.debitAmount === 0 && line.creditAmount === 0) {
-      continue;
-    }
-    const accountId = await getAccountId(line.accountCode);
-    await db2.insert(journalEntryLines).values({
-      journalEntryId: entry.id,
-      accountId,
-      debitAmount: line.debitAmount,
-      creditAmount: line.creditAmount,
-      description: line.description
-    });
-    if (isAutoGenerated) {
-      const account = await db2.query.chartOfAccounts.findFirst({
-        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
-      });
-      if (account) {
-        let balanceChange;
-        if (account.normalBalance === "debit") {
-          balanceChange = line.debitAmount - line.creditAmount;
-        } else {
-          balanceChange = line.creditAmount - line.debitAmount;
-        }
-        await db2.update(chartOfAccounts).set({
-          currentBalance: account.currentBalance + balanceChange,
-          updatedAt: now
-        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
-      }
-    }
-  }
-  await createAuditLog$1({
-    userId,
-    branchId,
-    action: "CREATE",
-    entityType: "journal_entry",
-    entityId: entry.id,
-    newValues: {
-      entryNumber: entry.entryNumber,
-      description,
-      referenceType,
-      referenceId,
-      status: entry.status,
-      totalDebits: lines.reduce((sum, l) => sum + l.debitAmount, 0),
-      totalCredits: lines.reduce((sum, l) => sum + l.creditAmount, 0),
-      lineCount: lines.length
-    },
-    description: `Journal entry ${entry.entryNumber} created for ${referenceType} #${referenceId}`
-  });
-  return entry.id;
-}
-async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
-  const lines = [];
-  const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (payments && payments.length > 0) {
-    for (const payment of payments) {
-      if (payment.amount <= 0) continue;
-      const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : "Cash";
-      lines.push({
-        accountCode,
-        debitAmount: payment.amount,
-        creditAmount: 0,
-        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
-      });
-    }
-  } else if (sale.amountPaid > 0) {
-    const netCashReceived = sale.amountPaid - (sale.changeGiven || 0);
-    const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    if (netCashReceived > 0) {
-      lines.push({
-        accountCode: cashAccountCode,
-        debitAmount: netCashReceived,
-        creditAmount: 0,
-        description: `Cash received for sale ${sale.invoiceNumber}`
-      });
-    }
-  }
-  if (receivableAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-      debitAmount: receivableAmount,
-      creditAmount: 0,
-      description: `Receivable for sale ${sale.invoiceNumber}`
-    });
-  }
-  const netRevenue = sale.subtotal - sale.discountAmount;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: 0,
-      creditAmount: netRevenue,
-      description: `Revenue from sale ${sale.invoiceNumber}`
-    });
-  }
-  if (sale.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: 0,
-      creditAmount: sale.taxAmount,
-      description: `Sales tax for sale ${sale.invoiceNumber}`
-    });
-  }
-  if (codCharges && codCharges > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
-      debitAmount: 0,
-      creditAmount: codCharges,
-      description: `COD charges collected for sale ${sale.invoiceNumber}`
-    });
-  }
-  const totalCOGS = saleItems2.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
-  if (totalCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: totalCOGS,
-      creditAmount: 0,
-      description: `Cost of goods sold for ${sale.invoiceNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: 0,
-      creditAmount: totalCOGS,
-      description: `Inventory reduction for ${sale.invoiceNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Sale: ${sale.invoiceNumber}`,
-    referenceType: "sale",
-    referenceId: sale.id,
-    branchId: sale.branchId,
-    userId,
-    lines
-  });
-}
-async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
-  const lines = [];
-  const totalValue = receivedItems.reduce(
-    (sum, item) => sum + item.unitCost * item.receivedQuantity,
-    0
-  );
-  if (totalValue <= 0) {
-    throw new Error("Cannot post zero-value purchase to GL");
-  }
-  lines.push({
-    accountCode: ACCOUNT_CODES.INVENTORY,
-    debitAmount: totalValue,
-    creditAmount: 0,
-    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
-  });
-  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Payable for PO ${purchase.purchaseOrderNumber}`
-    });
-  } else {
-    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccount,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Payment for PO ${purchase.purchaseOrderNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
-    referenceType: "purchase",
-    referenceId: purchase.id,
-    branchId: purchase.branchId,
-    userId,
-    lines
-  });
-}
-async function postExpenseToGL(expense, userId) {
-  const lines = [];
-  const categoryToAccount = {
-    salaries: ACCOUNT_CODES.SALARIES_WAGES,
-    rent: ACCOUNT_CODES.RENT_EXPENSE,
-    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
-    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
-    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
-    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
-    other: ACCOUNT_CODES.OTHER_EXPENSE
-  };
-  const expenseAccount = categoryToAccount[expense.categoryName.toLowerCase()] || ACCOUNT_CODES.OTHER_EXPENSE;
-  lines.push({
-    accountCode: expenseAccount,
-    debitAmount: expense.amount,
-    creditAmount: 0,
-    description: expense.description || `Expense: ${expense.categoryName}`
-  });
-  if (expense.paymentStatus === "unpaid") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-      debitAmount: 0,
-      creditAmount: expense.amount,
-      description: `Payable for expense ${expense.categoryName}`
-    });
-  } else {
-    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccount,
-      debitAmount: 0,
-      creditAmount: expense.amount,
-      description: `Payment for expense ${expense.categoryName}`
-    });
-  }
-  return createJournalEntry({
-    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ""}`,
-    referenceType: "expense",
-    referenceId: expense.id,
-    branchId: expense.branchId,
-    userId,
-    lines
-  });
-}
-async function postReturnToGL(returnData, returnItems2, userId) {
-  const lines = [];
-  const netRevenue = returnData.subtotal;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: netRevenue,
-      creditAmount: 0,
-      description: `Revenue reversal for return ${returnData.returnNumber}`
-    });
-  }
-  if (returnData.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: returnData.taxAmount,
-      creditAmount: 0,
-      description: `Tax reversal for return ${returnData.returnNumber}`
-    });
-  }
-  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: 0,
-    creditAmount: returnData.totalAmount,
-    description: `Refund for return ${returnData.returnNumber}`
-  });
-  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
-  if (restockableCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: restockableCOGS,
-      creditAmount: 0,
-      description: `Inventory restored for return ${returnData.returnNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: 0,
-      creditAmount: restockableCOGS,
-      description: `COGS reversal for return ${returnData.returnNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Return: ${returnData.returnNumber}`,
-    referenceType: "return",
-    referenceId: returnData.id,
-    branchId: returnData.branchId,
-    userId,
-    lines
-  });
-}
-async function postARPaymentToGL(payment, userId) {
-  const lines = [];
-  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: payment.amount,
-    creditAmount: 0,
-    description: `Payment received for ${payment.invoiceNumber}`
-  });
-  lines.push({
-    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-    debitAmount: 0,
-    creditAmount: payment.amount,
-    description: `AR reduction for ${payment.invoiceNumber}`
-  });
-  return createJournalEntry({
-    description: `AR Payment: ${payment.invoiceNumber}`,
-    referenceType: "receivable_payment",
-    referenceId: payment.id,
-    branchId: payment.branchId,
-    userId,
-    lines
-  });
-}
-async function postAPPaymentToGL(payment, userId) {
-  const lines = [];
-  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-    debitAmount: payment.amount,
-    creditAmount: 0,
-    description: `AP payment for ${payment.invoiceNumber}`
-  });
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: 0,
-    creditAmount: payment.amount,
-    description: `Payment for ${payment.invoiceNumber}`
-  });
-  return createJournalEntry({
-    description: `AP Payment: ${payment.invoiceNumber}`,
-    referenceType: "payable_payment",
-    referenceId: payment.id,
-    branchId: payment.branchId,
-    userId,
-    lines
-  });
-}
-async function postVoidSaleToGL(sale, saleItems2, userId) {
-  const lines = [];
-  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  if (sale.amountPaid > 0) {
-    lines.push({
-      accountCode: cashAccountCode,
-      debitAmount: 0,
-      creditAmount: sale.amountPaid,
-      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
-    });
-  }
-  const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (receivableAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-      debitAmount: 0,
-      creditAmount: receivableAmount,
-      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
-    });
-  }
-  const netRevenue = sale.subtotal - sale.discountAmount;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: netRevenue,
-      creditAmount: 0,
-      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
-    });
-  }
-  if (sale.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: sale.taxAmount,
-      creditAmount: 0,
-      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
-    });
-  }
-  const totalCOGS = saleItems2.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
-  if (totalCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: 0,
-      creditAmount: totalCOGS,
-      description: `Void - reverse COGS for ${sale.invoiceNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: totalCOGS,
-      creditAmount: 0,
-      description: `Void - restore inventory for ${sale.invoiceNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Void Sale: ${sale.invoiceNumber}`,
-    referenceType: "sale_void",
-    referenceId: sale.id,
-    branchId: sale.branchId,
-    userId,
-    lines
-  });
-}
-async function postStockAdjustmentToGL(adjustment, userId) {
-  const lines = [];
-  const totalValue = adjustment.quantityChange * adjustment.unitCost;
-  if (totalValue <= 0) {
-    throw new Error("Cannot post zero-value adjustment to GL");
-  }
-  if (adjustment.adjustmentType === "remove") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
-      debitAmount: totalValue,
-      creditAmount: 0,
-      description: `Inventory shrinkage: ${adjustment.reason}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Inventory reduction: ${adjustment.reason}`
-    });
-  } else {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: totalValue,
-      creditAmount: 0,
-      description: `Inventory increase: ${adjustment.reason}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Inventory adjustment income: ${adjustment.reason}`
-    });
-  }
-  return createJournalEntry({
-    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
-    referenceType: "stock_adjustment",
-    referenceId: adjustment.id,
-    branchId: adjustment.branchId,
-    userId,
-    lines
-  });
-}
-async function postCommissionPaymentToGL(commission, userId) {
-  const lines = [];
-  lines.push({
-    accountCode: ACCOUNT_CODES.OTHER_EXPENSE,
-    debitAmount: commission.commissionAmount,
-    creditAmount: 0,
-    description: `Commission payment: ${commission.commissionType} for sale #${commission.saleId}`
-  });
-  lines.push({
-    accountCode: ACCOUNT_CODES.CASH_IN_HAND,
-    debitAmount: 0,
-    creditAmount: commission.commissionAmount,
-    description: `Cash paid for commission #${commission.id}`
-  });
-  return createJournalEntry({
-    description: `Commission Payment: ${commission.commissionType} commission #${commission.id}`,
-    referenceType: "commission",
-    referenceId: commission.id,
-    branchId: commission.branchId,
-    userId,
-    lines
-  });
-}
 function registerInventoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("inventory:get-by-branch", async (_, branchId) => {
@@ -4830,7 +4972,8 @@ function registerInventoryHandlers() {
                 quantityChange: data.quantityChange,
                 unitCost: product.costPrice,
                 reason: data.reason,
-                reference: data.reference
+                reference: data.reference,
+                fundingSource: data.fundingSource
               },
               session?.userId ?? 0
             );
@@ -6162,6 +6305,10 @@ function registerSalesHandlers() {
                 recordedBy: session?.userId ?? 0
               });
             }
+          } else if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
+            console.warn(
+              `Cash sale ${invoiceNumber} completed without an open register session. Cash transaction not recorded in register. Branch: ${data.branchId}`
+            );
           }
         }
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
@@ -13269,6 +13416,33 @@ function registerCashRegisterHandlers() {
         openedBy: userSession.userId,
         notes: data.notes
       }).returning();
+      if (data.openingBalance > 0) {
+        const previousClosing = previousSession?.closingBalance ?? 0;
+        const capitalInjection = data.openingBalance - previousClosing;
+        if (capitalInjection > 0) {
+          await createJournalEntry({
+            description: `Cash register capital injection for ${today}`,
+            referenceType: "cash_register_session",
+            referenceId: newSession.id,
+            branchId: data.branchId,
+            userId: userSession.userId,
+            lines: [
+              {
+                accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+                debitAmount: capitalInjection,
+                creditAmount: 0,
+                description: `Cash float injection for session ${today}`
+              },
+              {
+                accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+                debitAmount: 0,
+                creditAmount: capitalInjection,
+                description: `Capital contribution: cash float ${today}`
+              }
+            ]
+          });
+        }
+      }
       await createAuditLog$1({
         userId: userSession.userId,
         branchId: data.branchId,

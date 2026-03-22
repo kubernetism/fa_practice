@@ -82,6 +82,7 @@ interface FormData {
   availability: string
   minStockAlert: string
   costPricePerBatch: string
+  fundingSource: 'owner_capital' | 'accounts_payable' | 'surplus'
 }
 
 const ITEMS_PER_PAGE = 10
@@ -94,6 +95,7 @@ const initialFormData: FormData = {
   availability: '0',
   minStockAlert: '5',
   costPricePerBatch: '',
+  fundingSource: 'owner_capital',
 }
 
 export function InventoryScreen() {
@@ -339,6 +341,7 @@ export function InventoryScreen() {
           adjustmentType: 'add',
           quantityChange: parseInt(formData.availability),
           reason: 'Initial stock entry',
+          fundingSource: formData.fundingSource,
         })
 
         if (!result.success) {
@@ -1019,6 +1022,26 @@ export function InventoryScreen() {
                   placeholder="0.00"
                 />
               </div>
+
+              {/* Funding Source — shown only when adding new stock */}
+              {!editingInventory && (
+                <div className="space-y-2">
+                  <Label htmlFor="fundingSource">Funding Source</Label>
+                  <select
+                    id="fundingSource"
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={formData.fundingSource}
+                    onChange={(e) => setFormData({ ...formData, fundingSource: e.target.value as FormData['fundingSource'] })}
+                  >
+                    <option value="owner_capital">Owner Capital</option>
+                    <option value="accounts_payable">Supplier Credit (Payable)</option>
+                    <option value="surplus">Surplus Found (Count Adjustment)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground">
+                    Determines how this stock addition is recorded in accounting
+                  </p>
+                </div>
+              )}
             </div>
 
             <DialogFooter>
