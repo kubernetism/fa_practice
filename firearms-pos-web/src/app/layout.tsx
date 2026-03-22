@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Geist, Geist_Mono, Noto_Nastaliq_Urdu } from 'next/font/google'
 import { Outfit } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
 import { Providers } from '@/components/providers'
@@ -21,6 +21,13 @@ const outfit = Outfit({
   weight: ['400', '500', '600', '700', '800'],
 })
 
+const notoNastaliqUrdu = Noto_Nastaliq_Urdu({
+  variable: '--font-urdu',
+  subsets: ['arabic'],
+  weight: ['400', '700'],
+  display: 'swap',
+})
+
 export const metadata: Metadata = {
   title: 'Firearms POS',
   description: 'Professional Point of Sale for Firearms Dealers',
@@ -34,7 +41,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${outfit.variable} ${notoNastaliqUrdu.variable} antialiased`}
       >
         <Providers>
           {children}

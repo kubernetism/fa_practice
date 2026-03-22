@@ -15,6 +15,13 @@ import {
   FileText,
   ShieldCheck,
   Key,
+  ShoppingCart,
+  Banknote,
+  CreditCard,
+  Smartphone,
+  User,
+  Truck,
+  Landmark,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -29,16 +36,27 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { getBusinessSettings, updateBusinessSettings, upsertSetting } from '@/actions/settings'
 import { changePassword } from '@/actions/users'
 import { toast } from 'sonner'
 import { PageLoader } from '@/components/ui/page-loader'
 
-type SettingsSection = 'business' | 'tax' | 'receipt' | 'notifications' | 'security'
+type SettingsSection = 'business' | 'tax' | 'sales' | 'receipt' | 'notifications' | 'security'
+
+const ALL_PAYMENT_METHODS = [
+  { key: 'cash', label: 'Cash', icon: Banknote, description: 'Accept cash payments' },
+  { key: 'card', label: 'Card', icon: CreditCard, description: 'Credit/debit card payments' },
+  { key: 'credit', label: 'Credit', icon: User, description: 'Customer credit / receivable' },
+  { key: 'mobile', label: 'Mobile', icon: Smartphone, description: 'Mobile wallet payments (JazzCash, Easypaisa)' },
+  { key: 'cod', label: 'COD', icon: Truck, description: 'Cash on delivery' },
+  { key: 'bank_transfer', label: 'Bank Transfer', icon: Landmark, description: 'Direct bank transfer' },
+]
 
 const sections: { id: SettingsSection; label: string; icon: typeof Settings }[] = [
   { id: 'business', label: 'Business Info', icon: Building2 },
   { id: 'tax', label: 'Tax & Currency', icon: Percent },
+  { id: 'sales', label: 'Sales & Payments', icon: ShoppingCart },
   { id: 'receipt', label: 'Receipt', icon: Receipt },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'security', label: 'Security', icon: ShieldCheck },
@@ -392,6 +410,99 @@ export default function SettingsPage() {
                       onCheckedChange={(checked) => updateField('showTaxOnReceipt', checked)}
                     />
                   </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {activeSection === 'sales' && (
+            <>
+              <Card className="card-tactical">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <ShoppingCart className="w-4 h-4 text-primary" />
+                    Payment Methods
+                  </CardTitle>
+                  <CardDescription>Select which payment methods are available at Point of Sale</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {ALL_PAYMENT_METHODS.map((method) => {
+                    const allowed = (settings?.allowedPaymentMethods || 'cash,card,credit,mobile')
+                      .toLowerCase()
+                      .split(',')
+                      .map((s: string) => s.trim())
+                    const isChecked = allowed.includes(method.key)
+
+                    return (
+                      <label
+                        key={method.key}
+                        className="flex items-center gap-3 p-3 rounded-lg border border-border/50 hover:bg-accent/50 transition-colors cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={(checked) => {
+                            let methods = allowed.filter((m: string) => m !== method.key)
+                            if (checked) methods.push(method.key)
+                            if (methods.length === 0) methods = ['cash']
+                            updateField('allowedPaymentMethods', methods.join(','))
+                            // If default was removed, reset to first allowed
+                            const currentDefault = (settings?.defaultPaymentMethod || 'cash').toLowerCase()
+                            if (!methods.includes(currentDefault)) {
+                              updateField('defaultPaymentMethod', methods[0])
+                            }
+                          }}
+                        />
+                        <method.icon className="w-4 h-4 text-muted-foreground" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium">{method.label}</p>
+                          <p className="text-xs text-muted-foreground">{method.description}</p>
+                        </div>
+                        {isChecked && (
+                          <Badge variant="outline" className="text-[10px] text-green-500 border-green-500/30">
+                            Active
+                          </Badge>
+                        )}
+                      </label>
+                    )
+                  })}
+                </CardContent>
+              </Card>
+
+              <Card className="card-tactical">
+                <CardHeader>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <DollarSign className="w-4 h-4 text-primary" />
+                    Default Payment Method
+                  </CardTitle>
+                  <CardDescription>Pre-selected payment method when opening POS</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Select
+                    value={(settings?.defaultPaymentMethod || 'cash').toLowerCase()}
+                    onValueChange={(value) => updateField('defaultPaymentMethod', value)}
+                  >
+                    <SelectTrigger className="w-full max-w-sm">
+                      <SelectValue placeholder="Select default method" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ALL_PAYMENT_METHODS
+                        .filter((method) => {
+                          const allowed = (settings?.allowedPaymentMethods || 'cash,card,credit,mobile')
+                            .toLowerCase()
+                            .split(',')
+                            .map((s: string) => s.trim())
+                          return allowed.includes(method.key)
+                        })
+                        .map((method) => (
+                          <SelectItem key={method.key} value={method.key}>
+                            <span className="flex items-center gap-2">
+                              <method.icon className="w-4 h-4" />
+                              {method.label}
+                            </span>
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
                 </CardContent>
               </Card>
             </>

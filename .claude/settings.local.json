@@ -79,7 +79,8 @@
       "Bash(apt list:*)",
       "Bash(sudo apt-get:*)",
       "Bash(pip3 show:*)",
-      "Bash(DB=\"/home/safdaralishah/.config/firearms-pos/data/firearms-pos.db\")"
+      "Bash(DB=\"/home/safdaralishah/.config/firearms-pos/data/firearms-pos.db\")",
+      "Bash(ls -1 /home/safdaralishah/Documents/github/fa_practice/firearms-pos-web/src/app/\\\\\\(dashboard\\\\\\)/)"
     ]
   }
 }

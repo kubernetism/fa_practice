@@ -18027,11 +18027,20 @@ function registerSetupHandlers() {
         isMain: true
       };
       const newBranch = db2.insert(branches).values(branchData).returning().get();
+      const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12);
       const existingAdmin = await db2.query.users.findFirst({
-        where: (u, { eq }) => eq(u.username, data.adminAccount.username)
+        where: (u, { eq: eq2 }) => eq2(u.username, data.adminAccount.username)
       });
-      if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12);
+      if (existingAdmin) {
+        db2.update(users).set({
+          password: hashedPassword,
+          email: data.adminAccount.email || data.business.businessEmail || existingAdmin.email,
+          fullName: data.adminAccount.fullName || existingAdmin.fullName,
+          phone: data.adminAccount.phone || existingAdmin.phone,
+          branchId: newBranch.id
+        }).where(drizzleOrm.eq(users.id, existingAdmin.id)).run();
+        console.log("[Setup] Admin user updated for branch:", newBranch.id, "userId:", existingAdmin.id);
+      } else {
         const newAdmin = db2.insert(users).values({
           username: data.adminAccount.username,
           password: hashedPassword,
@@ -18208,7 +18217,7 @@ function registerSetupHandlers() {
       let counter = 1;
       while (true) {
         const existing = db2.query.branches.findFirst({
-          where: (b, { eq }) => eq(b.code, finalCode)
+          where: (b, { eq: eq2 }) => eq2(b.code, finalCode)
         });
         if (!existing) break;
         counter++;

@@ -18,6 +18,8 @@ import {
   Trash2,
   Hash,
   ChevronsUpDown,
+  Truck,
+  Landmark,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -51,6 +53,7 @@ import {
 import { getProductsWithStock, getCategories } from '@/actions/products'
 import { getCustomers } from '@/actions/customers'
 import { createSale } from '@/actions/sales'
+import { getBusinessSettings } from '@/actions/settings'
 import { toast } from 'sonner'
 
 type Product = {
@@ -82,6 +85,15 @@ type Customer = {
   name: string
 }
 
+const PAYMENT_METHOD_MAP: Record<string, { label: string; icon: typeof Banknote }> = {
+  cash: { label: 'Cash', icon: Banknote },
+  card: { label: 'Card', icon: CreditCard },
+  credit: { label: 'Credit', icon: User },
+  mobile: { label: 'Mobile', icon: Smartphone },
+  cod: { label: 'COD', icon: Truck },
+  bank_transfer: { label: 'Bank Transfer', icon: Landmark },
+}
+
 export default function POSPage() {
   const [search, setSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('All')
@@ -100,14 +112,16 @@ export default function POSPage() {
   const [categories, setCategories] = useState<string[]>(['All'])
   const [loading, setLoading] = useState(true)
   const [completing, setCompleting] = useState(false)
+  const [enabledPaymentMethods, setEnabledPaymentMethods] = useState<string[]>(['cash', 'card', 'credit', 'mobile'])
 
   useEffect(() => {
     async function loadData() {
       setLoading(true)
-      const [productsResult, categoriesResult, customersResult] = await Promise.all([
+      const [productsResult, categoriesResult, customersResult, settingsResult] = await Promise.all([
         getProductsWithStock({ isActive: true }),
         getCategories(),
         getCustomers({ isActive: true }),
+        getBusinessSettings(),
       ])
 
       if (productsResult.success) {
@@ -129,6 +143,19 @@ export default function POSPage() {
           name: `${c.firstName} ${c.lastName}`.trim(),
         }))
         setCustomers([{ id: 0, name: 'Walk-in Customer' }, ...custs])
+      }
+      if (settingsResult.success && settingsResult.data) {
+        const s = settingsResult.data
+        const methods = (s.allowedPaymentMethods || 'cash,card,credit,mobile')
+          .toLowerCase()
+          .split(',')
+          .map((m: string) => m.trim())
+          .filter((m: string) => m in PAYMENT_METHOD_MAP)
+        if (methods.length > 0) {
+          setEnabledPaymentMethods(methods)
+          const defaultMethod = (s.defaultPaymentMethod || methods[0]).toLowerCase()
+          setPaymentMethod(methods.includes(defaultMethod) ? defaultMethod : methods[0])
+        }
       }
       setLoading(false)
     }
@@ -208,7 +235,7 @@ export default function POSPage() {
     setCart([])
     setDiscount(0)
     setNotes('')
-    setPaymentMethod(null)
+    setPaymentMethod(enabledPaymentMethods[0] || null)
     setAmountTendered('')
   }
 
@@ -465,24 +492,27 @@ export default function POSPage() {
         </div>
 
         {/* Payment Method */}
-        <div className="grid grid-cols-4 gap-2 mb-3">
-          {[
-            { key: 'cash', label: 'Cash', icon: Banknote },
-            { key: 'card', label: 'Card', icon: CreditCard },
-            { key: 'credit', label: 'Credit', icon: User },
-            { key: 'mobile', label: 'Mobile', icon: Smartphone },
-          ].map((m) => (
-            <Button
-              key={m.key}
-              variant={paymentMethod === m.key ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setPaymentMethod(m.key)}
-              className={`flex-col h-auto py-2 text-[10px] ${paymentMethod === m.key ? 'brass-glow' : ''}`}
-            >
-              <m.icon className="w-4 h-4 mb-1" />
-              {m.label}
-            </Button>
-          ))}
+        <div className={`grid gap-2 mb-3 ${
+          enabledPaymentMethods.length <= 2 ? 'grid-cols-2' :
+          enabledPaymentMethods.length === 3 ? 'grid-cols-3' :
+          enabledPaymentMethods.length === 4 ? 'grid-cols-4' : 'grid-cols-3'
+        }`}>
+          {enabledPaymentMethods.map((key) => {
+            const m = PAYMENT_METHOD_MAP[key]
+            if (!m) return null
+            return (
+              <Button
+                key={key}
+                variant={paymentMethod === key ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setPaymentMethod(key)}
+                className={`flex-col h-auto py-2 text-[10px] ${paymentMethod === key ? 'brass-glow' : ''}`}
+              >
+                <m.icon className="w-4 h-4 mb-1" />
+                {m.label}
+              </Button>
+            )
+          })}
         </div>
 
         {/* Cash tendered */}
