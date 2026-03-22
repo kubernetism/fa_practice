@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+/* Jameel Noori Nastaleeq — Urdu / Nastaliq font */
+@font-face {
+  font-family: 'Jameel Noori Nastaleeq';
+  src: url('../fonts/Jameel Noori Nastaleeq Kasheeda.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-urdu {
+  font-family: 'Jameel Noori Nastaleeq', serif;
+  line-height: 2.2;
+  direction: rtl;
+}
+
+.font-urdu h1, .font-urdu h2, .font-urdu h3, .font-urdu h4, .font-urdu h5, .font-urdu h6 {
+  font-family: 'Jameel Noori Nastaleeq', serif;
+  letter-spacing: 0;
+}
+
 /* Light theme (default) */
 @theme {
   --color-background: oklch(100% 0 0);

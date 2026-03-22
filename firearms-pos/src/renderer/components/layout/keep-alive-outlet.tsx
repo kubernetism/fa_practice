@@ -37,6 +37,7 @@ const routeComponents: Record<string, React.LazyExoticComponent<React.ComponentT
   '/vouchers': lazy(() => import('@/screens/vouchers').then((m) => ({ default: m.VouchersScreen }))),
   '/reversals': lazy(() => import('@/screens/reversals').then((m) => ({ default: m.ReversalsScreen }))),
   '/developer': lazy(() => import('@/screens/developer-info').then((m) => ({ default: m.DeveloperInfoScreen }))),
+  '/guide': lazy(() => import('@/screens/guide').then((m) => ({ default: m.GuideScreen }))),
 }
 
 // Preload frequently used screens so they're ready before user clicks

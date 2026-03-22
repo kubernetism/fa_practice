@@ -130,6 +130,7 @@ const sections: NavSection[] = [
       { title: 'Database', href: '/database', icon: Database, allowedRoles: ['admin'] },
       { title: 'License', href: '/settings/license', icon: Shield, allowedRoles: ['admin'] },
       { title: 'Developer', href: '/developer', icon: Code2, allowedRoles: ['admin'] },
+      { title: 'How-To Guide', href: '/guide', icon: BookOpen },
     ],
   },
 ]

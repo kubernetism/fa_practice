@@ -53,6 +53,7 @@ const KEEP_ALIVE_PATHS = [
   "vouchers",
   "reversals",
   "developer",
+  "guide",
 ];
 
 export function AppRoutes() {
