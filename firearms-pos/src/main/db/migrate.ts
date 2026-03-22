@@ -6,6 +6,7 @@ import { app } from 'electron'
 import { migrateToBusinessSettings } from './migrations/migrate_to_business_settings'
 import { addPhoneToUsers } from './migrations/add_phone_to_users'
 import { fixFinancialIntegrity } from './migrations/fix_financial_integrity'
+import { fixFinancialIntegrityV2 } from './migrations/fix_financial_integrity_v2'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -204,6 +205,14 @@ export async function runMigrations(): Promise<void> {
     await fixFinancialIntegrity()
   } catch (error) {
     console.error('Financial integrity fix error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Financial integrity fix v2: create AP account, backfill missing cash transaction
+  try {
+    await fixFinancialIntegrityV2()
+  } catch (error) {
+    console.error('Financial integrity fix v2 error:', error)
     // Don't throw - log error but continue
   }
 }

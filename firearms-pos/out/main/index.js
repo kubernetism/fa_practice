@@ -2868,6 +2868,15 @@ async function fixFinancialIntegrity() {
     return;
   }
   console.log("Running financial integrity fix...");
+  const firstBranch = await db2.query.branches.findFirst();
+  const firstUser = await db2.query.users.findFirst();
+  if (!firstBranch || !firstUser) {
+    console.error("Cannot run financial integrity fix: no branches or users found.");
+    return;
+  }
+  const branchId = firstBranch.id;
+  const userId = firstUser.id;
+  console.log(`Using branchId=${branchId}, userId=${userId}`);
   const ownerCapital = await db2.query.chartOfAccounts.findFirst({
     where: drizzleOrm.eq(chartOfAccounts.accountCode, "3000")
   });
@@ -2918,8 +2927,8 @@ async function fixFinancialIntegrity() {
     description: `AUDIT CORRECTION: Reclassify Rs ${phantomAmount} from Inventory Adjustment Income to Owner's Capital — initial stock was owner-funded, not surplus`,
     referenceType: "audit_correction",
     referenceId: 0,
-    branchId: 3,
-    userId: 1,
+    branchId,
+    userId,
     lines: [
       {
         accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
@@ -2940,8 +2949,8 @@ async function fixFinancialIntegrity() {
     description: "AUDIT CORRECTION: Cash register opening float — owner capital injection",
     referenceType: "audit_correction",
     referenceId: 0,
-    branchId: 3,
-    userId: 1,
+    branchId,
+    userId,
     lines: [
       {
         accountCode: ACCOUNT_CODES.CASH_IN_HAND,
@@ -2963,6 +2972,69 @@ async function fixFinancialIntegrity() {
   console.log("  Assets: Cash 70,000 + Inventory 510,000 = 580,000");
   console.log("  Equity: Owner's Capital 550,000 + Net Income 30,000 = 580,000");
   console.log("  Balance Sheet: BALANCED");
+}
+async function fixFinancialIntegrityV2() {
+  const db2 = getDatabase();
+  console.log("Running financial integrity fix v2...");
+  const accountsPayable = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "2000")
+  });
+  if (!accountsPayable) {
+    await db2.insert(chartOfAccounts).values({
+      accountCode: "2000",
+      accountName: "Accounts Payable",
+      accountType: "liability",
+      normalBalance: "credit",
+      description: "Amounts owed to suppliers",
+      currentBalance: 0,
+      isActive: true,
+      isSystemAccount: false,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log("Created Accounts Payable account (2000)");
+  } else {
+    console.log("Accounts Payable (2000) already exists, skipping.");
+  }
+  const missedSale = await db2.query.sales.findFirst({
+    where: drizzleOrm.eq(sales.invoiceNumber, "INV-20260322-R1HB")
+  });
+  if (missedSale) {
+    const existingTx = await db2.query.cashTransactions.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(cashTransactions.referenceType, "sale"),
+        drizzleOrm.eq(cashTransactions.referenceId, missedSale.id)
+      )
+    });
+    if (!existingTx) {
+      const session = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, missedSale.branchId),
+          drizzleOrm.eq(cashRegisterSessions.sessionDate, "2026-03-22")
+        )
+      });
+      if (session) {
+        await db2.insert(cashTransactions).values({
+          sessionId: session.id,
+          branchId: missedSale.branchId,
+          transactionType: "sale",
+          amount: missedSale.totalAmount,
+          referenceType: "sale",
+          referenceId: missedSale.id,
+          description: `Backfill: Cash sale ${missedSale.invoiceNumber} (missed due to sale preceding register opening)`,
+          recordedBy: missedSale.userId
+        });
+        console.log(`Backfilled cash transaction Rs ${missedSale.totalAmount} for ${missedSale.invoiceNumber}`);
+      } else {
+        console.warn("No register session found for backfill — skipping cash transaction.");
+      }
+    } else {
+      console.log(`Cash transaction for ${missedSale.invoiceNumber} already exists, skipping.`);
+    }
+  } else {
+    console.log("Sale INV-20260322-R1HB not found — skipping backfill.");
+  }
+  console.log("Financial integrity fix v2 completed.");
 }
 async function runMigrations() {
   const db2 = getDatabase();
@@ -3099,6 +3171,11 @@ async function runMigrations() {
     await fixFinancialIntegrity();
   } catch (error) {
     console.error("Financial integrity fix error:", error);
+  }
+  try {
+    await fixFinancialIntegrityV2();
+  } catch (error) {
+    console.error("Financial integrity fix v2 error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -6026,6 +6103,22 @@ function registerSalesHandlers() {
       const hasServices = data.services && data.services.length > 0;
       if (!hasProducts && !hasServices) {
         return { success: false, message: "No items or services in cart" };
+      }
+      if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const openSession = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+            drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+            drizzleOrm.eq(cashRegisterSessions.status, "open")
+          )
+        });
+        if (!openSession) {
+          return {
+            success: false,
+            message: "Please open the Cash Register before processing cash sales. Go to Finance → Cash Register to open today's session."
+          };
+        }
       }
       if (hasProducts) {
         for (const item of data.items) {
@@ -13389,6 +13482,35 @@ function registerCashRegisterHandlers() {
         return { success: false, message: "Unauthorized" };
       }
       const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const staleSessions = await db2.query.cashRegisterSessions.findMany({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+          drizzleOrm.eq(cashRegisterSessions.status, "open"),
+          drizzleOrm.lt(cashRegisterSessions.sessionDate, today)
+        )
+      });
+      for (const stale of staleSessions) {
+        const txSums = await db2.select({
+          totalIn: drizzleOrm.sql`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+          totalOut: drizzleOrm.sql`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`
+        }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, stale.id));
+        const totalIn = txSums[0]?.totalIn || 0;
+        const totalOut = txSums[0]?.totalOut || 0;
+        const expectedBalance = stale.openingBalance + totalIn - totalOut;
+        await db2.update(cashRegisterSessions).set({
+          closingBalance: expectedBalance,
+          expectedBalance,
+          actualBalance: expectedBalance,
+          variance: 0,
+          status: "closed",
+          closedBy: userSession.userId,
+          closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          notes: `${stale.notes || ""}
+Auto-closed: stale session from ${stale.sessionDate}`.trim(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(cashRegisterSessions.id, stale.id));
+        console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`);
+      }
       const existingSession = await db2.query.cashRegisterSessions.findFirst({
         where: drizzleOrm.and(
           drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),

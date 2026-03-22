@@ -78,7 +78,8 @@
       "Bash(sudo apt:*)",
       "Bash(apt list:*)",
       "Bash(sudo apt-get:*)",
-      "Bash(pip3 show:*)"
+      "Bash(pip3 show:*)",
+      "Bash(DB=\"/home/safdaralishah/.config/firearms-pos/data/firearms-pos.db\")"
     ]
   }
 }

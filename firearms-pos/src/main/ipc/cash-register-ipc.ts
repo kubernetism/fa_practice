@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, gte, lte } from 'drizzle-orm'
+import { eq, and, desc, sql, gte, lte, lt, ne } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   cashRegisterSessions,
@@ -116,6 +116,47 @@ export function registerCashRegisterHandlers(): void {
       }
 
       const today = new Date().toISOString().split('T')[0]
+
+      // Auto-close any stale open sessions from prior days
+      const staleSessions = await db.query.cashRegisterSessions.findMany({
+        where: and(
+          eq(cashRegisterSessions.branchId, data.branchId),
+          eq(cashRegisterSessions.status, 'open'),
+          lt(cashRegisterSessions.sessionDate, today)
+        ),
+      })
+
+      for (const stale of staleSessions) {
+        // Calculate expected balance from transactions
+        const txSums = await db
+          .select({
+            totalIn: sql<number>`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+            totalOut: sql<number>`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`,
+          })
+          .from(cashTransactions)
+          .where(eq(cashTransactions.sessionId, stale.id))
+
+        const totalIn = txSums[0]?.totalIn || 0
+        const totalOut = txSums[0]?.totalOut || 0
+        const expectedBalance = stale.openingBalance + totalIn - totalOut
+
+        await db
+          .update(cashRegisterSessions)
+          .set({
+            closingBalance: expectedBalance,
+            expectedBalance,
+            actualBalance: expectedBalance,
+            variance: 0,
+            status: 'closed',
+            closedBy: userSession.userId,
+            closedAt: new Date().toISOString(),
+            notes: `${stale.notes || ''}\nAuto-closed: stale session from ${stale.sessionDate}`.trim(),
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(cashRegisterSessions.id, stale.id))
+
+        console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`)
+      }
 
       // Check if session already exists for today
       const existingSession = await db.query.cashRegisterSessions.findFirst({

@@ -97,6 +97,25 @@ export function registerSalesHandlers(): void {
         return { success: false, message: 'No items or services in cart' }
       }
 
+      // Pre-validation: Require open cash register session for cash/cod sales
+      if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
+        const today = new Date().toISOString().split('T')[0]
+        const openSession = await db.query.cashRegisterSessions.findFirst({
+          where: and(
+            eq(cashRegisterSessions.branchId, data.branchId),
+            eq(cashRegisterSessions.sessionDate, today),
+            eq(cashRegisterSessions.status, 'open')
+          ),
+        })
+
+        if (!openSession) {
+          return {
+            success: false,
+            message: 'Please open the Cash Register before processing cash sales. Go to Finance → Cash Register to open today\'s session.',
+          }
+        }
+      }
+
       // Pre-validation (outside transaction for faster feedback)
       if (hasProducts) {
         for (const item of data.items) {
