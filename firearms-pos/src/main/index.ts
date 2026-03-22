@@ -160,7 +160,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', async () => {
-  // Perform backup on close if enabled
+  // Perform backup and cleanup on close
   if (!isAppLocked) {
     await performCloseBackup()
     stopBackupScheduler()
@@ -169,14 +169,4 @@ app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
-})
-
-// Handle app quit
-app.on('before-quit', async () => {
-  // Perform backup on close if enabled
-  if (!isAppLocked) {
-    await performCloseBackup()
-    stopBackupScheduler()
-  }
-  closeDatabase()
 })

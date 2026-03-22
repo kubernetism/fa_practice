@@ -21523,10 +21523,3 @@ electron.app.on("window-all-closed", async () => {
     electron.app.quit();
   }
 });
-electron.app.on("before-quit", async () => {
-  if (!isAppLocked) {
-    await performCloseBackup();
-    stopBackupScheduler();
-  }
-  closeDatabase();
-});
