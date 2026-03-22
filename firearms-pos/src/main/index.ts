@@ -43,6 +43,12 @@ function createWindow(): void {
     mainWindow?.show()
   })
 
+  // Restore webContents focus when the window regains OS focus (fixes focus
+  // loss after GL compositor errors on Linux)
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.focus()
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     // Open external links in browser
     require('electron').shell.openExternal(details.url)
@@ -56,6 +62,9 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// Workaround for GL/VSync errors on Linux that can break input focus
+app.commandLine.appendSwitch('disable-gpu-compositing')
 
 // Initialize app
 app.whenReady().then(async () => {

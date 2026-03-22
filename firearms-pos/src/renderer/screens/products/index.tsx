@@ -156,12 +156,14 @@ export function ProductsScreen() {
       taxRate: '8.5',
       barcode: '',
     })
+    fetchCategories()
     setShowDialog(true)
   }
 
   // Open dialog for editing
   const handleEditProduct = (product: Product) => {
     setEditingProduct(product)
+    fetchCategories()
     setFormData({
       code: product.code,
       name: product.name,
