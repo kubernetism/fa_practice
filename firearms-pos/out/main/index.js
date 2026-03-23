@@ -13940,18 +13940,20 @@ function registerChartOfAccountsHandlers() {
   });
   electron.ipcMain.handle("coa:get-balance-sheet", async (_, branchId) => {
     const accounts = await db2.query.chartOfAccounts.findMany({
-      where: drizzleOrm.and(
-        drizzleOrm.eq(chartOfAccounts.isActive, true),
-        drizzleOrm.sql`${chartOfAccounts.accountType} IN ('asset', 'liability', 'equity')`
-      ),
+      where: drizzleOrm.eq(chartOfAccounts.isActive, true),
       orderBy: [chartOfAccounts.accountType, chartOfAccounts.accountCode]
     });
     const assets = accounts.filter((a) => a.accountType === "asset");
     const liabilities = accounts.filter((a) => a.accountType === "liability");
     const equity = accounts.filter((a) => a.accountType === "equity");
+    const revenue = accounts.filter((a) => a.accountType === "revenue");
+    const expenses2 = accounts.filter((a) => a.accountType === "expense");
     const totalAssets = assets.reduce((sum, a) => sum + a.currentBalance, 0);
     const totalLiabilities = liabilities.reduce((sum, a) => sum + a.currentBalance, 0);
     const totalEquity = equity.reduce((sum, a) => sum + a.currentBalance, 0);
+    const totalRevenue = revenue.reduce((sum, a) => sum + a.currentBalance, 0);
+    const totalExpenses = expenses2.reduce((sum, a) => sum + a.currentBalance, 0);
+    const netIncome = totalRevenue - totalExpenses;
     return {
       assets: {
         accounts: assets,
@@ -13965,8 +13967,9 @@ function registerChartOfAccountsHandlers() {
         accounts: equity,
         total: totalEquity
       },
-      totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
-      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+      netIncome,
+      totalLiabilitiesAndEquity: totalLiabilities + totalEquity + netIncome,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + netIncome)) < 0.01
     };
   });
   electron.ipcMain.handle(

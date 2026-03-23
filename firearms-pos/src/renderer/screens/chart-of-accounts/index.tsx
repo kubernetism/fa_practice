@@ -83,6 +83,7 @@ interface BalanceSheet {
   assets: { accounts: Account[]; total: number }
   liabilities: { accounts: Account[]; total: number }
   equity: { accounts: Account[]; total: number }
+  netIncome: number
   totalLiabilitiesAndEquity: number
   isBalanced: boolean
 }
@@ -395,8 +396,8 @@ export default function ChartOfAccountsScreen() {
   const accountStats = useMemo(() => ({
     assets: balanceSheet?.assets.total || 0,
     liabilities: balanceSheet?.liabilities.total || 0,
-    equity: balanceSheet?.equity.total || 0,
-    netIncome: incomeStatement?.netIncome || 0,
+    equity: (balanceSheet?.equity.total || 0) + (balanceSheet?.netIncome || 0),
+    netIncome: balanceSheet?.netIncome ?? incomeStatement?.netIncome ?? 0,
   }), [balanceSheet, incomeStatement])
 
   if (loading) {
@@ -717,10 +718,16 @@ export default function ChartOfAccountsScreen() {
                                 </TableCell>
                               </TableRow>
                             ))}
+                            <TableRow className="h-9">
+                              <TableCell className="py-1.5 text-sm italic">Current Net Income</TableCell>
+                              <TableCell className={`py-1.5 text-right text-sm font-medium ${(balanceSheet?.netIncome || 0) >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                {formatCurrency(balanceSheet?.netIncome || 0)}
+                              </TableCell>
+                            </TableRow>
                             <TableRow className="border-t-2 h-9">
                               <TableCell className="py-1.5 font-bold text-sm">Total Equity</TableCell>
                               <TableCell className="py-1.5 text-right font-bold text-sm text-purple-500">
-                                {formatCurrency(balanceSheet?.equity.total || 0)}
+                                {formatCurrency((balanceSheet?.equity.total || 0) + (balanceSheet?.netIncome || 0))}
                               </TableCell>
                             </TableRow>
                           </TableBody>
