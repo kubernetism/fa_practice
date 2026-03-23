@@ -344,6 +344,18 @@ export function POSScreen() {
     loadServices()
   }, [loadAvailableProducts, loadServices])
 
+  // Refresh catalog data when POS screen becomes active (navigated to from sidebar)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      if ((e as CustomEvent).detail?.path === '/pos') {
+        loadAvailableProducts()
+        loadServices()
+      }
+    }
+    window.addEventListener('screen-activated', handler)
+    return () => window.removeEventListener('screen-activated', handler)
+  }, [loadAvailableProducts, loadServices])
+
   // Filter products based on search query
   const filteredProducts = searchQuery.trim()
     ? allProducts.filter(
@@ -780,7 +792,12 @@ export function POSScreen() {
     <div className="flex h-full gap-3 -m-6 p-3 overflow-hidden">
       {/* ═══ LEFT: Product/Service Catalog ═══ */}
       <div className="flex flex-1 flex-col min-w-0">
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'products' | 'services')} className="flex flex-col h-full">
+        <Tabs value={activeTab} onValueChange={(value) => {
+          const tab = value as 'products' | 'services'
+          setActiveTab(tab)
+          if (tab === 'products') loadAvailableProducts()
+          else loadServices()
+        }} className="flex flex-col h-full">
           {/* Tab Switcher + Search Bar — single compact row */}
           <div className="flex items-center gap-2 mb-2">
             <TabsList className="h-9 shrink-0">
