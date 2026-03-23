@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react'
-import { Plus, Search, Pencil, Trash2, UserCog, Shield, ShieldCheck, User, Users, UserX, UserCheck, Mail, Clock, RefreshCw } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, UserCog, Shield, ShieldCheck, ShieldQuestion, User, Users, UserX, UserCheck, Mail, Clock, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SecurityQuestionsDialog } from './security-questions-dialog'
 
 interface User {
   id: number
@@ -113,6 +114,7 @@ export default function UsersScreen() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [formData, setFormData] = useState<UserFormData>(initialFormData)
   const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [securityQuestionsUser, setSecurityQuestionsUser] = useState<{ id: number; name: string } | null>(null)
 
   useEffect(() => {
     fetchUsers()
@@ -438,6 +440,14 @@ export default function UsersScreen() {
                           <div className="flex items-center justify-end gap-0.5">
                             <Tooltip>
                               <TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setSecurityQuestionsUser({ id: user.id, name: user.fullName })}>
+                                  <ShieldQuestion className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>Security Questions</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
                                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => handleOpenDialog(user)}>
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
@@ -550,6 +560,16 @@ export default function UsersScreen() {
             </form>
           </DialogContent>
         </Dialog>
+
+        {/* Security Questions Dialog */}
+        {securityQuestionsUser && (
+          <SecurityQuestionsDialog
+            open={!!securityQuestionsUser}
+            onOpenChange={(open) => { if (!open) setSecurityQuestionsUser(null) }}
+            userId={securityQuestionsUser.id}
+            userName={securityQuestionsUser.name}
+          />
+        )}
       </div>
     </TooltipProvider>
   )

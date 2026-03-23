@@ -53,6 +53,7 @@ interface DashboardStats {
   payablesPaid: number
   cashInHand: number
   lowStockCount: number
+  totalDiscount: number
   totalSalesCount: number
 }
 
@@ -116,6 +117,20 @@ export function registerDashboardHandlers(): void {
           )
         )
 
+      // Get total sale-level discounts for the period
+      const discountResult = await db
+        .select({
+          total: sql<number>`COALESCE(SUM(${sales.discountAmount}), 0)`,
+        })
+        .from(sales)
+        .where(
+          and(
+            eq(sales.branchId, branchId),
+            between(sales.saleDate, dateRange.start, dateRange.end),
+            eq(sales.isVoided, false)
+          )
+        )
+
       const productRevenue = profitResult[0]?.revenue || 0
       const productCost = profitResult[0]?.cost || 0
       const productTax = profitResult[0]?.tax || 0
@@ -125,6 +140,7 @@ export function registerDashboardHandlers(): void {
       const grossCost = productCost // services have no COGS
       const grossTax = productTax + svcTax
       const commissionTotal = commissionResult[0]?.total || 0
+      const totalDiscount = discountResult[0]?.total || 0
 
       // Calculate return deductions for the period
       const returnDeductions = await db
@@ -146,7 +162,7 @@ export function registerDashboardHandlers(): void {
       const returnCost = returnDeductions[0]?.returnCost || 0
       const returnTax = returnDeductions[0]?.returnTax || 0
 
-      const revenue = grossRevenue - returnRevenue
+      const revenue = grossRevenue - returnRevenue - totalDiscount
       const cost = grossCost - returnCost
       const taxCollected = grossTax - returnTax
       const totalProfit = revenue - cost - commissionTotal - taxCollected
@@ -359,6 +375,7 @@ export function registerDashboardHandlers(): void {
         totalCost: cost,
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
+        totalDiscount,
         returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),

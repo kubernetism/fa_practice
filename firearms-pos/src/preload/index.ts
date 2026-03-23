@@ -186,6 +186,21 @@ const api = {
       ipcRenderer.invoke('users:update-permissions', id, permissions),
   },
 
+  // Account Recovery
+  recovery: {
+    getSuggestedQuestions: () => ipcRenderer.invoke('recovery:get-suggested-questions'),
+    setQuestions: (userId: number, questions: { question: string; answer: string }[]) =>
+      ipcRenderer.invoke('recovery:set-questions', userId, questions),
+    hasQuestions: (userId: number) => ipcRenderer.invoke('recovery:has-questions', userId),
+    getQuestions: (userId: number) => ipcRenderer.invoke('recovery:get-questions', userId),
+    lookupUser: (username: string) => ipcRenderer.invoke('recovery:lookup-user', username),
+    resetPassword: (params: {
+      userId: number
+      answers: { questionId: number; answer: string }[]
+      newPassword: string
+    }) => ipcRenderer.invoke('recovery:reset-password', params),
+  },
+
   // Expenses
   expenses: {
     getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('expenses:get-all', params),

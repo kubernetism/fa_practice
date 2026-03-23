@@ -1466,6 +1466,15 @@ const reversalRequestsRelations = drizzleOrm.relations(reversalRequests, ({ one 
     references: [branches.id]
   })
 }));
+const userSecurityQuestions = sqliteCore.sqliteTable("user_security_questions", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
+  question: sqliteCore.text("question").notNull(),
+  answerHash: sqliteCore.text("answer_hash").notNull(),
+  sortOrder: sqliteCore.integer("sort_order").notNull().default(0),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1526,6 +1535,7 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   suppliers,
   todos,
   todosRelations,
+  userSecurityQuestions,
   users,
   vouchers
 }, Symbol.toStringTag, { value: "Module" }));
@@ -3168,6 +3178,11 @@ async function runMigrations() {
     console.error("Return items cost_price migration error:", error);
   }
   try {
+    await ensureSecurityQuestionsTable();
+  } catch (error) {
+    console.error("Security questions table migration error:", error);
+  }
+  try {
     await fixFinancialIntegrity();
   } catch (error) {
     console.error("Financial integrity fix error:", error);
@@ -4234,6 +4249,29 @@ async function ensureReturnItemsCostPrice() {
   console.log("Adding return_items.cost_price column...");
   db2.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run();
   console.log("return_items.cost_price column added successfully");
+}
+async function ensureSecurityQuestionsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const exists = rawDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_security_questions'`).get();
+  if (exists) {
+    console.log("user_security_questions table exists: true");
+    return;
+  }
+  console.log("Creating user_security_questions table...");
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "user_security_questions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "user_id" integer NOT NULL REFERENCES "users"("id"),
+      "question" text NOT NULL,
+      "answer_hash" text NOT NULL,
+      "sort_order" integer NOT NULL DEFAULT 0,
+      "created_at" text NOT NULL DEFAULT (datetime('now')),
+      "updated_at" text NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "usq_user_idx" ON "user_security_questions" ("user_id")`).run();
+  console.log("user_security_questions table created successfully!");
 }
 let currentSession = null;
 function registerAuthHandlers() {
@@ -17541,6 +17579,15 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.isVoided, false)
         )
       );
+      const discountResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${sales.discountAmount}), 0)`
+      }).from(sales).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
       const productRevenue = profitResult[0]?.revenue || 0;
       const productCost = profitResult[0]?.cost || 0;
       const productTax = profitResult[0]?.tax || 0;
@@ -17550,6 +17597,7 @@ function registerDashboardHandlers() {
       const grossCost = productCost;
       const grossTax = productTax + svcTax;
       const commissionTotal = commissionResult[0]?.total || 0;
+      const totalDiscount = discountResult[0]?.total || 0;
       const returnDeductions = await db2.select({
         returnRevenue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
         returnCost: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
@@ -17563,7 +17611,7 @@ function registerDashboardHandlers() {
       const returnRevenue = returnDeductions[0]?.returnRevenue || 0;
       const returnCost = returnDeductions[0]?.returnCost || 0;
       const returnTax = returnDeductions[0]?.returnTax || 0;
-      const revenue = grossRevenue - returnRevenue;
+      const revenue = grossRevenue - returnRevenue - totalDiscount;
       const cost = grossCost - returnCost;
       const taxCollected = grossTax - returnTax;
       const totalProfit = revenue - cost - commissionTotal - taxCollected;
@@ -17701,6 +17749,7 @@ function registerDashboardHandlers() {
         totalCost: cost,
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
+        totalDiscount,
         returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
@@ -21352,6 +21401,185 @@ function registerShellHandlers() {
     }
   });
 }
+const SUGGESTED_QUESTIONS = [
+  "What is the name of your first pet?",
+  "What city were you born in?",
+  "What is your mother's maiden name?",
+  "What was the name of your first school?",
+  "What is your favorite childhood game?",
+  "What is the name of the street you grew up on?",
+  "What was your childhood nickname?",
+  "What is your father's middle name?",
+  "What was the make of your first vehicle?",
+  "What is your favorite book?"
+];
+function registerRecoveryHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("recovery:get-suggested-questions", () => {
+    return { success: true, data: SUGGESTED_QUESTIONS };
+  });
+  electron.ipcMain.handle(
+    "recovery:set-questions",
+    async (_, userId, questions) => {
+      try {
+        if (!questions || questions.length < 2) {
+          return { success: false, message: "At least 2 security questions are required" };
+        }
+        if (questions.length > 3) {
+          return { success: false, message: "Maximum 3 security questions allowed" };
+        }
+        const user = await db2.query.users.findFirst({
+          where: drizzleOrm.eq(users.id, userId)
+        });
+        if (!user) {
+          return { success: false, message: "User not found" };
+        }
+        for (const q of questions) {
+          if (!q.question.trim() || !q.answer.trim()) {
+            return { success: false, message: "All questions and answers must be filled" };
+          }
+          if (q.answer.trim().length < 2) {
+            return { success: false, message: "Answers must be at least 2 characters" };
+          }
+        }
+        await db2.delete(userSecurityQuestions).where(drizzleOrm.eq(userSecurityQuestions.userId, userId));
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (let i = 0; i < questions.length; i++) {
+          const answerHash = await bcrypt.hash(questions[i].answer.trim().toLowerCase(), 10);
+          await db2.insert(userSecurityQuestions).values({
+            userId,
+            question: questions[i].question.trim(),
+            answerHash,
+            sortOrder: i,
+            createdAt: now,
+            updatedAt: now
+          });
+        }
+        await createAuditLog$1({
+          action: "set_security_questions",
+          entity: "user",
+          entityId: userId,
+          description: `Security questions set for user: ${user.username} (${questions.length} questions)`
+        });
+        return { success: true, message: "Security questions saved successfully" };
+      } catch (error) {
+        console.error("Set security questions error:", error);
+        return { success: false, message: "Failed to save security questions" };
+      }
+    }
+  );
+  electron.ipcMain.handle("recovery:has-questions", async (_, userId) => {
+    try {
+      const questions = await db2.query.userSecurityQuestions.findMany({
+        where: drizzleOrm.eq(userSecurityQuestions.userId, userId),
+        columns: { id: true }
+      });
+      return { success: true, data: questions.length >= 2 };
+    } catch (error) {
+      console.error("Check security questions error:", error);
+      return { success: false, data: false };
+    }
+  });
+  electron.ipcMain.handle("recovery:get-questions", async (_, userId) => {
+    try {
+      const questions = await db2.query.userSecurityQuestions.findMany({
+        where: drizzleOrm.eq(userSecurityQuestions.userId, userId),
+        columns: { id: true, question: true, sortOrder: true },
+        orderBy: (q, { asc }) => [asc(q.sortOrder)]
+      });
+      return { success: true, data: questions };
+    } catch (error) {
+      console.error("Get security questions error:", error);
+      return { success: false, message: "Failed to fetch security questions" };
+    }
+  });
+  electron.ipcMain.handle("recovery:lookup-user", async (_, username) => {
+    try {
+      const user = await db2.query.users.findFirst({
+        where: drizzleOrm.and(drizzleOrm.eq(users.username, username), drizzleOrm.eq(users.isActive, true)),
+        columns: { id: true, username: true, fullName: true }
+      });
+      if (!user) {
+        return { success: false, message: "No active user found with this username" };
+      }
+      const questions = await db2.query.userSecurityQuestions.findMany({
+        where: drizzleOrm.eq(userSecurityQuestions.userId, user.id),
+        columns: { id: true, question: true, sortOrder: true },
+        orderBy: (q, { asc }) => [asc(q.sortOrder)]
+      });
+      if (questions.length < 2) {
+        return {
+          success: false,
+          message: "This account has no security questions configured. Please contact an administrator."
+        };
+      }
+      return {
+        success: true,
+        data: {
+          userId: user.id,
+          username: user.username,
+          fullName: user.fullName,
+          questions: questions.map((q) => ({ id: q.id, question: q.question }))
+        }
+      };
+    } catch (error) {
+      console.error("Lookup user for recovery error:", error);
+      return { success: false, message: "Failed to look up user" };
+    }
+  });
+  electron.ipcMain.handle(
+    "recovery:reset-password",
+    async (_, params) => {
+      try {
+        const { userId, answers, newPassword } = params;
+        if (!newPassword || newPassword.length < 6) {
+          return { success: false, message: "New password must be at least 6 characters" };
+        }
+        const storedQuestions = await db2.query.userSecurityQuestions.findMany({
+          where: drizzleOrm.eq(userSecurityQuestions.userId, userId)
+        });
+        if (storedQuestions.length < 2) {
+          return { success: false, message: "Security questions not configured for this user" };
+        }
+        for (const stored of storedQuestions) {
+          const provided = answers.find((a) => a.questionId === stored.id);
+          if (!provided) {
+            return { success: false, message: "All security questions must be answered" };
+          }
+          const isMatch = await bcrypt.compare(
+            provided.answer.trim().toLowerCase(),
+            stored.answerHash
+          );
+          if (!isMatch) {
+            await createAuditLog$1({
+              action: "password_reset_failed",
+              entity: "user",
+              entityId: userId,
+              description: `Failed password reset attempt - incorrect security answers`
+            });
+            return { success: false, message: "One or more answers are incorrect" };
+          }
+        }
+        const hashedPassword = await bcrypt.hash(newPassword, 12);
+        await db2.update(users).set({ password: hashedPassword, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(users.id, userId));
+        const user = await db2.query.users.findFirst({
+          where: drizzleOrm.eq(users.id, userId),
+          columns: { username: true }
+        });
+        await createAuditLog$1({
+          action: "password_reset",
+          entity: "user",
+          entityId: userId,
+          description: `Password reset via security questions for user: ${user?.username || userId}`
+        });
+        return { success: true, message: "Password has been reset successfully" };
+      } catch (error) {
+        console.error("Reset password error:", error);
+        return { success: false, message: "Failed to reset password" };
+      }
+    }
+  );
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -21393,6 +21621,7 @@ function registerAllHandlers() {
   registerReversalHandlers();
   registerClipboardHandlers();
   registerShellHandlers();
+  registerRecoveryHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

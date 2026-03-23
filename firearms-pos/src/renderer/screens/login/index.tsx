@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/auth-context'
 import { ThemeToggle } from '@/components/theme'
+import { ForgotPassword } from './forgot-password'
 
 export function LoginScreen() {
   const navigate = useNavigate()
@@ -17,6 +18,7 @@ export function LoginScreen() {
   const [isLoading, setIsLoading] = useState(false)
   const [businessName, setBusinessName] = useState('POS System')
   const [mounted, setMounted] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
 
   useEffect(() => {
     window.api.businessSettings.getGlobal().then((settings) => {
@@ -164,8 +166,19 @@ export function LoginScreen() {
           <ThemeToggle />
         </div>
 
-        {/* Login form */}
+        {/* Login form / Forgot password */}
         <div className="flex-1 flex items-center justify-center px-6 pb-10">
+          {showForgotPassword ? (
+            <div
+              style={{
+                transition: 'opacity 0.4s ease-out, transform 0.4s ease-out',
+                opacity: 1,
+                transform: 'translateY(0)',
+              }}
+            >
+              <ForgotPassword onBack={() => setShowForgotPassword(false)} />
+            </div>
+          ) : (
           <div
             className="w-full max-w-[380px] space-y-8"
             style={{
@@ -216,9 +229,18 @@ export function LoginScreen() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="password" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Password
-                </Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Password
+                  </Label>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    className="text-[10px] font-medium text-primary/70 hover:text-primary transition-colors uppercase tracking-wider"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
                 <div className="relative group">
                   <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/60 transition-colors group-focus-within:text-primary" />
                   <Input
@@ -305,6 +327,7 @@ export function LoginScreen() {
               </div>
             </div>
           </div>
+          )}
         </div>
 
         {/* Footer */}

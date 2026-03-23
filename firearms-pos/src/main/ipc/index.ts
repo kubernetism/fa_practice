@@ -39,6 +39,7 @@ import { registerVoucherHandlers } from './vouchers-ipc'
 import { registerReversalHandlers } from './reversal-ipc'
 import { registerClipboardHandlers } from './clipboard-ipc'
 import { registerShellHandlers } from './shell-ipc'
+import { registerRecoveryHandlers } from './recovery-ipc'
 
 // Re-export lock state from the centralized module
 export { isApplicationLocked, setApplicationLocked, checkLockGuard } from '../utils/app-lock-state'
@@ -84,6 +85,7 @@ export function registerAllHandlers(): void {
   registerReversalHandlers()
   registerClipboardHandlers()
   registerShellHandlers()
+  registerRecoveryHandlers()
 
   console.log('All IPC handlers registered')
 }

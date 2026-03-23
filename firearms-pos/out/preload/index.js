@@ -129,6 +129,15 @@ const api = {
     delete: (id) => electron.ipcRenderer.invoke("users:delete", id),
     updatePermissions: (id, permissions) => electron.ipcRenderer.invoke("users:update-permissions", id, permissions)
   },
+  // Account Recovery
+  recovery: {
+    getSuggestedQuestions: () => electron.ipcRenderer.invoke("recovery:get-suggested-questions"),
+    setQuestions: (userId, questions) => electron.ipcRenderer.invoke("recovery:set-questions", userId, questions),
+    hasQuestions: (userId) => electron.ipcRenderer.invoke("recovery:has-questions", userId),
+    getQuestions: (userId) => electron.ipcRenderer.invoke("recovery:get-questions", userId),
+    lookupUser: (username) => electron.ipcRenderer.invoke("recovery:lookup-user", username),
+    resetPassword: (params) => electron.ipcRenderer.invoke("recovery:reset-password", params)
+  },
   // Expenses
   expenses: {
     getAll: (params) => electron.ipcRenderer.invoke("expenses:get-all", params),

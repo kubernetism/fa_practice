@@ -10,6 +10,7 @@ interface ReportCardProps {
   stats: {
     grossRevenue: number
     totalRevenue: number
+    totalDiscount: number
     returnDeductions: number
     totalProfit: number
     totalCost: number
@@ -214,8 +215,13 @@ export const ReportCard = React.forwardRef<HTMLDivElement, ReportCardProps>(
             <p style={{ ...s.heroValue, color: '#38bdf8' }}>
               {formatCurrency(stats.grossRevenue)}
             </p>
-            {stats.returnDeductions > 0 && (
-              <p style={s.heroSub}>Net: {formatCurrency(stats.totalRevenue)}</p>
+            {(stats.returnDeductions > 0 || stats.totalDiscount > 0) && (
+              <p style={s.heroSub}>
+                {stats.totalDiscount > 0 && `Disc: -${formatCurrency(stats.totalDiscount)}`}
+                {stats.totalDiscount > 0 && stats.returnDeductions > 0 && ' · '}
+                {stats.returnDeductions > 0 && `Ret: -${formatCurrency(stats.returnDeductions)}`}
+                {' · '}Net: {formatCurrency(stats.totalRevenue)}
+              </p>
             )}
           </div>
           <div style={s.heroCell}>
@@ -271,6 +277,12 @@ export const ReportCard = React.forwardRef<HTMLDivElement, ReportCardProps>(
         <div style={s.section}>
           <p style={s.sectionTitle}>Deductions & Receivables</p>
           <div style={s.grid2}>
+            <div style={s.row}>
+              <p style={s.rowLabel}>Discounts</p>
+              <p style={{ ...s.rowValue, color: stats.totalDiscount > 0 ? '#f472b6' : '#e2e8f0' }}>
+                {formatCurrency(stats.totalDiscount)}
+              </p>
+            </div>
             <div style={s.row}>
               <p style={s.rowLabel}>Tax Collected</p>
               <p style={s.rowValue}>{formatCurrency(stats.totalTaxCollected)}</p>

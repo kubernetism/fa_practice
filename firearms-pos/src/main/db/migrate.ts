@@ -200,6 +200,14 @@ export async function runMigrations(): Promise<void> {
     // Don't throw - log error but continue
   }
 
+  // Ensure user_security_questions table exists
+  try {
+    await ensureSecurityQuestionsTable()
+  } catch (error) {
+    console.error('Security questions table migration error:', error)
+    // Don't throw - log error but continue
+  }
+
   // Financial integrity fix: create equity accounts, reclassify phantom revenue, post cash float
   try {
     await fixFinancialIntegrity()
@@ -1486,4 +1494,33 @@ async function ensureReturnItemsCostPrice(): Promise<void> {
   console.log('Adding return_items.cost_price column...')
   db.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run()
   console.log('return_items.cost_price column added successfully')
+}
+
+async function ensureSecurityQuestionsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  const exists = rawDb
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_security_questions'`)
+    .get()
+
+  if (exists) {
+    console.log('user_security_questions table exists: true')
+    return
+  }
+
+  console.log('Creating user_security_questions table...')
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "user_security_questions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "user_id" integer NOT NULL REFERENCES "users"("id"),
+      "question" text NOT NULL,
+      "answer_hash" text NOT NULL,
+      "sort_order" integer NOT NULL DEFAULT 0,
+      "created_at" text NOT NULL DEFAULT (datetime('now')),
+      "updated_at" text NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "usq_user_idx" ON "user_security_questions" ("user_id")`).run()
+  console.log('user_security_questions table created successfully!')
 }

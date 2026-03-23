@@ -56,6 +56,7 @@ interface DashboardStats {
   totalCost: number
   totalTaxCollected: number
   totalCommission: number
+  totalDiscount: number
   totalProducts: number
   totalProductsSold: number
   totalPurchases: number
@@ -336,9 +337,12 @@ export function DashboardScreen() {
             <div className="text-2xl font-bold tabular-nums text-blue-600">
               {formatCurrency(stats?.grossRevenue || 0)}
             </div>
-            {(stats?.returnDeductions || 0) > 0 ? (
+            {((stats?.returnDeductions || 0) > 0 || (stats?.totalDiscount || 0) > 0) ? (
               <p className="text-[10px] text-orange-500 mt-0.5">
-                Returns: -{formatCurrency(stats?.returnDeductions || 0)} &middot; Net: {formatCurrency(stats?.totalRevenue || 0)}
+                {(stats?.totalDiscount || 0) > 0 && <>Disc: -{formatCurrency(stats?.totalDiscount || 0)}</>}
+                {(stats?.totalDiscount || 0) > 0 && (stats?.returnDeductions || 0) > 0 && ' · '}
+                {(stats?.returnDeductions || 0) > 0 && <>Ret: -{formatCurrency(stats?.returnDeductions || 0)}</>}
+                {' · '}Net: {formatCurrency(stats?.totalRevenue || 0)}
               </p>
             ) : (
               <p className="text-[10px] text-muted-foreground mt-0.5">Gross sales revenue</p>
@@ -360,7 +364,7 @@ export function DashboardScreen() {
             <div className={`text-2xl font-bold tabular-nums ${profitPositive ? 'text-green-600' : 'text-red-600'}`}>
               {formatCurrency(profit)}
             </div>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Revenue - Cost - Comm - Tax</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">After cost, discount, comm & tax</p>
           </CardContent>
         </Card>
 
@@ -426,7 +430,14 @@ export function DashboardScreen() {
             />
           </Panel>
 
-          <Panel title="Tax & Commission">
+          <Panel title="Deductions">
+            <MetricRow
+              icon={Percent}
+              iconColor="text-pink-500"
+              label="Discounts"
+              value={formatCurrency(stats?.totalDiscount || 0)}
+              valueColor={(stats?.totalDiscount || 0) > 0 ? 'text-pink-500' : ''}
+            />
             <MetricRow
               icon={Percent}
               iconColor="text-blue-500"
