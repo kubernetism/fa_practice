@@ -78,6 +78,9 @@ interface DiscountRecord {
   userId: number
   userName?: string
   items: DiscountedItem[]
+  isFullyReturned?: boolean
+  effectiveDiscount?: number
+  returnRatio?: number
 }
 
 interface DiscountedItem {
@@ -395,7 +398,12 @@ export function DiscountManagementScreen() {
                   ) : (
                     paginationInfo.paginatedRecords.map((record) => (
                       <TableRow key={record.id} className="h-9 group">
-                        <TableCell className="py-1.5 text-sm font-medium">{record.invoiceNumber}</TableCell>
+                        <TableCell className="py-1.5 text-sm font-medium">
+                          <span className={record.isFullyReturned ? 'line-through opacity-50' : ''}>{record.invoiceNumber}</span>
+                          {record.isFullyReturned && (
+                            <Badge variant="outline" className="ml-1.5 text-[9px] px-1 py-0 text-orange-500 border-orange-500/30">Returned</Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="py-1.5 text-sm">{formatDateTime(record.saleDate)}</TableCell>
                         <TableCell className="py-1.5 text-sm">{record.customerName || 'Walk-in'}</TableCell>
                         <TableCell className="py-1.5 text-sm text-right">{formatCurrency(record.subtotal)}</TableCell>

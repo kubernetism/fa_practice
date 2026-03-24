@@ -12,6 +12,7 @@ import {
   X,
   AlertCircle,
   RefreshCw,
+  Pencil,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -48,6 +49,7 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip'
 import { Separator } from '@/components/ui/separator'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
 import { useBranch } from '@/contexts/branch-context'
 import { formatCurrency, formatDateTime, truncate } from '@/lib/utils'
 
@@ -216,6 +218,15 @@ export function ReturnsScreen() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [deletingReturn, setDeletingReturn] = useState<Return | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
+
+  // Edit Dialog
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [editingReturn, setEditingReturn] = useState<Return | null>(null)
+  const [editRefundAmount, setEditRefundAmount] = useState('')
+  const [editReason, setEditReason] = useState('')
+  const [editNotes, setEditNotes] = useState('')
+  const [isUpdating, setIsUpdating] = useState(false)
+  const [reversalTarget, setReversalTarget] = useState<Return | null>(null)
 
   // Summary stats
   const [summary, setSummary] = useState<ReturnsSummary>({
@@ -546,6 +557,47 @@ export function ReturnsScreen() {
     setIsDeleteDialogOpen(true)
   }
 
+  const openEditDialog = (ret: Return) => {
+    setEditingReturn(ret)
+    setEditRefundAmount(ret.refundAmount.toString())
+    setEditReason(ret.reason || '')
+    setEditNotes(ret.notes || '')
+    setIsEditDialogOpen(true)
+  }
+
+  const handleUpdateReturn = async () => {
+    if (!editingReturn) return
+
+    const newAmount = parseFloat(editRefundAmount)
+    if (isNaN(newAmount) || newAmount < 0) {
+      alert('Please enter a valid refund amount')
+      return
+    }
+
+    try {
+      setIsUpdating(true)
+      const result = await window.api.returns.update({
+        id: editingReturn.id,
+        refundAmount: newAmount,
+        reason: editReason || undefined,
+        notes: editNotes || undefined,
+      })
+
+      if (result.success) {
+        setIsEditDialogOpen(false)
+        setEditingReturn(null)
+        fetchData()
+      } else {
+        alert(result.message || 'Failed to update return')
+      }
+    } catch (error) {
+      console.error('Error updating return:', error)
+      alert('An error occurred while updating the return')
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
   const handleDeleteReturn = async () => {
     if (!deletingReturn) return
 
@@ -777,6 +829,19 @@ export function ReturnsScreen() {
                             <Button
                               variant="ghost"
                               size="icon"
+                              className="h-7 w-7"
+                              onClick={() => openEditDialog(ret)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Edit Return</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
                               className="h-7 w-7 text-destructive hover:text-destructive"
                               onClick={() => handleOpenDeleteDialog(ret)}
                             >
@@ -784,6 +849,19 @@ export function ReturnsScreen() {
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent>Delete Return</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7 text-amber-500 hover:text-amber-400"
+                              onClick={() => setReversalTarget(ret)}
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Request Reversal</TooltipContent>
                         </Tooltip>
                       </div>
                     </TableCell>
@@ -1311,6 +1389,99 @@ export function ReturnsScreen() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Edit Return Dialog */}
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Pencil className="h-5 w-5" />
+                Edit Return
+              </DialogTitle>
+              <DialogDescription>
+                Update the refund amount for this return. This will recalculate all related accounting entries.
+              </DialogDescription>
+            </DialogHeader>
+
+            {editingReturn && (
+              <div className="space-y-4">
+                <div className="rounded-lg bg-muted p-4">
+                  <p className="font-mono font-medium">{editingReturn.returnNumber}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDateTime(editingReturn.returnDate)} — Original: {formatCurrency(editingReturn.refundAmount)}
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Refund Amount *</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={editRefundAmount}
+                    onChange={(e) => setEditRefundAmount(e.target.value)}
+                    placeholder="Enter corrected refund amount"
+                  />
+                  {editRefundAmount && !isNaN(parseFloat(editRefundAmount)) && (
+                    <p className={`text-xs mt-1 ${
+                      parseFloat(editRefundAmount) !== editingReturn.refundAmount
+                        ? 'text-amber-500'
+                        : 'text-muted-foreground'
+                    }`}>
+                      {parseFloat(editRefundAmount) !== editingReturn.refundAmount
+                        ? `Change: ${formatCurrency(editingReturn.refundAmount)} → ${formatCurrency(parseFloat(editRefundAmount))} (difference: ${formatCurrency(parseFloat(editRefundAmount) - editingReturn.refundAmount)})`
+                        : 'No change'}
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <Label>Reason</Label>
+                  <Input
+                    value={editReason}
+                    onChange={(e) => setEditReason(e.target.value)}
+                    placeholder="Reason for return"
+                  />
+                </div>
+
+                <div>
+                  <Label>Notes</Label>
+                  <Textarea
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="Additional notes..."
+                  />
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => { setIsEditDialogOpen(false); setEditingReturn(null) }}>
+                Cancel
+              </Button>
+              <Button
+                onClick={handleUpdateReturn}
+                disabled={isUpdating}
+              >
+                {isUpdating ? 'Updating...' : 'Save Changes'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Reversal Request Modal */}
+        <ReversalRequestModal
+          open={!!reversalTarget}
+          onClose={() => setReversalTarget(null)}
+          entityType="return"
+          entityId={reversalTarget?.id || 0}
+          entityLabel={reversalTarget?.returnNumber || ''}
+          branchId={currentBranch?.id || 0}
+          onSuccess={() => {
+            setReversalTarget(null)
+            fetchReturns()
+          }}
+        />
       </div>
     </TooltipProvider>
   )

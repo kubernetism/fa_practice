@@ -58,6 +58,7 @@ interface DashboardStats {
   totalTaxCollected: number
   totalCommission: number
   totalDiscount: number
+  grossDiscount: number
   totalProducts: number
   totalProductsSold: number
   totalPurchases: number
@@ -477,8 +478,8 @@ export function DashboardScreen() {
               icon={Percent}
               iconColor="text-pink-500"
               label="Discounts"
-              value={formatCurrency(stats?.totalDiscount || 0)}
-              valueColor={(stats?.totalDiscount || 0) > 0 ? 'text-pink-500' : ''}
+              value={formatCurrency(stats?.grossDiscount || 0)}
+              valueColor={(stats?.grossDiscount || 0) > 0 ? 'text-pink-500' : ''}
             />
             <MetricRow
               icon={Percent}
@@ -491,6 +492,62 @@ export function DashboardScreen() {
               iconColor="text-amber-500"
               label="Commission"
               value={formatCurrency(stats?.totalCommission || 0)}
+            />
+          </Panel>
+
+        </div>
+
+        {/* Center column — AR / AP / Fund Flow */}
+        <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
+          <Panel title="Accounts Receivable">
+            <MetricRow
+              icon={ArrowDownCircle}
+              iconColor="text-yellow-500"
+              label="Pending"
+              value={formatCurrency(stats?.receivablesPending || 0)}
+              valueColor="text-yellow-600"
+            />
+            <MetricRow
+              icon={ArrowDownCircle}
+              iconColor="text-green-500"
+              label="Received"
+              value={formatCurrency(stats?.receivablesReceived || 0)}
+              valueColor="text-green-600"
+            />
+          </Panel>
+
+          <Panel title="Accounts Payable">
+            <MetricRow
+              icon={ArrowUpCircle}
+              iconColor="text-red-500"
+              label="Pending"
+              value={formatCurrency(stats?.payablesPending || 0)}
+              valueColor="text-red-600"
+            />
+            <MetricRow
+              icon={ArrowUpCircle}
+              iconColor="text-green-500"
+              label="Paid"
+              value={formatCurrency(stats?.payablesPaid || 0)}
+              valueColor="text-green-600"
+            />
+          </Panel>
+
+          <Panel title="Inventory">
+            <MetricRow
+              icon={Package}
+              iconColor="text-emerald-500"
+              label="Active Products"
+              value={formatNumber(stats?.totalProducts || 0)}
+            />
+            <MetricRow
+              icon={AlertTriangle}
+              iconColor="text-warning"
+              label="Low Stock"
+              value={formatNumber(stats?.lowStockCount || 0)}
+              valueColor={
+                (stats?.lowStockCount || 0) > 0 ? 'text-destructive' : ''
+              }
             />
           </Panel>
 
@@ -583,61 +640,6 @@ export function DashboardScreen() {
               />
             </Panel>
           )}
-        </div>
-
-        {/* Center column — AR / AP */}
-        <div className="col-span-3 flex flex-col gap-3">
-          <Panel title="Accounts Receivable">
-            <MetricRow
-              icon={ArrowDownCircle}
-              iconColor="text-yellow-500"
-              label="Pending"
-              value={formatCurrency(stats?.receivablesPending || 0)}
-              valueColor="text-yellow-600"
-            />
-            <MetricRow
-              icon={ArrowDownCircle}
-              iconColor="text-green-500"
-              label="Received"
-              value={formatCurrency(stats?.receivablesReceived || 0)}
-              valueColor="text-green-600"
-            />
-          </Panel>
-
-          <Panel title="Accounts Payable">
-            <MetricRow
-              icon={ArrowUpCircle}
-              iconColor="text-red-500"
-              label="Pending"
-              value={formatCurrency(stats?.payablesPending || 0)}
-              valueColor="text-red-600"
-            />
-            <MetricRow
-              icon={ArrowUpCircle}
-              iconColor="text-green-500"
-              label="Paid"
-              value={formatCurrency(stats?.payablesPaid || 0)}
-              valueColor="text-green-600"
-            />
-          </Panel>
-
-          <Panel title="Inventory">
-            <MetricRow
-              icon={Package}
-              iconColor="text-emerald-500"
-              label="Active Products"
-              value={formatNumber(stats?.totalProducts || 0)}
-            />
-            <MetricRow
-              icon={AlertTriangle}
-              iconColor="text-warning"
-              label="Low Stock"
-              value={formatNumber(stats?.lowStockCount || 0)}
-              valueColor={
-                (stats?.lowStockCount || 0) > 0 ? 'text-destructive' : ''
-              }
-            />
-          </Panel>
 
         </div>
 

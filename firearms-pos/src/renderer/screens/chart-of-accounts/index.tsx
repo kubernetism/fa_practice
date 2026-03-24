@@ -117,8 +117,9 @@ interface CashFlowTransaction {
   transactionType: string
   amount: number
   description: string | null
-  referenceNumber: string | null
-  createdAt: string
+  referenceType: string | null
+  referenceId: number | null
+  transactionDate: string
   sessionDate: string
 }
 
@@ -218,7 +219,27 @@ export default function ChartOfAccountsScreen() {
         startDate: cfStartDate,
         endDate: cfEndDate,
       })
-      setCashFlowData(result)
+      if (result.success && result.data) {
+        // Convert summaryByType from array to map
+        const summaryMap: Record<string, { count: number; totalAmount: number }> = {}
+        if (Array.isArray(result.data.summaryByType)) {
+          for (const item of result.data.summaryByType) {
+            summaryMap[item.transactionType] = {
+              count: Number(item.count),
+              totalAmount: Number(item.totalAmount),
+            }
+          }
+        } else {
+          Object.assign(summaryMap, result.data.summaryByType)
+        }
+        setCashFlowData({
+          transactions: result.data.transactions || [],
+          summaryByType: summaryMap,
+          totalInflows: result.data.totalInflows,
+          totalOutflows: result.data.totalOutflows,
+          netCashFlow: result.data.netCashFlow,
+        })
+      }
     } catch (error) {
       console.error('Failed to load cash flow data:', error)
     } finally {
@@ -1181,7 +1202,7 @@ export default function ChartOfAccountsScreen() {
                                 return (
                                   <TableRow key={txn.id} className="h-9">
                                     <TableCell className="py-1.5 text-xs">
-                                      {format(new Date(txn.createdAt), 'MMM d, yyyy')}
+                                      {format(new Date(txn.transactionDate || txn.sessionDate), 'MMM d, yyyy')}
                                     </TableCell>
                                     <TableCell className="py-1.5">
                                       <Badge variant="outline" className="text-[10px] px-1.5 py-0 capitalize">
@@ -1198,7 +1219,7 @@ export default function ChartOfAccountsScreen() {
                                       {!isInflow ? formatCurrency(Math.abs(txn.amount)) : '-'}
                                     </TableCell>
                                     <TableCell className="py-1.5 text-xs text-muted-foreground">
-                                      {txn.referenceNumber || '-'}
+                                      {txn.referenceType ? `${txn.referenceType}${txn.referenceId ? `#${txn.referenceId}` : ''}` : '-'}
                                     </TableCell>
                                   </TableRow>
                                 )
@@ -1463,6 +1484,8 @@ export default function ChartOfAccountsScreen() {
             generatedAt={new Date().toLocaleString()}
             formatCurrency={formatCurrency}
             balanceSheet={balanceSheet}
+            cashFlowData={cashFlowData || undefined}
+            cashFlowPeriod={cashFlowData ? `${cfStartDate} to ${cfEndDate}` : undefined}
           />
         )}
       </div>

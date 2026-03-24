@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, between, gte, lte, gt } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { sales, saleItems, products, customers, users } from '../db/schema'
+import { sales, saleItems, products, customers, users, returns, returnItems } from '../db/schema'
 
 interface DiscountParams {
   branchId: number
@@ -21,6 +21,9 @@ interface DiscountRecord {
   paymentStatus: 'paid' | 'partial' | 'pending'
   userId: number
   userName?: string
+  isFullyReturned?: boolean
+  effectiveDiscount?: number
+  returnRatio?: number
 }
 
 interface DiscountedItem {
@@ -62,10 +65,20 @@ export function registerDiscountManagementHandlers(): void {
 
       const whereClause = and(...conditions)
 
-      // Get overall summary
+      // Get overall summary (with return-adjusted discount)
       const summaryResult = await db
         .select({
           totalDiscountAmount: sql<number>`sum(${sales.discountAmount})`,
+          adjustedDiscountAmount: sql<number>`COALESCE(SUM(
+            ${sales.discountAmount} * (1.0 - MIN(1.0,
+              COALESCE((
+                SELECT SUM(ri.unit_price * ri.quantity)
+                FROM return_items ri
+                INNER JOIN returns r ON ri.return_id = r.id
+                WHERE r.original_sale_id = ${sales.id}
+              ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
+            ))
+          ), 0)`,
           salesWithDiscount: sql<number>`sum(case when ${sales.discountAmount} > 0 then 1 else 0 end)`,
           totalSales: sql<number>`count(*)`,
           totalSubtotal: sql<number>`sum(${sales.subtotal})`,
@@ -75,7 +88,7 @@ export function registerDiscountManagementHandlers(): void {
 
       const salesWithDiscount = summaryResult[0]?.salesWithDiscount || 0
       const totalSales = summaryResult[0]?.totalSales || 0
-      const totalDiscountAmount = summaryResult[0]?.totalDiscountAmount || 0
+      const totalDiscountAmount = summaryResult[0]?.adjustedDiscountAmount || 0
       const totalSubtotal = summaryResult[0]?.totalSubtotal || 0
 
       // Calculate average discount percent
@@ -155,6 +168,22 @@ export function registerDiscountManagementHandlers(): void {
           const discountPercent =
             record.subtotal > 0 ? (record.discountAmount / record.subtotal) * 100 : 0
 
+          // Check return status for this sale
+          const returnResult = await db
+            .select({
+              returnedValue: sql<number>`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
+            })
+            .from(returnItems)
+            .innerJoin(returns, eq(returnItems.returnId, returns.id))
+            .where(eq(returns.originalSaleId, record.id))
+
+          const returnedValue = returnResult[0]?.returnedValue || 0
+          const returnRatio = record.subtotal > 0
+            ? Math.min(1, returnedValue / record.subtotal)
+            : 0
+          const isFullyReturned = returnRatio >= 0.999
+          const effectiveDiscount = Math.round(record.discountAmount * (1 - returnRatio) * 100) / 100
+
           return {
             id: record.id,
             invoiceNumber: record.invoiceNumber,
@@ -167,6 +196,9 @@ export function registerDiscountManagementHandlers(): void {
             paymentStatus: record.paymentStatus as 'paid' | 'partial' | 'pending',
             userId: record.userId,
             userName,
+            isFullyReturned,
+            effectiveDiscount,
+            returnRatio,
           }
         })
       )

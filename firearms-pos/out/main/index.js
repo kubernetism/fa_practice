@@ -7314,6 +7314,153 @@ function registerReturnHandlers() {
       return handleIpcError("Get return", error);
     }
   });
+  electron.ipcMain.handle(
+    "returns:update",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        const returnRecord = await db2.query.returns.findFirst({
+          where: drizzleOrm.eq(returns.id, data.id)
+        });
+        if (!returnRecord) {
+          return { success: false, message: "Return not found" };
+        }
+        const oldTotalAmount = returnRecord.totalAmount;
+        const newTotalAmount = data.refundAmount;
+        if (newTotalAmount < 0) {
+          return { success: false, message: "Refund amount cannot be negative" };
+        }
+        const items = await db2.query.returnItems.findMany({
+          where: drizzleOrm.eq(returnItems.returnId, data.id)
+        });
+        await withTransaction(async ({ db: txDb }) => {
+          if (items.length === 1) {
+            const item = items[0];
+            const newUnitPrice = newTotalAmount / item.quantity;
+            await txDb.update(returnItems).set({
+              unitPrice: Math.round(newUnitPrice * 100) / 100,
+              totalPrice: newTotalAmount
+            }).where(drizzleOrm.eq(returnItems.id, item.id));
+          } else if (items.length > 1) {
+            const oldItemsTotal = items.reduce((sum, i) => sum + i.totalPrice, 0);
+            for (const item of items) {
+              const ratio = oldItemsTotal > 0 ? item.totalPrice / oldItemsTotal : 1 / items.length;
+              const newItemTotal = Math.round(newTotalAmount * ratio * 100) / 100;
+              const newUnitPrice = Math.round(newItemTotal / item.quantity * 100) / 100;
+              await txDb.update(returnItems).set({
+                unitPrice: newUnitPrice,
+                totalPrice: newItemTotal
+              }).where(drizzleOrm.eq(returnItems.id, item.id));
+            }
+          }
+          await txDb.update(returns).set({
+            subtotal: newTotalAmount,
+            totalAmount: newTotalAmount,
+            refundAmount: returnRecord.returnType === "refund" ? newTotalAmount : 0,
+            reason: data.reason !== void 0 ? data.reason : returnRecord.reason,
+            notes: data.notes !== void 0 ? data.notes : returnRecord.notes,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(returns.id, data.id));
+          const jeEntry = await txDb.query.journalEntries.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(journalEntries.referenceType, "return"),
+              drizzleOrm.eq(journalEntries.referenceId, data.id),
+              drizzleOrm.eq(journalEntries.status, "posted")
+            )
+          });
+          if (jeEntry) {
+            const lines = await txDb.query.journalEntryLines.findMany({
+              where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+            });
+            const reversingLines = [];
+            for (const line of lines) {
+              const account = await txDb.query.chartOfAccounts.findFirst({
+                where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+              });
+              if (account) {
+                reversingLines.push({
+                  accountCode: account.accountCode,
+                  debitAmount: line.creditAmount,
+                  creditAmount: line.debitAmount,
+                  description: `Reversal: ${line.description || ""}`
+                });
+              }
+            }
+            const reversalEntryId = await createJournalEntry({
+              description: `Reversal of return ${returnRecord.returnNumber} (edited)`,
+              referenceType: "return",
+              referenceId: data.id,
+              branchId: returnRecord.branchId,
+              userId: session?.userId ?? 0,
+              lines: reversingLines
+            });
+            await txDb.update(journalEntries).set({
+              status: "reversed",
+              reversedBy: session?.userId ?? 0,
+              reversedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              reversalEntryId,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
+          }
+          const updatedItems = await txDb.query.returnItems.findMany({
+            where: drizzleOrm.eq(returnItems.returnId, data.id)
+          });
+          const returnItemsForGL = updatedItems.map((item) => ({
+            costPrice: item.costPrice,
+            quantity: item.quantity,
+            restockable: item.restockable
+          }));
+          await postReturnToGL(
+            {
+              id: data.id,
+              returnNumber: returnRecord.returnNumber,
+              branchId: returnRecord.branchId,
+              subtotal: newTotalAmount,
+              taxAmount: 0,
+              totalAmount: newTotalAmount,
+              refundMethod: returnRecord.refundMethod
+            },
+            returnItemsForGL,
+            session?.userId ?? 0
+          );
+          if (returnRecord.returnType === "refund" && returnRecord.refundMethod === "cash") {
+            const existingCashTxn = await txDb.select().from(cashTransactions).where(
+              drizzleOrm.and(
+                drizzleOrm.eq(cashTransactions.referenceType, "return"),
+                drizzleOrm.eq(cashTransactions.referenceId, data.id),
+                drizzleOrm.eq(cashTransactions.transactionType, "refund")
+              )
+            ).limit(1);
+            if (existingCashTxn.length > 0) {
+              await txDb.update(cashTransactions).set({
+                amount: -newTotalAmount,
+                description: `Cash refund (edited): ${returnRecord.returnNumber}`
+              }).where(drizzleOrm.eq(cashTransactions.id, existingCashTxn[0].id));
+            }
+          }
+        });
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: returnRecord.branchId,
+          action: "update",
+          entityType: "return",
+          entityId: data.id,
+          oldValues: {
+            totalAmount: oldTotalAmount,
+            refundAmount: returnRecord.refundAmount
+          },
+          newValues: {
+            totalAmount: newTotalAmount,
+            refundAmount: newTotalAmount
+          },
+          description: `Edited return ${returnRecord.returnNumber}: amount ${oldTotalAmount} → ${newTotalAmount}`
+        });
+        return { success: true, message: "Return updated successfully" };
+      } catch (error) {
+        return handleIpcError("Update return", error);
+      }
+    }
+  );
   electron.ipcMain.handle("returns:delete", async (_, id) => {
     try {
       const session = getCurrentSession();
@@ -17650,7 +17797,17 @@ function registerDashboardHandlers() {
         )
       );
       const discountResult = await db2.select({
-        total: drizzleOrm.sql`COALESCE(SUM(${sales.discountAmount}), 0)`
+        gross: drizzleOrm.sql`COALESCE(SUM(${sales.discountAmount}), 0)`,
+        adjusted: drizzleOrm.sql`COALESCE(SUM(
+            ${sales.discountAmount} * (1.0 - MIN(1.0,
+              COALESCE((
+                SELECT SUM(ri.unit_price * ri.quantity)
+                FROM return_items ri
+                INNER JOIN returns r ON ri.return_id = r.id
+                WHERE r.original_sale_id = ${sales.id}
+              ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
+            ))
+          ), 0)`
       }).from(sales).where(
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
@@ -17667,7 +17824,8 @@ function registerDashboardHandlers() {
       const grossCost = productCost;
       const grossTax = productTax + svcTax;
       const commissionTotal = commissionResult[0]?.total || 0;
-      const totalDiscount = discountResult[0]?.total || 0;
+      const grossDiscount = discountResult[0]?.gross || 0;
+      const totalDiscount = discountResult[0]?.adjusted || 0;
       const returnDeductions = await db2.select({
         returnRevenue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
         returnCost: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
@@ -17691,7 +17849,14 @@ function registerDashboardHandlers() {
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          // Exclude fully-returned sales
+          drizzleOrm.sql`COALESCE((
+              SELECT SUM(ri.unit_price * ri.quantity)
+              FROM return_items ri
+              INNER JOIN returns r ON ri.return_id = r.id
+              WHERE r.original_sale_id = ${sales.id}
+            ), 0) < ${sales.subtotal}`
         )
       );
       const productsResult = await db2.select({ count: drizzleOrm.sql`COUNT(*)` }).from(products).where(drizzleOrm.eq(products.isActive, true));
@@ -17820,6 +17985,7 @@ function registerDashboardHandlers() {
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
         totalDiscount,
+        grossDiscount,
         returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
@@ -19513,13 +19679,23 @@ function registerDiscountManagementHandlers() {
       const whereClause = drizzleOrm.and(...conditions);
       const summaryResult = await db2.select({
         totalDiscountAmount: drizzleOrm.sql`sum(${sales.discountAmount})`,
+        adjustedDiscountAmount: drizzleOrm.sql`COALESCE(SUM(
+            ${sales.discountAmount} * (1.0 - MIN(1.0,
+              COALESCE((
+                SELECT SUM(ri.unit_price * ri.quantity)
+                FROM return_items ri
+                INNER JOIN returns r ON ri.return_id = r.id
+                WHERE r.original_sale_id = ${sales.id}
+              ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
+            ))
+          ), 0)`,
         salesWithDiscount: drizzleOrm.sql`sum(case when ${sales.discountAmount} > 0 then 1 else 0 end)`,
         totalSales: drizzleOrm.sql`count(*)`,
         totalSubtotal: drizzleOrm.sql`sum(${sales.subtotal})`
       }).from(sales).where(whereClause);
       const salesWithDiscount = summaryResult[0]?.salesWithDiscount || 0;
       const totalSales = summaryResult[0]?.totalSales || 0;
-      const totalDiscountAmount = summaryResult[0]?.totalDiscountAmount || 0;
+      const totalDiscountAmount = summaryResult[0]?.adjustedDiscountAmount || 0;
       const totalSubtotal = summaryResult[0]?.totalSubtotal || 0;
       const averageDiscountPercent = salesWithDiscount > 0 && totalSubtotal > 0 ? totalDiscountAmount / totalSubtotal * 100 : 0;
       const topProducts = await db2.select({
@@ -19568,6 +19744,13 @@ function registerDiscountManagementHandlers() {
             userName = user?.username;
           }
           const discountPercent = record.subtotal > 0 ? record.discountAmount / record.subtotal * 100 : 0;
+          const returnResult = await db2.select({
+            returnedValue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`
+          }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(drizzleOrm.eq(returns.originalSaleId, record.id));
+          const returnedValue = returnResult[0]?.returnedValue || 0;
+          const returnRatio = record.subtotal > 0 ? Math.min(1, returnedValue / record.subtotal) : 0;
+          const isFullyReturned = returnRatio >= 0.999;
+          const effectiveDiscount = Math.round(record.discountAmount * (1 - returnRatio) * 100) / 100;
           return {
             id: record.id,
             invoiceNumber: record.invoiceNumber,
@@ -19579,7 +19762,10 @@ function registerDiscountManagementHandlers() {
             totalAmount: record.totalAmount,
             paymentStatus: record.paymentStatus,
             userId: record.userId,
-            userName
+            userName,
+            isFullyReturned,
+            effectiveDiscount,
+            returnRatio
           };
         })
       );

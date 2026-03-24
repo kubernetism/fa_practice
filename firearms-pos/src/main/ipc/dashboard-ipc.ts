@@ -58,6 +58,7 @@ interface DashboardStats {
   cashInHand: number
   lowStockCount: number
   totalDiscount: number
+  grossDiscount: number
   totalSalesCount: number
 }
 
@@ -121,10 +122,20 @@ export function registerDashboardHandlers(): void {
           )
         )
 
-      // Get total sale-level discounts for the period
+      // Get total sale-level discounts for the period (gross and return-adjusted)
       const discountResult = await db
         .select({
-          total: sql<number>`COALESCE(SUM(${sales.discountAmount}), 0)`,
+          gross: sql<number>`COALESCE(SUM(${sales.discountAmount}), 0)`,
+          adjusted: sql<number>`COALESCE(SUM(
+            ${sales.discountAmount} * (1.0 - MIN(1.0,
+              COALESCE((
+                SELECT SUM(ri.unit_price * ri.quantity)
+                FROM return_items ri
+                INNER JOIN returns r ON ri.return_id = r.id
+                WHERE r.original_sale_id = ${sales.id}
+              ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
+            ))
+          ), 0)`,
         })
         .from(sales)
         .where(
@@ -144,7 +155,8 @@ export function registerDashboardHandlers(): void {
       const grossCost = productCost // services have no COGS
       const grossTax = productTax + svcTax
       const commissionTotal = commissionResult[0]?.total || 0
-      const totalDiscount = discountResult[0]?.total || 0
+      const grossDiscount = discountResult[0]?.gross || 0
+      const totalDiscount = discountResult[0]?.adjusted || 0
 
       // Calculate return deductions for the period
       const returnDeductions = await db
@@ -181,7 +193,14 @@ export function registerDashboardHandlers(): void {
           and(
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false)
+            eq(sales.isVoided, false),
+            // Exclude fully-returned sales
+            sql`COALESCE((
+              SELECT SUM(ri.unit_price * ri.quantity)
+              FROM return_items ri
+              INNER JOIN returns r ON ri.return_id = r.id
+              WHERE r.original_sale_id = ${sales.id}
+            ), 0) < ${sales.subtotal}`
           )
         )
 
@@ -380,6 +399,7 @@ export function registerDashboardHandlers(): void {
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
         totalDiscount,
+        grossDiscount,
         returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
         totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),

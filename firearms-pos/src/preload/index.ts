@@ -160,6 +160,8 @@ const api = {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('returns:create', data),
     getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('returns:get-all', params),
     getById: (id: number) => ipcRenderer.invoke('returns:get-by-id', id),
+    update: (data: { id: number; refundAmount: number; reason?: string; notes?: string }) =>
+      ipcRenderer.invoke('returns:update', data),
     delete: (id: number) => ipcRenderer.invoke('returns:delete', id),
   },
 
