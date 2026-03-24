@@ -44,6 +44,62 @@ interface RecordTransactionData {
   description?: string
 }
 
+/**
+ * Auto-close any stale open cash register sessions from prior days.
+ * Called at app startup and when opening a new session.
+ * If branchId is omitted, closes stale sessions across ALL branches.
+ * closedByUserId is optional — at startup there's no logged-in user.
+ */
+export async function autoCloseStaleRegisters(branchId?: number, closedByUserId?: number): Promise<number> {
+  const db = getDatabase()
+  const today = new Date().toISOString().split('T')[0]
+
+  const whereConditions = [
+    eq(cashRegisterSessions.status, 'open'),
+    lt(cashRegisterSessions.sessionDate, today),
+  ]
+  if (branchId !== undefined) {
+    whereConditions.push(eq(cashRegisterSessions.branchId, branchId))
+  }
+
+  const staleSessions = await db.query.cashRegisterSessions.findMany({
+    where: and(...whereConditions),
+  })
+
+  for (const stale of staleSessions) {
+    const txSums = await db
+      .select({
+        totalIn: sql<number>`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+        totalOut: sql<number>`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`,
+      })
+      .from(cashTransactions)
+      .where(eq(cashTransactions.sessionId, stale.id))
+
+    const totalIn = txSums[0]?.totalIn || 0
+    const totalOut = txSums[0]?.totalOut || 0
+    const expectedBalance = stale.openingBalance + totalIn - totalOut
+
+    await db
+      .update(cashRegisterSessions)
+      .set({
+        closingBalance: expectedBalance,
+        expectedBalance,
+        actualBalance: expectedBalance,
+        variance: 0,
+        status: 'closed',
+        closedBy: closedByUserId ?? stale.openedBy,
+        closedAt: new Date().toISOString(),
+        notes: `${stale.notes || ''}\nAuto-closed: stale session from ${stale.sessionDate}`.trim(),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(cashRegisterSessions.id, stale.id))
+
+    console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`)
+  }
+
+  return staleSessions.length
+}
+
 export function registerCashRegisterHandlers(): void {
   const db = getDatabase()
 
@@ -118,45 +174,7 @@ export function registerCashRegisterHandlers(): void {
       const today = new Date().toISOString().split('T')[0]
 
       // Auto-close any stale open sessions from prior days
-      const staleSessions = await db.query.cashRegisterSessions.findMany({
-        where: and(
-          eq(cashRegisterSessions.branchId, data.branchId),
-          eq(cashRegisterSessions.status, 'open'),
-          lt(cashRegisterSessions.sessionDate, today)
-        ),
-      })
-
-      for (const stale of staleSessions) {
-        // Calculate expected balance from transactions
-        const txSums = await db
-          .select({
-            totalIn: sql<number>`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
-            totalOut: sql<number>`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`,
-          })
-          .from(cashTransactions)
-          .where(eq(cashTransactions.sessionId, stale.id))
-
-        const totalIn = txSums[0]?.totalIn || 0
-        const totalOut = txSums[0]?.totalOut || 0
-        const expectedBalance = stale.openingBalance + totalIn - totalOut
-
-        await db
-          .update(cashRegisterSessions)
-          .set({
-            closingBalance: expectedBalance,
-            expectedBalance,
-            actualBalance: expectedBalance,
-            variance: 0,
-            status: 'closed',
-            closedBy: userSession.userId,
-            closedAt: new Date().toISOString(),
-            notes: `${stale.notes || ''}\nAuto-closed: stale session from ${stale.sessionDate}`.trim(),
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(cashRegisterSessions.id, stale.id))
-
-        console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`)
-      }
+      await autoCloseStaleRegisters(data.branchId, userSession.userId)
 
       // Check if session already exists for today
       const existingSession = await db.query.cashRegisterSessions.findFirst({

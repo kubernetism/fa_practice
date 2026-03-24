@@ -422,6 +422,8 @@ const api = {
     recalculateBalances: () => ipcRenderer.invoke('coa:recalculate-balances'),
     adjustBalance: (accountId: number, targetBalance: number, reason: string, postedBy: number) =>
       ipcRenderer.invoke('coa:adjust-balance', accountId, targetBalance, reason, postedBy),
+    getCashFlowDetail: (params: { branchId: number; startDate: string; endDate: string }) =>
+      ipcRenderer.invoke('coa:get-cash-flow-detail', params),
   },
 
   // Journal Entries
@@ -483,10 +485,12 @@ const api = {
 
   // Dashboard
   dashboard: {
-    getStats: (params: { branchId: number; timePeriod: string }) =>
+    getStats: (params: { branchId: number; timePeriod: string; customStart?: string; customEnd?: string }) =>
       ipcRenderer.invoke('dashboard:get-stats', params),
-    getTrendData: (params: { branchId: number; timePeriod: string; chartFilter: string }) =>
+    getTrendData: (params: { branchId: number; timePeriod: string; chartFilter: string; customStart?: string; customEnd?: string }) =>
       ipcRenderer.invoke('dashboard:get-trend-data', params),
+    getFundFlow: (params: { branchId: number; timePeriod: string; customStart?: string; customEnd?: string }) =>
+      ipcRenderer.invoke('dashboard:get-fund-flow', params),
   },
 
   // Setup Wizard

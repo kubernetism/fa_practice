@@ -294,7 +294,8 @@ const api = {
     getTrialBalance: (asOfDate) => electron.ipcRenderer.invoke("coa:get-trial-balance", asOfDate),
     getLedger: (accountId, startDate, endDate) => electron.ipcRenderer.invoke("coa:get-ledger", accountId, startDate, endDate),
     recalculateBalances: () => electron.ipcRenderer.invoke("coa:recalculate-balances"),
-    adjustBalance: (accountId, targetBalance, reason, postedBy) => electron.ipcRenderer.invoke("coa:adjust-balance", accountId, targetBalance, reason, postedBy)
+    adjustBalance: (accountId, targetBalance, reason, postedBy) => electron.ipcRenderer.invoke("coa:adjust-balance", accountId, targetBalance, reason, postedBy),
+    getCashFlowDetail: (params) => electron.ipcRenderer.invoke("coa:get-cash-flow-detail", params)
   },
   // Journal Entries
   journal: {
@@ -346,7 +347,8 @@ const api = {
   // Dashboard
   dashboard: {
     getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params),
-    getTrendData: (params) => electron.ipcRenderer.invoke("dashboard:get-trend-data", params)
+    getTrendData: (params) => electron.ipcRenderer.invoke("dashboard:get-trend-data", params),
+    getFundFlow: (params) => electron.ipcRenderer.invoke("dashboard:get-fund-flow", params)
   },
   // Setup Wizard
   setup: {

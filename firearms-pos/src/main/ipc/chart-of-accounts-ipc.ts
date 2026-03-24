@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, sql, desc } from 'drizzle-orm'
+import { eq, and, sql, desc, between, gte, lte } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import { withTransaction } from '../utils/db-transaction'
 import { handleIpcError } from '../utils/error-handling'
@@ -8,6 +8,8 @@ import {
   journalEntries,
   journalEntryLines,
   accountBalances,
+  cashRegisterSessions,
+  cashTransactions,
 } from '../db/schema'
 
 export function registerChartOfAccountsHandlers() {
@@ -887,4 +889,92 @@ export function registerChartOfAccountsHandlers() {
       return handleIpcError('Adjust balance', error)
     }
   })
+
+  // Cash Flow Detail for COA screen
+  ipcMain.handle(
+    'coa:get-cash-flow-detail',
+    async (
+      _,
+      params: { branchId: number; startDate: string; endDate: string }
+    ) => {
+      try {
+        const { branchId, startDate, endDate } = params
+
+        const startISO = new Date(startDate)
+        startISO.setHours(0, 0, 0, 0)
+        const endISO = new Date(endDate)
+        endISO.setHours(23, 59, 59, 999)
+
+        // Get individual transactions
+        const transactions = await db
+          .select({
+            id: cashTransactions.id,
+            transactionType: cashTransactions.transactionType,
+            amount: cashTransactions.amount,
+            description: cashTransactions.description,
+            referenceType: cashTransactions.referenceType,
+            referenceId: cashTransactions.referenceId,
+            transactionDate: cashTransactions.transactionDate,
+            sessionDate: cashRegisterSessions.sessionDate,
+          })
+          .from(cashTransactions)
+          .innerJoin(
+            cashRegisterSessions,
+            eq(cashTransactions.sessionId, cashRegisterSessions.id)
+          )
+          .where(
+            and(
+              eq(cashRegisterSessions.branchId, branchId),
+              gte(cashTransactions.transactionDate, startISO.toISOString()),
+              lte(cashTransactions.transactionDate, endISO.toISOString())
+            )
+          )
+          .orderBy(desc(cashTransactions.transactionDate))
+
+        // Summary by type
+        const summaryByType = await db
+          .select({
+            transactionType: cashTransactions.transactionType,
+            totalAmount: sql<number>`COALESCE(SUM(${cashTransactions.amount}), 0)`,
+            count: sql<number>`COUNT(*)`,
+          })
+          .from(cashTransactions)
+          .innerJoin(
+            cashRegisterSessions,
+            eq(cashTransactions.sessionId, cashRegisterSessions.id)
+          )
+          .where(
+            and(
+              eq(cashRegisterSessions.branchId, branchId),
+              gte(cashTransactions.transactionDate, startISO.toISOString()),
+              lte(cashTransactions.transactionDate, endISO.toISOString())
+            )
+          )
+          .groupBy(cashTransactions.transactionType)
+
+        const totalInflows = summaryByType
+          .filter((t) => (t.totalAmount || 0) > 0)
+          .reduce((sum, t) => sum + Number(t.totalAmount || 0), 0)
+
+        const totalOutflows = Math.abs(
+          summaryByType
+            .filter((t) => (t.totalAmount || 0) < 0)
+            .reduce((sum, t) => sum + Number(t.totalAmount || 0), 0)
+        )
+
+        return {
+          success: true,
+          data: {
+            transactions,
+            summaryByType,
+            totalInflows,
+            totalOutflows,
+            netCashFlow: totalInflows - totalOutflows,
+          },
+        }
+      } catch (error) {
+        return handleIpcError('Get cash flow detail', error)
+      }
+    }
+  )
 }

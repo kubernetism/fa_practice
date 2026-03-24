@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -57,9 +57,17 @@ import {
   ChevronRight,
   X,
   Trash2,
+  Camera,
+  Check,
+  Loader2,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  Search,
 } from 'lucide-react'
+import { toPng } from 'html-to-image'
 import { format } from 'date-fns'
 import { useBranch } from '@/contexts/branch-context'
+import { CoaReportCard } from './report-card'
 
 interface Account {
   id: number
@@ -104,6 +112,24 @@ interface TrialBalance {
   asOfDate: string
 }
 
+interface CashFlowTransaction {
+  id: number
+  transactionType: string
+  amount: number
+  description: string | null
+  referenceNumber: string | null
+  createdAt: string
+  sessionDate: string
+}
+
+interface CashFlowDetail {
+  transactions: CashFlowTransaction[]
+  summaryByType: Record<string, { count: number; totalAmount: number }>
+  totalInflows: number
+  totalOutflows: number
+  netCashFlow: number
+}
+
 export default function ChartOfAccountsScreen() {
   const { currentBranch } = useBranch()
   const [activeTab, setActiveTab] = useState('accounts')
@@ -121,6 +147,19 @@ export default function ChartOfAccountsScreen() {
   const [adjustTarget, setAdjustTarget] = useState('')
   const [adjustReason, setAdjustReason] = useState('')
   const [recalculating, setRecalculating] = useState(false)
+  const [isCopying, setIsCopying] = useState(false)
+  const [isCopied, setIsCopied] = useState(false)
+  const [businessName, setBusinessName] = useState('')
+  const reportRef = useRef<HTMLDivElement>(null)
+
+  // Cash Flow tab states
+  const [cashFlowData, setCashFlowData] = useState<CashFlowDetail | null>(null)
+  const [cashFlowLoading, setCashFlowLoading] = useState(false)
+  const [cfStartDate, setCfStartDate] = useState(() => {
+    const now = new Date()
+    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]
+  })
+  const [cfEndDate, setCfEndDate] = useState(() => new Date().toISOString().split('T')[0])
 
   // Form states
   const [formData, setFormData] = useState({
@@ -169,6 +208,79 @@ export default function ChartOfAccountsScreen() {
       setLoading(false)
     }
   }, [branchId])
+
+  const loadCashFlow = useCallback(async () => {
+    if (!branchId) return
+    setCashFlowLoading(true)
+    try {
+      const result = await window.api.chartOfAccounts.getCashFlowDetail({
+        branchId,
+        startDate: cfStartDate,
+        endDate: cfEndDate,
+      })
+      setCashFlowData(result)
+    } catch (error) {
+      console.error('Failed to load cash flow data:', error)
+    } finally {
+      setCashFlowLoading(false)
+    }
+  }, [branchId, cfStartDate, cfEndDate])
+
+  useEffect(() => {
+    if (activeTab === 'cash-flow' && branchId) {
+      loadCashFlow()
+    }
+  }, [activeTab, loadCashFlow])
+
+  // Fetch business name for the report header
+  useEffect(() => {
+    const fetchBizName = async () => {
+      try {
+        const result = await window.api.businessSettings.getGlobal()
+        if (result.success && result.data?.businessName) {
+          setBusinessName(result.data.businessName)
+        }
+      } catch {
+        // ignore — will fall back to default
+      }
+    }
+    fetchBizName()
+  }, [])
+
+  const handleCopySnapshot = useCallback(async () => {
+    if (!balanceSheet || !reportRef.current || isCopying) return
+
+    setIsCopying(true)
+    try {
+      const node = reportRef.current
+      const prevPos = node.style.position
+      const prevLeft = node.style.left
+      const prevTop = node.style.top
+      node.style.position = 'fixed'
+      node.style.left = '0px'
+      node.style.top = '0px'
+      node.style.zIndex = '-1'
+
+      const dataUrl = await toPng(node, {
+        pixelRatio: 2,
+        backgroundColor: '#0f172a',
+      })
+
+      node.style.position = prevPos
+      node.style.left = prevLeft
+      node.style.top = prevTop
+      node.style.zIndex = ''
+
+      await window.api.clipboard.copyImage(dataUrl)
+
+      setIsCopied(true)
+      setTimeout(() => setIsCopied(false), 2500)
+    } catch (error) {
+      console.error('Failed to capture COA snapshot:', error)
+    } finally {
+      setIsCopying(false)
+    }
+  }, [balanceSheet, isCopying])
 
   const handleCreateAccount = async () => {
     if (!formData.accountCode || !formData.accountName || !formData.accountType || !formData.normalBalance) {
@@ -438,6 +550,21 @@ export default function ChartOfAccountsScreen() {
             </span>
           </div>
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopySnapshot}
+              disabled={!balanceSheet || isCopying}
+              className="h-8 px-2 gap-1.5 text-xs"
+            >
+              {isCopying ? (
+                <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Capturing...</>
+              ) : isCopied ? (
+                <><Check className="h-3.5 w-3.5 text-green-500" /> Copied!</>
+              ) : (
+                <><Camera className="h-3.5 w-3.5" /> Screenshot</>
+              )}
+            </Button>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button onClick={handleRecalculateBalances} variant="outline" size="sm" disabled={recalculating}>
@@ -480,6 +607,7 @@ export default function ChartOfAccountsScreen() {
             <TabsTrigger value="balance-sheet" className="h-6 px-2 text-xs">Balance Sheet</TabsTrigger>
             <TabsTrigger value="income-statement" className="h-6 px-2 text-xs">Income Statement</TabsTrigger>
             <TabsTrigger value="trial-balance" className="h-6 px-2 text-xs">Trial Balance</TabsTrigger>
+            <TabsTrigger value="cash-flow" className="h-6 px-2 text-xs">Cash Flow</TabsTrigger>
           </TabsList>
 
           {/* Accounts Tab */}
@@ -921,6 +1049,174 @@ export default function ChartOfAccountsScreen() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Cash Flow Tab */}
+          <TabsContent value="cash-flow" className="space-y-3">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Wallet className="h-4 w-4" />
+                      Cash Flow Summary
+                    </CardTitle>
+                    <CardDescription className="text-xs">
+                      Detailed cash transactions for selected period
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="date"
+                      value={cfStartDate}
+                      onChange={(e) => setCfStartDate(e.target.value)}
+                      className="h-8 w-36 text-xs"
+                    />
+                    <span className="text-xs text-muted-foreground">to</span>
+                    <Input
+                      type="date"
+                      value={cfEndDate}
+                      onChange={(e) => setCfEndDate(e.target.value)}
+                      className="h-8 w-36 text-xs"
+                    />
+                    <Button size="sm" variant="outline" className="h-8" onClick={loadCashFlow} disabled={cashFlowLoading}>
+                      <Search className="h-3.5 w-3.5 mr-1" />
+                      Filter
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {cashFlowLoading ? (
+                  <div className="flex items-center justify-center h-32">
+                    <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                ) : cashFlowData ? (
+                  <div className="space-y-4">
+                    {/* Summary Cards */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="rounded-lg border bg-green-500/5 p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <ArrowDownCircle className="h-4 w-4 text-green-500" />
+                          <span className="text-xs font-medium text-muted-foreground">Total Inflows</span>
+                        </div>
+                        <p className="text-lg font-bold text-green-500">{formatCurrency(cashFlowData.totalInflows)}</p>
+                      </div>
+                      <div className="rounded-lg border bg-red-500/5 p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <ArrowUpCircle className="h-4 w-4 text-red-500" />
+                          <span className="text-xs font-medium text-muted-foreground">Total Outflows</span>
+                        </div>
+                        <p className="text-lg font-bold text-red-500">{formatCurrency(cashFlowData.totalOutflows)}</p>
+                      </div>
+                      <div className="rounded-lg border bg-blue-500/5 p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <DollarSign className="h-4 w-4 text-blue-500" />
+                          <span className="text-xs font-medium text-muted-foreground">Net Cash Flow</span>
+                        </div>
+                        <p className={`text-lg font-bold ${cashFlowData.netCashFlow >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                          {formatCurrency(cashFlowData.netCashFlow)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Summary by Type */}
+                    {Object.keys(cashFlowData.summaryByType).length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-semibold mb-2">Breakdown by Type</h3>
+                        <div className="rounded-md border overflow-hidden">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/30">
+                                <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Type</TableHead>
+                                <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-center">Transactions</TableHead>
+                                <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Total Amount</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {Object.entries(cashFlowData.summaryByType).map(([type, data]) => {
+                                const isInflow = ['sale', 'ar_collection', 'deposit', 'adjustment_add'].includes(type)
+                                return (
+                                  <TableRow key={type} className="h-9">
+                                    <TableCell className="py-1.5 text-sm capitalize">{type.replace(/_/g, ' ')}</TableCell>
+                                    <TableCell className="py-1.5 text-center text-sm">{data.count}</TableCell>
+                                    <TableCell className={`py-1.5 text-right text-sm font-medium ${isInflow ? 'text-green-500' : 'text-red-500'}`}>
+                                      {isInflow ? '+' : '-'}{formatCurrency(Math.abs(data.totalAmount))}
+                                    </TableCell>
+                                  </TableRow>
+                                )
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Transaction List */}
+                    <div>
+                      <h3 className="text-sm font-semibold mb-2">
+                        Transactions ({cashFlowData.transactions.length})
+                      </h3>
+                      <div className="rounded-md border overflow-hidden max-h-[400px] overflow-y-auto">
+                        <Table>
+                          <TableHeader>
+                            <TableRow className="bg-muted/30 sticky top-0">
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Date</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Type</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Description</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Inflow</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase text-right">Outflow</TableHead>
+                              <TableHead className="text-[10px] font-semibold tracking-wider uppercase">Reference</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {cashFlowData.transactions.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground text-sm">
+                                  No transactions found for this period
+                                </TableCell>
+                              </TableRow>
+                            ) : (
+                              cashFlowData.transactions.map((txn) => {
+                                const isInflow = ['sale', 'ar_collection', 'deposit', 'adjustment_add'].includes(txn.transactionType)
+                                return (
+                                  <TableRow key={txn.id} className="h-9">
+                                    <TableCell className="py-1.5 text-xs">
+                                      {format(new Date(txn.createdAt), 'MMM d, yyyy')}
+                                    </TableCell>
+                                    <TableCell className="py-1.5">
+                                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 capitalize">
+                                        {txn.transactionType.replace(/_/g, ' ')}
+                                      </Badge>
+                                    </TableCell>
+                                    <TableCell className="py-1.5 text-xs text-muted-foreground max-w-[200px] truncate">
+                                      {txn.description || '-'}
+                                    </TableCell>
+                                    <TableCell className="py-1.5 text-right text-sm font-medium text-green-500">
+                                      {isInflow ? formatCurrency(Math.abs(txn.amount)) : '-'}
+                                    </TableCell>
+                                    <TableCell className="py-1.5 text-right text-sm font-medium text-red-500">
+                                      {!isInflow ? formatCurrency(Math.abs(txn.amount)) : '-'}
+                                    </TableCell>
+                                    <TableCell className="py-1.5 text-xs text-muted-foreground">
+                                      {txn.referenceNumber || '-'}
+                                    </TableCell>
+                                  </TableRow>
+                                )
+                              })
+                            )}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+                    Select a date range and click Filter to load cash flow data
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
 
         {/* Create Account Dialog */}
@@ -1158,6 +1454,17 @@ export default function ChartOfAccountsScreen() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        {/* Off-screen report card for screenshot capture */}
+        {balanceSheet && (
+          <CoaReportCard
+            ref={reportRef}
+            businessName={businessName}
+            branchName={currentBranch?.name || 'Branch'}
+            generatedAt={new Date().toLocaleString()}
+            formatCurrency={formatCurrency}
+            balanceSheet={balanceSheet}
+          />
+        )}
       </div>
     </TooltipProvider>
   )

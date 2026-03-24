@@ -26,12 +26,16 @@ type ChartFilter = 'revenue_profit' | 'products' | 'services' | 'expenses' | 'pu
 interface DashboardParams {
   branchId: number
   timePeriod: TimePeriod
+  customStart?: string
+  customEnd?: string
 }
 
 interface TrendParams {
   branchId: number
   timePeriod: TimePeriod
   chartFilter: ChartFilter
+  customStart?: string
+  customEnd?: string
 }
 
 interface DashboardStats {
@@ -62,8 +66,8 @@ export function registerDashboardHandlers(): void {
 
   ipcMain.handle('dashboard:get-stats', async (_, params: DashboardParams) => {
     try {
-      const { branchId, timePeriod } = params
-      const dateRange = getDateRange(timePeriod)
+      const { branchId, timePeriod, customStart, customEnd } = params
+      const dateRange = getDateRange(timePeriod, customStart, customEnd)
 
       // 1. Total Profit calculation
       // Revenue = sum(unitPrice * quantity)  for products
@@ -403,8 +407,8 @@ export function registerDashboardHandlers(): void {
 
   ipcMain.handle('dashboard:get-trend-data', async (_, params: TrendParams) => {
     try {
-      const { branchId, timePeriod, chartFilter } = params
-      const dateRange = getDateRange(timePeriod)
+      const { branchId, timePeriod, chartFilter, customStart, customEnd } = params
+      const dateRange = getDateRange(timePeriod, customStart, customEnd)
 
       // Helper to build time-group expressions based on a date column
       function timeExprs(dateCol: ReturnType<typeof sql>) {
@@ -706,6 +710,102 @@ export function registerDashboardHandlers(): void {
     } catch (error) {
       console.error('Dashboard trend data error:', error)
       return { success: false, message: 'Failed to fetch trend data' }
+    }
+  })
+
+  // Fund Flow — complete cash movement breakdown
+  ipcMain.handle('dashboard:get-fund-flow', async (_, params: DashboardParams) => {
+    try {
+      const { branchId, timePeriod, customStart, customEnd } = params
+      const dateRange = getDateRange(timePeriod, customStart, customEnd)
+
+      // Get cash register session(s) for the period
+      const sessions = await db
+        .select({
+          openingBalance: cashRegisterSessions.openingBalance,
+          closingBalance: cashRegisterSessions.closingBalance,
+          status: cashRegisterSessions.status,
+        })
+        .from(cashRegisterSessions)
+        .where(
+          and(
+            eq(cashRegisterSessions.branchId, branchId),
+            between(cashRegisterSessions.sessionDate, dateRange.start.split('T')[0], dateRange.end.split('T')[0])
+          )
+        )
+
+      // Opening cash = first session's opening balance in the period
+      const openingCash = sessions.length > 0 ? sessions[0].openingBalance : 0
+
+      // Get cash transactions grouped by type for the period
+      const txByType = await db
+        .select({
+          transactionType: cashTransactions.transactionType,
+          total: sql<number>`COALESCE(SUM(ABS(${cashTransactions.amount})), 0)`,
+        })
+        .from(cashTransactions)
+        .innerJoin(
+          cashRegisterSessions,
+          eq(cashTransactions.sessionId, cashRegisterSessions.id)
+        )
+        .where(
+          and(
+            eq(cashRegisterSessions.branchId, branchId),
+            between(cashTransactions.transactionDate, dateRange.start, dateRange.end)
+          )
+        )
+        .groupBy(cashTransactions.transactionType)
+
+      const txMap: Record<string, number> = {}
+      for (const row of txByType) {
+        txMap[row.transactionType] = Number(row.total) || 0
+      }
+
+      // Cash inflows
+      const cashFromSales = txMap['sale'] || 0
+      const arCollections = txMap['ar_collection'] || 0
+      const deposits = txMap['deposit'] || 0
+      const pettyCashIn = txMap['petty_cash_in'] || 0
+      const cashIn = txMap['cash_in'] || 0
+      const totalCashIn = cashFromSales + arCollections + deposits + pettyCashIn + cashIn
+
+      // Cash outflows
+      const apPayments = txMap['ap_payment'] || 0
+      const expensesPaid = txMap['expense'] || 0
+      const refunds = txMap['refund'] || 0
+      const withdrawals = txMap['withdrawal'] || 0
+      const pettyCashOut = txMap['petty_cash_out'] || 0
+      const totalCashOut = apPayments + expensesPaid + refunds + withdrawals + pettyCashOut
+
+      // Closing cash = last session's closing or computed
+      const lastSession = sessions[sessions.length - 1]
+      const closingCash = lastSession?.status === 'closed'
+        ? (lastSession.closingBalance ?? openingCash + totalCashIn - totalCashOut)
+        : openingCash + totalCashIn - totalCashOut
+
+      return {
+        success: true,
+        data: {
+          openingCash,
+          cashFromSales,
+          arCollections,
+          deposits,
+          pettyCashIn,
+          cashIn,
+          totalCashIn,
+          apPayments,
+          expensesPaid,
+          refunds,
+          withdrawals,
+          pettyCashOut,
+          totalCashOut,
+          netCashFlow: totalCashIn - totalCashOut,
+          closingCash,
+        },
+      }
+    } catch (error) {
+      console.error('Dashboard fund flow error:', error)
+      return { success: false, message: 'Failed to fetch fund flow data' }
     }
   })
 }

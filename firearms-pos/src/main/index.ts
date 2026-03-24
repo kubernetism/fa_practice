@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase } from './db'
 import { runMigrations, seedInitialData } from './db/migrate'
 import { registerAllHandlers, registerLicenseOnlyHandlers, setApplicationLocked } from './ipc'
+import { autoCloseStaleRegisters } from './ipc/cash-register-ipc'
 import { performCloseBackup, stopBackupScheduler } from './ipc/backup-ipc'
 import { initializeEncryption } from './utils/encryption'
 import { isDbEncrypted } from './utils/db-cipher'
@@ -127,6 +128,16 @@ app.whenReady().then(async () => {
         // Register all IPC handlers
         registerAllHandlers()
         console.log('IPC handlers registered')
+
+        // Auto-close any stale cash register sessions from prior days
+        try {
+          const closedCount = await autoCloseStaleRegisters()
+          if (closedCount > 0) {
+            console.log(`Startup: Auto-closed ${closedCount} stale cash register session(s)`)
+          }
+        } catch (err) {
+          console.error('Startup: Failed to auto-close stale register sessions:', err)
+        }
       }
     }
   } catch (error) {

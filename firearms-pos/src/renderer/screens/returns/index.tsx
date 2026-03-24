@@ -93,6 +93,7 @@ interface Sale {
   userId: number
   subtotal: number
   taxAmount: number
+  discountAmount: number
   totalAmount: number
   paymentMethod: string
   saleDate: string
@@ -417,12 +418,16 @@ export function ReturnsScreen() {
       return
     }
 
+    // Calculate effective unit price after sale-level discount
+    const discountRatio = selectedSale ? (selectedSale.discountAmount || 0) / (selectedSale.subtotal || 1) : 0
+    const effectiveUnitPrice = saleItem.unitPrice * (1 - discountRatio)
+
     setReturnItems(prev => [
       ...prev,
       {
         saleItem,
         returnQty: saleItem.quantity,
-        refundAmount: saleItem.unitPrice * saleItem.quantity,
+        refundAmount: Math.round(effectiveUnitPrice * saleItem.quantity * 100) / 100,
         condition: 'good',
         restockable: true,
       },
@@ -435,9 +440,11 @@ export function ReturnsScreen() {
       prev.map(item => {
         if (item.saleItem.id === saleItemId) {
           const updated = { ...item, [field]: value }
-          // Recalculate refund amount if quantity changes
+          // Recalculate refund amount if quantity changes (using discounted price)
           if (field === 'returnQty') {
-            updated.refundAmount = item.saleItem.unitPrice * (value as number)
+            const discountRatio = selectedSale ? (selectedSale.discountAmount || 0) / (selectedSale.subtotal || 1) : 0
+            const effectiveUnitPrice = item.saleItem.unitPrice * (1 - discountRatio)
+            updated.refundAmount = Math.round(effectiveUnitPrice * (value as number) * 100) / 100
           }
           return updated
         }
@@ -489,7 +496,7 @@ export function ReturnsScreen() {
           saleItemId: item.saleItem.id,
           productId: item.saleItem.productId,
           quantity: item.returnQty,
-          unitPrice: item.saleItem.unitPrice,
+          unitPrice: Math.round((item.refundAmount / item.returnQty) * 100) / 100,
           serialNumber: item.saleItem.serialNumber,
           condition: item.condition,
           restockable: item.restockable,

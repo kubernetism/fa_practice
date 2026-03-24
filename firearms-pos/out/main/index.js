@@ -13463,6 +13463,43 @@ function registerReferralPersonHandlers() {
     }
   });
 }
+async function autoCloseStaleRegisters(branchId, closedByUserId) {
+  const db2 = getDatabase();
+  const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const whereConditions = [
+    drizzleOrm.eq(cashRegisterSessions.status, "open"),
+    drizzleOrm.lt(cashRegisterSessions.sessionDate, today)
+  ];
+  if (branchId !== void 0) {
+    whereConditions.push(drizzleOrm.eq(cashRegisterSessions.branchId, branchId));
+  }
+  const staleSessions = await db2.query.cashRegisterSessions.findMany({
+    where: drizzleOrm.and(...whereConditions)
+  });
+  for (const stale of staleSessions) {
+    const txSums = await db2.select({
+      totalIn: drizzleOrm.sql`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+      totalOut: drizzleOrm.sql`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`
+    }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, stale.id));
+    const totalIn = txSums[0]?.totalIn || 0;
+    const totalOut = txSums[0]?.totalOut || 0;
+    const expectedBalance = stale.openingBalance + totalIn - totalOut;
+    await db2.update(cashRegisterSessions).set({
+      closingBalance: expectedBalance,
+      expectedBalance,
+      actualBalance: expectedBalance,
+      variance: 0,
+      status: "closed",
+      closedBy: closedByUserId ?? stale.openedBy,
+      closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      notes: `${stale.notes || ""}
+Auto-closed: stale session from ${stale.sessionDate}`.trim(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(cashRegisterSessions.id, stale.id));
+    console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`);
+  }
+  return staleSessions.length;
+}
 function registerCashRegisterHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("cash-register:get-current-session", async (_, branchId) => {
@@ -13520,35 +13557,7 @@ function registerCashRegisterHandlers() {
         return { success: false, message: "Unauthorized" };
       }
       const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-      const staleSessions = await db2.query.cashRegisterSessions.findMany({
-        where: drizzleOrm.and(
-          drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
-          drizzleOrm.eq(cashRegisterSessions.status, "open"),
-          drizzleOrm.lt(cashRegisterSessions.sessionDate, today)
-        )
-      });
-      for (const stale of staleSessions) {
-        const txSums = await db2.select({
-          totalIn: drizzleOrm.sql`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
-          totalOut: drizzleOrm.sql`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`
-        }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, stale.id));
-        const totalIn = txSums[0]?.totalIn || 0;
-        const totalOut = txSums[0]?.totalOut || 0;
-        const expectedBalance = stale.openingBalance + totalIn - totalOut;
-        await db2.update(cashRegisterSessions).set({
-          closingBalance: expectedBalance,
-          expectedBalance,
-          actualBalance: expectedBalance,
-          variance: 0,
-          status: "closed",
-          closedBy: userSession.userId,
-          closedAt: (/* @__PURE__ */ new Date()).toISOString(),
-          notes: `${stale.notes || ""}
-Auto-closed: stale session from ${stale.sessionDate}`.trim(),
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(cashRegisterSessions.id, stale.id));
-        console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`);
-      }
+      await autoCloseStaleRegisters(data.branchId, userSession.userId);
       const existingSession = await db2.query.cashRegisterSessions.findFirst({
         where: drizzleOrm.and(
           drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
@@ -14560,6 +14569,67 @@ function registerChartOfAccountsHandlers() {
       return handleIpcError("Adjust balance", error);
     }
   });
+  electron.ipcMain.handle(
+    "coa:get-cash-flow-detail",
+    async (_, params) => {
+      try {
+        const { branchId, startDate, endDate } = params;
+        const startISO = new Date(startDate);
+        startISO.setHours(0, 0, 0, 0);
+        const endISO = new Date(endDate);
+        endISO.setHours(23, 59, 59, 999);
+        const transactions = await db2.select({
+          id: cashTransactions.id,
+          transactionType: cashTransactions.transactionType,
+          amount: cashTransactions.amount,
+          description: cashTransactions.description,
+          referenceType: cashTransactions.referenceType,
+          referenceId: cashTransactions.referenceId,
+          transactionDate: cashTransactions.transactionDate,
+          sessionDate: cashRegisterSessions.sessionDate
+        }).from(cashTransactions).innerJoin(
+          cashRegisterSessions,
+          drizzleOrm.eq(cashTransactions.sessionId, cashRegisterSessions.id)
+        ).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+            drizzleOrm.gte(cashTransactions.transactionDate, startISO.toISOString()),
+            drizzleOrm.lte(cashTransactions.transactionDate, endISO.toISOString())
+          )
+        ).orderBy(drizzleOrm.desc(cashTransactions.transactionDate));
+        const summaryByType = await db2.select({
+          transactionType: cashTransactions.transactionType,
+          totalAmount: drizzleOrm.sql`COALESCE(SUM(${cashTransactions.amount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`
+        }).from(cashTransactions).innerJoin(
+          cashRegisterSessions,
+          drizzleOrm.eq(cashTransactions.sessionId, cashRegisterSessions.id)
+        ).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+            drizzleOrm.gte(cashTransactions.transactionDate, startISO.toISOString()),
+            drizzleOrm.lte(cashTransactions.transactionDate, endISO.toISOString())
+          )
+        ).groupBy(cashTransactions.transactionType);
+        const totalInflows = summaryByType.filter((t) => (t.totalAmount || 0) > 0).reduce((sum, t) => sum + Number(t.totalAmount || 0), 0);
+        const totalOutflows = Math.abs(
+          summaryByType.filter((t) => (t.totalAmount || 0) < 0).reduce((sum, t) => sum + Number(t.totalAmount || 0), 0)
+        );
+        return {
+          success: true,
+          data: {
+            transactions,
+            summaryByType,
+            totalInflows,
+            totalOutflows,
+            netCashFlow: totalInflows - totalOutflows
+          }
+        };
+      } catch (error) {
+        return handleIpcError("Get cash flow detail", error);
+      }
+    }
+  );
 }
 const fontSizeMap = {
   small: { base: 11, header: 16, title: 24, caption: 9 },
@@ -17546,8 +17616,8 @@ function registerDashboardHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("dashboard:get-stats", async (_, params) => {
     try {
-      const { branchId, timePeriod } = params;
-      const dateRange = getDateRange(timePeriod);
+      const { branchId, timePeriod, customStart, customEnd } = params;
+      const dateRange = getDateRange(timePeriod, customStart, customEnd);
       const profitResult = await db2.select({
         revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
         cost: drizzleOrm.sql`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
@@ -17798,8 +17868,8 @@ function registerDashboardHandlers() {
           };
         }
       };
-      const { branchId, timePeriod, chartFilter } = params;
-      const dateRange = getDateRange(timePeriod);
+      const { branchId, timePeriod, chartFilter, customStart, customEnd } = params;
+      const dateRange = getDateRange(timePeriod, customStart, customEnd);
       if (chartFilter === "revenue_profit") {
         const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
         const productRows = await db2.select({
@@ -17993,6 +18063,76 @@ function registerDashboardHandlers() {
     } catch (error) {
       console.error("Dashboard trend data error:", error);
       return { success: false, message: "Failed to fetch trend data" };
+    }
+  });
+  electron.ipcMain.handle("dashboard:get-fund-flow", async (_, params) => {
+    try {
+      const { branchId, timePeriod, customStart, customEnd } = params;
+      const dateRange = getDateRange(timePeriod, customStart, customEnd);
+      const sessions = await db2.select({
+        openingBalance: cashRegisterSessions.openingBalance,
+        closingBalance: cashRegisterSessions.closingBalance,
+        status: cashRegisterSessions.status
+      }).from(cashRegisterSessions).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+          drizzleOrm.between(cashRegisterSessions.sessionDate, dateRange.start.split("T")[0], dateRange.end.split("T")[0])
+        )
+      );
+      const openingCash = sessions.length > 0 ? sessions[0].openingBalance : 0;
+      const txByType = await db2.select({
+        transactionType: cashTransactions.transactionType,
+        total: drizzleOrm.sql`COALESCE(SUM(ABS(${cashTransactions.amount})), 0)`
+      }).from(cashTransactions).innerJoin(
+        cashRegisterSessions,
+        drizzleOrm.eq(cashTransactions.sessionId, cashRegisterSessions.id)
+      ).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+          drizzleOrm.between(cashTransactions.transactionDate, dateRange.start, dateRange.end)
+        )
+      ).groupBy(cashTransactions.transactionType);
+      const txMap = {};
+      for (const row of txByType) {
+        txMap[row.transactionType] = Number(row.total) || 0;
+      }
+      const cashFromSales = txMap["sale"] || 0;
+      const arCollections = txMap["ar_collection"] || 0;
+      const deposits = txMap["deposit"] || 0;
+      const pettyCashIn = txMap["petty_cash_in"] || 0;
+      const cashIn = txMap["cash_in"] || 0;
+      const totalCashIn = cashFromSales + arCollections + deposits + pettyCashIn + cashIn;
+      const apPayments = txMap["ap_payment"] || 0;
+      const expensesPaid = txMap["expense"] || 0;
+      const refunds = txMap["refund"] || 0;
+      const withdrawals = txMap["withdrawal"] || 0;
+      const pettyCashOut = txMap["petty_cash_out"] || 0;
+      const totalCashOut = apPayments + expensesPaid + refunds + withdrawals + pettyCashOut;
+      const lastSession = sessions[sessions.length - 1];
+      const closingCash = lastSession?.status === "closed" ? lastSession.closingBalance ?? openingCash + totalCashIn - totalCashOut : openingCash + totalCashIn - totalCashOut;
+      return {
+        success: true,
+        data: {
+          openingCash,
+          cashFromSales,
+          arCollections,
+          deposits,
+          pettyCashIn,
+          cashIn,
+          totalCashIn,
+          apPayments,
+          expensesPaid,
+          refunds,
+          withdrawals,
+          pettyCashOut,
+          totalCashOut,
+          netCashFlow: totalCashIn - totalCashOut,
+          closingCash
+        }
+      };
+    } catch (error) {
+      console.error("Dashboard fund flow error:", error);
+      return { success: false, message: "Failed to fetch fund flow data" };
     }
   });
 }
@@ -21713,6 +21853,14 @@ electron.app.whenReady().then(async () => {
       } else {
         registerAllHandlers();
         console.log("IPC handlers registered");
+        try {
+          const closedCount = await autoCloseStaleRegisters();
+          if (closedCount > 0) {
+            console.log(`Startup: Auto-closed ${closedCount} stale cash register session(s)`);
+          }
+        } catch (err) {
+          console.error("Startup: Failed to auto-close stale register sessions:", err);
+        }
       }
     }
   } catch (error) {

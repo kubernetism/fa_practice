@@ -19,6 +19,7 @@ import {
   Loader2,
   Percent,
   BarChart3,
+  CalendarDays,
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
 import {
@@ -47,7 +48,7 @@ import { useCurrency } from '@/contexts/settings-context'
 import { formatNumber } from '@/lib/utils'
 import { ReportCard } from './report-card'
 
-type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly'
+type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom'
 
 interface DashboardStats {
   totalProfit: number
@@ -80,6 +81,24 @@ interface LowStockItem {
   minQuantity: number
 }
 
+interface FundFlowData {
+  openingCash: number
+  cashFromSales: number
+  arCollections: number
+  deposits: number
+  pettyCashIn: number
+  cashIn: number
+  totalCashIn: number
+  apPayments: number
+  expensesPaid: number
+  refunds: number
+  withdrawals: number
+  pettyCashOut: number
+  totalCashOut: number
+  netCashFlow: number
+  closingCash: number
+}
+
 type ChartFilter = 'revenue_profit' | 'products' | 'services' | 'expenses' | 'purchases' | 'returns'
 
 interface TrendChartData {
@@ -104,6 +123,7 @@ const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
   weekly: 'This Week',
   monthly: 'This Month',
   yearly: 'This Year',
+  custom: 'Custom',
 }
 
 /* ------------------------------------------------------------------ */
@@ -168,8 +188,10 @@ export function DashboardScreen() {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
   const [trendChart, setTrendChart] = useState<TrendChartData | null>(null)
+  const [fundFlow, setFundFlow] = useState<FundFlowData | null>(null)
   const [chartFilter, setChartFilter] = useState<ChartFilter>('revenue_profit')
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('daily')
+  const [customDate, setCustomDate] = useState(() => new Date().toISOString().split('T')[0])
   const [isLoading, setIsLoading] = useState(true)
   const [isCopied, setIsCopied] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
@@ -238,6 +260,7 @@ export function DashboardScreen() {
         const statsResult = await window.api.dashboard.getStats({
           branchId: currentBranch.id,
           timePeriod,
+          ...(timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}),
         })
 
         if (statsResult.success && statsResult.data) {
@@ -260,9 +283,19 @@ export function DashboardScreen() {
           branchId: currentBranch.id,
           timePeriod,
           chartFilter,
+          ...(timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}),
         })
         if (trendResult.success && trendResult.data) {
           setTrendChart(trendResult.data)
+        }
+
+        const fundFlowResult = await window.api.dashboard.getFundFlow({
+          branchId: currentBranch.id,
+          timePeriod,
+          ...(timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}),
+        })
+        if (fundFlowResult.success && fundFlowResult.data) {
+          setFundFlow(fundFlowResult.data)
         }
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error)
@@ -272,7 +305,7 @@ export function DashboardScreen() {
     }
 
     fetchDashboardData()
-  }, [currentBranch, timePeriod, chartFilter])
+  }, [currentBranch, timePeriod, chartFilter, customDate])
 
   if (isLoading) {
     return (
@@ -317,11 +350,20 @@ export function DashboardScreen() {
             <TabsList className="h-7">
               {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
                 <TabsTrigger key={period} value={period} className="text-xs px-2.5 h-5">
+                  {period === 'custom' ? <CalendarDays className="h-3 w-3 mr-1" /> : null}
                   {TIME_PERIOD_LABELS[period]}
                 </TabsTrigger>
               ))}
             </TabsList>
           </Tabs>
+          {timePeriod === 'custom' && (
+            <input
+              type="date"
+              value={customDate}
+              onChange={(e) => setCustomDate(e.target.value)}
+              className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+          )}
         </div>
       </div>
 
@@ -451,6 +493,96 @@ export function DashboardScreen() {
               value={formatCurrency(stats?.totalCommission || 0)}
             />
           </Panel>
+
+          {/* Fund Flow — Cash Movement Breakdown */}
+          {fundFlow && (
+            <Panel title="Fund Flow">
+              <MetricRow
+                icon={Banknote}
+                iconColor="text-slate-400"
+                label="Opening Cash"
+                value={formatCurrency(fundFlow.openingCash)}
+              />
+              <MetricRow
+                icon={ArrowDownCircle}
+                iconColor="text-green-500"
+                label="+ Sales (Cash)"
+                value={formatCurrency(fundFlow.cashFromSales)}
+                valueColor="text-green-600"
+              />
+              {fundFlow.arCollections > 0 && (
+                <MetricRow
+                  icon={ArrowDownCircle}
+                  iconColor="text-green-500"
+                  label="+ AR Collections"
+                  value={formatCurrency(fundFlow.arCollections)}
+                  valueColor="text-green-600"
+                />
+              )}
+              {fundFlow.deposits > 0 && (
+                <MetricRow
+                  icon={ArrowDownCircle}
+                  iconColor="text-green-500"
+                  label="+ Deposits"
+                  value={formatCurrency(fundFlow.deposits)}
+                  valueColor="text-green-600"
+                />
+              )}
+              <div className="border-t border-border/50 my-0.5" />
+              <MetricRow
+                icon={DollarSign}
+                iconColor="text-blue-500"
+                label="Total Available"
+                value={formatCurrency(fundFlow.openingCash + fundFlow.totalCashIn)}
+                valueColor="text-blue-500 font-bold"
+              />
+              <div className="border-t border-border/50 my-0.5" />
+              {fundFlow.apPayments > 0 && (
+                <MetricRow
+                  icon={ArrowUpCircle}
+                  iconColor="text-red-500"
+                  label="- AP Payments"
+                  value={`(${formatCurrency(fundFlow.apPayments)})`}
+                  valueColor="text-red-500"
+                />
+              )}
+              {fundFlow.expensesPaid > 0 && (
+                <MetricRow
+                  icon={ArrowUpCircle}
+                  iconColor="text-red-500"
+                  label="- Expenses"
+                  value={`(${formatCurrency(fundFlow.expensesPaid)})`}
+                  valueColor="text-red-500"
+                />
+              )}
+              {fundFlow.refunds > 0 && (
+                <MetricRow
+                  icon={ArrowUpCircle}
+                  iconColor="text-orange-500"
+                  label="- Refunds"
+                  value={`(${formatCurrency(fundFlow.refunds)})`}
+                  valueColor="text-orange-500"
+                />
+              )}
+              {fundFlow.withdrawals > 0 && (
+                <MetricRow
+                  icon={ArrowUpCircle}
+                  iconColor="text-red-500"
+                  label="- Withdrawals"
+                  value={`(${formatCurrency(fundFlow.withdrawals)})`}
+                  valueColor="text-red-500"
+                />
+              )}
+              <div className="border-t border-border/50 my-0.5" />
+              <MetricRow
+                icon={Banknote}
+                iconColor="text-emerald-500"
+                label="Closing Cash"
+                value={formatCurrency(fundFlow.closingCash)}
+                valueColor="text-emerald-500 font-bold"
+              />
+            </Panel>
+          )}
         </div>
 
         {/* Center column — AR / AP */}
@@ -506,6 +638,7 @@ export function DashboardScreen() {
               }
             />
           </Panel>
+
         </div>
 
         {/* Right column — Business Progress Chart + Quick Actions */}
@@ -646,11 +779,12 @@ export function DashboardScreen() {
           ref={reportRef}
           businessName={businessName}
           branchName={currentBranch?.name || 'Branch'}
-          periodLabel={TIME_PERIOD_LABELS[timePeriod]}
+          periodLabel={timePeriod === 'custom' ? customDate : TIME_PERIOD_LABELS[timePeriod]}
           generatedAt={new Date().toLocaleString()}
           formatCurrency={formatCurrency}
           formatNumber={formatNumber}
           stats={stats}
+          fundFlow={fundFlow}
         />
       )}
     </div>

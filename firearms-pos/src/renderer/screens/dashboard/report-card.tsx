@@ -1,5 +1,19 @@
 import React from 'react'
 
+interface FundFlowData {
+  openingCash: number
+  cashFromSales: number
+  arCollections: number
+  deposits: number
+  totalCashIn: number
+  apPayments: number
+  expensesPaid: number
+  refunds: number
+  withdrawals: number
+  totalCashOut: number
+  closingCash: number
+}
+
 interface ReportCardProps {
   businessName: string
   branchName: string
@@ -29,6 +43,7 @@ interface ReportCardProps {
     cashInHand: number
     lowStockCount: number
   }
+  fundFlow?: FundFlowData | null
 }
 
 /**
@@ -37,7 +52,7 @@ interface ReportCardProps {
  * Uses inline styles only — no Tailwind — so the capture is pixel-perfect.
  */
 export const ReportCard = React.forwardRef<HTMLDivElement, ReportCardProps>(
-  ({ businessName, branchName, periodLabel, generatedAt, formatCurrency, formatNumber, stats }, ref) => {
+  ({ businessName, branchName, periodLabel, generatedAt, formatCurrency, formatNumber, stats, fundFlow }, ref) => {
     const profit = stats.totalProfit
     const profitColor = profit >= 0 ? '#16a34a' : '#dc2626'
 
@@ -318,6 +333,68 @@ export const ReportCard = React.forwardRef<HTMLDivElement, ReportCardProps>(
             </div>
           </div>
         </div>
+
+        {/* ── Fund Flow ──────────────────────── */}
+        {fundFlow && (
+          <div style={s.section}>
+            <p style={s.sectionTitle}>Fund Flow</p>
+            <div style={s.row}>
+              <p style={s.rowLabel}>Opening Cash</p>
+              <p style={s.rowValue}>{formatCurrency(fundFlow.openingCash)}</p>
+            </div>
+            <div style={s.row}>
+              <p style={s.rowLabel}>+ Sales (Cash)</p>
+              <p style={{ ...s.rowValue, color: '#34d399' }}>{formatCurrency(fundFlow.cashFromSales)}</p>
+            </div>
+            {fundFlow.arCollections > 0 && (
+              <div style={s.row}>
+                <p style={s.rowLabel}>+ AR Collections</p>
+                <p style={{ ...s.rowValue, color: '#34d399' }}>{formatCurrency(fundFlow.arCollections)}</p>
+              </div>
+            )}
+            {fundFlow.deposits > 0 && (
+              <div style={s.row}>
+                <p style={s.rowLabel}>+ Deposits</p>
+                <p style={{ ...s.rowValue, color: '#34d399' }}>{formatCurrency(fundFlow.deposits)}</p>
+              </div>
+            )}
+            <div style={{ borderTop: '1px solid rgba(148,163,184,0.12)', margin: '4px 0' }} />
+            <div style={s.row}>
+              <p style={{ ...s.rowLabel, fontWeight: 600, color: '#38bdf8' }}>Total Available</p>
+              <p style={{ ...s.rowValue, color: '#38bdf8' }}>{formatCurrency(fundFlow.openingCash + fundFlow.totalCashIn)}</p>
+            </div>
+            <div style={{ borderTop: '1px solid rgba(148,163,184,0.12)', margin: '4px 0' }} />
+            {fundFlow.apPayments > 0 && (
+              <div style={s.row}>
+                <p style={s.rowLabel}>- AP Payments</p>
+                <p style={{ ...s.rowValue, color: '#f87171' }}>({formatCurrency(fundFlow.apPayments)})</p>
+              </div>
+            )}
+            {fundFlow.expensesPaid > 0 && (
+              <div style={s.row}>
+                <p style={s.rowLabel}>- Expenses</p>
+                <p style={{ ...s.rowValue, color: '#f87171' }}>({formatCurrency(fundFlow.expensesPaid)})</p>
+              </div>
+            )}
+            {fundFlow.refunds > 0 && (
+              <div style={s.row}>
+                <p style={s.rowLabel}>- Refunds</p>
+                <p style={{ ...s.rowValue, color: '#fb923c' }}>({formatCurrency(fundFlow.refunds)})</p>
+              </div>
+            )}
+            {fundFlow.withdrawals > 0 && (
+              <div style={s.row}>
+                <p style={s.rowLabel}>- Withdrawals</p>
+                <p style={{ ...s.rowValue, color: '#f87171' }}>({formatCurrency(fundFlow.withdrawals)})</p>
+              </div>
+            )}
+            <div style={{ borderTop: '1px solid rgba(148,163,184,0.12)', margin: '4px 0' }} />
+            <div style={s.row}>
+              <p style={{ ...s.rowLabel, fontWeight: 700, color: '#34d399' }}>Closing Cash</p>
+              <p style={{ ...s.rowValue, color: '#34d399', fontSize: 14 }}>{formatCurrency(fundFlow.closingCash)}</p>
+            </div>
+          </div>
+        )}
 
         {/* ── Inventory ──────────────────────── */}
         <div style={{ ...s.section, borderBottom: 'none' }}>
