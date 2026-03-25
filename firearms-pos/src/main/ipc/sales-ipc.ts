@@ -52,7 +52,7 @@ interface ServiceItem {
 }
 
 interface PaymentBreakdownItem {
-  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer' | 'cod'
   amount: number
   referenceNumber?: string
 }
@@ -383,7 +383,7 @@ export function registerSalesHandlers(): void {
           const netPaymentAmount = Math.min(data.amountPaid, totalAmount)
           const method = data.paymentMethod === 'card' ? 'card'
             : data.paymentMethod === 'mobile' ? 'mobile'
-            : data.paymentMethod === 'cod' ? 'cash'
+            : data.paymentMethod === 'cod' ? 'cod'
             : 'cash'
 
           // Build reference and notes for mobile/card payments
@@ -426,20 +426,42 @@ export function registerSalesHandlers(): void {
               direction: 'inflow',
               referenceNumber: payment.referenceNumber,
               customerName: data.customerId
-                ? (await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) }))?.name
+                ? await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) }).then(c => c ? `${c.firstName} ${c.lastName}`.trim() : undefined)
                 : data.codName || undefined,
               customerId: data.customerId || undefined,
               invoiceNumber,
               bankAccountName: data.paymentMethod === 'mobile'
                 ? `${data.mobileProvider || ''} ${data.mobileReceiverPhone || ''}`.trim() || undefined
                 : undefined,
-              status: data.paymentMethod === 'cod' ? 'pending' : 'pending',
+              status: 'pending',
               sourceType: 'sale',
               sourceId: sale.id,
               saleId: sale.id,
               createdBy: session?.userId ?? 0,
             })
           }
+        }
+
+        // 7c. COD sales: record as pending online transaction (no payment received yet)
+        if (data.paymentMethod === 'cod') {
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: totalAmount,
+            paymentChannel: 'cod',
+            direction: 'inflow',
+            referenceNumber: undefined,
+            customerName: data.codName || (data.customerId
+              ? await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) }).then(c => c ? `${c.firstName} ${c.lastName}`.trim() : undefined)
+              : undefined),
+            customerId: data.customerId || undefined,
+            invoiceNumber,
+            status: 'pending',
+            sourceType: 'sale',
+            sourceId: sale.id,
+            saleId: sale.id,
+            createdBy: session?.userId ?? 0,
+          })
         }
 
         // 8. Post to General Ledger (automated GL posting with payment breakdown)
@@ -473,8 +495,8 @@ export function registerSalesHandlers(): void {
             // For mixed payments, record each cash/non-cash component separately
             if (data.payments && data.payments.length > 0) {
               for (const payment of data.payments) {
-                if (payment.method === 'cash') {
-                  // Cash portion goes to cash register (net of change)
+                if (payment.method === 'cash' || payment.method === 'cod') {
+                  // Cash/COD portion goes to cash register (net of change)
                   const cashAmount = Math.min(payment.amount, totalAmount)
                   await txDb.insert(cashTransactions).values({
                     sessionId: openSession.id,

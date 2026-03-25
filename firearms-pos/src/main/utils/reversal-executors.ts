@@ -18,6 +18,9 @@ import {
   inventoryCostLayers,
   returns,
   returnItems,
+  cashRegisterSessions,
+  cashTransactions,
+  salePayments,
 } from '../db/schema'
 import { createJournalEntry, postVoidSaleToGL } from './gl-posting'
 import { restoreCostLayers, consumeCostLayers } from './inventory-valuation'
@@ -203,6 +206,46 @@ export async function executeSaleReversal(
     userId
   )
 
+  // 6. Record cash refund transaction if the sale involved cash payments
+  let cashRefundAmount = 0
+  const hasCashPayment = ['cash', 'cod'].includes(sale.paymentMethod)
+
+  if (hasCashPayment) {
+    cashRefundAmount = Math.min(sale.amountPaid, sale.totalAmount)
+  } else if (sale.paymentMethod === 'mixed') {
+    // For mixed payments, sum up cash/cod portions
+    const payments = await db.query.salePayments.findMany({
+      where: eq(salePayments.saleId, entityId),
+    })
+    cashRefundAmount = payments
+      .filter((p) => ['cash', 'cod'].includes(p.paymentMethod))
+      .reduce((sum, p) => sum + p.amount, 0)
+  }
+
+  if (cashRefundAmount > 0) {
+    const today = new Date().toISOString().split('T')[0]
+    const openSession = await db.query.cashRegisterSessions.findFirst({
+      where: and(
+        eq(cashRegisterSessions.branchId, sale.branchId),
+        eq(cashRegisterSessions.sessionDate, today),
+        eq(cashRegisterSessions.status, 'open')
+      ),
+    })
+
+    if (openSession) {
+      await db.insert(cashTransactions).values({
+        sessionId: openSession.id,
+        branchId: sale.branchId,
+        transactionType: 'refund',
+        amount: -cashRefundAmount,
+        referenceType: 'sale_void',
+        referenceId: sale.id,
+        description: `Cash refund (reversed): ${sale.invoiceNumber}`,
+        recordedBy: userId,
+      })
+    }
+  }
+
   return {
     reversalDetails: {
       saleId: entityId,
@@ -211,6 +254,7 @@ export async function executeSaleReversal(
       commissionssCancelled: cancelledCommissions.length,
       receivableCancelled: linkedReceivable?.id ?? null,
       reversalJournalEntryId: reversalJEId,
+      cashRefundAmount,
     },
   }
 }

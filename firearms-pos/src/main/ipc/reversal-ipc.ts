@@ -1,13 +1,93 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, inArray } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { reversalRequests } from '../db/schema'
+import {
+  reversalRequests,
+  sales,
+  purchases,
+  expenses,
+  journalEntries,
+  accountReceivables,
+  accountPayables,
+  commissions,
+  returns,
+  receivablePayments,
+  payablePayments,
+} from '../db/schema'
 import { withTransaction } from '../utils/db-transaction'
 import { handleIpcError } from '../utils/error-handling'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generateReversalNumber } from '../utils/gl-posting'
 import { executeReversal } from '../utils/reversal-executors'
+
+/**
+ * Look up the human-readable reference number for a reversal's source entity.
+ */
+async function lookupEntityReference(
+  db: ReturnType<typeof getDatabase>,
+  entityType: string,
+  entityId: number
+): Promise<string | null> {
+  switch (entityType) {
+    case 'sale': {
+      const row = await db.query.sales.findFirst({
+        where: eq(sales.id, entityId),
+        columns: { invoiceNumber: true },
+      })
+      return row?.invoiceNumber ?? null
+    }
+    case 'purchase': {
+      const row = await db.query.purchases.findFirst({
+        where: eq(purchases.id, entityId),
+        columns: { purchaseOrderNumber: true },
+      })
+      return row?.purchaseOrderNumber ?? null
+    }
+    case 'expense': {
+      const row = await db.query.expenses.findFirst({
+        where: eq(expenses.id, entityId),
+        columns: { id: true },
+      })
+      return row ? `EXP-${row.id}` : null
+    }
+    case 'journal_entry': {
+      const row = await db.query.journalEntries.findFirst({
+        where: eq(journalEntries.id, entityId),
+        columns: { entryNumber: true },
+      })
+      return row?.entryNumber ?? null
+    }
+    case 'receivable':
+    case 'ar_payment': {
+      const row = await db.query.accountReceivables.findFirst({
+        where: eq(accountReceivables.id, entityId),
+        columns: { invoiceNumber: true },
+      })
+      return row?.invoiceNumber ?? null
+    }
+    case 'payable':
+    case 'ap_payment': {
+      const row = await db.query.accountPayables.findFirst({
+        where: eq(accountPayables.id, entityId),
+        columns: { invoiceNumber: true },
+      })
+      return row?.invoiceNumber ?? null
+    }
+    case 'commission': {
+      return `COM-${entityId}`
+    }
+    case 'return': {
+      const row = await db.query.returns.findFirst({
+        where: eq(returns.id, entityId),
+        columns: { returnNumber: true },
+      })
+      return row?.returnNumber ?? null
+    }
+    default:
+      return null
+  }
+}
 
 export function registerReversalHandlers(): void {
   const db = getDatabase()
@@ -131,9 +211,17 @@ export function registerReversalHandlers(): void {
           },
         })
 
+        // Enrich each request with the source entity's reference number
+        const enriched = await Promise.all(
+          data.map(async (req) => {
+            const entityReference = await lookupEntityReference(db, req.entityType, req.entityId)
+            return { ...req, entityReference }
+          })
+        )
+
         return {
           success: true,
-          data,
+          data: enriched,
           pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
         }
       } catch (error) {

@@ -278,7 +278,7 @@ const salePayments = sqliteCore.sqliteTable("sale_payments", {
   id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
   saleId: sqliteCore.integer("sale_id").notNull().references(() => sales.id),
   paymentMethod: sqliteCore.text("payment_method", {
-    enum: ["cash", "card", "debit_card", "mobile", "cheque", "bank_transfer"]
+    enum: ["cash", "card", "debit_card", "mobile", "cheque", "bank_transfer", "cod"]
   }).notNull(),
   amount: sqliteCore.real("amount").notNull(),
   referenceNumber: sqliteCore.text("reference_number"),
@@ -2545,7 +2545,7 @@ async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
     for (const payment of payments) {
       if (payment.amount <= 0) continue;
       const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : "Cash";
+      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : payment.method === "cod" ? "COD" : "Cash";
       lines.push({
         accountCode,
         debitAmount: payment.amount,
@@ -2841,6 +2841,15 @@ async function postVoidSaleToGL(sale, saleItems2, userId) {
       debitAmount: sale.taxAmount,
       creditAmount: 0,
       description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const codCharges = sale.totalAmount - (sale.subtotal - sale.discountAmount + sale.taxAmount);
+  if (codCharges > 0.01) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: codCharges,
+      creditAmount: 0,
+      description: `Void - reverse COD charges for sale ${sale.invoiceNumber}`
     });
   }
   const totalCOGS = saleItems2.reduce(
@@ -6879,7 +6888,7 @@ function registerSalesHandlers() {
           }
         } else if (data.amountPaid > 0 && data.paymentMethod !== "receivable") {
           const netPaymentAmount = Math.min(data.amountPaid, totalAmount);
-          const method = data.paymentMethod === "card" ? "card" : data.paymentMethod === "mobile" ? "mobile" : data.paymentMethod === "cod" ? "cash" : "cash";
+          const method = data.paymentMethod === "card" ? "card" : data.paymentMethod === "mobile" ? "mobile" : data.paymentMethod === "cod" ? "cod" : "cash";
           let referenceNumber;
           let paymentNotes;
           if (data.paymentMethod === "mobile" && data.mobileTransactionId) {
@@ -6914,17 +6923,35 @@ function registerSalesHandlers() {
               paymentChannel: mapPaymentMethodToChannel(payment.method),
               direction: "inflow",
               referenceNumber: payment.referenceNumber,
-              customerName: data.customerId ? (await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }))?.name : data.codName || void 0,
+              customerName: data.customerId ? await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }).then((c) => c ? `${c.firstName} ${c.lastName}`.trim() : void 0) : data.codName || void 0,
               customerId: data.customerId || void 0,
               invoiceNumber,
               bankAccountName: data.paymentMethod === "mobile" ? `${data.mobileProvider || ""} ${data.mobileReceiverPhone || ""}`.trim() || void 0 : void 0,
-              status: data.paymentMethod === "cod" ? "pending" : "pending",
+              status: "pending",
               sourceType: "sale",
               sourceId: sale.id,
               saleId: sale.id,
               createdBy: session?.userId ?? 0
             });
           }
+        }
+        if (data.paymentMethod === "cod") {
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: totalAmount,
+            paymentChannel: "cod",
+            direction: "inflow",
+            referenceNumber: void 0,
+            customerName: data.codName || (data.customerId ? await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }).then((c) => c ? `${c.firstName} ${c.lastName}`.trim() : void 0) : void 0),
+            customerId: data.customerId || void 0,
+            invoiceNumber,
+            status: "pending",
+            sourceType: "sale",
+            sourceId: sale.id,
+            saleId: sale.id,
+            createdBy: session?.userId ?? 0
+          });
         }
         await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === "cod" ? codCharges : 0);
         if (data.voucherId) {
@@ -6947,7 +6974,7 @@ function registerSalesHandlers() {
           if (openSession) {
             if (data.payments && data.payments.length > 0) {
               for (const payment of data.payments) {
-                if (payment.method === "cash") {
+                if (payment.method === "cash" || payment.method === "cod") {
                   const cashAmount = Math.min(payment.amount, totalAmount);
                   await txDb.insert(cashTransactions).values({
                     sessionId: openSession.id,
@@ -21540,6 +21567,38 @@ async function executeSaleReversal(entityId, userId) {
     items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
     userId
   );
+  let cashRefundAmount = 0;
+  const hasCashPayment = ["cash", "cod"].includes(sale.paymentMethod);
+  if (hasCashPayment) {
+    cashRefundAmount = Math.min(sale.amountPaid, sale.totalAmount);
+  } else if (sale.paymentMethod === "mixed") {
+    const payments = await db2.query.salePayments.findMany({
+      where: drizzleOrm.eq(salePayments.saleId, entityId)
+    });
+    cashRefundAmount = payments.filter((p) => ["cash", "cod"].includes(p.paymentMethod)).reduce((sum, p) => sum + p.amount, 0);
+  }
+  if (cashRefundAmount > 0) {
+    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const openSession = await db2.query.cashRegisterSessions.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(cashRegisterSessions.branchId, sale.branchId),
+        drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+        drizzleOrm.eq(cashRegisterSessions.status, "open")
+      )
+    });
+    if (openSession) {
+      await db2.insert(cashTransactions).values({
+        sessionId: openSession.id,
+        branchId: sale.branchId,
+        transactionType: "refund",
+        amount: -cashRefundAmount,
+        referenceType: "sale_void",
+        referenceId: sale.id,
+        description: `Cash refund (reversed): ${sale.invoiceNumber}`,
+        recordedBy: userId
+      });
+    }
+  }
   return {
     reversalDetails: {
       saleId: entityId,
@@ -21547,7 +21606,8 @@ async function executeSaleReversal(entityId, userId) {
       itemsRestored: items.length,
       commissionssCancelled: cancelledCommissions.length,
       receivableCancelled: linkedReceivable?.id ?? null,
-      reversalJournalEntryId: reversalJEId
+      reversalJournalEntryId: reversalJEId,
+      cashRefundAmount
     }
   };
 }
@@ -21978,6 +22038,66 @@ async function executeReversal(entityType, entityId, userId) {
       throw new Error(`Unknown entity type for reversal: '${entityType}'`);
   }
 }
+async function lookupEntityReference(db2, entityType, entityId) {
+  switch (entityType) {
+    case "sale": {
+      const row = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, entityId),
+        columns: { invoiceNumber: true }
+      });
+      return row?.invoiceNumber ?? null;
+    }
+    case "purchase": {
+      const row = await db2.query.purchases.findFirst({
+        where: drizzleOrm.eq(purchases.id, entityId),
+        columns: { purchaseOrderNumber: true }
+      });
+      return row?.purchaseOrderNumber ?? null;
+    }
+    case "expense": {
+      const row = await db2.query.expenses.findFirst({
+        where: drizzleOrm.eq(expenses.id, entityId),
+        columns: { id: true }
+      });
+      return row ? `EXP-${row.id}` : null;
+    }
+    case "journal_entry": {
+      const row = await db2.query.journalEntries.findFirst({
+        where: drizzleOrm.eq(journalEntries.id, entityId),
+        columns: { entryNumber: true }
+      });
+      return row?.entryNumber ?? null;
+    }
+    case "receivable":
+    case "ar_payment": {
+      const row = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.id, entityId),
+        columns: { invoiceNumber: true }
+      });
+      return row?.invoiceNumber ?? null;
+    }
+    case "payable":
+    case "ap_payment": {
+      const row = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.id, entityId),
+        columns: { invoiceNumber: true }
+      });
+      return row?.invoiceNumber ?? null;
+    }
+    case "commission": {
+      return `COM-${entityId}`;
+    }
+    case "return": {
+      const row = await db2.query.returns.findFirst({
+        where: drizzleOrm.eq(returns.id, entityId),
+        columns: { returnNumber: true }
+      });
+      return row?.returnNumber ?? null;
+    }
+    default:
+      return null;
+  }
+}
 function registerReversalHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle(
@@ -22055,9 +22175,15 @@ function registerReversalHandlers() {
             branch: true
           }
         });
+        const enriched = await Promise.all(
+          data.map(async (req) => {
+            const entityReference = await lookupEntityReference(db2, req.entityType, req.entityId);
+            return { ...req, entityReference };
+          })
+        );
         return {
           success: true,
-          data,
+          data: enriched,
           pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
         };
       } catch (error) {

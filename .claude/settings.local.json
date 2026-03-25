@@ -80,7 +80,8 @@
       "Bash(sudo apt-get:*)",
       "Bash(pip3 show:*)",
       "Bash(DB=\"/home/safdaralishah/.config/firearms-pos/data/firearms-pos.db\")",
-      "Bash(ls -1 /home/safdaralishah/Documents/github/fa_practice/firearms-pos-web/src/app/\\\\\\(dashboard\\\\\\)/)"
+      "Bash(ls -1 /home/safdaralishah/Documents/github/fa_practice/firearms-pos-web/src/app/\\\\\\(dashboard\\\\\\)/)",
+      "Bash(grep -A 5 -B 5 \"payment.method === ''''cash''''\" src/main/ipc/sales-ipc.ts)"
     ]
   }
 }

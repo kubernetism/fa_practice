@@ -75,6 +75,7 @@ interface ReversalRequest {
   requestNumber: string
   entityType: string
   entityId: number
+  entityReference: string | null
   reason: string
   priority: 'urgent' | 'high' | 'medium' | 'low'
   status: 'pending' | 'approved' | 'completed' | 'failed' | 'rejected'
@@ -769,7 +770,7 @@ export function ReversalsScreen() {
                     <TableRow className="hover:bg-transparent">
                       <TableHead className="w-32 text-xs">Request #</TableHead>
                       <TableHead className="text-xs w-24">Type</TableHead>
-                      <TableHead className="text-xs w-16">ID</TableHead>
+                      <TableHead className="text-xs w-40">Reference</TableHead>
                       <TableHead className="text-xs">Reason</TableHead>
                       <TableHead className="text-xs w-24">Priority</TableHead>
                       <TableHead className="text-xs w-24">Status</TableHead>
@@ -796,7 +797,11 @@ export function ReversalsScreen() {
                             </Badge>
                           </TableCell>
                           <TableCell className="font-mono text-[11px] text-muted-foreground py-2">
-                            #{req.entityId}
+                            {req.entityReference ? (
+                              <span title={`ID: ${req.entityId}`}>{req.entityReference}</span>
+                            ) : (
+                              <span>#{req.entityId}</span>
+                            )}
                           </TableCell>
                           <TableCell className="text-xs text-muted-foreground py-2 max-w-[200px]">
                             <Tooltip>

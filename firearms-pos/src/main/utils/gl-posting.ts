@@ -339,7 +339,7 @@ export async function createJournalEntry(params: CreateJournalEntryParams): Prom
 }
 
 interface PaymentBreakdownForGL {
-  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer' | 'cod'
   amount: number
   referenceNumber?: string
 }
@@ -382,6 +382,7 @@ export async function postSaleToGL(
         : payment.method === 'mobile' ? 'Mobile'
         : payment.method === 'cheque' ? 'Cheque'
         : payment.method === 'bank_transfer' ? 'Bank Transfer'
+        : payment.method === 'cod' ? 'COD'
         : 'Cash'
 
       lines.push({
@@ -863,6 +864,18 @@ export async function postVoidSaleToGL(
       debitAmount: sale.taxAmount,
       creditAmount: 0,
       description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`,
+    })
+  }
+
+  // DR COD Charges Payable (reverse the credit)
+  // COD charges = totalAmount - (subtotal - discount + tax)
+  const codCharges = sale.totalAmount - ((sale.subtotal - sale.discountAmount) + sale.taxAmount)
+  if (codCharges > 0.01) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: codCharges,
+      creditAmount: 0,
+      description: `Void - reverse COD charges for sale ${sale.invoiceNumber}`,
     })
   }
 

@@ -694,8 +694,12 @@ export function POSScreen() {
         if (actualAmountPaid < total) {
           paymentStatus = actualAmountPaid > 0 ? 'partial' : 'pending'
         }
+      } else if (paymentMethod === 'cod') {
+        // COD - payment collected on delivery, not yet received
+        actualAmountPaid = 0
+        paymentStatus = 'pending'
       } else {
-        // Card, COD, Mobile - full payment
+        // Card, Mobile - full payment
         actualAmountPaid = total
       }
 
