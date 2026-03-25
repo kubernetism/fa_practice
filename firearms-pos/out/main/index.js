@@ -9930,6 +9930,19 @@ function registerBusinessSettingsHandlers() {
     }
   });
 }
+function normalizeDateRange(startDate, endDate) {
+  if (startDate.includes("T") && endDate.includes("T")) {
+    return { start: startDate, end: endDate };
+  }
+  const start = new Date(startDate);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString()
+  };
+}
 function getDateRange(period, customStart, customEnd) {
   const now = /* @__PURE__ */ new Date();
   switch (period) {
@@ -11395,7 +11408,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate, groupBy = "day" } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, groupBy = "day" } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
@@ -11517,7 +11531,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
@@ -11530,7 +11545,10 @@ function registerReportHandlers() {
         const cogs = await db2.select({
           totalCost: drizzleOrm.sql`sum(${saleItems.costPrice} * ${saleItems.quantity})`
         }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(...salesConditions));
-        const expenseConditions = [drizzleOrm.between(expenses.expenseDate, startDate, endDate)];
+        const expenseConditions = [
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false)
+        ];
         if (branchId) expenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
         const expenseTotal = await db2.select({
           totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`
@@ -11590,10 +11608,11 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { startDate, endDate, limit = 20 } = params;
+        const { startDate: rawStart, endDate: rawEnd, limit = 20 } = params;
         const conditions = [drizzleOrm.eq(sales.isVoided, false)];
-        if (startDate && endDate) {
-          conditions.push(drizzleOrm.between(sales.saleDate, startDate, endDate));
+        if (rawStart && rawEnd) {
+          const { start, end } = normalizeDateRange(rawStart, rawEnd);
+          conditions.push(drizzleOrm.between(sales.saleDate, start, end));
         }
         const topCustomers = await db2.select({
           customerId: sales.customerId,
@@ -11633,8 +11652,12 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
-        const conditions = [drizzleOrm.between(expenses.expenseDate, startDate, endDate)];
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
+        const conditions = [
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false)
+        ];
         if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
         const summary = await db2.select({
           totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`,
@@ -11689,7 +11712,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(purchases.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(purchases.branchId, branchId));
         const summary = await db2.select({
@@ -11744,7 +11768,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(returns.returnDate, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(returns.branchId, branchId));
         const totalSalesResult = await db2.select({
@@ -11796,7 +11821,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(commissions.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(commissions.branchId, branchId));
         const summary = await db2.select({
@@ -11843,7 +11869,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
@@ -11890,7 +11917,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { startDate, endDate } = params;
+        const { startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const allBranches = await db2.select().from(branches);
         const branchMetrics = await Promise.all(
           allBranches.map(async (branch) => {
@@ -11909,7 +11937,8 @@ function registerReportHandlers() {
             }).from(expenses).where(
               drizzleOrm.and(
                 drizzleOrm.eq(expenses.branchId, branch.id),
-                drizzleOrm.between(expenses.expenseDate, startDate, endDate)
+                drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+                drizzleOrm.eq(expenses.isVoided, false)
               )
             );
             const inventoryResult = await db2.select({
@@ -11968,7 +11997,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = branchId ? [drizzleOrm.eq(sales.branchId, branchId)] : [];
         const expenseConditions = branchId ? [drizzleOrm.eq(expenses.branchId, branchId)] : [];
         const salesCash = await db2.select({
@@ -11991,7 +12021,11 @@ function registerReportHandlers() {
         );
         const expensesCash = await db2.select({
           total: drizzleOrm.sql`sum(${expenses.amount})`
-        }).from(expenses).where(drizzleOrm.and(drizzleOrm.between(expenses.expenseDate, startDate, endDate), ...expenseConditions));
+        }).from(expenses).where(drizzleOrm.and(
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false),
+          ...expenseConditions
+        ));
         const commissionsCash = await db2.select({
           total: drizzleOrm.sql`sum(${commissions.commissionAmount})`
         }).from(commissions).where(
@@ -12057,7 +12091,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate, userId } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, userId } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(auditLogs.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
         if (userId) conditions.push(drizzleOrm.eq(auditLogs.userId, userId));
@@ -12123,7 +12158,8 @@ function registerReportHandlers() {
         ];
         if (branchId) salesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
         const expenseConditions = [
-          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end)
+          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(expenses.isVoided, false)
         ];
         if (branchId) expenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
         const purchaseConditions = [

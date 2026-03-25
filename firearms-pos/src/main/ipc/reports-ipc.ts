@@ -22,7 +22,7 @@ import {
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
-import { getDateRange, getPeriodLabel } from '../utils/date-helpers'
+import { getDateRange, getPeriodLabel, normalizeDateRange } from '../utils/date-helpers'
 import { generateReportPDF } from '../utils/pdf-generator'
 import type { TimePeriod, ReportType } from '../../shared/types'
 
@@ -42,7 +42,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate, groupBy = 'day' } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, groupBy = 'day' } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [
           between(sales.saleDate, startDate, endDate),
@@ -231,7 +232,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         // Revenue from sales
         const salesConditions = [
@@ -258,7 +260,10 @@ export function registerReportHandlers(): void {
           .where(and(...salesConditions))
 
         // Expenses
-        const expenseConditions = [between(expenses.expenseDate, startDate, endDate)]
+        const expenseConditions = [
+          between(expenses.expenseDate, startDate, endDate),
+          eq(expenses.isVoided, false),
+        ]
         if (branchId) expenseConditions.push(eq(expenses.branchId, branchId))
 
         const expenseTotal = await db
@@ -350,11 +355,12 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { startDate, endDate, limit = 20 } = params
+        const { startDate: rawStart, endDate: rawEnd, limit = 20 } = params
 
         const conditions = [eq(sales.isVoided, false)]
-        if (startDate && endDate) {
-          conditions.push(between(sales.saleDate, startDate, endDate))
+        if (rawStart && rawEnd) {
+          const { start, end } = normalizeDateRange(rawStart, rawEnd)
+          conditions.push(between(sales.saleDate, start, end))
         }
 
         // Top customers
@@ -419,9 +425,13 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
-        const conditions = [between(expenses.expenseDate, startDate, endDate)]
+        const conditions = [
+          between(expenses.expenseDate, startDate, endDate),
+          eq(expenses.isVoided, false),
+        ]
         if (branchId) conditions.push(eq(expenses.branchId, branchId))
 
         // Summary
@@ -516,7 +526,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(purchases.createdAt, startDate, endDate)]
         if (branchId) conditions.push(eq(purchases.branchId, branchId))
@@ -610,7 +621,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(returns.returnDate, startDate, endDate)]
         if (branchId) conditions.push(eq(returns.branchId, branchId))
@@ -702,7 +714,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(commissions.createdAt, startDate, endDate)]
         if (branchId) conditions.push(eq(commissions.branchId, branchId))
@@ -783,7 +796,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [
           between(sales.saleDate, startDate, endDate),
@@ -859,7 +873,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { startDate, endDate } = params
+        const { startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         // Get all branches
         const allBranches = await db.select().from(branches)
@@ -891,7 +906,8 @@ export function registerReportHandlers(): void {
               .where(
                 and(
                   eq(expenses.branchId, branch.id),
-                  between(expenses.expenseDate, startDate, endDate)
+                  between(expenses.expenseDate, startDate, endDate),
+                  eq(expenses.isVoided, false)
                 )
               )
 
@@ -973,7 +989,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = branchId ? [eq(sales.branchId, branchId)] : []
         const expenseConditions = branchId ? [eq(expenses.branchId, branchId)] : []
@@ -1012,7 +1029,11 @@ export function registerReportHandlers(): void {
             total: sql<number>`sum(${expenses.amount})`,
           })
           .from(expenses)
-          .where(and(between(expenses.expenseDate, startDate, endDate), ...expenseConditions))
+          .where(and(
+            between(expenses.expenseDate, startDate, endDate),
+            eq(expenses.isVoided, false),
+            ...expenseConditions
+          ))
 
         // Cash out - Commissions
         const commissionsCash = await db
@@ -1102,7 +1123,8 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate, userId } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, userId } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(auditLogs.createdAt, startDate, endDate)]
         if (branchId) conditions.push(eq(auditLogs.branchId, branchId))
@@ -1217,6 +1239,7 @@ export function registerReportHandlers(): void {
 
         const expenseConditions = [
           between(expenses.expenseDate, dateRange.start, dateRange.end),
+          eq(expenses.isVoided, false),
         ]
         if (branchId) expenseConditions.push(eq(expenses.branchId, branchId))
 

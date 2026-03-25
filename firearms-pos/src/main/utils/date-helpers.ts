@@ -3,6 +3,29 @@ export interface DateRange {
   end: string
 }
 
+/**
+ * Normalize plain date strings (e.g. "2026-03-25") to full ISO range.
+ * Database stores dates as ISO timestamps ("2026-03-25T14:30:00.000Z"),
+ * so plain date strings fail with SQLite's lexicographic `between` comparison.
+ */
+export function normalizeDateRange(startDate: string, endDate: string): DateRange {
+  // If already an ISO timestamp, use as-is
+  if (startDate.includes('T') && endDate.includes('T')) {
+    return { start: startDate, end: endDate }
+  }
+
+  const start = new Date(startDate)
+  start.setHours(0, 0, 0, 0)
+
+  const end = new Date(endDate)
+  end.setHours(23, 59, 59, 999)
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  }
+}
+
 export type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'all-time' | 'custom'
 
 /**
