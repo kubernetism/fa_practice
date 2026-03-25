@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Link } from 'react-router-dom'
 import {
   DollarSign,
   ShoppingCart,
@@ -11,7 +10,6 @@ import {
   RotateCcw,
   Wallet,
   Banknote,
-  Users,
   ArrowDownCircle,
   ArrowUpCircle,
   Camera,
@@ -20,11 +18,12 @@ import {
   Percent,
   BarChart3,
   CalendarDays,
+  PackageX,
 } from 'lucide-react'
 import { toPng } from 'html-to-image'
 import {
-  AreaChart,
-  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -43,6 +42,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { useBranch } from '@/contexts/branch-context'
 import { useCurrency } from '@/contexts/settings-context'
 import { formatNumber } from '@/lib/utils'
@@ -128,65 +129,116 @@ const TIME_PERIOD_LABELS: Record<TimePeriod, string> = {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Compact inline metric row used inside grouped panels               */
+/*  KPI Cell — compact metric with period + all-time                   */
 /* ------------------------------------------------------------------ */
-function MetricRow({
+function KpiCell({
   icon: Icon,
   iconColor,
   label,
   value,
-  sub,
+  allTimeValue,
+  allTimeLabel = 'All time',
   valueColor,
+  sub,
 }: {
   icon: React.ElementType
   iconColor: string
   label: string
   value: string
-  sub?: string
+  allTimeValue?: string
+  allTimeLabel?: string
   valueColor?: string
+  sub?: string
 }) {
   return (
-    <div className="flex items-center justify-between gap-2 py-1.5">
-      <div className="flex items-center gap-2 min-w-0">
-        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconColor}`} />
-        <span className="text-xs text-muted-foreground truncate">{label}</span>
-      </div>
-      <div className="text-right shrink-0">
-        <span className={`text-sm font-semibold tabular-nums ${valueColor || ''}`}>{value}</span>
-        {sub && <p className="text-[10px] text-muted-foreground leading-tight">{sub}</p>}
-      </div>
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/*  Small panel wrapper                                                */
-/* ------------------------------------------------------------------ */
-function Panel({
-  title,
-  children,
-  className = '',
-}: {
-  title: string
-  children: React.ReactNode
-  className?: string
-}) {
-  return (
-    <Card className={`${className}`}>
-      <CardContent className="p-3">
-        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-          {title}
-        </h3>
-        <div className="divide-y divide-border/50">{children}</div>
+    <Card className="min-w-0">
+      <CardContent className="p-2.5">
+        <div className="flex items-center gap-1.5 mb-0.5">
+          <Icon className={`h-3 w-3 shrink-0 ${iconColor}`} />
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground truncate">
+            {label}
+          </span>
+        </div>
+        <div className={`text-lg font-bold tabular-nums leading-tight ${valueColor || ''}`}>
+          {value}
+        </div>
+        {sub && (
+          <p className="text-[9px] text-orange-500 leading-tight mt-0.5 truncate">{sub}</p>
+        )}
+        {allTimeValue && (
+          <p className="text-[9px] text-muted-foreground mt-0.5 tabular-nums">
+            {allTimeLabel}: <span className="font-medium text-foreground/70">{allTimeValue}</span>
+          </p>
+        )}
       </CardContent>
     </Card>
   )
 }
 
+/* ------------------------------------------------------------------ */
+/*  Compact inline metric row                                          */
+/* ------------------------------------------------------------------ */
+function MetricRow({
+  label,
+  value,
+  valueColor,
+  bold,
+}: {
+  label: string
+  value: string
+  valueColor?: string
+  bold?: boolean
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 py-[3px]">
+      <span className={`text-[11px] truncate ${bold ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>
+        {label}
+      </span>
+      <span className={`text-[11px] tabular-nums shrink-0 ${bold ? 'font-bold' : 'font-semibold'} ${valueColor || ''}`}>
+        {value}
+      </span>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Section header inside panels                                       */
+/* ------------------------------------------------------------------ */
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/70 mb-1 mt-2 first:mt-0">
+      {children}
+    </h3>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Low Stock progress bar                                             */
+/* ------------------------------------------------------------------ */
+function StockBar({ current, min }: { current: number; min: number }) {
+  const pct = min > 0 ? Math.min((current / min) * 100, 100) : 0
+  const critical = pct <= 30
+  const warn = pct <= 60 && !critical
+  return (
+    <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+      <div
+        className={`h-full rounded-full transition-all ${
+          critical ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'
+        }`}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  )
+}
+
+/* ================================================================== */
+/*  DASHBOARD SCREEN                                                   */
+/* ================================================================== */
 export function DashboardScreen() {
   const { currentBranch } = useBranch()
   const { formatCurrency } = useCurrency()
   const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [allTimeStats, setAllTimeStats] = useState<DashboardStats | null>(null)
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
   const [trendChart, setTrendChart] = useState<TrendChartData | null>(null)
   const [fundFlow, setFundFlow] = useState<FundFlowData | null>(null)
@@ -199,7 +251,6 @@ export function DashboardScreen() {
   const [businessName, setBusinessName] = useState('')
   const reportRef = useRef<HTMLDivElement>(null)
 
-  // Fetch business name for the report header
   useEffect(() => {
     const fetchBizName = async () => {
       try {
@@ -208,7 +259,7 @@ export function DashboardScreen() {
           setBusinessName(result.data.businessName)
         }
       } catch {
-        // ignore — will fall back to default
+        // ignore
       }
     }
     fetchBizName()
@@ -216,10 +267,8 @@ export function DashboardScreen() {
 
   const handleCopyDashboard = useCallback(async () => {
     if (!stats || !currentBranch || !reportRef.current || isCopying) return
-
     setIsCopying(true)
     try {
-      // Temporarily make the off-screen report card visible for rendering
       const node = reportRef.current
       const prevPos = node.style.position
       const prevLeft = node.style.left
@@ -229,20 +278,14 @@ export function DashboardScreen() {
       node.style.top = '0px'
       node.style.zIndex = '-1'
 
-      const dataUrl = await toPng(node, {
-        pixelRatio: 2,
-        backgroundColor: '#0f172a',
-      })
+      const dataUrl = await toPng(node, { pixelRatio: 2, backgroundColor: '#0f172a' })
 
-      // Restore off-screen positioning
       node.style.position = prevPos
       node.style.left = prevLeft
       node.style.top = prevTop
       node.style.zIndex = ''
 
-      // Copy via Electron native clipboard
       await window.api.clipboard.copyImage(dataUrl)
-
       setIsCopied(true)
       setTimeout(() => setIsCopied(false), 2500)
     } catch (error) {
@@ -252,61 +295,49 @@ export function DashboardScreen() {
     }
   }, [stats, currentBranch, isCopying])
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      if (!currentBranch) return
+  const fetchDashboardData = useCallback(async (silent = false) => {
+    if (!currentBranch) return
+    if (!silent) setIsLoading(true)
+    try {
+      const dateParams = timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}
 
-      setIsLoading(true)
-      try {
-        const statsResult = await window.api.dashboard.getStats({
-          branchId: currentBranch.id,
-          timePeriod,
-          ...(timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}),
-        })
+      const [statsResult, allTimeResult, lowStockResult, trendResult, fundFlowResult] =
+        await Promise.all([
+          window.api.dashboard.getStats({ branchId: currentBranch.id, timePeriod, ...dateParams }),
+          window.api.dashboard.getStats({ branchId: currentBranch.id, timePeriod: 'all-time' as any }),
+          window.api.inventory.getLowStock(currentBranch.id),
+          window.api.dashboard.getTrendData({ branchId: currentBranch.id, timePeriod, chartFilter, ...dateParams }),
+          window.api.dashboard.getFundFlow({ branchId: currentBranch.id, timePeriod, ...dateParams }),
+        ])
 
-        if (statsResult.success && statsResult.data) {
-          setStats(statsResult.data)
-        }
-
-        const lowStockResult = await window.api.inventory.getLowStock(currentBranch.id)
-        if (lowStockResult.success && lowStockResult.data) {
-          const items = lowStockResult.data.map((item: any) => ({
+      if (statsResult.success && statsResult.data) setStats(statsResult.data)
+      if (allTimeResult.success && allTimeResult.data) setAllTimeStats(allTimeResult.data)
+      if (lowStockResult.success && lowStockResult.data) {
+        setLowStockItems(
+          lowStockResult.data.map((item: any) => ({
             productId: item.product.id,
             productName: item.product.name,
             productCode: item.product.code,
             quantity: item.inventory.quantity,
             minQuantity: item.inventory.minQuantity,
           }))
-          setLowStockItems(items)
-        }
-
-        const trendResult = await window.api.dashboard.getTrendData({
-          branchId: currentBranch.id,
-          timePeriod,
-          chartFilter,
-          ...(timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}),
-        })
-        if (trendResult.success && trendResult.data) {
-          setTrendChart(trendResult.data)
-        }
-
-        const fundFlowResult = await window.api.dashboard.getFundFlow({
-          branchId: currentBranch.id,
-          timePeriod,
-          ...(timePeriod === 'custom' ? { customStart: customDate, customEnd: customDate } : {}),
-        })
-        if (fundFlowResult.success && fundFlowResult.data) {
-          setFundFlow(fundFlowResult.data)
-        }
-      } catch (error) {
-        console.error('Failed to fetch dashboard data:', error)
-      } finally {
-        setIsLoading(false)
+        )
       }
+      if (trendResult.success && trendResult.data) setTrendChart(trendResult.data)
+      if (fundFlowResult.success && fundFlowResult.data) setFundFlow(fundFlowResult.data)
+    } catch (error) {
+      console.error('Failed to fetch dashboard data:', error)
+    } finally {
+      if (!silent) setIsLoading(false)
     }
-
-    fetchDashboardData()
   }, [currentBranch, timePeriod, chartFilter, customDate])
+
+  // Initial fetch + auto-refresh every 30 seconds
+  useEffect(() => {
+    fetchDashboardData()
+    const interval = setInterval(() => fetchDashboardData(true), 30_000)
+    return () => clearInterval(interval)
+  }, [fetchDashboardData])
 
   if (isLoading) {
     return (
@@ -318,349 +349,230 @@ export function DashboardScreen() {
 
   const profit = stats?.totalProfit || 0
   const profitPositive = profit >= 0
+  const hasDeductions = (stats?.returnDeductions || 0) > 0 || (stats?.totalDiscount || 0) > 0
 
   return (
-    <div className="flex h-full flex-col gap-3 overflow-hidden">
-      {/* Setup Checklist - shown until dismissed */}
-      <SetupChecklist />
+    <TooltipProvider delayDuration={200}>
+      <div className="flex h-full flex-col gap-2.5 overflow-hidden">
+        <SetupChecklist />
 
-      {/* ── Header ─────────────────────────────────────── */}
-      <div className="flex items-center justify-between shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold leading-tight truncate">
+        {/* ── Header ─────────────────────────────────────── */}
+        <div className="flex items-center justify-between shrink-0">
+          <h1 className="text-lg font-bold leading-tight truncate min-w-0">
             {currentBranch?.name || 'Dashboard'}
           </h1>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopyDashboard}
-            disabled={!stats || isCopying}
-            className="h-7 px-2 gap-1.5 text-xs"
-          >
-            {isCopying ? (
-              <><Loader2 className="h-3 w-3 animate-spin" /> Capturing...</>
-            ) : isCopied ? (
-              <><Check className="h-3 w-3 text-green-500" /> Copied!</>
-            ) : (
-              <><Camera className="h-3 w-3" /> Screenshot</>
-            )}
-          </Button>
-          <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
-            <TabsList className="h-7">
-              {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
-                <TabsTrigger key={period} value={period} className="text-xs px-2.5 h-5">
-                  {period === 'custom' ? <CalendarDays className="h-3 w-3 mr-1" /> : null}
-                  {TIME_PERIOD_LABELS[period]}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-          {timePeriod === 'custom' && (
-            <input
-              type="date"
-              value={customDate}
-              onChange={(e) => setCustomDate(e.target.value)}
-              className="h-7 rounded-md border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
-            />
-          )}
-        </div>
-      </div>
-
-      {/* ── Hero KPIs ──────────────────────────────────── */}
-      <div className="grid grid-cols-4 gap-3 shrink-0">
-        {/* Revenue */}
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Revenue</span>
-              <DollarSign className="h-3.5 w-3.5 text-blue-500" />
-            </div>
-            <div className="text-2xl font-bold tabular-nums text-blue-600">
-              {formatCurrency(stats?.grossRevenue || 0)}
-            </div>
-            {((stats?.returnDeductions || 0) > 0 || (stats?.totalDiscount || 0) > 0) ? (
-              <p className="text-[10px] text-orange-500 mt-0.5">
-                {(stats?.totalDiscount || 0) > 0 && <>Disc: -{formatCurrency(stats?.totalDiscount || 0)}</>}
-                {(stats?.totalDiscount || 0) > 0 && (stats?.returnDeductions || 0) > 0 && ' · '}
-                {(stats?.returnDeductions || 0) > 0 && <>Ret: -{formatCurrency(stats?.returnDeductions || 0)}</>}
-                {' · '}Net: {formatCurrency(stats?.totalRevenue || 0)}
-              </p>
-            ) : (
-              <p className="text-[10px] text-muted-foreground mt-0.5">Gross sales revenue</p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Profit */}
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Profit</span>
-              {profitPositive ? (
-                <TrendingUp className="h-3.5 w-3.5 text-green-500" />
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleCopyDashboard}
+              disabled={!stats || isCopying}
+              className="h-6 px-2 gap-1 text-[10px]"
+            >
+              {isCopying ? (
+                <><Loader2 className="h-3 w-3 animate-spin" /> Capturing...</>
+              ) : isCopied ? (
+                <><Check className="h-3 w-3 text-green-500" /> Copied!</>
               ) : (
-                <TrendingDown className="h-3.5 w-3.5 text-red-500" />
+                <><Camera className="h-3 w-3" /> Screenshot</>
               )}
-            </div>
-            <div className={`text-2xl font-bold tabular-nums ${profitPositive ? 'text-green-600' : 'text-red-600'}`}>
-              {formatCurrency(profit)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-0.5">After cost, discount, comm & tax</p>
-          </CardContent>
-        </Card>
-
-        {/* Cash In Hand */}
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Cash In Hand</span>
-              <Banknote className="h-3.5 w-3.5 text-emerald-500" />
-            </div>
-            <div className="text-2xl font-bold tabular-nums">
-              {formatCurrency(stats?.cashInHand || 0)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-0.5">Register balance</p>
-          </CardContent>
-        </Card>
-
-        {/* Sales Count */}
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sales</span>
-              <ShoppingCart className="h-3.5 w-3.5 text-indigo-500" />
-            </div>
-            <div className="text-2xl font-bold tabular-nums">
-              {formatNumber(stats?.totalSalesCount || 0)}
-            </div>
-            <p className="text-[10px] text-muted-foreground mt-0.5">
-              {formatNumber(stats?.totalProductsSold || 0)} units sold
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* ── Detail Grid ────────────────────────────────── */}
-      <div className="grid grid-cols-12 gap-3 flex-1 min-h-0">
-        {/* Left column — Financials + Purchases/Expenses */}
-        <div className="col-span-3 flex flex-col gap-3">
-          <Panel title="Cost & Margins">
-            <MetricRow
-              icon={Receipt}
-              iconColor="text-purple-500"
-              label="Total Cost"
-              value={formatCurrency(stats?.totalCost || 0)}
-            />
-            <MetricRow
-              icon={Receipt}
-              iconColor="text-purple-500"
-              label="Purchases"
-              value={formatCurrency(stats?.totalPurchases || 0)}
-            />
-            <MetricRow
-              icon={Wallet}
-              iconColor="text-red-500"
-              label="Expenses"
-              value={formatCurrency(stats?.totalExpense || 0)}
-            />
-            <MetricRow
-              icon={RotateCcw}
-              iconColor="text-orange-500"
-              label="Returns"
-              value={formatCurrency(stats?.totalReturns || 0)}
-            />
-          </Panel>
-
-          <Panel title="Deductions">
-            <MetricRow
-              icon={Percent}
-              iconColor="text-pink-500"
-              label="Discounts"
-              value={formatCurrency(stats?.grossDiscount || 0)}
-              valueColor={(stats?.grossDiscount || 0) > 0 ? 'text-pink-500' : ''}
-            />
-            <MetricRow
-              icon={Percent}
-              iconColor="text-blue-500"
-              label="Tax Collected"
-              value={formatCurrency(stats?.totalTaxCollected || 0)}
-            />
-            <MetricRow
-              icon={DollarSign}
-              iconColor="text-amber-500"
-              label="Commission"
-              value={formatCurrency(stats?.totalCommission || 0)}
-            />
-          </Panel>
-
+            </Button>
+            <Tabs value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
+              <TabsList className="h-6">
+                {(Object.keys(TIME_PERIOD_LABELS) as TimePeriod[]).map((period) => (
+                  <TabsTrigger key={period} value={period} className="text-[10px] px-2 h-4">
+                    {period === 'custom' ? <CalendarDays className="h-2.5 w-2.5 mr-0.5" /> : null}
+                    {TIME_PERIOD_LABELS[period]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            {timePeriod === 'custom' && (
+              <input
+                type="date"
+                value={customDate}
+                onChange={(e) => setCustomDate(e.target.value)}
+                className="h-6 rounded-md border border-input bg-background px-2 text-[10px] focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            )}
+          </div>
         </div>
 
-        {/* Center column — AR / AP / Fund Flow */}
-        <div className="col-span-3 flex flex-col gap-3 overflow-y-auto">
-          <Panel title="Accounts Receivable">
-            <MetricRow
-              icon={ArrowDownCircle}
-              iconColor="text-yellow-500"
-              label="Pending"
-              value={formatCurrency(stats?.receivablesPending || 0)}
-              valueColor="text-yellow-600"
-            />
-            <MetricRow
-              icon={ArrowDownCircle}
-              iconColor="text-green-500"
-              label="Received"
-              value={formatCurrency(stats?.receivablesReceived || 0)}
-              valueColor="text-green-600"
-            />
-          </Panel>
+        {/* ── KPI Strip ──────────────────────────────────── */}
+        <div className="grid grid-cols-6 gap-2 shrink-0">
+          <KpiCell
+            icon={DollarSign}
+            iconColor="text-blue-500"
+            label="Revenue"
+            value={formatCurrency(stats?.grossRevenue || 0)}
+            allTimeValue={allTimeStats ? formatCurrency(allTimeStats.grossRevenue) : undefined}
+            valueColor="text-blue-600"
+            sub={hasDeductions ? `Net: ${formatCurrency(stats?.totalRevenue || 0)}` : undefined}
+          />
+          <KpiCell
+            icon={profitPositive ? TrendingUp : TrendingDown}
+            iconColor={profitPositive ? 'text-green-500' : 'text-red-500'}
+            label="Profit"
+            value={formatCurrency(profit)}
+            allTimeValue={allTimeStats ? formatCurrency(allTimeStats.totalProfit) : undefined}
+            valueColor={profitPositive ? 'text-green-600' : 'text-red-600'}
+          />
+          <KpiCell
+            icon={Banknote}
+            iconColor="text-emerald-500"
+            label="Cash In Hand"
+            value={formatCurrency(stats?.cashInHand || 0)}
+          />
+          <KpiCell
+            icon={ShoppingCart}
+            iconColor="text-indigo-500"
+            label="Sales"
+            value={formatNumber(stats?.totalSalesCount || 0)}
+            allTimeValue={allTimeStats ? formatNumber(allTimeStats.totalSalesCount) : undefined}
+            sub={`${formatNumber(stats?.totalProductsSold || 0)} units`}
+          />
+          <KpiCell
+            icon={Package}
+            iconColor="text-emerald-500"
+            label="Products"
+            value={formatNumber(stats?.totalProducts || 0)}
+            allTimeValue={`${formatNumber(stats?.totalProductsSold || 0)} sold`}
+            allTimeLabel="Period"
+          />
+          <KpiCell
+            icon={AlertTriangle}
+            iconColor={(stats?.lowStockCount || 0) > 0 ? 'text-red-500' : 'text-emerald-500'}
+            label="Low Stock"
+            value={formatNumber(stats?.lowStockCount || 0)}
+            valueColor={(stats?.lowStockCount || 0) > 0 ? 'text-red-600' : ''}
+          />
+        </div>
 
-          <Panel title="Accounts Payable">
-            <MetricRow
-              icon={ArrowUpCircle}
-              iconColor="text-red-500"
-              label="Pending"
-              value={formatCurrency(stats?.payablesPending || 0)}
-              valueColor="text-red-600"
-            />
-            <MetricRow
-              icon={ArrowUpCircle}
-              iconColor="text-green-500"
-              label="Paid"
-              value={formatCurrency(stats?.payablesPaid || 0)}
-              valueColor="text-green-600"
-            />
-          </Panel>
+        {/* ── Main Content Grid ──────────────────────────── */}
+        <div className="grid grid-cols-12 gap-2.5 flex-1 min-h-0">
 
-          <Panel title="Inventory">
-            <MetricRow
-              icon={Package}
-              iconColor="text-emerald-500"
-              label="Active Products"
-              value={formatNumber(stats?.totalProducts || 0)}
-            />
-            <MetricRow
-              icon={AlertTriangle}
-              iconColor="text-warning"
-              label="Low Stock"
-              value={formatNumber(stats?.lowStockCount || 0)}
-              valueColor={
-                (stats?.lowStockCount || 0) > 0 ? 'text-destructive' : ''
-              }
-            />
-          </Panel>
-
-          {/* Fund Flow — Cash Movement Breakdown */}
-          {fundFlow && (
-            <Panel title="Fund Flow">
+          {/* ── Column 1: Financials & Deductions ──────── */}
+          <Card className="col-span-3 min-h-0">
+            <CardContent className="p-2.5 h-full overflow-y-auto">
+              <SectionLabel>Cost & Outflows</SectionLabel>
+              <MetricRow label="Total Cost (COGS)" value={formatCurrency(stats?.totalCost || 0)} />
+              <MetricRow label="Purchases" value={formatCurrency(stats?.totalPurchases || 0)} />
+              <MetricRow label="Expenses" value={formatCurrency(stats?.totalExpense || 0)} />
               <MetricRow
-                icon={Banknote}
-                iconColor="text-slate-400"
-                label="Opening Cash"
-                value={formatCurrency(fundFlow.openingCash)}
+                label="Returns"
+                value={formatCurrency(stats?.totalReturns || 0)}
+                valueColor={(stats?.totalReturns || 0) > 0 ? 'text-orange-500' : ''}
+              />
+
+              <SectionLabel>Deductions</SectionLabel>
+              <MetricRow
+                label="Discounts"
+                value={formatCurrency(stats?.grossDiscount || 0)}
+                valueColor={(stats?.grossDiscount || 0) > 0 ? 'text-pink-500' : ''}
+              />
+              <MetricRow label="Tax Collected" value={formatCurrency(stats?.totalTaxCollected || 0)} />
+              <MetricRow label="Commission (Paid)" value={formatCurrency(stats?.totalCommission || 0)} />
+
+              <SectionLabel>Accounts Receivable</SectionLabel>
+              <MetricRow
+                label="Pending"
+                value={formatCurrency(stats?.receivablesPending || 0)}
+                valueColor={(stats?.receivablesPending || 0) > 0 ? 'text-yellow-600' : ''}
               />
               <MetricRow
-                icon={ArrowDownCircle}
-                iconColor="text-green-500"
-                label="+ Sales (Cash)"
-                value={formatCurrency(fundFlow.cashFromSales)}
+                label="Received"
+                value={formatCurrency(stats?.receivablesReceived || 0)}
                 valueColor="text-green-600"
               />
-              {fundFlow.arCollections > 0 && (
-                <MetricRow
-                  icon={ArrowDownCircle}
-                  iconColor="text-green-500"
-                  label="+ AR Collections"
-                  value={formatCurrency(fundFlow.arCollections)}
-                  valueColor="text-green-600"
-                />
-              )}
-              {fundFlow.deposits > 0 && (
-                <MetricRow
-                  icon={ArrowDownCircle}
-                  iconColor="text-green-500"
-                  label="+ Deposits"
-                  value={formatCurrency(fundFlow.deposits)}
-                  valueColor="text-green-600"
-                />
-              )}
-              <div className="border-t border-border/50 my-0.5" />
-              <MetricRow
-                icon={DollarSign}
-                iconColor="text-blue-500"
-                label="Total Available"
-                value={formatCurrency(fundFlow.openingCash + fundFlow.totalCashIn)}
-                valueColor="text-blue-500 font-bold"
-              />
-              <div className="border-t border-border/50 my-0.5" />
-              {fundFlow.apPayments > 0 && (
-                <MetricRow
-                  icon={ArrowUpCircle}
-                  iconColor="text-red-500"
-                  label="- AP Payments"
-                  value={`(${formatCurrency(fundFlow.apPayments)})`}
-                  valueColor="text-red-500"
-                />
-              )}
-              {fundFlow.expensesPaid > 0 && (
-                <MetricRow
-                  icon={ArrowUpCircle}
-                  iconColor="text-red-500"
-                  label="- Expenses"
-                  value={`(${formatCurrency(fundFlow.expensesPaid)})`}
-                  valueColor="text-red-500"
-                />
-              )}
-              {fundFlow.refunds > 0 && (
-                <MetricRow
-                  icon={ArrowUpCircle}
-                  iconColor="text-orange-500"
-                  label="- Refunds"
-                  value={`(${formatCurrency(fundFlow.refunds)})`}
-                  valueColor="text-orange-500"
-                />
-              )}
-              {fundFlow.withdrawals > 0 && (
-                <MetricRow
-                  icon={ArrowUpCircle}
-                  iconColor="text-red-500"
-                  label="- Withdrawals"
-                  value={`(${formatCurrency(fundFlow.withdrawals)})`}
-                  valueColor="text-red-500"
-                />
-              )}
-              <div className="border-t border-border/50 my-0.5" />
-              <MetricRow
-                icon={Banknote}
-                iconColor="text-emerald-500"
-                label="Closing Cash"
-                value={formatCurrency(fundFlow.closingCash)}
-                valueColor="text-emerald-500 font-bold"
-              />
-            </Panel>
-          )}
 
-        </div>
+              <SectionLabel>Accounts Payable</SectionLabel>
+              <MetricRow
+                label="Pending"
+                value={formatCurrency(stats?.payablesPending || 0)}
+                valueColor={(stats?.payablesPending || 0) > 0 ? 'text-red-500' : ''}
+              />
+              <MetricRow
+                label="Paid"
+                value={formatCurrency(stats?.payablesPaid || 0)}
+                valueColor="text-green-600"
+              />
+            </CardContent>
+          </Card>
 
-        {/* Right column — Business Progress Chart + Quick Actions */}
-        <div className="col-span-6 flex flex-col gap-3 min-h-0">
-          {/* Business Progress Chart */}
-          <Card className="flex-1 min-h-0 flex flex-col">
-            <CardContent className="p-3 flex flex-col flex-1 min-h-0">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                  <BarChart3 className="h-3 w-3 text-blue-500" />
+          {/* ── Column 2: Fund Flow ────────────────────── */}
+          <Card className="col-span-2 min-h-0">
+            <CardContent className="p-2.5 h-full overflow-y-auto">
+              <SectionLabel>Fund Flow</SectionLabel>
+              {fundFlow ? (
+                <>
+                  <MetricRow label="Opening Cash" value={formatCurrency(fundFlow.openingCash)} />
+                  <div className="my-1 border-t border-border/40" />
+                  <MetricRow label="+ Sales (Cash)" value={formatCurrency(fundFlow.cashFromSales)} valueColor="text-green-600" />
+                  {fundFlow.arCollections > 0 && (
+                    <MetricRow label="+ AR Collections" value={formatCurrency(fundFlow.arCollections)} valueColor="text-green-600" />
+                  )}
+                  {fundFlow.deposits > 0 && (
+                    <MetricRow label="+ Deposits" value={formatCurrency(fundFlow.deposits)} valueColor="text-green-600" />
+                  )}
+                  {fundFlow.pettyCashIn > 0 && (
+                    <MetricRow label="+ Petty Cash In" value={formatCurrency(fundFlow.pettyCashIn)} valueColor="text-green-600" />
+                  )}
+                  {fundFlow.cashIn > 0 && (
+                    <MetricRow label="+ Cash In" value={formatCurrency(fundFlow.cashIn)} valueColor="text-green-600" />
+                  )}
+                  <div className="my-1 border-t border-border/40" />
+                  <MetricRow
+                    label="Total Available"
+                    value={formatCurrency(fundFlow.openingCash + fundFlow.totalCashIn)}
+                    valueColor="text-blue-500"
+                    bold
+                  />
+                  <div className="my-1 border-t border-border/40" />
+                  {fundFlow.apPayments > 0 && (
+                    <MetricRow label="- AP Payments" value={`(${formatCurrency(fundFlow.apPayments)})`} valueColor="text-red-500" />
+                  )}
+                  {fundFlow.expensesPaid > 0 && (
+                    <MetricRow label="- Expenses" value={`(${formatCurrency(fundFlow.expensesPaid)})`} valueColor="text-red-500" />
+                  )}
+                  {fundFlow.refunds > 0 && (
+                    <MetricRow label="- Refunds" value={`(${formatCurrency(fundFlow.refunds)})`} valueColor="text-orange-500" />
+                  )}
+                  {fundFlow.withdrawals > 0 && (
+                    <MetricRow label="- Withdrawals" value={`(${formatCurrency(fundFlow.withdrawals)})`} valueColor="text-red-500" />
+                  )}
+                  {fundFlow.pettyCashOut > 0 && (
+                    <MetricRow label="- Petty Cash Out" value={`(${formatCurrency(fundFlow.pettyCashOut)})`} valueColor="text-red-500" />
+                  )}
+                  <div className="my-1 border-t border-border/40" />
+                  <MetricRow
+                    label="Closing Cash"
+                    value={formatCurrency(fundFlow.closingCash)}
+                    valueColor="text-emerald-500"
+                    bold
+                  />
+                </>
+              ) : (
+                <p className="text-[10px] text-muted-foreground">No cash session data</p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* ── Column 3: Chart ────────────────────────── */}
+          <Card className="col-span-4 min-h-0 flex flex-col">
+            <CardContent className="p-2.5 flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/70 flex items-center gap-1">
+                  <BarChart3 className="h-2.5 w-2.5 text-blue-500" />
                   Business Progress
                 </h3>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   {trendChart && trendChart.points.length > 0 && (
-                    <span className="text-[10px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">
+                    <span className="text-[9px] bg-blue-500/10 text-blue-500 px-1.5 py-0.5 rounded-full font-medium">
                       {trendChart.badge}
                     </span>
                   )}
                   <Select value={chartFilter} onValueChange={(v) => setChartFilter(v as ChartFilter)}>
-                    <SelectTrigger className="h-6 w-[140px] text-[10px] px-2">
+                    <SelectTrigger className="h-5 w-[120px] text-[9px] px-1.5">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -676,30 +588,20 @@ export function DashboardScreen() {
               <div className="flex-1 min-h-0">
                 {!trendChart || trendChart.points.length === 0 ? (
                   <div className="flex items-center justify-center h-full">
-                    <p className="text-xs text-muted-foreground text-center">
-                      No data for this period
-                    </p>
+                    <p className="text-[10px] text-muted-foreground">No data for this period</p>
                   </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={trendChart.points} margin={{ top: 5, right: 10, left: -10, bottom: 0 }}>
-                      <defs>
-                        {trendChart.series.map((key) => (
-                          <linearGradient key={key} id={`gradient_${key}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor={trendChart.seriesColors[key]} stopOpacity={0.3} />
-                            <stop offset="95%" stopColor={trendChart.seriesColors[key]} stopOpacity={0} />
-                          </linearGradient>
-                        ))}
-                      </defs>
+                    <BarChart data={trendChart.points} margin={{ top: 5, right: 5, left: -15, bottom: 0 }} barCategoryGap="20%">
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
                       <XAxis
                         dataKey="label"
-                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                        tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
                         axisLine={{ stroke: 'hsl(var(--border))' }}
                         tickLine={false}
                       />
                       <YAxis
-                        tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+                        tick={{ fontSize: 9, fill: 'hsl(var(--muted-foreground))' }}
                         axisLine={false}
                         tickLine={false}
                         tickFormatter={(v) => {
@@ -709,86 +611,114 @@ export function DashboardScreen() {
                         }}
                       />
                       <RechartsTooltip
+                        cursor={{ fill: 'transparent' }}
                         contentStyle={{
                           backgroundColor: 'hsl(var(--card))',
                           border: '1px solid hsl(var(--border))',
-                          borderRadius: '8px',
-                          fontSize: '11px',
-                          padding: '8px 12px',
+                          borderRadius: '6px',
+                          fontSize: '10px',
+                          padding: '6px 10px',
                         }}
-                        labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 600, marginBottom: 4 }}
+                        labelStyle={{ color: 'hsl(var(--foreground))', fontWeight: 600, marginBottom: 2 }}
                         formatter={(value: number, name: string) => [
                           formatCurrency(value),
                           trendChart.seriesLabels[name] || name,
                         ]}
                       />
                       <Legend
-                        iconType="circle"
+                        iconType="square"
                         iconSize={6}
-                        wrapperStyle={{ fontSize: '10px', paddingTop: '4px' }}
+                        wrapperStyle={{ fontSize: '9px', paddingTop: '2px' }}
                         formatter={(value) => trendChart.seriesLabels[value] || value}
                       />
                       {trendChart.series.map((key) => (
-                        <Area
+                        <Bar
                           key={key}
-                          type="monotone"
                           dataKey={key}
-                          stroke={trendChart.seriesColors[key]}
-                          strokeWidth={2}
-                          fill={`url(#gradient_${key})`}
+                          fill={trendChart.seriesColors[key]}
+                          radius={[2, 2, 0, 0]}
+                          maxBarSize={32}
                         />
                       ))}
-                    </AreaChart>
+                    </BarChart>
                   </ResponsiveContainer>
                 )}
               </div>
             </CardContent>
           </Card>
 
-          {/* Quick Actions — compact row */}
-          <div className="grid grid-cols-4 gap-2 shrink-0">
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
-              <Link to="/pos">
-                <ShoppingCart className="h-3 w-3" />
-                New Sale
-              </Link>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
-              <Link to="/products">
-                <Package className="h-3 w-3" />
-                Add Product
-              </Link>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
-              <Link to="/customers">
-                <Users className="h-3 w-3" />
-                Add Customer
-              </Link>
-            </Button>
-            <Button variant="outline" size="sm" className="h-8 text-xs gap-1.5" asChild>
-              <Link to="/inventory">
-                <Package className="h-3 w-3" />
-                Stock Adjust
-              </Link>
-            </Button>
-          </div>
+          {/* ── Column 4: Low Stock Items ──────────────── */}
+          <Card className="col-span-3 min-h-0 flex flex-col">
+            <CardContent className="p-2.5 flex flex-col flex-1 min-h-0">
+              <div className="flex items-center justify-between mb-1.5">
+                <h3 className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground/70 flex items-center gap-1">
+                  <PackageX className="h-2.5 w-2.5 text-red-500" />
+                  Low Stock Items
+                </h3>
+                {lowStockItems.length > 0 && (
+                  <span className="text-[9px] bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded-full font-medium">
+                    {lowStockItems.length} items
+                  </span>
+                )}
+              </div>
+              {lowStockItems.length === 0 ? (
+                <div className="flex-1 flex items-center justify-center">
+                  <div className="text-center">
+                    <Package className="h-6 w-6 text-emerald-500/40 mx-auto mb-1" />
+                    <p className="text-[10px] text-muted-foreground">All stock levels OK</p>
+                  </div>
+                </div>
+              ) : (
+                <ScrollArea className="flex-1 min-h-0">
+                  <div className="space-y-1.5 pr-2">
+                    {lowStockItems.map((item) => (
+                      <div key={item.productId} className="group">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <p className="text-[11px] font-medium truncate cursor-default">
+                                  {item.productName}
+                                </p>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="text-xs">
+                                {item.productName} ({item.productCode})
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                          <span className={`text-[10px] font-bold tabular-nums shrink-0 ${
+                            item.quantity <= 0 ? 'text-red-500' :
+                            item.quantity <= item.minQuantity * 0.3 ? 'text-red-500' :
+                            'text-amber-500'
+                          }`}>
+                            {item.quantity}/{item.minQuantity}
+                          </span>
+                        </div>
+                        <StockBar current={item.quantity} min={item.minQuantity} />
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
         </div>
-      </div>
 
-      {/* Off-screen report card for screenshot capture */}
-      {stats && (
-        <ReportCard
-          ref={reportRef}
-          businessName={businessName}
-          branchName={currentBranch?.name || 'Branch'}
-          periodLabel={timePeriod === 'custom' ? customDate : TIME_PERIOD_LABELS[timePeriod]}
-          generatedAt={new Date().toLocaleString()}
-          formatCurrency={formatCurrency}
-          formatNumber={formatNumber}
-          stats={stats}
-          fundFlow={fundFlow}
-        />
-      )}
-    </div>
+        {/* Off-screen report card for screenshot capture */}
+        {stats && (
+          <ReportCard
+            ref={reportRef}
+            businessName={businessName}
+            branchName={currentBranch?.name || 'Branch'}
+            periodLabel={timePeriod === 'custom' ? customDate : TIME_PERIOD_LABELS[timePeriod]}
+            generatedAt={new Date().toLocaleString()}
+            formatCurrency={formatCurrency}
+            formatNumber={formatNumber}
+            stats={stats}
+            fundFlow={fundFlow}
+          />
+        )}
+      </div>
+    </TooltipProvider>
   )
 }

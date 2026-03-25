@@ -36,11 +36,15 @@ import {
   Briefcase,
   ShieldCheck,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettings } from '@/contexts/settings-context'
+import { useSidebar } from '@/contexts/sidebar-context'
 import { ThemeToggle } from '@/components/theme'
 
 type UserRole = 'admin' | 'manager' | 'cashier'
@@ -59,10 +63,6 @@ interface NavSection {
   items: NavItem[]
 }
 
-// Cashier: Main only
-// Manager: Main + Inventory + Management
-// Admin: Everything
-
 const sections: NavSection[] = [
   {
     id: 'main',
@@ -72,6 +72,7 @@ const sections: NavSection[] = [
       { title: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
       { title: 'Point of Sale', href: '/pos', icon: ShoppingCart },
       { title: 'Sales History', href: '/sales', icon: Receipt },
+      { title: 'Online Transactions', href: '/online-transactions', icon: Banknote },
     ],
   },
   {
@@ -138,6 +139,7 @@ const sections: NavSection[] = [
 export function Sidebar() {
   const { user } = useAuth()
   const { currentBranchSettings, globalSettings } = useSettings()
+  const { collapsed, toggle } = useSidebar()
   const location = useLocation()
   const businessName = currentBranchSettings?.businessName || globalSettings?.businessName || 'POS System'
 
@@ -147,7 +149,6 @@ export function Sidebar() {
 
   const userRole = user?.role?.toLowerCase() as UserRole
 
-  // Filter sections based on user role
   const visibleSections = useMemo(() => {
     return sections
       .map((section) => ({
@@ -160,7 +161,6 @@ export function Sidebar() {
       .filter((section) => section.items.length > 0)
   }, [userRole])
 
-  // Determine which section contains the active route
   const activeSection = useMemo(() => {
     for (const section of visibleSections) {
       for (const item of section.items) {
@@ -174,13 +174,82 @@ export function Sidebar() {
 
   const [openSection, setOpenSection] = useState<string>(activeSection)
 
-  // Sync open section when route changes
   useEffect(() => {
     setOpenSection(activeSection)
   }, [activeSection])
 
+  // ── Collapsed sidebar ──
+  if (collapsed) {
+    return (
+      <TooltipProvider delayDuration={0}>
+        <aside className="flex h-full w-14 flex-col border-r bg-card transition-all duration-200">
+          {/* Logo / initial */}
+          <div className="flex h-14 items-center justify-center border-b border-border">
+            <span className="text-base font-bold text-primary">{businessName.charAt(0)}</span>
+          </div>
+
+          {/* Icon nav */}
+          <div className="flex-1 overflow-y-auto py-2 space-y-0.5">
+            {visibleSections.map((section) => (
+              <div key={section.id} className="px-1.5 mb-1">
+                {/* Section divider dot */}
+                <div className="flex justify-center mb-1">
+                  <div className={cn(
+                    'h-px w-6',
+                    activeSection === section.id ? 'bg-primary/40' : 'bg-border/60'
+                  )} />
+                </div>
+                {section.items.map((item) => {
+                  const isActive = location.pathname === item.href || location.pathname.startsWith(item.href + '/')
+                  return (
+                    <Tooltip key={item.href}>
+                      <TooltipTrigger asChild>
+                        <NavLink
+                          to={item.href}
+                          end={item.href === '/settings'}
+                          className={cn(
+                            'flex items-center justify-center rounded-md h-8 w-full mb-0.5 transition-colors',
+                            isActive
+                              ? 'bg-primary text-primary-foreground'
+                              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                          )}
+                        >
+                          <item.icon className="h-3.5 w-3.5" />
+                        </NavLink>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="text-xs">
+                        {item.title}
+                      </TooltipContent>
+                    </Tooltip>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+
+          {/* Footer */}
+          <div className="border-t py-2 flex flex-col items-center gap-1.5 shrink-0">
+            <ThemeToggle />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={toggle}
+                  className="flex items-center justify-center h-8 w-8 rounded-md border border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                >
+                  <PanelLeftOpen className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">Expand sidebar</TooltipContent>
+            </Tooltip>
+          </div>
+        </aside>
+      </TooltipProvider>
+    )
+  }
+
+  // ── Expanded sidebar ──
   return (
-    <aside className="flex h-full w-64 flex-col border-r bg-card">
+    <aside className="flex h-full w-64 flex-col border-r bg-card transition-all duration-200">
       {/* Business Name Header */}
       <div className="flex h-14 items-center border-b border-border px-5">
         <h1
@@ -270,9 +339,18 @@ export function Sidebar() {
       </div>
 
       {/* Footer */}
-      <div className="border-t p-4 flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">Version 1.0.0</p>
-        <ThemeToggle />
+      <div className="border-t p-3 space-y-2 shrink-0">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-muted-foreground">Version 1.0.0</p>
+          <ThemeToggle />
+        </div>
+        <button
+          onClick={toggle}
+          className="flex items-center justify-center gap-2 w-full h-7 rounded-md border border-border text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+        >
+          <PanelLeftClose className="h-3.5 w-3.5" />
+          Collapse
+        </button>
       </div>
     </aside>
   )

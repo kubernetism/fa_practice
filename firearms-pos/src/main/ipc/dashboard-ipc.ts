@@ -132,7 +132,7 @@ export function registerDashboardHandlers(): void {
                 SELECT SUM(ri.unit_price * ri.quantity)
                 FROM return_items ri
                 INNER JOIN returns r ON ri.return_id = r.id
-                WHERE r.original_sale_id = ${sales.id}
+                WHERE r.original_sale_id = sales.id
               ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
             ))
           ), 0)`,
@@ -199,7 +199,7 @@ export function registerDashboardHandlers(): void {
               SELECT SUM(ri.unit_price * ri.quantity)
               FROM return_items ri
               INNER JOIN returns r ON ri.return_id = r.id
-              WHERE r.original_sale_id = ${sales.id}
+              WHERE r.original_sale_id = sales.id
             ), 0) < ${sales.subtotal}`
           )
         )

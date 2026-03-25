@@ -208,6 +208,14 @@ export async function runMigrations(): Promise<void> {
     // Don't throw - log error but continue
   }
 
+  // Ensure online_transactions table exists
+  try {
+    await ensureOnlineTransactionsTable()
+  } catch (error) {
+    console.error('Online transactions table migration error:', error)
+    // Don't throw - log error but continue
+  }
+
   // Financial integrity fix: create equity accounts, reclassify phantom revenue, post cash float
   try {
     await fixFinancialIntegrity()
@@ -1523,4 +1531,54 @@ async function ensureSecurityQuestionsTable(): Promise<void> {
   `).run()
   rawDb.prepare(`CREATE INDEX IF NOT EXISTS "usq_user_idx" ON "user_security_questions" ("user_id")`).run()
   console.log('user_security_questions table created successfully!')
+}
+
+async function ensureOnlineTransactionsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='online_transactions'`
+  ).get()
+
+  if (tableCheck) {
+    console.log('online_transactions table exists: true')
+    return
+  }
+
+  console.log('Creating online_transactions table...')
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "online_transactions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "branch_id" integer NOT NULL REFERENCES "branches"("id"),
+      "transaction_date" text NOT NULL,
+      "amount" real NOT NULL,
+      "payment_channel" text NOT NULL,
+      "direction" text DEFAULT 'inflow' NOT NULL,
+      "reference_number" text,
+      "customer_name" text,
+      "customer_id" integer REFERENCES "customers"("id"),
+      "invoice_number" text,
+      "bank_account_name" text,
+      "status" text DEFAULT 'pending' NOT NULL,
+      "notes" text,
+      "source_type" text DEFAULT 'manual' NOT NULL,
+      "source_id" integer,
+      "sale_id" integer REFERENCES "sales"("id"),
+      "receivable_id" integer REFERENCES "account_receivables"("id"),
+      "payable_id" integer REFERENCES "account_payables"("id"),
+      "confirmed_by" integer REFERENCES "users"("id"),
+      "confirmed_at" text,
+      "created_by" integer REFERENCES "users"("id"),
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL
+    )
+  `).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_branch_idx" ON "online_transactions" ("branch_id")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_date_idx" ON "online_transactions" ("transaction_date")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_channel_idx" ON "online_transactions" ("payment_channel")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_status_idx" ON "online_transactions" ("status")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_source_idx" ON "online_transactions" ("source_type", "source_id")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_sale_idx" ON "online_transactions" ("sale_id")`).run()
+  console.log('online_transactions table created successfully!')
 }

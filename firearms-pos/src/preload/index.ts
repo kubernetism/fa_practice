@@ -571,6 +571,28 @@ const api = {
     copyImage: (dataUrl: string) => ipcRenderer.invoke('clipboard:copy-image', dataUrl),
   },
 
+  // Online Transactions
+  onlineTransactions: {
+    getAll: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('online-transactions:get-all', params),
+    create: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('online-transactions:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('online-transactions:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('online-transactions:delete', id),
+    confirm: (id: number) => ipcRenderer.invoke('online-transactions:confirm', id),
+    bulkConfirm: (ids: number[]) =>
+      ipcRenderer.invoke('online-transactions:bulk-confirm', ids),
+    markFailed: (id: number, reason?: string) =>
+      ipcRenderer.invoke('online-transactions:mark-failed', id, reason),
+    getDashboard: (params: {
+      branchId: number
+      timePeriod: string
+      customStart?: string
+      customEnd?: string
+    }) => ipcRenderer.invoke('online-transactions:dashboard', params),
+  },
+
   // Discount Management
   discountManagement: {
     getSummary: (params: Record<string, unknown>) =>

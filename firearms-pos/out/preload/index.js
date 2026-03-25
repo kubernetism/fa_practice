@@ -408,6 +408,17 @@ const api = {
   clipboard: {
     copyImage: (dataUrl) => electron.ipcRenderer.invoke("clipboard:copy-image", dataUrl)
   },
+  // Online Transactions
+  onlineTransactions: {
+    getAll: (params) => electron.ipcRenderer.invoke("online-transactions:get-all", params),
+    create: (data) => electron.ipcRenderer.invoke("online-transactions:create", data),
+    update: (id, data) => electron.ipcRenderer.invoke("online-transactions:update", id, data),
+    delete: (id) => electron.ipcRenderer.invoke("online-transactions:delete", id),
+    confirm: (id) => electron.ipcRenderer.invoke("online-transactions:confirm", id),
+    bulkConfirm: (ids) => electron.ipcRenderer.invoke("online-transactions:bulk-confirm", ids),
+    markFailed: (id, reason) => electron.ipcRenderer.invoke("online-transactions:mark-failed", id, reason),
+    getDashboard: (params) => electron.ipcRenderer.invoke("online-transactions:dashboard", params)
+  },
   // Discount Management
   discountManagement: {
     getSummary: (params) => electron.ipcRenderer.invoke("discount-management:get-summary", params),

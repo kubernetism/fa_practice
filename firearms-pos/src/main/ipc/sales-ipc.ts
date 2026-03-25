@@ -20,6 +20,7 @@ import {
   type NewSalePayment,
   type NewSaleService,
   vouchers,
+  onlineTransactions,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -28,6 +29,7 @@ import { withTransaction } from '../utils/db-transaction'
 import { postSaleToGL, postVoidSaleToGL } from '../utils/gl-posting'
 import { consumeCostLayers, restoreCostLayers } from '../utils/inventory-valuation'
 import { handleIpcError } from '../utils/error-handling'
+import { mapPaymentMethodToChannel } from './online-transactions-ipc'
 
 interface CartItem {
   productId: number
@@ -411,6 +413,33 @@ export function registerSalesHandlers(): void {
             notes: paymentNotes,
           })
           paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber })
+        }
+
+        // 7b. Auto-record non-cash payments as online transactions
+        for (const payment of paymentRecords) {
+          if (payment.method !== 'cash') {
+            await txDb.insert(onlineTransactions).values({
+              branchId: data.branchId,
+              transactionDate: new Date().toISOString().split('T')[0],
+              amount: payment.amount,
+              paymentChannel: mapPaymentMethodToChannel(payment.method),
+              direction: 'inflow',
+              referenceNumber: payment.referenceNumber,
+              customerName: data.customerId
+                ? (await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) }))?.name
+                : data.codName || undefined,
+              customerId: data.customerId || undefined,
+              invoiceNumber,
+              bankAccountName: data.paymentMethod === 'mobile'
+                ? `${data.mobileProvider || ''} ${data.mobileReceiverPhone || ''}`.trim() || undefined
+                : undefined,
+              status: data.paymentMethod === 'cod' ? 'pending' : 'pending',
+              sourceType: 'sale',
+              sourceId: sale.id,
+              saleId: sale.id,
+              createdBy: session?.userId ?? 0,
+            })
+          }
         }
 
         // 8. Post to General Ledger (automated GL posting with payment breakdown)

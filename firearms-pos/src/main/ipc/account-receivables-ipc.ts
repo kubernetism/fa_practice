@@ -11,12 +11,15 @@ import {
   cashRegisterSessions,
   cashTransactions,
   type NewAccountReceivable,
+  onlineTransactions,
+  type NewAccountReceivable,
   type NewReceivablePayment,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { withTransaction } from '../utils/db-transaction'
 import { postARPaymentToGL } from '../utils/gl-posting'
+import { mapPaymentMethodToChannel } from './online-transactions-ipc'
 
 interface PaginationParams {
   page?: number
@@ -376,7 +379,28 @@ export function registerAccountReceivablesHandlers(): void {
           session.userId
         )
 
-        // 5. Record cash register inflow for cash AR collections
+        // 5. Auto-record non-cash payments as online transactions
+        if (data.paymentMethod !== 'cash') {
+          await txDb.insert(onlineTransactions).values({
+            branchId: receivable.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: 'inflow',
+            referenceNumber: data.referenceNumber,
+            customerName: receivable.customer?.name,
+            customerId: receivable.customerId,
+            invoiceNumber: receivable.invoiceNumber,
+            status: 'pending',
+            sourceType: 'receivable_payment',
+            sourceId: payment.id,
+            receivableId: data.receivableId,
+            saleId: receivable.saleId || undefined,
+            createdBy: session.userId,
+          })
+        }
+
+        // 6. Record cash register inflow for cash AR collections
         if (data.paymentMethod === 'cash') {
           const today = new Date().toISOString().split('T')[0]
           const openSession = await txDb.query.cashRegisterSessions.findFirst({

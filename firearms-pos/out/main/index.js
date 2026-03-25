@@ -1475,6 +1475,88 @@ const userSecurityQuestions = sqliteCore.sqliteTable("user_security_questions", 
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const onlineTransactions = sqliteCore.sqliteTable(
+  "online_transactions",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    transactionDate: sqliteCore.text("transaction_date").notNull(),
+    // YYYY-MM-DD
+    amount: sqliteCore.real("amount").notNull(),
+    paymentChannel: sqliteCore.text("payment_channel", {
+      enum: ["bank_transfer", "mobile", "card", "cod", "cheque", "other"]
+    }).notNull(),
+    direction: sqliteCore.text("direction", {
+      enum: ["inflow", "outflow"]
+    }).notNull().default("inflow"),
+    referenceNumber: sqliteCore.text("reference_number"),
+    // Transaction ID, cheque #, etc.
+    customerName: sqliteCore.text("customer_name"),
+    // Name of payer/payee
+    customerId: sqliteCore.integer("customer_id").references(() => customers.id),
+    invoiceNumber: sqliteCore.text("invoice_number"),
+    // Linked invoice
+    bankAccountName: sqliteCore.text("bank_account_name"),
+    // Bank/wallet/account name
+    status: sqliteCore.text("status", {
+      enum: ["pending", "confirmed", "failed"]
+    }).notNull().default("pending"),
+    notes: sqliteCore.text("notes"),
+    // Source tracking - what created this record
+    sourceType: sqliteCore.text("source_type", {
+      enum: ["sale", "receivable_payment", "payable_payment", "manual"]
+    }).notNull().default("manual"),
+    sourceId: sqliteCore.integer("source_id"),
+    // ID of the source record
+    saleId: sqliteCore.integer("sale_id").references(() => sales.id),
+    receivableId: sqliteCore.integer("receivable_id").references(() => accountReceivables.id),
+    payableId: sqliteCore.integer("payable_id").references(() => accountPayables.id),
+    // Metadata
+    confirmedBy: sqliteCore.integer("confirmed_by").references(() => users.id),
+    confirmedAt: sqliteCore.text("confirmed_at"),
+    createdBy: sqliteCore.integer("created_by").references(() => users.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    branchIdx: sqliteCore.index("online_txn_branch_idx").on(table.branchId),
+    dateIdx: sqliteCore.index("online_txn_date_idx").on(table.transactionDate),
+    channelIdx: sqliteCore.index("online_txn_channel_idx").on(table.paymentChannel),
+    statusIdx: sqliteCore.index("online_txn_status_idx").on(table.status),
+    sourceIdx: sqliteCore.index("online_txn_source_idx").on(table.sourceType, table.sourceId),
+    saleIdx: sqliteCore.index("online_txn_sale_idx").on(table.saleId)
+  })
+);
+const onlineTransactionsRelations = drizzleOrm.relations(onlineTransactions, ({ one }) => ({
+  branch: one(branches, {
+    fields: [onlineTransactions.branchId],
+    references: [branches.id]
+  }),
+  customer: one(customers, {
+    fields: [onlineTransactions.customerId],
+    references: [customers.id]
+  }),
+  sale: one(sales, {
+    fields: [onlineTransactions.saleId],
+    references: [sales.id]
+  }),
+  receivable: one(accountReceivables, {
+    fields: [onlineTransactions.receivableId],
+    references: [accountReceivables.id]
+  }),
+  payable: one(accountPayables, {
+    fields: [onlineTransactions.payableId],
+    references: [accountPayables.id]
+  }),
+  confirmedByUser: one(users, {
+    fields: [onlineTransactions.confirmedBy],
+    references: [users.id]
+  }),
+  createdByUser: one(users, {
+    fields: [onlineTransactions.createdBy],
+    references: [users.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1511,6 +1593,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   journalEntryLinesRelations,
   messages,
   messagesRelations,
+  onlineTransactions,
+  onlineTransactionsRelations,
   payablePayments,
   payablePaymentsRelations,
   products,
@@ -3183,6 +3267,11 @@ async function runMigrations() {
     console.error("Security questions table migration error:", error);
   }
   try {
+    await ensureOnlineTransactionsTable();
+  } catch (error) {
+    console.error("Online transactions table migration error:", error);
+  }
+  try {
     await fixFinancialIntegrity();
   } catch (error) {
     console.error("Financial integrity fix error:", error);
@@ -4272,6 +4361,52 @@ async function ensureSecurityQuestionsTable() {
   `).run();
   rawDb.prepare(`CREATE INDEX IF NOT EXISTS "usq_user_idx" ON "user_security_questions" ("user_id")`).run();
   console.log("user_security_questions table created successfully!");
+}
+async function ensureOnlineTransactionsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='online_transactions'`
+  ).get();
+  if (tableCheck) {
+    console.log("online_transactions table exists: true");
+    return;
+  }
+  console.log("Creating online_transactions table...");
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "online_transactions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "branch_id" integer NOT NULL REFERENCES "branches"("id"),
+      "transaction_date" text NOT NULL,
+      "amount" real NOT NULL,
+      "payment_channel" text NOT NULL,
+      "direction" text DEFAULT 'inflow' NOT NULL,
+      "reference_number" text,
+      "customer_name" text,
+      "customer_id" integer REFERENCES "customers"("id"),
+      "invoice_number" text,
+      "bank_account_name" text,
+      "status" text DEFAULT 'pending' NOT NULL,
+      "notes" text,
+      "source_type" text DEFAULT 'manual' NOT NULL,
+      "source_id" integer,
+      "sale_id" integer REFERENCES "sales"("id"),
+      "receivable_id" integer REFERENCES "account_receivables"("id"),
+      "payable_id" integer REFERENCES "account_payables"("id"),
+      "confirmed_by" integer REFERENCES "users"("id"),
+      "confirmed_at" text,
+      "created_by" integer REFERENCES "users"("id"),
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL
+    )
+  `).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_branch_idx" ON "online_transactions" ("branch_id")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_date_idx" ON "online_transactions" ("transaction_date")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_channel_idx" ON "online_transactions" ("payment_channel")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_status_idx" ON "online_transactions" ("status")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_source_idx" ON "online_transactions" ("source_type", "source_id")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_sale_idx" ON "online_transactions" ("sale_id")`).run();
+  console.log("online_transactions table created successfully!");
 }
 let currentSession = null;
 function registerAuthHandlers() {
@@ -6132,6 +6267,388 @@ function handleIpcError(operation, error) {
   console.error(`${operation} error [${classified.category}/${classified.code}]:`, error);
   return { success: false, message: classified.message };
 }
+function mapPaymentMethodToChannel(method) {
+  switch (method) {
+    case "bank_transfer":
+      return "bank_transfer";
+    case "mobile":
+      return "mobile";
+    case "card":
+    case "debit_card":
+      return "card";
+    case "cod":
+      return "cod";
+    case "cheque":
+      return "cheque";
+    default:
+      return "other";
+  }
+}
+function registerOnlineTransactionHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "online-transactions:get-all",
+    async (_, filters) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const page = filters.page || 1;
+        const limit = filters.limit || 50;
+        const offset = (page - 1) * limit;
+        const conditions = [];
+        if (filters.branchId) {
+          conditions.push(drizzleOrm.eq(onlineTransactions.branchId, filters.branchId));
+        }
+        if (filters.paymentChannel && filters.paymentChannel !== "all") {
+          conditions.push(drizzleOrm.eq(onlineTransactions.paymentChannel, filters.paymentChannel));
+        }
+        if (filters.status && filters.status !== "all") {
+          conditions.push(drizzleOrm.eq(onlineTransactions.status, filters.status));
+        }
+        if (filters.direction && filters.direction !== "all") {
+          conditions.push(drizzleOrm.eq(onlineTransactions.direction, filters.direction));
+        }
+        if (filters.startDate) {
+          conditions.push(drizzleOrm.gte(onlineTransactions.transactionDate, filters.startDate));
+        }
+        if (filters.endDate) {
+          conditions.push(drizzleOrm.lte(onlineTransactions.transactionDate, filters.endDate));
+        }
+        if (filters.search) {
+          const term = `%${filters.search}%`;
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(onlineTransactions.referenceNumber, term),
+              drizzleOrm.like(onlineTransactions.customerName, term),
+              drizzleOrm.like(onlineTransactions.invoiceNumber, term),
+              drizzleOrm.like(onlineTransactions.bankAccountName, term),
+              drizzleOrm.like(onlineTransactions.notes, term)
+            )
+          );
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const [data, countResult] = await Promise.all([
+          db2.select({
+            id: onlineTransactions.id,
+            branchId: onlineTransactions.branchId,
+            transactionDate: onlineTransactions.transactionDate,
+            amount: onlineTransactions.amount,
+            paymentChannel: onlineTransactions.paymentChannel,
+            direction: onlineTransactions.direction,
+            referenceNumber: onlineTransactions.referenceNumber,
+            customerName: onlineTransactions.customerName,
+            customerId: onlineTransactions.customerId,
+            invoiceNumber: onlineTransactions.invoiceNumber,
+            bankAccountName: onlineTransactions.bankAccountName,
+            status: onlineTransactions.status,
+            notes: onlineTransactions.notes,
+            sourceType: onlineTransactions.sourceType,
+            sourceId: onlineTransactions.sourceId,
+            saleId: onlineTransactions.saleId,
+            receivableId: onlineTransactions.receivableId,
+            payableId: onlineTransactions.payableId,
+            confirmedAt: onlineTransactions.confirmedAt,
+            createdAt: onlineTransactions.createdAt,
+            createdByName: users.fullName
+          }).from(onlineTransactions).leftJoin(users, drizzleOrm.eq(onlineTransactions.createdBy, users.id)).where(whereClause).orderBy(drizzleOrm.desc(onlineTransactions.transactionDate), drizzleOrm.desc(onlineTransactions.id)).limit(limit).offset(offset),
+          db2.select({ count: drizzleOrm.sql`count(*)` }).from(onlineTransactions).where(whereClause)
+        ]);
+        const total = countResult[0]?.count || 0;
+        return {
+          success: true,
+          data,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+      } catch (error) {
+        console.error("Get online transactions error:", error);
+        return { success: false, message: "Failed to fetch online transactions" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "online-transactions:create",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const [record] = await db2.insert(onlineTransactions).values({
+          branchId: data.branchId,
+          transactionDate: data.transactionDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+          amount: data.amount,
+          paymentChannel: data.paymentChannel,
+          direction: data.direction || "inflow",
+          referenceNumber: data.referenceNumber,
+          customerName: data.customerName,
+          customerId: data.customerId,
+          invoiceNumber: data.invoiceNumber,
+          bankAccountName: data.bankAccountName,
+          status: data.status || "pending",
+          notes: data.notes,
+          sourceType: "manual",
+          createdBy: session.userId
+        }).returning();
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: data.branchId,
+          action: "create",
+          entityType: "online_transaction",
+          entityId: record.id,
+          newValues: {
+            amount: record.amount,
+            paymentChannel: record.paymentChannel,
+            direction: record.direction
+          },
+          description: `Created manual online transaction: ${record.paymentChannel} ${record.amount}`
+        });
+        return { success: true, data: record };
+      } catch (error) {
+        console.error("Create online transaction error:", error);
+        return { success: false, message: "Failed to create online transaction" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "online-transactions:update",
+    async (_, id, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const existing = await db2.query.onlineTransactions.findFirst({
+          where: drizzleOrm.eq(onlineTransactions.id, id)
+        });
+        if (!existing) return { success: false, message: "Transaction not found" };
+        if (existing.sourceType !== "manual" && existing.status === "confirmed") {
+          return { success: false, message: "Cannot edit confirmed auto-recorded transactions" };
+        }
+        const updateData = { updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const editableFields = [
+          "transactionDate",
+          "amount",
+          "paymentChannel",
+          "direction",
+          "referenceNumber",
+          "customerName",
+          "customerId",
+          "invoiceNumber",
+          "bankAccountName",
+          "status",
+          "notes"
+        ];
+        for (const field of editableFields) {
+          if (data[field] !== void 0) {
+            updateData[field] = data[field];
+          }
+        }
+        const [updated] = await db2.update(onlineTransactions).set(updateData).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: existing.branchId,
+          action: "update",
+          entityType: "online_transaction",
+          entityId: id,
+          oldValues: existing,
+          newValues: updateData,
+          description: `Updated online transaction #${id}`
+        });
+        return { success: true, data: updated };
+      } catch (error) {
+        console.error("Update online transaction error:", error);
+        return { success: false, message: "Failed to update online transaction" };
+      }
+    }
+  );
+  electron.ipcMain.handle("online-transactions:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const existing = await db2.query.onlineTransactions.findFirst({
+        where: drizzleOrm.eq(onlineTransactions.id, id)
+      });
+      if (!existing) return { success: false, message: "Transaction not found" };
+      if (existing.status === "confirmed") {
+        return { success: false, message: "Cannot delete confirmed transactions" };
+      }
+      await db2.delete(onlineTransactions).where(drizzleOrm.eq(onlineTransactions.id, id));
+      await createAuditLog$1({
+        userId: session.userId,
+        branchId: existing.branchId,
+        action: "delete",
+        entityType: "online_transaction",
+        entityId: id,
+        oldValues: existing,
+        description: `Deleted online transaction #${id}`
+      });
+      return { success: true };
+    } catch (error) {
+      console.error("Delete online transaction error:", error);
+      return { success: false, message: "Failed to delete online transaction" };
+    }
+  });
+  electron.ipcMain.handle("online-transactions:confirm", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const existing = await db2.query.onlineTransactions.findFirst({
+        where: drizzleOrm.eq(onlineTransactions.id, id)
+      });
+      if (!existing) return { success: false, message: "Transaction not found" };
+      if (existing.status === "confirmed") {
+        return { success: false, message: "Transaction is already confirmed" };
+      }
+      const [updated] = await db2.update(onlineTransactions).set({
+        status: "confirmed",
+        confirmedBy: session.userId,
+        confirmedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+      await createAuditLog$1({
+        userId: session.userId,
+        branchId: existing.branchId,
+        action: "update",
+        entityType: "online_transaction",
+        entityId: id,
+        oldValues: { status: existing.status },
+        newValues: { status: "confirmed" },
+        description: `Confirmed online transaction #${id}`
+      });
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error("Confirm online transaction error:", error);
+      return { success: false, message: "Failed to confirm transaction" };
+    }
+  });
+  electron.ipcMain.handle("online-transactions:bulk-confirm", async (_, ids) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      await db2.update(onlineTransactions).set({
+        status: "confirmed",
+        confirmedBy: session.userId,
+        confirmedAt: now,
+        updatedAt: now
+      }).where(
+        drizzleOrm.and(
+          drizzleOrm.inArray(onlineTransactions.id, ids),
+          drizzleOrm.eq(onlineTransactions.status, "pending")
+        )
+      );
+      return { success: true, message: `${ids.length} transactions confirmed` };
+    } catch (error) {
+      console.error("Bulk confirm error:", error);
+      return { success: false, message: "Failed to confirm transactions" };
+    }
+  });
+  electron.ipcMain.handle("online-transactions:mark-failed", async (_, id, reason) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const [updated] = await db2.update(onlineTransactions).set({
+        status: "failed",
+        notes: reason ? drizzleOrm.sql`CASE WHEN ${onlineTransactions.notes} IS NOT NULL THEN ${onlineTransactions.notes} || ' | Failed: ' || ${reason} ELSE 'Failed: ' || ${reason} END` : onlineTransactions.notes,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error("Mark failed error:", error);
+      return { success: false, message: "Failed to update transaction" };
+    }
+  });
+  electron.ipcMain.handle(
+    "online-transactions:dashboard",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        let startDate = today;
+        let endDate = today;
+        if (params.timePeriod === "custom" && params.customStart && params.customEnd) {
+          startDate = params.customStart;
+          endDate = params.customEnd;
+        } else if (params.timePeriod === "week") {
+          const d = /* @__PURE__ */ new Date();
+          d.setDate(d.getDate() - 7);
+          startDate = d.toISOString().split("T")[0];
+        } else if (params.timePeriod === "month") {
+          const d = /* @__PURE__ */ new Date();
+          d.setDate(1);
+          startDate = d.toISOString().split("T")[0];
+        } else if (params.timePeriod === "year") {
+          startDate = `${(/* @__PURE__ */ new Date()).getFullYear()}-01-01`;
+        }
+        const branchCondition = drizzleOrm.eq(onlineTransactions.branchId, params.branchId);
+        const dateRange = drizzleOrm.and(
+          drizzleOrm.gte(onlineTransactions.transactionDate, startDate),
+          drizzleOrm.lte(onlineTransactions.transactionDate, endDate)
+        );
+        const todayCondition = drizzleOrm.and(
+          branchCondition,
+          drizzleOrm.eq(onlineTransactions.transactionDate, today)
+        );
+        const periodCondition = drizzleOrm.and(branchCondition, dateRange);
+        const [todayByChannel, periodByChannel, statusSummary, recentPending] = await Promise.all([
+          // Today's totals per channel
+          db2.select({
+            paymentChannel: onlineTransactions.paymentChannel,
+            direction: onlineTransactions.direction,
+            total: drizzleOrm.sql`COALESCE(SUM(${onlineTransactions.amount}), 0)`,
+            count: drizzleOrm.sql`count(*)`,
+            confirmed: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'confirmed' THEN ${onlineTransactions.amount} ELSE 0 END)`,
+            pending: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'pending' THEN ${onlineTransactions.amount} ELSE 0 END)`
+          }).from(onlineTransactions).where(todayCondition).groupBy(onlineTransactions.paymentChannel, onlineTransactions.direction),
+          // Period totals per channel
+          db2.select({
+            paymentChannel: onlineTransactions.paymentChannel,
+            direction: onlineTransactions.direction,
+            total: drizzleOrm.sql`COALESCE(SUM(${onlineTransactions.amount}), 0)`,
+            count: drizzleOrm.sql`count(*)`,
+            confirmed: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'confirmed' THEN ${onlineTransactions.amount} ELSE 0 END)`,
+            pending: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'pending' THEN ${onlineTransactions.amount} ELSE 0 END)`
+          }).from(onlineTransactions).where(periodCondition).groupBy(onlineTransactions.paymentChannel, onlineTransactions.direction),
+          // Overall status summary for the period
+          db2.select({
+            status: onlineTransactions.status,
+            total: drizzleOrm.sql`COALESCE(SUM(${onlineTransactions.amount}), 0)`,
+            count: drizzleOrm.sql`count(*)`
+          }).from(onlineTransactions).where(periodCondition).groupBy(onlineTransactions.status),
+          // Recent pending transactions
+          db2.select({
+            id: onlineTransactions.id,
+            transactionDate: onlineTransactions.transactionDate,
+            amount: onlineTransactions.amount,
+            paymentChannel: onlineTransactions.paymentChannel,
+            customerName: onlineTransactions.customerName,
+            invoiceNumber: onlineTransactions.invoiceNumber,
+            referenceNumber: onlineTransactions.referenceNumber,
+            direction: onlineTransactions.direction
+          }).from(onlineTransactions).where(
+            drizzleOrm.and(
+              branchCondition,
+              drizzleOrm.eq(onlineTransactions.status, "pending")
+            )
+          ).orderBy(drizzleOrm.desc(onlineTransactions.transactionDate)).limit(10)
+        ]);
+        return {
+          success: true,
+          data: {
+            todayByChannel,
+            periodByChannel,
+            statusSummary,
+            recentPending,
+            dateRange: { startDate, endDate }
+          }
+        };
+      } catch (error) {
+        console.error("Online transactions dashboard error:", error);
+        return { success: false, message: "Failed to fetch dashboard data" };
+      }
+    }
+  );
+}
 function registerSalesHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("sales:create", async (_, data) => {
@@ -6387,6 +6904,27 @@ function registerSalesHandlers() {
             notes: paymentNotes
           });
           paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber });
+        }
+        for (const payment of paymentRecords) {
+          if (payment.method !== "cash") {
+            await txDb.insert(onlineTransactions).values({
+              branchId: data.branchId,
+              transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+              amount: payment.amount,
+              paymentChannel: mapPaymentMethodToChannel(payment.method),
+              direction: "inflow",
+              referenceNumber: payment.referenceNumber,
+              customerName: data.customerId ? (await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }))?.name : data.codName || void 0,
+              customerId: data.customerId || void 0,
+              invoiceNumber,
+              bankAccountName: data.paymentMethod === "mobile" ? `${data.mobileProvider || ""} ${data.mobileReceiverPhone || ""}`.trim() || void 0 : void 0,
+              status: data.paymentMethod === "cod" ? "pending" : "pending",
+              sourceType: "sale",
+              sourceId: sale.id,
+              saleId: sale.id,
+              createdBy: session?.userId ?? 0
+            });
+          }
         }
         await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === "cod" ? codCharges : 0);
         if (data.voucherId) {
@@ -12549,6 +13087,25 @@ function registerAccountReceivablesHandlers() {
           },
           session.userId
         );
+        if (data.paymentMethod !== "cash") {
+          await txDb.insert(onlineTransactions).values({
+            branchId: receivable.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: "inflow",
+            referenceNumber: data.referenceNumber,
+            customerName: receivable.customer?.name,
+            customerId: receivable.customerId,
+            invoiceNumber: receivable.invoiceNumber,
+            status: "pending",
+            sourceType: "receivable_payment",
+            sourceId: payment.id,
+            receivableId: data.receivableId,
+            saleId: receivable.saleId || void 0,
+            createdBy: session.userId
+          });
+        }
         if (data.paymentMethod === "cash") {
           const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
           const openSession = await txDb.query.cashRegisterSessions.findFirst({
@@ -13143,6 +13700,23 @@ function registerAccountPayablesHandlers() {
           },
           session.userId
         );
+        if (data.paymentMethod !== "cash") {
+          await txDb.insert(onlineTransactions).values({
+            branchId: payable.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: "outflow",
+            referenceNumber: data.referenceNumber,
+            customerName: payable.supplier?.name,
+            invoiceNumber: payable.invoiceNumber,
+            status: "pending",
+            sourceType: "payable_payment",
+            sourceId: payment.id,
+            payableId: data.payableId,
+            createdBy: session.userId
+          });
+        }
         if (data.paymentMethod === "cash") {
           const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
           const openSession = await txDb.query.cashRegisterSessions.findFirst({
@@ -17804,7 +18378,7 @@ function registerDashboardHandlers() {
                 SELECT SUM(ri.unit_price * ri.quantity)
                 FROM return_items ri
                 INNER JOIN returns r ON ri.return_id = r.id
-                WHERE r.original_sale_id = ${sales.id}
+                WHERE r.original_sale_id = sales.id
               ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
             ))
           ), 0)`
@@ -17855,7 +18429,7 @@ function registerDashboardHandlers() {
               SELECT SUM(ri.unit_price * ri.quantity)
               FROM return_items ri
               INNER JOIN returns r ON ri.return_id = r.id
-              WHERE r.original_sale_id = ${sales.id}
+              WHERE r.original_sale_id = sales.id
             ), 0) < ${sales.subtotal}`
         )
       );
@@ -21948,6 +22522,7 @@ function registerAllHandlers() {
   registerClipboardHandlers();
   registerShellHandlers();
   registerRecoveryHandlers();
+  registerOnlineTransactionHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

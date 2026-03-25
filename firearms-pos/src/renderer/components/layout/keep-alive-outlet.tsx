@@ -11,6 +11,7 @@ const routeComponents: Record<string, React.LazyExoticComponent<React.ComponentT
   '/services': lazy(() => import('@/screens/services').then((m) => ({ default: m.ServicesScreen }))),
   '/inventory': lazy(() => import('@/screens/inventory').then((m) => ({ default: m.InventoryScreen }))),
   '/sales': lazy(() => import('@/screens/sales').then((m) => ({ default: m.SalesHistoryScreen }))),
+  '/online-transactions': lazy(() => import('@/screens/online-transactions').then((m) => ({ default: m.OnlineTransactionsScreen }))),
   '/purchases': lazy(() => import('@/screens/purchases').then((m) => ({ default: m.PurchasesScreen }))),
   '/returns': lazy(() => import('@/screens/returns').then((m) => ({ default: m.ReturnsScreen }))),
   '/customers': lazy(() => import('@/screens/customers').then((m) => ({ default: m.CustomersScreen }))),
@@ -42,7 +43,7 @@ const routeComponents: Record<string, React.LazyExoticComponent<React.ComponentT
 }
 
 // Screens that should NOT auto-refresh (they have important in-progress state)
-const NO_AUTO_REFRESH: Set<string> = new Set(['/pos', '/setup'])
+const NO_AUTO_REFRESH: Set<string> = new Set(['/pos', '/setup', '/dashboard'])
 
 // Seconds before a screen's data is considered stale
 const STALE_AFTER_SECONDS = 30

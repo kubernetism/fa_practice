@@ -11,12 +11,15 @@ import {
   cashRegisterSessions,
   cashTransactions,
   type NewAccountPayable,
+  onlineTransactions,
+  type NewAccountPayable,
   type NewPayablePayment,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { withTransaction } from '../utils/db-transaction'
 import { postAPPaymentToGL } from '../utils/gl-posting'
+import { mapPaymentMethodToChannel } from './online-transactions-ipc'
 
 interface PaginationParams {
   page?: number
@@ -371,6 +374,25 @@ export function registerAccountPayablesHandlers(): void {
           },
           session.userId
         )
+
+        // Auto-record non-cash payments as online transactions (outflow)
+        if (data.paymentMethod !== 'cash') {
+          await txDb.insert(onlineTransactions).values({
+            branchId: payable.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: 'outflow',
+            referenceNumber: data.referenceNumber,
+            customerName: payable.supplier?.name,
+            invoiceNumber: payable.invoiceNumber,
+            status: 'pending',
+            sourceType: 'payable_payment',
+            sourceId: payment.id,
+            payableId: data.payableId,
+            createdBy: session.userId,
+          })
+        }
 
         // Record cash register outflow for cash AP payments
         if (data.paymentMethod === 'cash') {

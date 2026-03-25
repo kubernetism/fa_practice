@@ -26,6 +26,7 @@ const KEEP_ALIVE_PATHS = [
   "services",
   "inventory",
   "sales",
+  "online-transactions",
   "purchases",
   "returns",
   "customers",
