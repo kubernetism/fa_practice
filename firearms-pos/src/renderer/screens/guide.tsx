@@ -29,7 +29,6 @@ import {
   Wrench,
   BarChart3,
   ClipboardList,
-  FileBarChart,
   UserCog,
   Building,
   Settings,
@@ -229,7 +228,7 @@ const workflowPhases: WorkflowPhase[] = [
       en: 'Review audit logs and reports, manage user accounts, configure settings, and get support when needed.',
       ur: 'آڈٹ لاگز اور رپورٹس دیکھیں، صارف اکاؤنٹس کا انتظام کریں، سیٹنگز ترتیب دیں۔',
     },
-    modules: ['audit-logs', 'audit-reports', 'users', 'branches', 'settings'],
+    modules: ['audit-logs', 'users', 'branches', 'settings'],
     icon: Shield,
   },
 ]
@@ -515,13 +514,6 @@ const guideSections: GuideSection[] = [
     summary: { en: 'View detailed history of all actions', ur: 'تمام کارروائیوں کی تفصیلی تاریخ دیکھیں' },
     steps: [
       { title: { en: 'View Logs', ur: 'لاگز دیکھیں' }, description: { en: 'Go to Activity Logs. See who did what, when, with full details.', ur: 'Activity Logs پر جائیں۔ کس نے کیا کب کیا دیکھیں۔' } },
-    ],
-  },
-  {
-    id: 'audit-reports', title: { en: 'Audit Reports', ur: 'آڈٹ رپورٹس' }, icon: FileBarChart, category: 'management',
-    summary: { en: 'Generate compliance and audit reports', ur: 'تعمیل اور آڈٹ رپورٹس بنائیں' },
-    steps: [
-      { title: { en: 'Run Audit Report', ur: 'آڈٹ رپورٹ بنائیں' }, description: { en: 'Select report type and date range. Reports show transaction summaries and compliance status.', ur: 'رپورٹ کی قسم اور تاریخ کی حد منتخب کریں۔' } },
     ],
   },
   {

@@ -10084,6 +10084,7 @@ async function generateReportPDF(options) {
       htmlContent = generateCashFlowHTML(data, filters, businessInfo);
       break;
     case "audit-trail":
+    case "comprehensive-audit":
       htmlContent = generateAuditTrailHTML(data, filters, businessInfo);
       break;
     default:
@@ -11398,6 +11399,32 @@ function generateAuditTrailHTML(data, filters, businessInfo) {
       </table>
     </div>
     ` : ""}
+
+    <!-- Voided / Reversed Transactions -->
+    ${data.voidedTransactions && data.voidedTransactions.length > 0 ? `
+    <div class="page-break"></div>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Voided / Reversed Transactions</div>
+        <div class="section-badge">${data.voidedTransactions.length} items</div>
+      </div>
+      <div class="alert warning">These transactions have been voided or reversed and are excluded from all totals above.</div>
+      <table>
+        <thead><tr><th>Type</th><th>Reference</th><th>Description</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.voidedTransactions.map((item) => `
+            <tr>
+              <td>${item.type || "—"}</td>
+              <td>${item.reference || item.invoiceNumber || "—"}</td>
+              <td>${item.description || item.customerName || "—"}</td>
+              <td>${item.date ? formatDate(item.date) : "—"}</td>
+              <td class="text-danger">${fmtCurrency(item.amount || item.totalAmount || 0)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+    ` : ""}
   `;
   return getReportTemplate("Comprehensive Audit Report", content, filters, businessInfo);
 }
@@ -11408,13 +11435,16 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd, groupBy = "day" } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, groupBy = "day", paymentMethod, paymentStatus, customerId, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
         ];
         if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
+        if (paymentMethod) conditions.push(drizzleOrm.eq(sales.paymentMethod, paymentMethod));
+        if (paymentStatus) conditions.push(drizzleOrm.eq(sales.paymentStatus, paymentStatus));
+        if (customerId) conditions.push(drizzleOrm.eq(sales.customerId, customerId));
         const summary = await db2.select({
           totalSales: drizzleOrm.sql`count(*)`,
           totalRevenue: drizzleOrm.sql`sum(${sales.totalAmount})`,
@@ -11450,6 +11480,19 @@ function registerReportHandlers() {
           count: drizzleOrm.sql`count(*)`,
           total: drizzleOrm.sql`sum(${sales.totalAmount})`
         }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(drizzleOrm.sql`date(${sales.saleDate})`).orderBy(drizzleOrm.sql`date(${sales.saleDate})`);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: sales.id,
+          invoiceNumber: sales.invoiceNumber,
+          customerName: drizzleOrm.sql`coalesce(${customers.firstName} || ' ' || ${customers.lastName}, 'Walk-in')`,
+          saleDate: sales.saleDate,
+          paymentMethod: sales.paymentMethod,
+          paymentStatus: sales.paymentStatus,
+          totalAmount: sales.totalAmount,
+          taxAmount: sales.taxAmount,
+          discountAmount: sales.discountAmount
+        }).from(sales).leftJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11463,7 +11506,13 @@ function registerReportHandlers() {
             summary: summary[0],
             byPaymentMethod,
             topProducts,
-            dailySales
+            dailySales,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11475,7 +11524,7 @@ function registerReportHandlers() {
   electron.ipcMain.handle("reports:inventory-report", async (_, params) => {
     try {
       const session = getCurrentSession();
-      const { branchId } = params;
+      const { branchId, page = 1, limit: pageSize = 50 } = params;
       const conditions = [];
       if (branchId) conditions.push(drizzleOrm.eq(inventory.branchId, branchId));
       const stockSummary = await db2.select({
@@ -11506,6 +11555,21 @@ function registerReportHandlers() {
           conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0
         )
       ).orderBy(drizzleOrm.sql`${inventory.quantity} - ${inventory.minQuantity}`).limit(50);
+      const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(inventory).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0);
+      const totalRows = totalCountResult[0]?.count || 0;
+      const detailRows = await db2.select({
+        id: inventory.id,
+        productId: inventory.productId,
+        productName: products.name,
+        productCode: products.code,
+        branchId: inventory.branchId,
+        branchName: branches.name,
+        quantity: inventory.quantity,
+        minQuantity: inventory.minQuantity,
+        maxQuantity: inventory.maxQuantity,
+        costValue: drizzleOrm.sql`${inventory.quantity} * ${products.costPrice}`,
+        retailValue: drizzleOrm.sql`${inventory.quantity} * ${products.sellingPrice}`
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).orderBy(products.name).limit(pageSize).offset((page - 1) * pageSize);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: branchId ?? session?.branchId,
@@ -11518,7 +11582,13 @@ function registerReportHandlers() {
         data: {
           stockSummary,
           stockValue,
-          lowStock
+          lowStock,
+          details: {
+            rows: detailRows,
+            total: totalRows,
+            page,
+            totalPages: Math.ceil(totalRows / pageSize)
+          }
         }
       };
     } catch (error) {
@@ -11531,7 +11601,7 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
@@ -11577,6 +11647,26 @@ function registerReportHandlers() {
         const netProfit = grossProfit - totalExpenses;
         const grossMargin = totalRevenue > 0 ? grossProfit / totalRevenue * 100 : 0;
         const netMargin = totalRevenue > 0 ? netProfit / totalRevenue * 100 : 0;
+        const totalSalesCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...salesConditions));
+        const totalExpensesCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(expenses).where(drizzleOrm.and(...expenseConditions));
+        const totalRows = (totalSalesCount[0]?.count || 0) + (totalExpensesCount[0]?.count || 0);
+        const salesDetailRows = await db2.select({
+          id: sales.id,
+          type: drizzleOrm.sql`'sale'`,
+          date: sales.saleDate,
+          reference: sales.invoiceNumber,
+          description: drizzleOrm.sql`'Sale ' || ${sales.invoiceNumber}`,
+          amount: sales.totalAmount
+        }).from(sales).where(drizzleOrm.and(...salesConditions));
+        const expenseDetailRows = await db2.select({
+          id: expenses.id,
+          type: drizzleOrm.sql`'expense'`,
+          date: expenses.expenseDate,
+          reference: drizzleOrm.sql`coalesce(${expenses.reference}, '')`,
+          description: drizzleOrm.sql`coalesce(${expenses.description}, '')`,
+          amount: expenses.amount
+        }).from(expenses).where(drizzleOrm.and(...expenseConditions));
+        const combinedRows = [...salesDetailRows, ...expenseDetailRows].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice((page - 1) * pageSize, page * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11594,7 +11684,13 @@ function registerReportHandlers() {
             expenses: totalExpenses,
             expensesByCategory,
             netProfit,
-            netMargin
+            netMargin,
+            details: {
+              rows: combinedRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11608,12 +11704,14 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { startDate: rawStart, endDate: rawEnd, limit = 20 } = params;
+        const { startDate: rawStart, endDate: rawEnd, limit: pageSize = 20, page = 1 } = params;
         const conditions = [drizzleOrm.eq(sales.isVoided, false)];
         if (rawStart && rawEnd) {
           const { start, end } = normalizeDateRange(rawStart, rawEnd);
           conditions.push(drizzleOrm.between(sales.saleDate, start, end));
         }
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(distinct ${sales.customerId})` }).from(sales).innerJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
         const topCustomers = await db2.select({
           customerId: sales.customerId,
           customerName: drizzleOrm.sql`${customers.firstName} || ' ' || ${customers.lastName}`,
@@ -11622,7 +11720,7 @@ function registerReportHandlers() {
           totalOrders: drizzleOrm.sql`count(*)`,
           totalSpent: drizzleOrm.sql`sum(${sales.totalAmount})`,
           avgOrderValue: drizzleOrm.sql`avg(${sales.totalAmount})`
-        }).from(sales).innerJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.customerId, customers.firstName, customers.lastName, customers.email, customers.phone).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${sales.totalAmount})`)).limit(limit);
+        }).from(sales).innerJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.customerId, customers.firstName, customers.lastName, customers.email, customers.phone).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${sales.totalAmount})`)).limit(pageSize).offset((page - 1) * pageSize);
         const customerSummary = await db2.select({
           totalCustomers: drizzleOrm.sql`count(distinct ${sales.customerId})`,
           totalRevenue: drizzleOrm.sql`sum(${sales.totalAmount})`
@@ -11638,7 +11736,13 @@ function registerReportHandlers() {
           success: true,
           data: {
             topCustomers,
-            summary: customerSummary[0]
+            summary: customerSummary[0],
+            details: {
+              rows: topCustomers,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11652,13 +11756,16 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, categoryId, supplierId, paymentStatus, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(expenses.expenseDate, startDate, endDate),
           drizzleOrm.eq(expenses.isVoided, false)
         ];
         if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
+        if (categoryId) conditions.push(drizzleOrm.eq(expenses.categoryId, categoryId));
+        if (supplierId) conditions.push(drizzleOrm.eq(expenses.supplierId, supplierId));
+        if (paymentStatus) conditions.push(drizzleOrm.eq(expenses.paymentStatus, paymentStatus));
         const summary = await db2.select({
           totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`,
           expenseCount: drizzleOrm.sql`count(*)`,
@@ -11685,6 +11792,18 @@ function registerReportHandlers() {
           date: expenses.expenseDate,
           branchName: branches.name
         }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(expenses).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: expenses.id,
+          expenseDate: expenses.expenseDate,
+          category: categories.name,
+          description: expenses.description,
+          paymentMethod: expenses.paymentMethod,
+          paymentStatus: expenses.paymentStatus,
+          amount: expenses.amount,
+          supplierName: drizzleOrm.sql`${suppliers.name}`
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).leftJoin(suppliers, drizzleOrm.eq(expenses.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.expenseDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11698,7 +11817,13 @@ function registerReportHandlers() {
             summary: summary[0],
             expensesByCategory,
             expensesByBranch,
-            topExpenses
+            topExpenses,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11712,10 +11837,12 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, supplierId, status, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(purchases.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(purchases.branchId, branchId));
+        if (supplierId) conditions.push(drizzleOrm.eq(purchases.supplierId, supplierId));
+        if (status) conditions.push(drizzleOrm.eq(purchases.status, status));
         const summary = await db2.select({
           totalPurchases: drizzleOrm.sql`count(*)`,
           totalCost: drizzleOrm.sql`sum(${purchases.totalAmount})`,
@@ -11733,14 +11860,17 @@ function registerReportHandlers() {
           count: drizzleOrm.sql`count(*)`,
           totalAmount: drizzleOrm.sql`sum(${purchases.totalAmount})`
         }).from(purchases).where(drizzleOrm.and(...conditions)).groupBy(purchases.status);
-        const recentPurchases = await db2.select({
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(purchases).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
           id: purchases.id,
           purchaseOrderNumber: purchases.purchaseOrderNumber,
           supplierName: suppliers.name,
           totalAmount: purchases.totalAmount,
+          paymentStatus: purchases.paymentStatus,
           status: purchases.status,
           createdAt: purchases.createdAt
-        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(20);
+        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11754,7 +11884,13 @@ function registerReportHandlers() {
             summary: summary[0],
             purchasesBySupplier,
             purchasesByStatus,
-            recentPurchases
+            recentPurchases: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11768,10 +11904,11 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, reason, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(returns.returnDate, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(returns.branchId, branchId));
+        if (reason) conditions.push(drizzleOrm.like(returns.reason, `%${reason}%`));
         const totalSalesResult = await db2.select({
           count: drizzleOrm.sql`count(*)`
         }).from(sales).where(drizzleOrm.between(sales.saleDate, startDate, endDate));
@@ -11792,6 +11929,17 @@ function registerReportHandlers() {
           returnCount: drizzleOrm.sql`sum(${returnItems.quantity})`,
           totalValue: drizzleOrm.sql`sum(${returnItems.totalPrice})`
         }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).innerJoin(products, drizzleOrm.eq(returnItems.productId, products.id)).where(drizzleOrm.and(...conditions)).groupBy(returnItems.productId, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${returnItems.quantity})`)).limit(10);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(returns).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: returns.id,
+          returnNumber: returns.returnNumber,
+          invoiceNumber: sales.invoiceNumber,
+          returnDate: returns.returnDate,
+          reason: returns.reason,
+          totalAmount: returns.totalAmount,
+          refundAmount: returns.refundAmount
+        }).from(returns).innerJoin(sales, drizzleOrm.eq(returns.originalSaleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(returns.returnDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11807,7 +11955,13 @@ function registerReportHandlers() {
               returnRate
             },
             returnsByReason,
-            returnsByProduct
+            returnsByProduct,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11821,10 +11975,11 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, salespersonId, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(commissions.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(commissions.branchId, branchId));
+        if (salespersonId) conditions.push(drizzleOrm.eq(commissions.userId, salespersonId));
         const summary = await db2.select({
           totalCommissions: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
           commissionCount: drizzleOrm.sql`count(*)`,
@@ -11836,13 +11991,17 @@ function registerReportHandlers() {
           totalCommission: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
           salesCount: drizzleOrm.sql`count(*)`
         }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).where(drizzleOrm.and(...conditions)).groupBy(commissions.userId, users.fullName).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${commissions.commissionAmount})`));
-        const recentCommissions = await db2.select({
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(commissions).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
           id: commissions.id,
           userName: users.fullName,
           saleInvoice: sales.invoiceNumber,
           amount: commissions.commissionAmount,
+          commissionType: commissions.commissionType,
+          status: commissions.status,
           date: commissions.createdAt
-        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(commissions.createdAt)).limit(20);
+        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(commissions.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11855,7 +12014,13 @@ function registerReportHandlers() {
           data: {
             summary: summary[0],
             commissionsBySalesperson,
-            recentCommissions
+            recentCommissions: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11869,7 +12034,7 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
@@ -11891,6 +12056,17 @@ function registerReportHandlers() {
           taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
           salesCount: drizzleOrm.sql`count(*)`
         }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(sales.paymentMethod);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: sales.id,
+          invoiceNumber: sales.invoiceNumber,
+          saleDate: sales.saleDate,
+          totalAmount: sales.totalAmount,
+          taxAmount: sales.taxAmount,
+          paymentMethod: sales.paymentMethod,
+          branchName: branches.name
+        }).from(sales).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11903,7 +12079,13 @@ function registerReportHandlers() {
           data: {
             summary: summary[0],
             taxByBranch,
-            taxByPaymentMethod
+            taxByPaymentMethod,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11917,7 +12099,7 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { startDate: rawStart, endDate: rawEnd } = params;
+        const { startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const allBranches = await db2.select().from(branches);
         const branchMetrics = await Promise.all(
@@ -11970,6 +12152,8 @@ function registerReportHandlers() {
           entityType: "branch",
           description: `Generated branch performance report: ${startDate} to ${endDate}`
         });
+        const totalRows = branchMetrics.length;
+        const paginatedMetrics = branchMetrics.slice((page - 1) * pageSize, page * pageSize);
         return {
           success: true,
           data: {
@@ -11983,6 +12167,12 @@ function registerReportHandlers() {
               branchId: topBranch.branchId,
               branchName: topBranch.branchName,
               revenue: topBranch.revenue
+            },
+            details: {
+              rows: paginatedMetrics,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
             }
           }
         };
@@ -11997,7 +12187,7 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = branchId ? [drizzleOrm.eq(sales.branchId, branchId)] : [];
         const expenseConditions = branchId ? [drizzleOrm.eq(expenses.branchId, branchId)] : [];
@@ -12056,6 +12246,35 @@ function registerReportHandlers() {
           entityType: "sale",
           description: `Generated cash flow report: ${startDate} to ${endDate}`
         });
+        const salesRows = await db2.select({
+          id: sales.id,
+          type: drizzleOrm.sql`'sale'`,
+          date: sales.saleDate,
+          reference: sales.invoiceNumber,
+          amount: sales.totalAmount,
+          direction: drizzleOrm.sql`'in'`
+        }).from(sales).where(
+          drizzleOrm.and(
+            drizzleOrm.between(sales.saleDate, startDate, endDate),
+            drizzleOrm.eq(sales.isVoided, false),
+            ...conditions
+          )
+        );
+        const expenseRows = await db2.select({
+          id: expenses.id,
+          type: drizzleOrm.sql`'expense'`,
+          date: expenses.expenseDate,
+          reference: drizzleOrm.sql`coalesce(${expenses.reference}, ${expenses.description}, '')`,
+          amount: expenses.amount,
+          direction: drizzleOrm.sql`'out'`
+        }).from(expenses).where(drizzleOrm.and(
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false),
+          ...expenseConditions
+        ));
+        const allCashRows = [...salesRows, ...expenseRows].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+        const totalRows = allCashRows.length;
+        const paginatedRows = allCashRows.slice((page - 1) * pageSize, page * pageSize);
         return {
           success: true,
           data: {
@@ -12077,7 +12296,13 @@ function registerReportHandlers() {
               commissions: cashOutCommissions,
               refunds: cashOutRefunds
             },
-            cashByBranch: []
+            cashByBranch: [],
+            details: {
+              rows: paginatedRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -12091,11 +12316,13 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd, userId } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, userId, actionType, entityType, page = 1, limit: pageSize = 50 } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(auditLogs.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
         if (userId) conditions.push(drizzleOrm.eq(auditLogs.userId, userId));
+        if (actionType) conditions.push(drizzleOrm.eq(auditLogs.action, actionType));
+        if (entityType) conditions.push(drizzleOrm.eq(auditLogs.entityType, entityType));
         const summary = await db2.select({
           totalActions: drizzleOrm.sql`count(*)`,
           uniqueUsers: drizzleOrm.sql`count(distinct ${auditLogs.userId})`
@@ -12109,14 +12336,16 @@ function registerReportHandlers() {
           action: auditLogs.action,
           count: drizzleOrm.sql`count(*)`
         }).from(auditLogs).where(drizzleOrm.and(...conditions)).groupBy(auditLogs.action).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
-        const recentActions = await db2.select({
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
           id: auditLogs.id,
           userName: users.fullName,
           action: auditLogs.action,
           entityType: auditLogs.entityType,
           description: auditLogs.description,
           timestamp: auditLogs.createdAt
-        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(50);
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -12130,7 +12359,13 @@ function registerReportHandlers() {
             summary: summary[0],
             actionsByUser,
             actionsByType,
-            recentActions
+            recentActions: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -12150,7 +12385,7 @@ function registerReportHandlers() {
             message: "Unauthorized: Admin access required"
           };
         }
-        const { branchId, timePeriod, startDate, endDate } = params;
+        const { branchId, timePeriod, startDate, endDate, page = 1, limit: pageSize = 50 } = params;
         const dateRange = getDateRange(timePeriod, startDate, endDate);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
@@ -12258,6 +12493,44 @@ function registerReportHandlers() {
           tableName: log.tableName,
           timestamp: log.timestamp
         }));
+        const voidedSalesConditions = [
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, true)
+        ];
+        if (branchId) voidedSalesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
+        const voidedSales = await db2.select({
+          type: drizzleOrm.sql`'sale'`,
+          reference: sales.invoiceNumber,
+          originalAmount: sales.totalAmount,
+          voidReason: sales.voidReason,
+          voidedDate: sales.updatedAt
+        }).from(sales).where(drizzleOrm.and(...voidedSalesConditions));
+        const voidedExpenseConditions = [
+          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(expenses.isVoided, true)
+        ];
+        if (branchId) voidedExpenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
+        const voidedExpenses = await db2.select({
+          type: drizzleOrm.sql`'expense'`,
+          reference: drizzleOrm.sql`coalesce(${expenses.description}, ${expenses.reference}, '')`,
+          originalAmount: expenses.amount,
+          voidReason: expenses.voidReason,
+          voidedDate: expenses.updatedAt
+        }).from(expenses).where(drizzleOrm.and(...voidedExpenseConditions));
+        const voidedTransactions = [...voidedSales, ...voidedExpenses];
+        const totalAuditCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(drizzleOrm.and(...auditLogConditions));
+        const totalRows = totalAuditCount[0]?.count || 0;
+        const paginatedAuditLogs = await db2.select({
+          id: auditLogs.id,
+          userName: users.fullName,
+          action: auditLogs.action,
+          tableName: auditLogs.entityType,
+          timestamp: auditLogs.createdAt
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...auditLogConditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
+        const formattedPaginatedLogs = paginatedAuditLogs.map((log) => ({
+          ...log,
+          userName: log.userName || "System"
+        }));
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -12290,7 +12563,14 @@ function registerReportHandlers() {
               profitMargin
             },
             commissionsSummary: commissionsSummary[0],
-            auditLogs: formattedAuditLogs
+            auditLogs: formattedAuditLogs,
+            voidedTransactions,
+            details: {
+              rows: formattedPaginatedLogs,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {

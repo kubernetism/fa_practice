@@ -37,7 +37,6 @@ const getPageName = (pathname: string): string => {
     users: 'Users',
     branches: 'Branches',
     reports: 'Reports',
-    'audit-reports': 'Audit Reports',
     audit: 'Activity Logs',
     settings: 'Settings',
     database: 'Database Viewer',

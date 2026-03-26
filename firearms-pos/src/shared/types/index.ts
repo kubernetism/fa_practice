@@ -189,8 +189,13 @@ export type ReportType =
   | 'branch-performance'
   | 'cash-flow'
   | 'audit-trail'
+  | 'comprehensive-audit'
 
 export type TimePeriod = 'daily' | 'weekly' | 'monthly' | 'yearly' | 'all-time' | 'custom'
+
+export type ComparisonMode = 'none' | 'period' | 'branch'
+
+export type GroupBy = 'day' | 'week' | 'month'
 
 export interface ReportFilters {
   reportType: ReportType
@@ -202,6 +207,36 @@ export interface ReportFilters {
   productId?: number
   customerId?: number
   userId?: number
+  supplierId?: number
+  paymentMethod?: string
+  paymentStatus?: string
+  groupBy?: GroupBy
+  actionType?: string
+  entityType?: string
+  includeVoided?: boolean
+  reason?: string
+  comparisonMode?: ComparisonMode
+  comparisonBranchId?: number
+  page?: number
+  limit?: number
+}
+
+export interface PaginatedDetailResponse<T = Record<string, unknown>> {
+  rows: T[]
+  total: number
+  page: number
+  totalPages: number
+}
+
+export interface ReportResponse {
+  success: boolean
+  message?: string
+  data?: {
+    summary: Record<string, unknown>
+    details?: PaginatedDetailResponse
+    voidedTransactions?: Array<Record<string, unknown>>
+    [key: string]: unknown
+  }
 }
 
 export interface ExpenseReportData {

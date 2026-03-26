@@ -75,6 +75,7 @@ export async function generateReportPDF(options: PDFOptions): Promise<string> {
       htmlContent = generateCashFlowHTML(data, filters, businessInfo)
       break
     case 'audit-trail':
+    case 'comprehensive-audit':
       htmlContent = generateAuditTrailHTML(data, filters, businessInfo)
       break
     default:
@@ -1452,6 +1453,32 @@ function generateAuditTrailHTML(data: AuditTrailData, filters: any, businessInfo
               <td>${item.userName}</td>
               <td>${item.action}</td>
               <td>${item.tableName}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Voided / Reversed Transactions -->
+    ${data.voidedTransactions && data.voidedTransactions.length > 0 ? `
+    <div class="page-break"></div>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Voided / Reversed Transactions</div>
+        <div class="section-badge">${data.voidedTransactions.length} items</div>
+      </div>
+      <div class="alert warning">These transactions have been voided or reversed and are excluded from all totals above.</div>
+      <table>
+        <thead><tr><th>Type</th><th>Reference</th><th>Description</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.voidedTransactions.map((item: any) => `
+            <tr>
+              <td>${item.type || '—'}</td>
+              <td>${item.reference || item.invoiceNumber || '—'}</td>
+              <td>${item.description || item.customerName || '—'}</td>
+              <td>${item.date ? formatDate(item.date) : '—'}</td>
+              <td class="text-danger">${fmtCurrency(item.amount || item.totalAmount || 0)}</td>
             </tr>
           `).join('')}
         </tbody>

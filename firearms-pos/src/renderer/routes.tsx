@@ -36,7 +36,6 @@ const KEEP_ALIVE_PATHS = [
   "users",
   "branches",
   "reports",
-  "audit-reports",
   "referral-persons",
   "receivables",
   "payables",

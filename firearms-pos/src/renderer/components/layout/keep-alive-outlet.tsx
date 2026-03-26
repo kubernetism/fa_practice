@@ -21,7 +21,6 @@ const routeComponents: Record<string, React.LazyExoticComponent<React.ComponentT
   '/users': lazy(() => import('@/screens/users')),
   '/branches': lazy(() => import('@/screens/branches')),
   '/reports': lazy(() => import('@/screens/reports')),
-  '/audit-reports': lazy(() => import('@/screens/reports/audit-reports')),
   '/referral-persons': lazy(() => import('@/screens/referral-persons')),
   '/receivables': lazy(() => import('@/screens/account-receivables').then((m) => ({ default: m.AccountReceivablesScreen }))),
   '/payables': lazy(() => import('@/screens/account-payables').then((m) => ({ default: m.AccountPayablesScreen }))),
