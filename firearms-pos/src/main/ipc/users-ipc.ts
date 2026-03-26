@@ -14,7 +14,7 @@ export function registerUserHandlers(): void {
     'users:get-all',
     async (_, params: PaginationParams & { search?: string; role?: string; isActive?: boolean }) => {
       try {
-        const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc', search, role, isActive } = params
+        const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc', search, role, isActive } = params || {}
 
         const conditions = []
 

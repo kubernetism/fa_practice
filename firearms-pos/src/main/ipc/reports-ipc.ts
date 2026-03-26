@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, between, gte, lte, count, like } from 'drizzle-orm'
+import { eq, and, desc, sql, between, gte, lte, count, like, isNull } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   sales,
@@ -1921,14 +1921,22 @@ export function registerReportHandlers(): void {
         const session = getCurrentSession()
         const { reportType, data, filters } = params
 
-        // Get business info from settings
-        const globalSetting = await db.select().from(businessSettings).where(sql`${businessSettings.branchId} IS NULL`).limit(1)
+        // Get business info from settings (match the same query as business-settings:get-global)
+        const globalSetting = await db.select().from(businessSettings).where(isNull(businessSettings.branchId)).orderBy(desc(businessSettings.settingId)).limit(1)
         const settingsRow = globalSetting[0]
+        console.log('[PDF Export] Business settings:', settingsRow ? `found - ${settingsRow.businessName}` : 'NOT FOUND')
         const businessInfo = {
           name: settingsRow?.businessName || 'POS System',
           address: settingsRow?.businessAddress || '',
+          city: settingsRow?.businessCity || '',
+          state: settingsRow?.businessState || '',
+          postalCode: settingsRow?.businessPostalCode || '',
+          country: settingsRow?.businessCountry || '',
           phone: settingsRow?.businessPhone || '',
           email: settingsRow?.businessEmail || '',
+          website: settingsRow?.businessWebsite || '',
+          registrationNo: settingsRow?.businessRegistrationNo || '',
+          taxId: settingsRow?.taxId || '',
         }
 
         const filePath = await generateReportPDF({
@@ -1936,6 +1944,7 @@ export function registerReportHandlers(): void {
           data,
           filters,
           businessInfo,
+          generatedBy: session?.fullName || session?.username || '',
         })
 
         await createAuditLog({

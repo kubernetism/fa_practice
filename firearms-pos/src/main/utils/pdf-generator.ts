@@ -31,52 +31,64 @@ interface PDFOptions {
   businessInfo?: {
     name: string
     address?: string
+    city?: string
+    state?: string
+    postalCode?: string
+    country?: string
     phone?: string
     email?: string
+    website?: string
+    registrationNo?: string
+    taxId?: string
+    logo?: string
   }
+  generatedBy?: string
 }
 
 export async function generateReportPDF(options: PDFOptions): Promise<string> {
-  const { reportType, data, filters, businessInfo } = options
+  const { reportType, data, filters, businessInfo, generatedBy } = options
+
+  // Attach generatedBy to businessInfo so it flows through to the template
+  const bizInfo = businessInfo ? { ...businessInfo, generatedBy } : { name: 'Business', generatedBy }
 
   let htmlContent = ''
   switch (reportType) {
     case 'sales':
-      htmlContent = generateSalesReportHTML(data, filters, businessInfo)
+      htmlContent = generateSalesReportHTML(data, filters, bizInfo)
       break
     case 'inventory':
-      htmlContent = generateInventoryReportHTML(data, filters, businessInfo)
+      htmlContent = generateInventoryReportHTML(data, filters, bizInfo)
       break
     case 'profit-loss':
-      htmlContent = generateProfitLossReportHTML(data, filters, businessInfo)
+      htmlContent = generateProfitLossReportHTML(data, filters, bizInfo)
       break
     case 'expenses':
-      htmlContent = generateExpenseReportHTML(data, filters, businessInfo)
+      htmlContent = generateExpenseReportHTML(data, filters, bizInfo)
       break
     case 'purchases':
-      htmlContent = generatePurchaseReportHTML(data, filters, businessInfo)
+      htmlContent = generatePurchaseReportHTML(data, filters, bizInfo)
       break
     case 'returns':
-      htmlContent = generateReturnReportHTML(data, filters, businessInfo)
+      htmlContent = generateReturnReportHTML(data, filters, bizInfo)
       break
     case 'commissions':
-      htmlContent = generateCommissionReportHTML(data, filters, businessInfo)
+      htmlContent = generateCommissionReportHTML(data, filters, bizInfo)
       break
     case 'tax':
-      htmlContent = generateTaxReportHTML(data, filters, businessInfo)
+      htmlContent = generateTaxReportHTML(data, filters, bizInfo)
       break
     case 'customer':
-      htmlContent = generateCustomerReportHTML(data, filters, businessInfo)
+      htmlContent = generateCustomerReportHTML(data, filters, bizInfo)
       break
     case 'branch-performance':
-      htmlContent = generateBranchPerformanceHTML(data, filters, businessInfo)
+      htmlContent = generateBranchPerformanceHTML(data, filters, bizInfo)
       break
     case 'cash-flow':
-      htmlContent = generateCashFlowHTML(data, filters, businessInfo)
+      htmlContent = generateCashFlowHTML(data, filters, bizInfo)
       break
     case 'audit-trail':
     case 'comprehensive-audit':
-      htmlContent = generateAuditTrailHTML(data, filters, businessInfo)
+      htmlContent = generateAuditTrailHTML(data, filters, bizInfo)
       break
     default:
       throw new Error(`Unknown report type: ${reportType}`)
@@ -139,9 +151,22 @@ function getReportTemplate(
 ): string {
   const bizName = businessInfo?.name || 'Business'
   const bizAddress = businessInfo?.address || ''
+  const bizCity = businessInfo?.city || ''
+  const bizState = businessInfo?.state || ''
+  const bizPostalCode = businessInfo?.postalCode || ''
+  const bizCountry = businessInfo?.country || ''
   const bizPhone = businessInfo?.phone || ''
   const bizEmail = businessInfo?.email || ''
-  const hasContact = bizAddress || bizPhone || bizEmail
+  const bizWebsite = businessInfo?.website || ''
+  const bizRegNo = businessInfo?.registrationNo || ''
+  const bizTaxId = businessInfo?.taxId || ''
+  const generatedBy = businessInfo?.generatedBy || ''
+
+  // Build full address line
+  const addressParts = [bizAddress, bizCity, bizState, bizPostalCode, bizCountry].filter(Boolean)
+  const fullAddress = addressParts.join(', ')
+
+  const hasContact = fullAddress || bizPhone || bizEmail
   const periodLabel = getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)
   const generatedAt = formatDateTime(new Date())
 
@@ -166,46 +191,57 @@ function getReportTemplate(
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    padding-bottom: 14px;
-    border-bottom: 2px solid #0f172a;
-    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1.5px solid #334155;
+    margin-bottom: 14px;
   }
   .biz-block {}
   .biz-name {
-    font-size: 20px;
+    font-size: 18px;
     font-weight: 700;
     color: #0f172a;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
     line-height: 1.2;
   }
   .biz-contact {
-    font-size: 9px;
-    color: #64748b;
-    margin-top: 4px;
+    font-size: 8.5px;
+    color: #475569;
+    margin-top: 3px;
     line-height: 1.6;
+  }
+  .biz-ids {
+    font-size: 8px;
+    color: #64748b;
+    margin-top: 2px;
+    line-height: 1.5;
   }
   .report-meta {
     text-align: right;
   }
   .report-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 700;
     color: #0f172a;
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
   }
   .report-period {
-    font-size: 10px;
+    font-size: 9.5px;
     color: #475569;
     margin-top: 3px;
   }
+  .report-generated {
+    font-size: 8.5px;
+    color: #64748b;
+    margin-top: 2px;
+  }
   .report-branch {
     display: inline-block;
-    margin-top: 5px;
-    padding: 2px 8px;
-    background: #f1f5f9;
+    margin-top: 4px;
+    padding: 2px 7px;
+    border: 1px solid #cbd5e1;
     border-radius: 3px;
-    font-size: 9px;
+    font-size: 8.5px;
     font-weight: 600;
     color: #475569;
     text-transform: uppercase;
@@ -228,11 +264,12 @@ function getReportTemplate(
     padding: 12px 14px;
   }
   .kpi-card.highlight {
-    background: #0f172a;
-    border-color: #0f172a;
+    background: #f8fafc;
+    border-color: #334155;
+    border-width: 2px;
   }
-  .kpi-card.highlight .kpi-label { color: #94a3b8; }
-  .kpi-card.highlight .kpi-value { color: #fff; }
+  .kpi-card.highlight .kpi-label { color: #475569; }
+  .kpi-card.highlight .kpi-value { color: #0f172a; }
   .kpi-card.accent {
     background: #fefce8;
     border-color: #fde68a;
@@ -358,11 +395,12 @@ function getReportTemplate(
     font-variant-numeric: tabular-nums;
   }
   .data-row.total {
-    background: #0f172a;
+    background: #f1f5f9;
+    border: 1.5px solid #334155;
     padding: 10px 14px;
   }
-  .data-row.total .label { color: #cbd5e1; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-  .data-row.total .value { color: #fff; font-size: 14px; font-weight: 700; }
+  .data-row.total .label { color: #0f172a; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .data-row.total .value { color: #0f172a; font-size: 14px; font-weight: 700; }
   .data-row.subtotal {
     background: #f1f5f9;
   }
@@ -431,13 +469,17 @@ function getReportTemplate(
     <div class="biz-block">
       <div class="biz-name">${bizName}</div>
       ${hasContact ? `<div class="biz-contact">
-        ${bizAddress ? `${bizAddress}<br>` : ''}
-        ${bizPhone ? `Tel: ${bizPhone}` : ''}${bizPhone && bizEmail ? ' &nbsp;|&nbsp; ' : ''}${bizEmail ? `Email: ${bizEmail}` : ''}
+        ${fullAddress ? `${fullAddress}<br>` : ''}
+        ${bizPhone ? `Tel: ${bizPhone}` : ''}${bizPhone && bizEmail ? ' &nbsp;|&nbsp; ' : ''}${bizEmail ? `Email: ${bizEmail}` : ''}${(bizPhone || bizEmail) && bizWebsite ? ' &nbsp;|&nbsp; ' : ''}${bizWebsite ? `Web: ${bizWebsite}` : ''}
+      </div>` : ''}
+      ${bizRegNo || bizTaxId ? `<div class="biz-ids">
+        ${bizRegNo ? `Reg #: ${bizRegNo}` : ''}${bizRegNo && bizTaxId ? ' &nbsp;|&nbsp; ' : ''}${bizTaxId ? `Tax ID: ${bizTaxId}` : ''}
       </div>` : ''}
     </div>
     <div class="report-meta">
       <div class="report-title">${title}</div>
       <div class="report-period">${periodLabel}</div>
+      <div class="report-generated">${generatedAt}${generatedBy ? ` &nbsp;|&nbsp; By: ${generatedBy}` : ''}</div>
       <div class="report-branch">${filters.branchName || 'All Branches'}</div>
     </div>
   </div>
@@ -448,10 +490,10 @@ function getReportTemplate(
   <!-- Footer -->
   <div class="report-footer">
     <div class="footer-left">
-      Generated: ${generatedAt} &nbsp;|&nbsp; ${bizName}
+      ${bizName}${bizPhone ? ` &nbsp;|&nbsp; Tel: ${bizPhone}` : ''}
     </div>
     <div class="footer-right">
-      Confidential &mdash; For Internal Use Only
+      Page generated: ${generatedAt}${generatedBy ? ` by ${generatedBy}` : ''} &nbsp;|&nbsp; Confidential
     </div>
   </div>
 
