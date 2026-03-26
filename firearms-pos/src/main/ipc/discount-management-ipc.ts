@@ -108,7 +108,7 @@ export function registerDiscountManagementHandlers(): void {
         .innerJoin(products, eq(saleItems.productId, products.id))
         .innerJoin(sales, eq(saleItems.saleId, sales.id))
         .where(and(whereClause, gt(saleItems.discountAmount, 0)))
-        .groupBy(products.id, products.name)
+        .groupBy(sql`${products.id}`, sql`${products.name}`)
         .orderBy(desc(sql`sum(${saleItems.discountAmount})`))
         .limit(10)
 

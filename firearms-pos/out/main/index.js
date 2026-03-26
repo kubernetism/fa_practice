@@ -2881,45 +2881,94 @@ async function postVoidSaleToGL(sale, saleItems2, userId) {
 }
 async function postStockAdjustmentToGL(adjustment, userId) {
   const lines = [];
-  const totalValue = adjustment.quantityChange * adjustment.unitCost;
+  const totalValue = Math.abs(adjustment.quantityChange) * adjustment.unitCost;
   if (totalValue <= 0) {
     throw new Error("Cannot post zero-value adjustment to GL");
   }
-  if (adjustment.adjustmentType === "remove") {
+  const productInfo = adjustment.productName ? `${adjustment.productName}` : "Unknown product";
+  const qtyInfo = adjustment.quantityBefore !== void 0 && adjustment.quantityAfter !== void 0 ? ` (${adjustment.quantityBefore} → ${adjustment.quantityAfter} units)` : ` (${Math.abs(adjustment.quantityChange)} units)`;
+  const detail = `${productInfo}${qtyInfo}`;
+  const isShrinkage = ["damage", "theft", "expired"].includes(adjustment.adjustmentType);
+  const isAdminRemoval = adjustment.adjustmentType === "remove";
+  const isCorrection = adjustment.adjustmentType === "correction";
+  const isAddition = adjustment.adjustmentType === "add";
+  if (isShrinkage) {
+    const typeLabel = adjustment.adjustmentType === "damage" ? "Damaged" : adjustment.adjustmentType === "theft" ? "Stolen" : "Expired";
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
       debitAmount: totalValue,
       creditAmount: 0,
-      description: `Inventory shrinkage: ${adjustment.reason}`
+      description: `${typeLabel} inventory: ${detail} - ${adjustment.reason}`
     });
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: 0,
       creditAmount: totalValue,
-      description: `Inventory reduction: ${adjustment.reason}`
+      description: `Inventory write-off: ${detail}`
     });
-  } else {
+  } else if (isAdminRemoval) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory removed: ${detail} - ${adjustment.reason}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${detail}`
+    });
+  } else if (isCorrection) {
+    if (adjustment.quantityChange < 0) {
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Cycle count shortage: ${detail} - ${adjustment.reason}`
+      });
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Inventory correction (shortage): ${detail}`
+      });
+    } else {
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Inventory correction (surplus): ${detail}`
+      });
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Cycle count surplus: ${detail} - ${adjustment.reason}`
+      });
+    }
+  } else if (isAddition) {
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: totalValue,
       creditAmount: 0,
-      description: `Inventory increase: ${adjustment.reason}`
+      description: `Inventory added: ${detail} - ${adjustment.reason}`
     });
     let creditAccount;
     let creditDescription;
     switch (adjustment.fundingSource) {
       case "owner_capital":
         creditAccount = ACCOUNT_CODES.OWNERS_CAPITAL;
-        creditDescription = `Owner capital investment: ${adjustment.reason}`;
+        creditDescription = `Owner capital investment: ${detail}`;
         break;
       case "accounts_payable":
         creditAccount = ACCOUNT_CODES.ACCOUNTS_PAYABLE;
-        creditDescription = `Supplier payable: ${adjustment.reason}`;
+        creditDescription = `Supplier payable: ${detail}`;
         break;
       case "surplus":
       default:
         creditAccount = ACCOUNT_CODES.INVENTORY_ADJUSTMENT;
-        creditDescription = `Inventory adjustment income: ${adjustment.reason}`;
+        creditDescription = `Inventory adjustment income: ${detail}`;
         break;
     }
     lines.push({
@@ -2929,8 +2978,16 @@ async function postStockAdjustmentToGL(adjustment, userId) {
       description: creditDescription
     });
   }
+  const typeLabels = {
+    add: "Addition",
+    remove: "Removal",
+    damage: "Damage Write-off",
+    theft: "Theft Write-off",
+    correction: "Cycle Count Correction",
+    expired: "Expiry Write-off"
+  };
   return createJournalEntry({
-    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
+    description: `Stock ${typeLabels[adjustment.adjustmentType] || adjustment.adjustmentType}: ${detail} - ${adjustment.reason}`,
     referenceType: "stock_adjustment",
     referenceId: adjustment.id,
     branchId: adjustment.branchId,
@@ -5232,7 +5289,10 @@ function registerInventoryHandlers() {
                 unitCost: product.costPrice,
                 reason: data.reason,
                 reference: data.reference,
-                fundingSource: data.fundingSource
+                fundingSource: data.fundingSource,
+                productName: product.name,
+                quantityBefore,
+                quantityAfter
               },
               session?.userId ?? 0
             );
@@ -20656,7 +20716,7 @@ function registerDiscountManagementHandlers() {
         productName: products.name,
         discountAmount: drizzleOrm.sql`sum(${saleItems.discountAmount})`,
         count: drizzleOrm.sql`count(*)`
-      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(whereClause, drizzleOrm.gt(saleItems.discountAmount, 0))).groupBy(products.id, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${saleItems.discountAmount})`)).limit(10);
+      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(whereClause, drizzleOrm.gt(saleItems.discountAmount, 0))).groupBy(drizzleOrm.sql`${products.id}`, drizzleOrm.sql`${products.name}`).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${saleItems.discountAmount})`)).limit(10);
       const summary = {
         totalDiscounts: salesWithDiscount,
         totalDiscountAmount,
@@ -21138,7 +21198,7 @@ function registerInventoryCountsHandlers() {
             quantity: newQuantity,
             updatedAt: now
           }).where(drizzleOrm.eq(inventory.id, inv.id));
-          await db2.insert(stockAdjustments).values({
+          const [adjustment] = await db2.insert(stockAdjustments).values({
             productId: item.productId,
             branchId: count.branchId,
             userId,
@@ -21149,7 +21209,27 @@ function registerInventoryCountsHandlers() {
             reason: `Cycle count adjustment - Count #${count.countNumber}`,
             reference: count.countNumber,
             createdAt: now
+          }).returning();
+          const product = await db2.query.products.findFirst({
+            where: drizzleOrm.eq(products.id, item.productId)
           });
+          if (product && adjustment) {
+            await postStockAdjustmentToGL(
+              {
+                id: adjustment.id,
+                branchId: count.branchId,
+                adjustmentType: "correction",
+                quantityChange: varianceQty,
+                unitCost: product.costPrice,
+                reason: `Cycle count adjustment - Count #${count.countNumber}`,
+                reference: count.countNumber,
+                productName: product.name,
+                quantityBefore: inv.quantity,
+                quantityAfter: newQuantity
+              },
+              userId
+            );
+          }
           await db2.update(inventoryCountItems).set({ adjustmentCreated: true, updatedAt: now }).where(drizzleOrm.eq(inventoryCountItems.id, item.id));
           adjustedCount++;
         }

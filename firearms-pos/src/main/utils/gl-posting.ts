@@ -930,43 +930,111 @@ export async function postStockAdjustmentToGL(
   adjustment: {
     id: number
     branchId: number
-    adjustmentType: 'add' | 'remove'
+    adjustmentType: 'add' | 'remove' | 'damage' | 'theft' | 'correction' | 'expired'
     quantityChange: number
     unitCost: number
     reason: string
     reference?: string
     fundingSource?: 'owner_capital' | 'accounts_payable' | 'surplus'
+    productName?: string
+    quantityBefore?: number
+    quantityAfter?: number
   },
   userId: number
 ): Promise<number> {
   const lines: JournalLine[] = []
-  const totalValue = adjustment.quantityChange * adjustment.unitCost
+  const totalValue = Math.abs(adjustment.quantityChange) * adjustment.unitCost
 
   if (totalValue <= 0) {
     throw new Error('Cannot post zero-value adjustment to GL')
   }
 
-  if (adjustment.adjustmentType === 'remove') {
-    // Reduction: DR Shrinkage Expense, CR Inventory
+  // Build detailed description with product info
+  const productInfo = adjustment.productName ? `${adjustment.productName}` : 'Unknown product'
+  const qtyInfo = adjustment.quantityBefore !== undefined && adjustment.quantityAfter !== undefined
+    ? ` (${adjustment.quantityBefore} → ${adjustment.quantityAfter} units)`
+    : ` (${Math.abs(adjustment.quantityChange)} units)`
+  const detail = `${productInfo}${qtyInfo}`
+
+  // Shrinkage types: actual loss that should hit the expense account
+  const isShrinkage = ['damage', 'theft', 'expired'].includes(adjustment.adjustmentType)
+  // Administrative removal: cleaning up records, not actual loss
+  const isAdminRemoval = adjustment.adjustmentType === 'remove'
+  // Correction: cycle count or manual correction
+  const isCorrection = adjustment.adjustmentType === 'correction'
+  // Addition
+  const isAddition = adjustment.adjustmentType === 'add'
+
+  if (isShrinkage) {
+    // Actual loss/damage/theft/expiry: DR Shrinkage Expense, CR Inventory
+    const typeLabel = adjustment.adjustmentType === 'damage' ? 'Damaged'
+      : adjustment.adjustmentType === 'theft' ? 'Stolen'
+      : 'Expired'
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
       debitAmount: totalValue,
       creditAmount: 0,
-      description: `Inventory shrinkage: ${adjustment.reason}`,
+      description: `${typeLabel} inventory: ${detail} - ${adjustment.reason}`,
     })
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: 0,
       creditAmount: totalValue,
-      description: `Inventory reduction: ${adjustment.reason}`,
+      description: `Inventory write-off: ${detail}`,
     })
-  } else {
+  } else if (isAdminRemoval) {
+    // Administrative removal (record cleanup): DR Owner's Capital, CR Inventory
+    // This is NOT an expense — it reverses the equity that funded the inventory
+    lines.push({
+      accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory removed: ${detail} - ${adjustment.reason}`,
+    })
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${detail}`,
+    })
+  } else if (isCorrection) {
+    // Cycle count correction: variance can be positive or negative
+    if (adjustment.quantityChange < 0) {
+      // Shortage found: DR Shrinkage Expense, CR Inventory
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Cycle count shortage: ${detail} - ${adjustment.reason}`,
+      })
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Inventory correction (shortage): ${detail}`,
+      })
+    } else {
+      // Surplus found: DR Inventory, CR Inventory Adjustment Income
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Inventory correction (surplus): ${detail}`,
+      })
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Cycle count surplus: ${detail} - ${adjustment.reason}`,
+      })
+    }
+  } else if (isAddition) {
     // Addition: DR Inventory
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: totalValue,
       creditAmount: 0,
-      description: `Inventory increase: ${adjustment.reason}`,
+      description: `Inventory added: ${detail} - ${adjustment.reason}`,
     })
 
     // CR based on funding source
@@ -976,16 +1044,16 @@ export async function postStockAdjustmentToGL(
     switch (adjustment.fundingSource) {
       case 'owner_capital':
         creditAccount = ACCOUNT_CODES.OWNERS_CAPITAL
-        creditDescription = `Owner capital investment: ${adjustment.reason}`
+        creditDescription = `Owner capital investment: ${detail}`
         break
       case 'accounts_payable':
         creditAccount = ACCOUNT_CODES.ACCOUNTS_PAYABLE
-        creditDescription = `Supplier payable: ${adjustment.reason}`
+        creditDescription = `Supplier payable: ${detail}`
         break
       case 'surplus':
       default:
         creditAccount = ACCOUNT_CODES.INVENTORY_ADJUSTMENT
-        creditDescription = `Inventory adjustment income: ${adjustment.reason}`
+        creditDescription = `Inventory adjustment income: ${detail}`
         break
     }
 
@@ -997,8 +1065,17 @@ export async function postStockAdjustmentToGL(
     })
   }
 
+  const typeLabels: Record<string, string> = {
+    add: 'Addition',
+    remove: 'Removal',
+    damage: 'Damage Write-off',
+    theft: 'Theft Write-off',
+    correction: 'Cycle Count Correction',
+    expired: 'Expiry Write-off',
+  }
+
   return createJournalEntry({
-    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
+    description: `Stock ${typeLabels[adjustment.adjustmentType] || adjustment.adjustmentType}: ${detail} - ${adjustment.reason}`,
     referenceType: 'stock_adjustment',
     referenceId: adjustment.id,
     branchId: adjustment.branchId,

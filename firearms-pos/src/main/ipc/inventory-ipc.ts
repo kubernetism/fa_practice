@@ -188,6 +188,9 @@ export function registerInventoryHandlers(): void {
                 reason: data.reason,
                 reference: data.reference,
                 fundingSource: data.fundingSource,
+                productName: product.name,
+                quantityBefore: quantityBefore,
+                quantityAfter: quantityAfter,
               },
               session?.userId ?? 0
             )

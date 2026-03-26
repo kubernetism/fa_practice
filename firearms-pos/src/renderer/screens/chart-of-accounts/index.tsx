@@ -1000,6 +1000,128 @@ export default function ChartOfAccountsScreen() {
                       </span>
                     </div>
                   </div>
+
+                  {/* Diagnostic Breakdown */}
+                  {incomeStatement && (() => {
+                    const totalRevenue = incomeStatement.revenue.total || 0
+                    const totalExpenses = incomeStatement.expenses.total || 0
+                    const netIncome = incomeStatement.netIncome || 0
+                    const cogsAccount = incomeStatement.expenses.accounts.find(a => a.accountCode === '5000')
+                    const cogsAmount = cogsAccount?.currentBalance || 0
+                    const grossProfit = totalRevenue - cogsAmount
+                    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
+                    const operatingExpenses = totalExpenses - cogsAmount
+                    const isNegative = netIncome < 0
+                    const deficit = Math.abs(netIncome)
+
+                    // Sort expenses by balance descending
+                    const sortedExpenses = [...incomeStatement.expenses.accounts]
+                      .filter(a => a.currentBalance > 0)
+                      .sort((a, b) => b.currentBalance - a.currentBalance)
+
+                    return (
+                      <div className="space-y-3 mt-2">
+                        {/* Gross Profit Analysis */}
+                        <div className="rounded-lg border p-3 space-y-2">
+                          <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                            <Calculator className="h-3.5 w-3.5" />
+                            Profitability Analysis
+                          </h4>
+                          <div className="grid grid-cols-2 gap-2 text-sm">
+                            <div className="flex justify-between p-2 rounded bg-muted/30">
+                              <span className="text-muted-foreground">Sales Revenue</span>
+                              <span className="font-medium text-green-500">{formatCurrency(totalRevenue)}</span>
+                            </div>
+                            <div className="flex justify-between p-2 rounded bg-muted/30">
+                              <span className="text-muted-foreground">Cost of Goods Sold</span>
+                              <span className="font-medium text-red-500">{formatCurrency(cogsAmount)}</span>
+                            </div>
+                            <div className="flex justify-between p-2 rounded bg-muted/30">
+                              <span className="text-muted-foreground">Gross Profit</span>
+                              <span className={`font-bold ${grossProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                {formatCurrency(grossProfit)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between p-2 rounded bg-muted/30">
+                              <span className="text-muted-foreground">Gross Margin</span>
+                              <span className={`font-bold ${grossMargin >= 30 ? 'text-green-500' : grossMargin >= 15 ? 'text-yellow-500' : 'text-red-500'}`}>
+                                {grossMargin.toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="flex justify-between p-2 rounded bg-muted/30">
+                              <span className="text-muted-foreground">Operating Expenses</span>
+                              <span className="font-medium text-red-500">{formatCurrency(operatingExpenses)}</span>
+                            </div>
+                            <div className="flex justify-between p-2 rounded bg-muted/30">
+                              <span className="text-muted-foreground">Net Margin</span>
+                              <span className={`font-bold ${netIncome >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                                {totalRevenue > 0 ? ((netIncome / totalRevenue) * 100).toFixed(1) : '0.0'}%
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Expense Contribution Breakdown */}
+                        {totalExpenses > 0 && (
+                          <div className="rounded-lg border p-3 space-y-2">
+                            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                              <AlertTriangle className="h-3.5 w-3.5" />
+                              Expense Breakdown by Impact
+                            </h4>
+                            <div className="space-y-1.5">
+                              {sortedExpenses.map((account) => {
+                                const pct = (account.currentBalance / totalExpenses) * 100
+                                const pctOfRevenue = totalRevenue > 0 ? (account.currentBalance / totalRevenue) * 100 : 0
+                                return (
+                                  <div key={account.id} className="space-y-0.5">
+                                    <div className="flex justify-between items-center text-xs">
+                                      <span className="text-muted-foreground truncate mr-2">
+                                        {account.accountName}
+                                        <span className="text-muted-foreground/60 ml-1">({account.accountCode})</span>
+                                      </span>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="text-muted-foreground">{pct.toFixed(1)}% of expenses</span>
+                                        {totalRevenue > 0 && (
+                                          <span className={`${pctOfRevenue > 50 ? 'text-red-400' : 'text-muted-foreground/60'}`}>
+                                            ({pctOfRevenue.toFixed(1)}% of revenue)
+                                          </span>
+                                        )}
+                                        <span className="font-medium w-24 text-right">{formatCurrency(account.currentBalance)}</span>
+                                      </div>
+                                    </div>
+                                    <div className="h-1.5 bg-muted/30 rounded-full overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${pctOfRevenue > 50 ? 'bg-red-500' : pctOfRevenue > 25 ? 'bg-yellow-500' : 'bg-blue-500/60'}`}
+                                        style={{ width: `${Math.min(pct, 100)}%` }}
+                                      />
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Warning banner when net income is negative */}
+                        {isNegative && (
+                          <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-1.5">
+                            <div className="flex items-center gap-2 text-red-400 text-sm font-semibold">
+                              <AlertTriangle className="h-4 w-4" />
+                              Net Loss Detected: {formatCurrency(deficit)}
+                            </div>
+                            <p className="text-xs text-muted-foreground leading-relaxed">
+                              {grossProfit < 0
+                                ? `Cost of goods sold (${formatCurrency(cogsAmount)}) exceeds total revenue (${formatCurrency(totalRevenue)}). Your product cost prices may be higher than selling prices, or returns have reduced revenue significantly.`
+                                : operatingExpenses > grossProfit
+                                  ? `Gross profit of ${formatCurrency(grossProfit)} is not enough to cover operating expenses of ${formatCurrency(operatingExpenses)}. Consider reducing expenses or increasing prices/volume.`
+                                  : `Total expenses of ${formatCurrency(totalExpenses)} exceed total revenue of ${formatCurrency(totalRevenue)}.`
+                              }
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               </CardContent>
             </Card>
