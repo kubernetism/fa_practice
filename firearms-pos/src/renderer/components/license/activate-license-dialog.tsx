@@ -47,8 +47,8 @@ export function ActivateLicenseDialog({
     setError(null)
     setValidationResult(null)
 
-    // Validate when key is 32 or 64 characters (both formats accepted)
-    if (formatted.length === 32 || formatted.length === 64) {
+    // Validate when key is 64 (legacy) or 100 (new format) characters
+    if (formatted.length === 64 || formatted.length === 100) {
       setIsValidating(true)
       try {
         const result = await window.api.license.validateKey(formatted)
@@ -64,9 +64,8 @@ export function ActivateLicenseDialog({
   }
 
   const handleActivate = async () => {
-    // Accept both 32 and 64 character keys
-    if (licenseKey.length !== 32 && licenseKey.length !== 64) {
-      setError('Please enter a valid license key (32 or 64 characters)')
+    if (licenseKey.length !== 64 && licenseKey.length !== 100) {
+      setError('Please enter a valid license key (64 or 100 characters)')
       return
     }
 
@@ -101,8 +100,8 @@ export function ActivateLicenseDialog({
               id="licenseKey"
               value={licenseKey}
               onChange={handleKeyChange}
-              placeholder="Enter 64-character license key"
-              maxLength={64}
+              placeholder="Enter license key"
+              maxLength={100}
               className="font-mono"
               disabled={isActivating}
             />

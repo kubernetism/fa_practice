@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { initDatabase, closeDatabase } from './db'
 import { runMigrations, seedInitialData } from './db/migrate'
 import { registerAllHandlers, registerLicenseOnlyHandlers, setApplicationLocked } from './ipc'
+import { autoCloseStaleRegisters } from './ipc/cash-register-ipc'
 import { performCloseBackup, stopBackupScheduler } from './ipc/backup-ipc'
 import { initializeEncryption } from './utils/encryption'
 import { isDbEncrypted } from './utils/db-cipher'
@@ -43,6 +44,12 @@ function createWindow(): void {
     mainWindow?.show()
   })
 
+  // Restore webContents focus when the window regains OS focus (fixes focus
+  // loss after GL compositor errors on Linux)
+  mainWindow.on('focus', () => {
+    mainWindow?.webContents.focus()
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     // Open external links in browser
     require('electron').shell.openExternal(details.url)
@@ -56,6 +63,9 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// Workaround for GL/VSync errors on Linux that can break input focus
+app.commandLine.appendSwitch('disable-gpu-compositing')
 
 // Initialize app
 app.whenReady().then(async () => {
@@ -100,21 +110,34 @@ app.whenReady().then(async () => {
 
       if (shouldLock) {
         console.log('Trial/License expired - locking application...')
-        const lockResult = lockApplication()
-        if (lockResult.success) {
-          isAppLocked = true
-          console.log('Application locked and database encrypted')
-          // Only register license handlers since DB is now encrypted
-          registerLicenseOnlyHandlers()
-        } else {
-          console.error('Failed to lock application:', lockResult.message)
-          // Fall through to normal mode if locking fails
-          registerAllHandlers()
+        try {
+          const lockResult = lockApplication()
+          if (lockResult.success) {
+            console.log('Application locked and database encrypted')
+          } else {
+            console.error('Failed to lock application:', lockResult.message)
+          }
+        } catch (lockError) {
+          console.error('Error during lock application:', lockError)
         }
+        // Always enter locked mode when trial/license expired, even if encryption fails
+        isAppLocked = true
+        setApplicationLocked(true)
+        registerLicenseOnlyHandlers()
       } else {
         // Register all IPC handlers
         registerAllHandlers()
         console.log('IPC handlers registered')
+
+        // Auto-close any stale cash register sessions from prior days
+        try {
+          const closedCount = await autoCloseStaleRegisters()
+          if (closedCount > 0) {
+            console.log(`Startup: Auto-closed ${closedCount} stale cash register session(s)`)
+          }
+        } catch (err) {
+          console.error('Startup: Failed to auto-close stale register sessions:', err)
+        }
       }
     }
   } catch (error) {
@@ -148,7 +171,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', async () => {
-  // Perform backup on close if enabled
+  // Perform backup and cleanup on close
   if (!isAppLocked) {
     await performCloseBackup()
     stopBackupScheduler()
@@ -157,14 +180,4 @@ app.on('window-all-closed', async () => {
   if (process.platform !== 'darwin') {
     app.quit()
   }
-})
-
-// Handle app quit
-app.on('before-quit', async () => {
-  // Perform backup on close if enabled
-  if (!isAppLocked) {
-    await performCloseBackup()
-    stopBackupScheduler()
-  }
-  closeDatabase()
 })

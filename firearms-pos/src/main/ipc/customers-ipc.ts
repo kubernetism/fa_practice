@@ -73,7 +73,7 @@ export function registerCustomerHandlers(): void {
     'customers:get-all',
     async (_, params: PaginationParams & { search?: string; isActive?: boolean }) => {
       try {
-        const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc', search, isActive } = params
+        const { page = 1, limit = 20, sortBy = 'createdAt', sortOrder = 'desc', search, isActive } = params || {}
 
         const conditions = []
 

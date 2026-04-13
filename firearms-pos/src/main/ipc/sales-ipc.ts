@@ -13,18 +13,23 @@ import {
   commissions,
   accountReceivables,
   expenses,
+  cashRegisterSessions,
+  cashTransactions,
   type NewSale,
   type NewSaleItem,
   type NewSalePayment,
   type NewSaleService,
   vouchers,
+  onlineTransactions,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generateInvoiceNumber, isLicenseExpired, type PaginationParams, type PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
 import { postSaleToGL, postVoidSaleToGL } from '../utils/gl-posting'
-import { consumeCostLayersFIFO, restoreCostLayers } from '../utils/inventory-valuation'
+import { consumeCostLayers, restoreCostLayers } from '../utils/inventory-valuation'
+import { handleIpcError } from '../utils/error-handling'
+import { mapPaymentMethodToChannel } from './online-transactions-ipc'
 
 interface CartItem {
   productId: number
@@ -47,7 +52,7 @@ interface ServiceItem {
 }
 
 interface PaymentBreakdownItem {
-  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer' | 'cod'
   amount: number
   referenceNumber?: string
 }
@@ -92,6 +97,25 @@ export function registerSalesHandlers(): void {
       const hasServices = data.services && data.services.length > 0
       if (!hasProducts && !hasServices) {
         return { success: false, message: 'No items or services in cart' }
+      }
+
+      // Pre-validation: Require open cash register session for cash/cod sales
+      if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
+        const today = new Date().toISOString().split('T')[0]
+        const openSession = await db.query.cashRegisterSessions.findFirst({
+          where: and(
+            eq(cashRegisterSessions.branchId, data.branchId),
+            eq(cashRegisterSessions.sessionDate, today),
+            eq(cashRegisterSessions.status, 'open')
+          ),
+        })
+
+        if (!openSession) {
+          return {
+            success: false,
+            message: 'Please open the Cash Register before processing cash sales. Go to Finance → Cash Register to open today\'s session.',
+          }
+        }
       }
 
       // Pre-validation (outside transaction for faster feedback)
@@ -184,8 +208,8 @@ export function registerSalesHandlers(): void {
         // Process products
         if (hasProducts) {
           for (const item of data.items) {
-            // Get actual FIFO cost for this item
-            const fifoResult = await consumeCostLayersFIFO(
+            // Get actual cost for this item using configured valuation method
+            const fifoResult = await consumeCostLayers(
               item.productId,
               data.branchId,
               item.quantity
@@ -359,7 +383,7 @@ export function registerSalesHandlers(): void {
           const netPaymentAmount = Math.min(data.amountPaid, totalAmount)
           const method = data.paymentMethod === 'card' ? 'card'
             : data.paymentMethod === 'mobile' ? 'mobile'
-            : data.paymentMethod === 'cod' ? 'cash'
+            : data.paymentMethod === 'cod' ? 'cod'
             : 'cash'
 
           // Build reference and notes for mobile/card payments
@@ -391,6 +415,55 @@ export function registerSalesHandlers(): void {
           paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber })
         }
 
+        // 7b. Auto-record non-cash payments as online transactions
+        for (const payment of paymentRecords) {
+          if (payment.method !== 'cash') {
+            await txDb.insert(onlineTransactions).values({
+              branchId: data.branchId,
+              transactionDate: new Date().toISOString().split('T')[0],
+              amount: payment.amount,
+              paymentChannel: mapPaymentMethodToChannel(payment.method),
+              direction: 'inflow',
+              referenceNumber: payment.referenceNumber,
+              customerName: data.customerId
+                ? await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) }).then(c => c ? `${c.firstName} ${c.lastName}`.trim() : undefined)
+                : data.codName || undefined,
+              customerId: data.customerId || undefined,
+              invoiceNumber,
+              bankAccountName: data.paymentMethod === 'mobile'
+                ? `${data.mobileProvider || ''} ${data.mobileReceiverPhone || ''}`.trim() || undefined
+                : undefined,
+              status: 'pending',
+              sourceType: 'sale',
+              sourceId: sale.id,
+              saleId: sale.id,
+              createdBy: session?.userId ?? 0,
+            })
+          }
+        }
+
+        // 7c. COD sales: record as pending online transaction (no payment received yet)
+        if (data.paymentMethod === 'cod') {
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: totalAmount,
+            paymentChannel: 'cod',
+            direction: 'inflow',
+            referenceNumber: undefined,
+            customerName: data.codName || (data.customerId
+              ? await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) }).then(c => c ? `${c.firstName} ${c.lastName}`.trim() : undefined)
+              : undefined),
+            customerId: data.customerId || undefined,
+            invoiceNumber,
+            status: 'pending',
+            sourceType: 'sale',
+            sourceId: sale.id,
+            saleId: sale.id,
+            createdBy: session?.userId ?? 0,
+          })
+        }
+
         // 8. Post to General Ledger (automated GL posting with payment breakdown)
         await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === 'cod' ? codCharges : 0)
 
@@ -405,6 +478,59 @@ export function registerSalesHandlers(): void {
               updatedAt: new Date().toISOString(),
             })
             .where(eq(vouchers.id, data.voucherId))
+        }
+
+        // 10. Record cash register transaction if there's an open session and cash was received
+        if (data.amountPaid > 0) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, data.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            // For mixed payments, record each cash/non-cash component separately
+            if (data.payments && data.payments.length > 0) {
+              for (const payment of data.payments) {
+                if (payment.method === 'cash' || payment.method === 'cod') {
+                  // Cash/COD portion goes to cash register (net of change)
+                  const cashAmount = Math.min(payment.amount, totalAmount)
+                  await txDb.insert(cashTransactions).values({
+                    sessionId: openSession.id,
+                    branchId: data.branchId,
+                    transactionType: 'sale',
+                    amount: cashAmount,
+                    referenceType: 'sale',
+                    referenceId: sale.id,
+                    description: `Cash sale: ${invoiceNumber}`,
+                    recordedBy: session?.userId ?? 0,
+                  })
+                }
+              }
+            } else if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
+              // Single cash payment — record net amount (excluding change)
+              const cashAmount = Math.min(data.amountPaid, totalAmount)
+              await txDb.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: data.branchId,
+                transactionType: 'sale',
+                amount: cashAmount,
+                referenceType: 'sale',
+                referenceId: sale.id,
+                description: `Cash sale: ${invoiceNumber}`,
+                recordedBy: session?.userId ?? 0,
+              })
+            }
+          } else if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
+            // No open session — cash sale without register tracking
+            console.warn(
+              `Cash sale ${invoiceNumber} completed without an open register session. ` +
+              `Cash transaction not recorded in register. Branch: ${data.branchId}`
+            )
+          }
         }
 
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
@@ -433,10 +559,7 @@ export function registerSalesHandlers(): void {
 
       return { success: true, data: result.sale }
     } catch (error) {
-      console.error('Create sale error:', error)
-      // Provide more detailed error message
-      const errorMessage = error instanceof Error ? error.message : 'Failed to create sale'
-      return { success: false, message: errorMessage }
+      return handleIpcError('Create sale', error)
     }
   })
 
@@ -501,8 +624,7 @@ export function registerSalesHandlers(): void {
 
         return { success: true, ...result }
       } catch (error) {
-        console.error('Get sales error:', error)
-        return { success: false, message: 'Failed to fetch sales' }
+        return handleIpcError('Get sales', error)
       }
     }
   )
@@ -542,8 +664,7 @@ export function registerSalesHandlers(): void {
         },
       }
     } catch (error) {
-      console.error('Get sale error:', error)
-      return { success: false, message: 'Failed to fetch sale' }
+      return handleIpcError('Get sale', error)
     }
   })
 
@@ -632,6 +753,32 @@ export function registerSalesHandlers(): void {
           items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
           session?.userId ?? 0
         )
+
+        // 6. Reverse cash register transaction if there's an open session and sale was cash
+        if (sale.amountPaid > 0 && (sale.paymentMethod === 'cash' || sale.paymentMethod === 'cod')) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, sale.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            const cashAmount = Math.min(sale.amountPaid, sale.totalAmount)
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: sale.branchId,
+              transactionType: 'refund',
+              amount: -cashAmount,
+              referenceType: 'sale_void',
+              referenceId: sale.id,
+              description: `Voided sale: ${sale.invoiceNumber}`,
+              recordedBy: session?.userId ?? 0,
+            })
+          }
+        }
       })
 
       await createAuditLog({
@@ -647,8 +794,7 @@ export function registerSalesHandlers(): void {
 
       return { success: true, message: 'Sale voided successfully' }
     } catch (error) {
-      console.error('Void sale error:', error)
-      return { success: false, message: 'Failed to void sale' }
+      return handleIpcError('Void sale', error)
     }
   })
 
@@ -684,8 +830,7 @@ export function registerSalesHandlers(): void {
         },
       }
     } catch (error) {
-      console.error('Get daily summary error:', error)
-      return { success: false, message: 'Failed to fetch daily summary' }
+      return handleIpcError('Get daily summary', error)
     }
   })
 
@@ -724,8 +869,7 @@ export function registerSalesHandlers(): void {
         data: { fixedCount },
       }
     } catch (error) {
-      console.error('Fix payment status error:', error)
-      return { success: false, message: 'Failed to fix payment status' }
+      return handleIpcError('Fix payment status', error)
     }
   })
 
@@ -774,8 +918,7 @@ export function registerSalesHandlers(): void {
         data: { createdCount },
       }
     } catch (error) {
-      console.error('Fix orphaned receivables error:', error)
-      return { success: false, message: 'Failed to fix orphaned receivables' }
+      return handleIpcError('Fix orphaned receivables', error)
     }
   })
 }

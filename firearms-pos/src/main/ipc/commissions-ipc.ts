@@ -1,10 +1,11 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, between, isNull, isNotNull } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { commissions, users, sales, referralPersons, type NewCommission } from '../db/schema'
+import { commissions, users, sales, referralPersons, cashRegisterSessions, cashTransactions, type NewCommission } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
+import { postCommissionPaymentToGL } from '../utils/gl-posting'
 
 export function registerCommissionHandlers(): void {
   const db = getDatabase()
@@ -415,7 +416,7 @@ export function registerCommissionHandlers(): void {
           )
         )
 
-      // Update referral person paid totals
+      // Update referral person paid totals, post GL entries, and record cash register
       for (const commission of commissionRecords) {
         if (commission.referralPersonId) {
           await db
@@ -425,6 +426,41 @@ export function registerCommissionHandlers(): void {
               updatedAt: new Date().toISOString(),
             })
             .where(eq(referralPersons.id, commission.referralPersonId))
+        }
+
+        // Post to General Ledger
+        await postCommissionPaymentToGL(
+          {
+            id: commission.id,
+            branchId: commission.branchId,
+            commissionAmount: commission.commissionAmount,
+            commissionType: commission.commissionType,
+            saleId: commission.saleId,
+          },
+          session?.userId ?? 0
+        )
+
+        // Record cash register outflow (commissions are paid in cash)
+        const today = new Date().toISOString().split('T')[0]
+        const openSession = await db.query.cashRegisterSessions.findFirst({
+          where: and(
+            eq(cashRegisterSessions.branchId, commission.branchId),
+            eq(cashRegisterSessions.sessionDate, today),
+            eq(cashRegisterSessions.status, 'open')
+          ),
+        })
+
+        if (openSession) {
+          await db.insert(cashTransactions).values({
+            sessionId: openSession.id,
+            branchId: commission.branchId,
+            transactionType: 'expense',
+            amount: -commission.commissionAmount,
+            referenceType: 'commission',
+            referenceId: commission.id,
+            description: `Commission payment: ${commission.commissionType} #${commission.id}`,
+            recordedBy: session?.userId ?? 0,
+          })
         }
 
         await createAuditLog({

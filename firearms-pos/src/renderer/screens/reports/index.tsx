@@ -1,179 +1,199 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
-import { Navigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import {
   FileText,
   Download,
-  TrendingUp,
-  Package,
-  DollarSign,
-  ShoppingCart,
-  RotateCcw,
-  BadgePercent,
-  Receipt,
-  Users,
-  Building2,
-  Banknote,
-  History,
   Loader2,
   Calendar,
+  Shield,
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  GitCompareArrows,
+  TrendingUp,
+  TrendingDown,
+  AlertTriangle,
+  X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { ReportType, TimePeriod, Branch } from '@shared/types'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import type { ReportType, TimePeriod, Branch, ComparisonMode, GroupBy } from '@shared/types'
+import {
+  REPORT_FILTER_CONFIG,
+  REPORT_CATEGORIES,
+  PAYMENT_METHOD_OPTIONS,
+  PAYMENT_STATUS_OPTIONS,
+  AUDIT_ACTION_OPTIONS,
+  AUDIT_ENTITY_OPTIONS,
+  GROUP_BY_OPTIONS,
+  getReportsByCategory,
+  type ReportFilterConfig,
+} from './report-filter-config'
 
-interface ReportCard {
-  type: ReportType
-  title: string
-  description: string
-  icon: React.ElementType
-  color: string
+// Format helpers
+function formatCurrency(value: number | null | undefined): string {
+  return `Rs. ${(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+function formatNumber(value: number | null | undefined): string {
+  return (value || 0).toLocaleString('en-US')
+}
+function formatPercent(value: number | null | undefined): string {
+  return `${(value || 0).toFixed(1)}%`
+}
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '-'
+  return new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return '-'
+  return new Date(value).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-const reportCards: ReportCard[] = [
-  {
-    type: 'sales',
-    title: 'Sales Report',
-    description: 'Comprehensive sales analysis with revenue, transactions, and top products',
-    icon: TrendingUp,
-    color: 'text-green-600',
-  },
-  {
-    type: 'inventory',
-    title: 'Inventory Report',
-    description: 'Current stock levels, valuations, and low stock alerts',
-    icon: Package,
-    color: 'text-blue-600',
-  },
-  {
-    type: 'profit-loss',
-    title: 'Profit & Loss',
-    description: 'Financial summary with revenue, expenses, and profit calculations',
-    icon: DollarSign,
-    color: 'text-purple-600',
-  },
-  {
-    type: 'expenses',
-    title: 'Expense Report',
-    description: 'Detailed expense tracking and analysis by category',
-    icon: Receipt,
-    color: 'text-red-600',
-  },
-  {
-    type: 'purchases',
-    title: 'Purchase Report',
-    description: 'Supplier purchase analysis and payment tracking',
-    icon: ShoppingCart,
-    color: 'text-orange-600',
-  },
-  {
-    type: 'returns',
-    title: 'Returns Report',
-    description: 'Product returns analysis and refund tracking',
-    icon: RotateCcw,
-    color: 'text-yellow-600',
-  },
-  {
-    type: 'commissions',
-    title: 'Commission Report',
-    description: 'Sales commission tracking by salesperson',
-    icon: BadgePercent,
-    color: 'text-pink-600',
-  },
-  {
-    type: 'tax',
-    title: 'Tax Report',
-    description: 'Tax collection summary and compliance tracking',
-    icon: Receipt,
-    color: 'text-indigo-600',
-  },
-  {
-    type: 'customer',
-    title: 'Customer Report',
-    description: 'Customer analytics and purchase history',
-    icon: Users,
-    color: 'text-teal-600',
-  },
-  {
-    type: 'branch-performance',
-    title: 'Branch Performance',
-    description: 'Multi-branch comparison and performance metrics',
-    icon: Building2,
-    color: 'text-cyan-600',
-  },
-  {
-    type: 'cash-flow',
-    title: 'Cash Flow Report',
-    description: 'Money in/out tracking and cash position',
-    icon: Banknote,
-    color: 'text-emerald-600',
-  },
-  {
-    type: 'audit-trail',
-    title: 'Audit Trail',
-    description: 'System activity and user action logs',
-    icon: History,
-    color: 'text-gray-600',
-  },
-]
+function formatCellValue(value: unknown, format?: string): string {
+  if (value === null || value === undefined) return '-'
+  switch (format) {
+    case 'currency': return formatCurrency(value as number)
+    case 'number': return formatNumber(value as number)
+    case 'percent': return formatPercent(value as number)
+    case 'date': return formatDate(value as string)
+    case 'datetime': return formatDateTime(value as string)
+    default: return String(value)
+  }
+}
+
+function getComparisonChange(current: number, previous: number): { percent: number; direction: 'up' | 'down' | 'same' } {
+  if (previous === 0) return { percent: current > 0 ? 100 : 0, direction: current > 0 ? 'up' : 'same' }
+  const percent = ((current - previous) / Math.abs(previous)) * 100
+  return { percent: Math.abs(percent), direction: percent > 0 ? 'up' : percent < 0 ? 'down' : 'same' }
+}
 
 export default function ReportsScreen() {
   const { user } = useAuth()
   const { currentBranch } = useBranch()
+  const navigate = useNavigate()
+
+  // Data state
   const [branches, setBranches] = useState<Branch[]>([])
-  const [selectedReport, setSelectedReport] = useState<ReportType | null>(null)
+  const [customers, setCustomers] = useState<Array<{ id: number; firstName: string; lastName: string }>>([])
+  const [suppliersData, setSuppliersData] = useState<Array<{ id: number; name: string }>>([])
+  const [categoriesData, setCategoriesData] = useState<Array<{ id: number; name: string }>>([])
+  const [usersData, setUsersData] = useState<Array<{ id: number; fullName: string }>>([])
+
+  // Report selection
+  const [reportType, setReportType] = useState<ReportType>('sales')
+  const config = REPORT_FILTER_CONFIG[reportType]
+
+  // Filters
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('monthly')
-  const [selectedBranch, setSelectedBranch] = useState<string>(currentBranch?.id?.toString() || 'all')
   const [startDate, setStartDate] = useState(
     new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0]
   )
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0])
+  const [selectedBranch, setSelectedBranch] = useState<string>(currentBranch?.id?.toString() || 'all')
+  const [paymentMethod, setPaymentMethod] = useState<string>('all')
+  const [paymentStatus, setPaymentStatus] = useState<string>('all')
+  const [customerId, setCustomerId] = useState<string>('all')
+  const [supplierId, setSupplierId] = useState<string>('all')
+  const [categoryId, setCategoryId] = useState<string>('all')
+  const [salespersonId, setSalespersonId] = useState<string>('all')
+  const [actionType, setActionType] = useState<string>('all')
+  const [entityType, setEntityType] = useState<string>('all')
+  const [groupBy, setGroupBy] = useState<GroupBy>('day')
+  const [reason, setReason] = useState<string>('all')
+
+  // Comparison
+  const [comparisonMode, setComparisonMode] = useState<ComparisonMode>('none')
+  const [comparisonBranchId, setComparisonBranchId] = useState<string>('all')
+
+  // Report data
+  const [reportData, setReportData] = useState<any>(null)
+  const [comparisonData, setComparisonData] = useState<any>(null)
   const [isGenerating, setIsGenerating] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
-  const [reportData, setReportData] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Admin-only protection
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize] = useState(25)
+
+  // Sort
+  const [sortColumn, setSortColumn] = useState<string>('')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc')
+
   if (!user || user.role !== 'admin') {
     return <Navigate to="/dashboard" replace />
   }
 
+  // Fetch reference data on mount
   useEffect(() => {
     fetchBranches()
+    fetchReferenceData()
   }, [])
 
-  // Update selected branch when current branch changes
   useEffect(() => {
     if (currentBranch && selectedBranch === 'all') {
       setSelectedBranch(currentBranch.id.toString())
     }
   }, [currentBranch])
 
+  // Reset filters when report type changes
   useEffect(() => {
-    // Auto-update date range when time period changes
+    setReportData(null)
+    setComparisonData(null)
+    setCurrentPage(1)
+    setSortColumn('')
+    setPaymentMethod('all')
+    setPaymentStatus('all')
+    setCustomerId('all')
+    setSupplierId('all')
+    setCategoryId('all')
+    setSalespersonId('all')
+    setActionType('all')
+    setEntityType('all')
+    setReason('all')
+    setComparisonMode('none')
+  }, [reportType])
+
+  // Update date range when period changes
+  useEffect(() => {
     const now = new Date()
     switch (timePeriod) {
       case 'daily':
         setStartDate(now.toISOString().split('T')[0])
         setEndDate(now.toISOString().split('T')[0])
         break
-      case 'weekly':
+      case 'weekly': {
         const weekStart = new Date(now)
         weekStart.setDate(now.getDate() - now.getDay())
         setStartDate(weekStart.toISOString().split('T')[0])
         setEndDate(now.toISOString().split('T')[0])
         break
+      }
       case 'monthly':
         setStartDate(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0])
         setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0])
@@ -192,376 +212,818 @@ export default function ReportsScreen() {
   const fetchBranches = async () => {
     try {
       const response = await window.api.branches.getAll()
-      if (response?.success && response?.data) {
-        setBranches(response.data)
-      } else if (response?.data) {
-        setBranches(response.data)
-      } else {
-        setBranches([])
-      }
-    } catch (error) {
-      console.error('Failed to fetch branches:', error)
-      setBranches([])
+      setBranches(response?.data || [])
+    } catch { setBranches([]) }
+  }
+
+  const fetchReferenceData = async () => {
+    try {
+      const [custRes, suppRes, catRes, userRes] = await Promise.all([
+        window.api.customers?.getAll?.() || { data: [] },
+        window.api.suppliers?.getAll?.() || { data: [] },
+        window.api.categories?.getAll?.() || { data: [] },
+        window.api.users?.getAll?.() || { data: [] },
+      ])
+      setCustomers(custRes?.data || [])
+      setSuppliersData(suppRes?.data || [])
+      setCategoriesData(catRes?.data || [])
+      setUsersData(userRes?.data || [])
+    } catch {
+      // Non-critical - filter dropdowns will just be empty
     }
   }
 
-  const handleGenerateReport = async (reportType: ReportType) => {
-    setSelectedReport(reportType)
+  const buildParams = useCallback((overrides?: Record<string, unknown>) => {
+    const params: Record<string, unknown> = {
+      startDate,
+      endDate,
+      page: currentPage,
+      limit: pageSize,
+      ...(groupBy && config.hasGroupBy ? { groupBy } : {}),
+    }
+    if (selectedBranch !== 'all') params.branchId = parseInt(selectedBranch)
+    if (paymentMethod !== 'all') params.paymentMethod = paymentMethod
+    if (paymentStatus !== 'all') params.paymentStatus = paymentStatus
+    if (customerId !== 'all') params.customerId = parseInt(customerId)
+    if (supplierId !== 'all') params.supplierId = parseInt(supplierId)
+    if (categoryId !== 'all') params.categoryId = parseInt(categoryId)
+    if (salespersonId !== 'all') params.salespersonId = parseInt(salespersonId)
+    if (actionType !== 'all') params.actionType = actionType
+    if (entityType !== 'all') params.entityType = entityType
+    if (reason !== 'all') params.reason = reason
+    if (overrides) Object.assign(params, overrides)
+    return params
+  }, [startDate, endDate, currentPage, pageSize, groupBy, config.hasGroupBy, selectedBranch, paymentMethod, paymentStatus, customerId, supplierId, categoryId, salespersonId, actionType, entityType, reason])
+
+  const getComparisonParams = useCallback(() => {
+    if (comparisonMode === 'branch') {
+      return buildParams({ branchId: comparisonBranchId !== 'all' ? parseInt(comparisonBranchId) : undefined })
+    }
+    if (comparisonMode === 'period') {
+      const start = new Date(startDate)
+      const end = new Date(endDate)
+      const duration = end.getTime() - start.getTime()
+      const prevEnd = new Date(start.getTime() - 1)
+      const prevStart = new Date(prevEnd.getTime() - duration)
+      return buildParams({
+        startDate: prevStart.toISOString().split('T')[0],
+        endDate: prevEnd.toISOString().split('T')[0],
+      })
+    }
+    return null
+  }, [comparisonMode, comparisonBranchId, buildParams, startDate, endDate])
+
+  const handleGenerateReport = async () => {
     setIsGenerating(true)
     setError(null)
     setReportData(null)
+    setComparisonData(null)
+    setCurrentPage(1)
 
     try {
-      const params: any = {
-        startDate,
-        endDate,
+      const params = buildParams({ page: 1 })
+
+      let apiMethod: string = reportType
+      if (reportType === 'comprehensive-audit') {
+        apiMethod = 'comprehensiveAudit'
+        ;(params as any).timePeriod = timePeriod
       }
 
-      if (selectedBranch !== 'all') {
-        params.branchId = parseInt(selectedBranch)
-      }
-
-      let response
-      const channelMap: Record<ReportType, string> = {
-        'sales': 'reports:sales-report',
-        'inventory': 'reports:inventory-report',
-        'profit-loss': 'reports:profit-loss',
-        'expenses': 'reports:expenses-report',
-        'purchases': 'reports:purchases-report',
-        'returns': 'reports:returns-report',
-        'commissions': 'reports:commissions-report',
-        'tax': 'reports:tax-report',
-        'customer': 'reports:customer-report',
-        'branch-performance': 'reports:branch-performance',
-        'cash-flow': 'reports:cash-flow',
-        'audit-trail': 'reports:audit-trail',
-      }
-
-      const channel = channelMap[reportType]
-      if (!channel) {
-        throw new Error(`Unknown report type: ${reportType}`)
-      }
-
-      response = await window.api.reports[reportType](params)
+      const response = await (window.api.reports as any)[apiMethod](params)
 
       if (response?.success && response?.data) {
         setReportData(response.data)
       } else {
         setError(response?.message || 'Failed to generate report')
       }
-    } catch (error) {
-      console.error('Failed to generate report:', error)
-      setError(error instanceof Error ? error.message : 'Failed to generate report. Please try again.')
+
+      // Comparison data
+      if (comparisonMode !== 'none') {
+        const compParams = getComparisonParams()
+        if (compParams) {
+          const compResponse = await (window.api.reports as any)[apiMethod](compParams)
+          if (compResponse?.success && compResponse?.data) {
+            setComparisonData(compResponse.data)
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to generate report:', err)
+      setError(err instanceof Error ? err.message : 'Failed to generate report.')
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const handlePageChange = async (newPage: number) => {
+    setCurrentPage(newPage)
+    setIsGenerating(true)
+    try {
+      const params = buildParams({ page: newPage })
+      let apiMethod: string = reportType
+      if (reportType === 'comprehensive-audit') {
+        apiMethod = 'comprehensiveAudit'
+        ;(params as any).timePeriod = timePeriod
+      }
+      const response = await (window.api.reports as any)[apiMethod](params)
+      if (response?.success && response?.data) {
+        setReportData((prev: any) => ({
+          ...prev,
+          details: response.data.details,
+        }))
+      }
+    } catch (err) {
+      console.error('Failed to fetch page:', err)
     } finally {
       setIsGenerating(false)
     }
   }
 
   const handleDownloadPDF = async () => {
-    if (!selectedReport || !reportData) return
-
+    if (!reportData) return
     setIsDownloading(true)
     setError(null)
 
     try {
       const branchName = selectedBranch === 'all'
         ? 'All Branches'
-        : branches.find((b) => b.id.toString() === selectedBranch)?.name || 'Unknown Branch'
+        : branches.find((b) => b.id.toString() === selectedBranch)?.name || 'Unknown'
+
+      let pdfData = reportData
+      if (reportType === 'audit-trail' || reportType === 'comprehensive-audit') {
+        const auditParams: any = { timePeriod, startDate, endDate }
+        if (selectedBranch !== 'all') auditParams.branchId = parseInt(selectedBranch)
+        const resp = await window.api.reports.comprehensiveAudit(auditParams)
+        if (resp?.success && resp?.data) pdfData = resp.data
+      }
 
       const result = await window.api.reports.exportPDF({
-        reportType: selectedReport,
-        data: reportData,
-        filters: {
-          timePeriod,
-          startDate,
-          endDate,
-          branchName,
-        },
+        reportType,
+        data: pdfData,
+        filters: { timePeriod, startDate, endDate, branchName },
       })
 
       if (result?.success && result?.filePath) {
-        alert(`Report downloaded successfully!\n\nLocation: ${result.filePath}`)
+        alert(`Report downloaded!\n\nLocation: ${result.filePath}`)
       } else {
         setError(result?.message || 'Failed to download PDF')
       }
-    } catch (error) {
-      console.error('Failed to download PDF:', error)
-      setError(error instanceof Error ? error.message : 'Failed to download PDF. Please try again.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to download PDF.')
     } finally {
       setIsDownloading(false)
     }
   }
 
-  const renderSummaryCards = () => {
-    if (!reportData) return null
-
-    const summary = reportData.summary
-    if (!summary) return null
-
-    // Different summaries for different report types
-    if (selectedReport === 'sales') {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Total Sales</div>
-              <div className="text-2xl font-bold">{summary.totalSales || 0}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Total Revenue</div>
-              <div className="text-2xl font-bold text-green-600">
-                Rs. {(summary.totalRevenue || 0).toFixed(2)}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Avg Order Value</div>
-              <div className="text-2xl font-bold text-blue-600">
-                Rs. {(summary.avgOrderValue || 0).toFixed(2)}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Tax Collected</div>
-              <div className="text-2xl font-bold">Rs. {(summary.totalTax || 0).toFixed(2)}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )
+  const handleSort = (column: string) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortColumn(column)
+      setSortDirection('desc')
     }
-
-    if (selectedReport === 'profit-loss') {
-      return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Revenue</div>
-              <div className="text-2xl font-bold text-green-600">
-                Rs. {(summary.revenue || reportData.revenue || 0).toFixed(2)}
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Gross Profit</div>
-              <div className="text-2xl font-bold text-blue-600">
-                Rs. {(summary.grossProfit || reportData.grossProfit || 0).toFixed(2)}
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {(summary.grossMargin || reportData.grossMargin || 0).toFixed(2)}% margin
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1">Net Profit</div>
-              <div className={`text-2xl font-bold ${(reportData.netProfit || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                Rs. {(summary.netProfit || reportData.netProfit || 0).toFixed(2)}
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                {(summary.netMargin || reportData.netMargin || 0).toFixed(2)}% margin
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )
-    }
-
-    // Generic summary for other reports
-    return (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        {Object.entries(summary).slice(0, 3).map(([key, value]) => (
-          <Card key={key}>
-            <CardContent className="pt-6">
-              <div className="text-sm text-muted-foreground mb-1 capitalize">
-                {key.replace(/([A-Z])/g, ' $1').trim()}
-              </div>
-              <div className="text-2xl font-bold">
-                {typeof value === 'number' ? value.toFixed(2) : value}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    )
   }
 
+  const handleDrillDown = (row: any) => {
+    if (!config.drillDownRoute) return
+    navigate(config.drillDownRoute)
+  }
+
+  // Sort detail rows client-side
+  const sortedDetails = useMemo(() => {
+    const details = reportData?.details?.rows || []
+    if (!sortColumn || details.length === 0) return details
+    return [...details].sort((a: any, b: any) => {
+      const aVal = a[sortColumn]
+      const bVal = b[sortColumn]
+      if (aVal === bVal) return 0
+      if (aVal === null || aVal === undefined) return 1
+      if (bVal === null || bVal === undefined) return -1
+      const cmp = typeof aVal === 'number' ? aVal - bVal : String(aVal).localeCompare(String(bVal))
+      return sortDirection === 'asc' ? cmp : -cmp
+    })
+  }, [reportData?.details?.rows, sortColumn, sortDirection])
+
+  // Get summary values for comparison
+  const getSummaryValue = (data: any, key: string): number => {
+    if (!data) return 0
+    // Check in summary object first
+    const summary = data.summary || data
+    if (summary[key] !== undefined) return Number(summary[key]) || 0
+    // Check in financial summary
+    if (data.financialSummary?.[key] !== undefined) return Number(data.financialSummary[key]) || 0
+    if (data.salesSummary?.[key] !== undefined) return Number(data.salesSummary[key]) || 0
+    if (data.expensesSummary?.[key] !== undefined) return Number(data.expensesSummary[key]) || 0
+    if (data.inventorySummary?.[key] !== undefined) return Number(data.inventorySummary[key]) || 0
+    // Direct key on data
+    if (data[key] !== undefined) return Number(data[key]) || 0
+    return 0
+  }
+
+  const reportsByCategory = useMemo(() => getReportsByCategory(), [])
+
+  // ------ RENDER ------
+
   return (
-    <div className="flex flex-col h-full p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Reports & Analytics</h1>
-        <p className="text-muted-foreground">Generate comprehensive business reports and download as PDF</p>
-        <div className="mt-2 inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
-          Admin Only
+    <div className="flex flex-col h-full p-4 space-y-3">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="p-2 rounded-lg bg-primary/10">
+            <FileText className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold leading-tight">Reports & Analytics</h1>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20">
+                <Shield className="w-3 h-3 mr-0.5" />
+                Admin
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {config.description}
+            </p>
+          </div>
         </div>
       </div>
 
-      {/* Filters */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="text-lg">Report Configuration</CardTitle>
-          <CardDescription>Select time period and branch to filter reports</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="timePeriod">Time Period</Label>
-              <Select value={timePeriod} onValueChange={(value) => setTimePeriod(value as TimePeriod)}>
-                <SelectTrigger>
+      {/* Row 1: Report Type + Date filters */}
+      <div className="flex items-end gap-2.5 flex-wrap">
+        {/* Report Type Dropdown */}
+        <div className="space-y-1">
+          <Label className="text-[10px] text-muted-foreground">Report Type</Label>
+          <Select value={reportType} onValueChange={(v) => setReportType(v as ReportType)}>
+            <SelectTrigger className="h-8 w-[200px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(reportsByCategory).map(([cat, reports]) => (
+                <SelectGroup key={cat}>
+                  <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    {REPORT_CATEGORIES[cat as keyof typeof REPORT_CATEGORIES]?.label || cat}
+                  </SelectLabel>
+                  {reports.map(({ type, config: c }) => (
+                    <SelectItem key={type} value={type} className="text-xs">
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Date Filters */}
+        {config.hasDateFilter && (
+          <>
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">Period</Label>
+              <Select value={timePeriod} onValueChange={(v) => setTimePeriod(v as TimePeriod)}>
+                <SelectTrigger className="h-8 w-[110px] text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="yearly">Yearly</SelectItem>
+                  <SelectItem value="daily">Today</SelectItem>
+                  <SelectItem value="weekly">This Week</SelectItem>
+                  <SelectItem value="monthly">This Month</SelectItem>
+                  <SelectItem value="yearly">This Year</SelectItem>
                   <SelectItem value="all-time">All Time</SelectItem>
-                  <SelectItem value="custom">Custom Range</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="startDate">Start Date</Label>
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">From</Label>
               <Input
-                id="startDate"
                 type="date"
                 value={startDate}
-                onChange={(e) => {
-                  setStartDate(e.target.value)
-                  setTimePeriod('custom')
-                }}
+                onChange={(e) => { setStartDate(e.target.value); setTimePeriod('custom') }}
+                className="h-8 w-[130px] text-xs"
               />
             </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="endDate">End Date</Label>
+            <div className="space-y-1">
+              <Label className="text-[10px] text-muted-foreground">To</Label>
               <Input
-                id="endDate"
                 type="date"
                 value={endDate}
-                onChange={(e) => {
-                  setEndDate(e.target.value)
-                  setTimePeriod('custom')
-                }}
+                onChange={(e) => { setEndDate(e.target.value); setTimePeriod('custom') }}
+                className="h-8 w-[130px] text-xs"
               />
             </div>
+          </>
+        )}
 
-            <div className="space-y-2">
-              <Label htmlFor="branch">Branch</Label>
-              <Select value={selectedBranch} onValueChange={setSelectedBranch}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Branches" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Branches</SelectItem>
-                  {branches.map((branch) => (
-                    <SelectItem key={branch.id} value={branch.id.toString()}>
-                      {branch.code} - {branch.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+        {/* Group By */}
+        {config.hasGroupBy && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Group By</Label>
+            <Select value={groupBy} onValueChange={(v) => setGroupBy(v as GroupBy)}>
+              <SelectTrigger className="h-8 w-[90px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {GROUP_BY_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </CardContent>
-      </Card>
+        )}
 
-      {/* Report Types */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-        {reportCards.map((card) => (
-          <Card
-            key={card.type}
-            className={`cursor-pointer transition-all hover:shadow-lg ${
-              selectedReport === card.type ? 'ring-2 ring-primary' : ''
-            }`}
-            onClick={() => !isGenerating && handleGenerateReport(card.type)}
-          >
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <card.icon className={`h-5 w-5 ${card.color}`} />
-                {card.title}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground mb-4">{card.description}</p>
-              <Button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  handleGenerateReport(card.type)
-                }}
-                disabled={isGenerating}
-                className="w-full"
-                size="sm"
-              >
-                {isGenerating && selectedReport === card.type ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Generating...
-                  </>
-                ) : (
-                  <>
-                    <FileText className="h-4 w-4 mr-2" />
-                    Generate Report
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-        ))}
+        <div className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Calendar className="w-3.5 h-3.5" />
+          {startDate} to {endDate}
+        </div>
       </div>
 
-      {/* Error Display */}
+      {/* Row 2: Entity filters + Comparison + Actions */}
+      <div className="flex items-end gap-2.5 flex-wrap">
+        {/* Branch filter */}
+        {config.entityFilters.includes('branch') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Branch</Label>
+            <Select value={selectedBranch} onValueChange={setSelectedBranch}>
+              <SelectTrigger className="h-8 w-[150px] text-xs">
+                <SelectValue placeholder="All Branches" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Branches</SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.id.toString()}>
+                    {b.code} - {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Customer filter */}
+        {config.entityFilters.includes('customer') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Customer</Label>
+            <Select value={customerId} onValueChange={setCustomerId}>
+              <SelectTrigger className="h-8 w-[150px] text-xs">
+                <SelectValue placeholder="All Customers" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Customers</SelectItem>
+                {customers.map((c) => (
+                  <SelectItem key={c.id} value={c.id.toString()}>
+                    {c.firstName} {c.lastName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Supplier filter */}
+        {config.entityFilters.includes('supplier') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Supplier</Label>
+            <Select value={supplierId} onValueChange={setSupplierId}>
+              <SelectTrigger className="h-8 w-[150px] text-xs">
+                <SelectValue placeholder="All Suppliers" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Suppliers</SelectItem>
+                {suppliersData.map((s) => (
+                  <SelectItem key={s.id} value={s.id.toString()}>{s.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Category filter */}
+        {config.entityFilters.includes('category') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Category</Label>
+            <Select value={categoryId} onValueChange={setCategoryId}>
+              <SelectTrigger className="h-8 w-[140px] text-xs">
+                <SelectValue placeholder="All Categories" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {categoriesData.map((c) => (
+                  <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Payment Method filter */}
+        {config.entityFilters.includes('paymentMethod') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Payment</Label>
+            <Select value={paymentMethod} onValueChange={setPaymentMethod}>
+              <SelectTrigger className="h-8 w-[110px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Methods</SelectItem>
+                {PAYMENT_METHOD_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Payment Status filter */}
+        {config.entityFilters.includes('paymentStatus') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Status</Label>
+            <Select value={paymentStatus} onValueChange={setPaymentStatus}>
+              <SelectTrigger className="h-8 w-[100px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                {PAYMENT_STATUS_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Salesperson filter */}
+        {config.entityFilters.includes('salesperson') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Salesperson</Label>
+            <Select value={salespersonId} onValueChange={setSalespersonId}>
+              <SelectTrigger className="h-8 w-[140px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Salespersons</SelectItem>
+                {usersData.map((u) => (
+                  <SelectItem key={u.id} value={u.id.toString()}>{u.fullName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* User filter (audit) */}
+        {config.entityFilters.includes('user') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">User</Label>
+            <Select value={salespersonId} onValueChange={setSalespersonId}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="All Users" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Users</SelectItem>
+                {usersData.map((u) => (
+                  <SelectItem key={u.id} value={u.id.toString()}>{u.fullName}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Action Type filter (audit) */}
+        {config.entityFilters.includes('actionType') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Action</Label>
+            <Select value={actionType} onValueChange={setActionType}>
+              <SelectTrigger className="h-8 w-[100px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Actions</SelectItem>
+                {AUDIT_ACTION_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Entity Type filter (audit) */}
+        {config.entityFilters.includes('entityType') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Entity</Label>
+            <Select value={entityType} onValueChange={setEntityType}>
+              <SelectTrigger className="h-8 w-[110px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Entities</SelectItem>
+                {AUDIT_ENTITY_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Reason filter (returns) */}
+        {config.entityFilters.includes('reason') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Reason</Label>
+            <Select value={reason} onValueChange={setReason}>
+              <SelectTrigger className="h-8 w-[120px] text-xs">
+                <SelectValue placeholder="All" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Reasons</SelectItem>
+                <SelectItem value="defective">Defective</SelectItem>
+                <SelectItem value="wrong_item">Wrong Item</SelectItem>
+                <SelectItem value="not_needed">Not Needed</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+
+      {/* Row 3: Comparison + Generate + Download */}
+      <div className="flex items-end gap-2.5 flex-wrap">
+        {/* Comparison Mode */}
+        <div className="space-y-1">
+          <Label className="text-[10px] text-muted-foreground">Compare</Label>
+          <Select value={comparisonMode} onValueChange={(v) => setComparisonMode(v as ComparisonMode)}>
+            <SelectTrigger className="h-8 w-[140px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">No Comparison</SelectItem>
+              <SelectItem value="period">vs Previous Period</SelectItem>
+              <SelectItem value="branch">vs Another Branch</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {comparisonMode === 'branch' && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Compare Branch</Label>
+            <Select value={comparisonBranchId} onValueChange={setComparisonBranchId}>
+              <SelectTrigger className="h-8 w-[150px] text-xs">
+                <SelectValue placeholder="Select Branch" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Branches</SelectItem>
+                {branches.map((b) => (
+                  <SelectItem key={b.id} value={b.id.toString()}>
+                    {b.code} - {b.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {comparisonMode === 'period' && (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground bg-muted/50 px-2 py-1.5 rounded">
+            <GitCompareArrows className="w-3.5 h-3.5" />
+            Comparing with previous {timePeriod === 'custom' ? 'period' : timePeriod.replace('-', ' ')}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div className="flex items-center gap-2 ml-auto">
+          <Button size="sm" onClick={handleGenerateReport} disabled={isGenerating} className="h-8">
+            {isGenerating ? (
+              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+            ) : (
+              <FileText className="h-3.5 w-3.5 mr-1.5" />
+            )}
+            {isGenerating ? 'Generating...' : 'Generate Report'}
+          </Button>
+
+          {reportData && (
+            <Button size="sm" variant="outline" onClick={handleDownloadPDF} disabled={isDownloading} className="h-8">
+              {isDownloading ? (
+                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5 mr-1.5" />
+              )}
+              PDF
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* Error */}
       {error && (
-        <Card className="mb-6 border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <p className="text-red-700">{error}</p>
+        <Card className="border-destructive/30">
+          <CardContent className="p-3 flex items-center gap-2">
+            <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
+            <p className="text-sm text-destructive">{error}</p>
           </CardContent>
         </Card>
       )}
 
-      {/* Report Preview */}
+      {/* Report Content */}
       {reportData && (
-        <Card className="mb-6">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>
-                  {reportCards.find((r) => r.type === selectedReport)?.title || 'Report'} Summary
-                </CardTitle>
-                <CardDescription>
-                  {timePeriod.charAt(0).toUpperCase() + timePeriod.slice(1)} report from {startDate} to{' '}
-                  {endDate}
-                </CardDescription>
-              </div>
-              <Button onClick={handleDownloadPDF} disabled={isDownloading}>
-                {isDownloading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Downloading...
-                  </>
-                ) : (
-                  <>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download PDF
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {renderSummaryCards()}
+        <div className="flex-1 overflow-auto space-y-3">
+          {/* Summary Cards */}
+          <div className={`grid grid-cols-${Math.min(config.summaryCards.length, 4)} gap-3`}>
+            {config.summaryCards.map((card) => {
+              const value = getSummaryValue(reportData, card.key)
+              const compValue = comparisonData ? getSummaryValue(comparisonData, card.key) : null
+              const change = compValue !== null ? getComparisonChange(value, compValue) : null
 
-            {/* Additional report data display can go here */}
-            <div className="text-sm text-muted-foreground mt-4">
-              Report generated successfully. Click "Download PDF" to save a detailed copy.
-            </div>
-          </CardContent>
-        </Card>
+              const colorClasses: Record<string, string> = {
+                green: 'text-green-600 dark:text-green-400',
+                red: 'text-red-600 dark:text-red-400',
+                blue: 'text-blue-600 dark:text-blue-400',
+              }
+
+              return (
+                <Card key={card.key} className={card.color ? `border-${card.color}-500/20` : ''}>
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{card.label}</span>
+                      {change && change.direction !== 'same' && (
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] px-1 py-0 ${
+                            change.direction === 'up'
+                              ? 'bg-green-500/10 text-green-600 border-green-500/20'
+                              : 'bg-red-500/10 text-red-600 border-red-500/20'
+                          }`}
+                        >
+                          {change.direction === 'up' ? <TrendingUp className="w-2.5 h-2.5 mr-0.5" /> : <TrendingDown className="w-2.5 h-2.5 mr-0.5" />}
+                          {change.percent.toFixed(1)}%
+                        </Badge>
+                      )}
+                    </div>
+                    <p className={`text-lg font-bold ${card.color ? colorClasses[card.color] || '' : ''}`}>
+                      {card.format === 'currency' ? formatCurrency(value) : card.format === 'percent' ? formatPercent(value) : formatNumber(value)}
+                    </p>
+                    {compValue !== null && (
+                      <p className="text-[10px] text-muted-foreground">
+                        vs {card.format === 'currency' ? formatCurrency(compValue) : card.format === 'percent' ? formatPercent(compValue) : formatNumber(compValue)}
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+
+          {/* Detail Table */}
+          {reportData.details && reportData.details.rows && reportData.details.rows.length > 0 && (
+            <Card>
+              <CardHeader className="p-3 pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">
+                    {config.label} Details
+                  </CardTitle>
+                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                    {reportData.details.total} records
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      {config.tableColumns.map((col) => (
+                        <TableHead
+                          key={col.key}
+                          className={`text-xs ${col.align === 'right' ? 'text-right' : ''} ${col.sortable ? 'cursor-pointer select-none hover:text-foreground' : ''}`}
+                          onClick={() => col.sortable && handleSort(col.key)}
+                        >
+                          <div className={`flex items-center gap-1 ${col.align === 'right' ? 'justify-end' : ''}`}>
+                            {col.label}
+                            {col.sortable && (
+                              sortColumn === col.key
+                                ? sortDirection === 'asc'
+                                  ? <ArrowUp className="w-3 h-3" />
+                                  : <ArrowDown className="w-3 h-3" />
+                                : <ArrowUpDown className="w-3 h-3 opacity-30" />
+                            )}
+                          </div>
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedDetails.map((row: any, idx: number) => (
+                      <TableRow
+                        key={row.id || idx}
+                        className={config.drillDownRoute ? 'cursor-pointer hover:bg-muted/50' : ''}
+                        onClick={() => config.drillDownRoute && handleDrillDown(row)}
+                      >
+                        {config.tableColumns.map((col) => (
+                          <TableCell
+                            key={col.key}
+                            className={`text-xs py-1.5 ${col.align === 'right' ? 'text-right' : ''} ${col.format === 'currency' ? 'font-semibold' : ''}`}
+                          >
+                            {col.format === 'badge' ? (
+                              <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+                                {String(row[col.key] || '-')}
+                              </Badge>
+                            ) : (
+                              formatCellValue(row[col.key], col.format)
+                            )}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+
+                {/* Pagination */}
+                {reportData.details.totalPages > 1 && (
+                  <div className="flex items-center justify-between px-3 py-2 border-t">
+                    <p className="text-[11px] text-muted-foreground">
+                      Page {reportData.details.page} of {reportData.details.totalPages}
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        disabled={reportData.details.page <= 1 || isGenerating}
+                        onClick={() => handlePageChange(reportData.details.page - 1)}
+                      >
+                        <ChevronLeft className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 w-7 p-0"
+                        disabled={reportData.details.page >= reportData.details.totalPages || isGenerating}
+                        onClick={() => handlePageChange(reportData.details.page + 1)}
+                      >
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Voided Transactions Section (Audit reports only) */}
+          {(reportType === 'comprehensive-audit' || reportType === 'audit-trail') &&
+            reportData.voidedTransactions &&
+            reportData.voidedTransactions.length > 0 && (
+            <Card className="border-amber-500/30">
+              <CardHeader className="p-3 pb-2">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm flex items-center gap-1.5">
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                    Voided / Reversed Transactions
+                  </CardTitle>
+                  <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-600 border-amber-500/20">
+                    {reportData.voidedTransactions.length} voided
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="text-xs">Type</TableHead>
+                      <TableHead className="text-xs">Reference</TableHead>
+                      <TableHead className="text-xs">Date</TableHead>
+                      <TableHead className="text-xs">Void Reason</TableHead>
+                      <TableHead className="text-xs text-right">Original Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {reportData.voidedTransactions.map((vt: any, idx: number) => (
+                      <TableRow key={idx} className="text-muted-foreground">
+                        <TableCell className="text-xs py-1.5">
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-red-500/10 text-red-600 border-red-500/20">
+                            {vt.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs py-1.5 line-through">{vt.reference || '-'}</TableCell>
+                        <TableCell className="text-xs py-1.5">{formatDateTime(vt.voidedDate)}</TableCell>
+                        <TableCell className="text-xs py-1.5">{vt.voidReason || 'No reason'}</TableCell>
+                        <TableCell className="text-xs py-1.5 text-right font-semibold text-red-600 dark:text-red-400">
+                          {formatCurrency(vt.originalAmount)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!reportData && !error && !isGenerating && (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <config.icon className="w-12 h-12 mx-auto mb-3 text-muted-foreground/20" />
+            <p className="text-sm font-medium text-muted-foreground">Select filters and click "Generate Report"</p>
+            <p className="text-xs text-muted-foreground/60 mt-1">{config.description}</p>
+          </div>
+        </div>
       )}
     </div>
   )

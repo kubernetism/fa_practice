@@ -172,6 +172,126 @@ export function registerReceiptHandlers(): void {
     }
   })
 
+  // Get receipt data for preview rendering (returns structured data, not a file)
+  ipcMain.handle('receipt:get-data', async (_, saleId: number) => {
+    try {
+      const sale = await db.query.sales.findFirst({
+        where: eq(sales.id, saleId),
+      })
+      if (!sale) {
+        return { success: false, message: 'Sale not found' }
+      }
+
+      const items = await db
+        .select({ saleItem: saleItems, product: products })
+        .from(saleItems)
+        .innerJoin(products, eq(saleItems.productId, products.id))
+        .where(eq(saleItems.saleId, saleId))
+
+      const saleServiceItems = await db
+        .select({ saleService: saleServices, service: services })
+        .from(saleServices)
+        .innerJoin(services, eq(saleServices.serviceId, services.id))
+        .where(eq(saleServices.saleId, saleId))
+
+      let customer: ReceiptCustomerData | null = null
+      if (sale.customerId) {
+        const customerData = await db.query.customers.findFirst({
+          where: eq(customers.id, sale.customerId),
+        })
+        if (customerData) {
+          customer = {
+            name: `${customerData.firstName} ${customerData.lastName}`.trim(),
+            phone: customerData.phone || undefined,
+            email: customerData.email || undefined,
+            address: [customerData.address, customerData.city, customerData.state]
+              .filter(Boolean)
+              .join(', ') || undefined,
+          }
+        }
+      }
+
+      let settings = null
+      if (sale.branchId) {
+        settings = await db.query.businessSettings.findFirst({
+          where: eq(businessSettings.branchId, sale.branchId),
+        })
+      }
+      if (!settings) {
+        settings = await db.query.businessSettings.findFirst({
+          where: isNull(businessSettings.branchId),
+        })
+      }
+      if (!settings) {
+        return { success: false, message: 'Business settings not configured' }
+      }
+
+      return {
+        success: true,
+        data: {
+          sale: {
+            id: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            saleDate: sale.saleDate || new Date().toISOString(),
+            subtotal: sale.subtotal || 0,
+            taxAmount: sale.taxAmount || 0,
+            discountAmount: sale.discountAmount || 0,
+            totalAmount: sale.totalAmount || 0,
+            amountPaid: sale.amountPaid || 0,
+            changeGiven: sale.changeGiven || 0,
+            paymentMethod: sale.paymentMethod || 'cash',
+            paymentStatus: sale.paymentStatus || 'paid',
+            notes: sale.notes || undefined,
+          },
+          items: items.map((item) => ({
+            productName: item.product.name,
+            productCode: item.product.code,
+            quantity: item.saleItem.quantity || 1,
+            unitPrice: item.saleItem.unitPrice || 0,
+            serialNumber: item.saleItem.serialNumber || undefined,
+            discountAmount: item.saleItem.discountAmount || 0,
+            taxAmount: item.saleItem.taxAmount || 0,
+            totalPrice: item.saleItem.totalPrice || 0,
+          })),
+          services: saleServiceItems.map((item) => ({
+            serviceName: item.saleService.serviceName || item.service.name,
+            serviceCode: item.service.code || undefined,
+            quantity: item.saleService.quantity || 1,
+            unitPrice: item.saleService.unitPrice || 0,
+            hours: item.saleService.hours || undefined,
+            taxAmount: item.saleService.taxAmount || 0,
+            totalAmount: item.saleService.totalPrice || 0,
+            notes: item.saleService.notes || undefined,
+          })),
+          customer,
+          businessSettings: {
+            businessName: settings.businessName,
+            businessLogo: settings.businessLogo,
+            currencySymbol: settings.currencySymbol || 'Rs.',
+            currencyPosition: settings.currencyPosition || 'prefix',
+            decimalPlaces: settings.decimalPlaces || 2,
+            taxRate: settings.taxRate || 0,
+            showTaxOnReceipt: settings.showTaxOnReceipt !== false,
+            receiptFooter: settings.receiptFooter || '',
+            receiptTermsAndConditions: settings.receiptTermsAndConditions || '',
+            receiptCustomField1Label: settings.receiptCustomField1Label || '',
+            receiptCustomField1Value: settings.receiptCustomField1Value || '',
+            receiptCustomField2Label: settings.receiptCustomField2Label || '',
+            receiptCustomField2Value: settings.receiptCustomField2Value || '',
+            receiptCustomField3Label: settings.receiptCustomField3Label || '',
+            receiptCustomField3Value: settings.receiptCustomField3Value || '',
+          },
+        },
+      }
+    } catch (error) {
+      console.error('Receipt data fetch error:', error)
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Failed to fetch receipt data',
+      }
+    }
+  })
+
   // Get receipt settings for a branch
   ipcMain.handle('receipt:get-settings', async (_, branchId?: number) => {
     try {

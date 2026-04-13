@@ -66,7 +66,7 @@ export async function migrateToBusinessSettings() {
       // Create default global settings
       await db.insert(businessSettings).values({
         branchId: null,
-        businessName: "Firearms Retail POS",
+        businessName: "My Business",
         businessAddress: "",
         businessCity: "",
         businessState: "",
@@ -105,7 +105,6 @@ export async function migrateToBusinessSettings() {
         requireCustomerForSale: false,
         enableCustomerLoyalty: false,
         loyaltyPointsRatio: 1,
-        expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
         expenseApprovalRequired: false,
         expenseApprovalLimit: 10000,
         enableReturns: true,

@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, between, gte, lte, count } from 'drizzle-orm'
+import { eq, and, desc, sql, between, gte, lte, count, like, isNull } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   sales,
@@ -17,10 +17,12 @@ import {
   auditLogs,
   users,
   suppliers,
+  categories,
+  businessSettings,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
-import { getDateRange, getPeriodLabel } from '../utils/date-helpers'
+import { getDateRange, getPeriodLabel, normalizeDateRange } from '../utils/date-helpers'
 import { generateReportPDF } from '../utils/pdf-generator'
 import type { TimePeriod, ReportType } from '../../shared/types'
 
@@ -36,17 +38,26 @@ export function registerReportHandlers(): void {
         startDate: string
         endDate: string
         groupBy?: 'day' | 'week' | 'month'
+        paymentMethod?: string
+        paymentStatus?: string
+        customerId?: number
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate, groupBy = 'day' } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, groupBy = 'day', paymentMethod, paymentStatus, customerId, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [
           between(sales.saleDate, startDate, endDate),
           eq(sales.isVoided, false),
         ]
         if (branchId) conditions.push(eq(sales.branchId, branchId))
+        if (paymentMethod) conditions.push(eq(sales.paymentMethod, paymentMethod as any))
+        if (paymentStatus) conditions.push(eq(sales.paymentStatus, paymentStatus as any))
+        if (customerId) conditions.push(eq(sales.customerId, customerId))
 
         // Summary
         const summary = await db
@@ -112,6 +123,32 @@ export function registerReportHandlers(): void {
           .groupBy(sql`date(${sales.saleDate})`)
           .orderBy(sql`date(${sales.saleDate})`)
 
+        // Detailed rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(sales)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
+          .select({
+            id: sales.id,
+            invoiceNumber: sales.invoiceNumber,
+            customerName: sql<string>`coalesce(${customers.firstName} || ' ' || ${customers.lastName}, 'Walk-in')`,
+            saleDate: sales.saleDate,
+            paymentMethod: sales.paymentMethod,
+            paymentStatus: sales.paymentStatus,
+            totalAmount: sales.totalAmount,
+            taxAmount: sales.taxAmount,
+            discountAmount: sales.discountAmount,
+          })
+          .from(sales)
+          .leftJoin(customers, eq(sales.customerId, customers.id))
+          .where(and(...conditions))
+          .orderBy(desc(sales.saleDate))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
+
         await createAuditLog({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -127,6 +164,12 @@ export function registerReportHandlers(): void {
             byPaymentMethod,
             topProducts,
             dailySales,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -136,10 +179,10 @@ export function registerReportHandlers(): void {
     }
   )
 
-  ipcMain.handle('reports:inventory-report', async (_, params: { branchId?: number }) => {
+  ipcMain.handle('reports:inventory-report', async (_, params: { branchId?: number; page?: number; limit?: number }) => {
     try {
       const session = getCurrentSession()
-      const { branchId } = params
+      const { branchId, page = 1, limit: pageSize = 50 } = params
 
       const conditions = []
       if (branchId) conditions.push(eq(inventory.branchId, branchId))
@@ -195,6 +238,35 @@ export function registerReportHandlers(): void {
         .orderBy(sql`${inventory.quantity} - ${inventory.minQuantity}`)
         .limit(50)
 
+      // Detail rows with pagination
+      const totalCountResult = await db
+        .select({ count: sql<number>`count(*)` })
+        .from(inventory)
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+      const totalRows = totalCountResult[0]?.count || 0
+
+      const detailRows = await db
+        .select({
+          id: inventory.id,
+          productId: inventory.productId,
+          productName: products.name,
+          productCode: products.code,
+          branchId: inventory.branchId,
+          branchName: branches.name,
+          quantity: inventory.quantity,
+          minQuantity: inventory.minQuantity,
+          maxQuantity: inventory.maxQuantity,
+          costValue: sql<number>`${inventory.quantity} * ${products.costPrice}`,
+          retailValue: sql<number>`${inventory.quantity} * ${products.sellingPrice}`,
+        })
+        .from(inventory)
+        .innerJoin(products, eq(inventory.productId, products.id))
+        .innerJoin(branches, eq(inventory.branchId, branches.id))
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .orderBy(products.name)
+        .limit(pageSize)
+        .offset((page - 1) * pageSize)
+
       await createAuditLog({
         userId: session?.userId,
         branchId: branchId ?? session?.branchId,
@@ -209,6 +281,12 @@ export function registerReportHandlers(): void {
           stockSummary,
           stockValue,
           lowStock,
+          details: {
+            rows: detailRows,
+            total: totalRows,
+            page,
+            totalPages: Math.ceil(totalRows / pageSize),
+          },
         },
       }
     } catch (error) {
@@ -225,11 +303,14 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         // Revenue from sales
         const salesConditions = [
@@ -256,7 +337,10 @@ export function registerReportHandlers(): void {
           .where(and(...salesConditions))
 
         // Expenses
-        const expenseConditions = [between(expenses.expenseDate, startDate, endDate)]
+        const expenseConditions = [
+          between(expenses.expenseDate, startDate, endDate),
+          eq(expenses.isVoided, false),
+        ]
         if (branchId) expenseConditions.push(eq(expenses.branchId, branchId))
 
         const expenseTotal = await db
@@ -268,20 +352,84 @@ export function registerReportHandlers(): void {
 
         const expensesByCategory = await db
           .select({
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             total: sql<number>`sum(${expenses.amount})`,
           })
           .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...expenseConditions))
-          .groupBy(expenses.category)
+          .groupBy(expenses.categoryId, categories.name)
 
-        const totalRevenue = revenue[0]?.totalRevenue ?? 0
-        const totalCost = cogs[0]?.totalCost ?? 0
+        // Return deductions for the period
+        const returnConditions = [between(returns.returnDate, startDate, endDate)]
+        if (branchId) returnConditions.push(eq(returns.branchId, branchId))
+
+        const returnRevenue = await db
+          .select({
+            totalReturn: sql<number>`COALESCE(SUM(${returns.totalAmount}), 0)`,
+          })
+          .from(returns)
+          .where(and(...returnConditions))
+
+        const returnCogs = await db
+          .select({
+            totalReturnCost: sql<number>`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
+          })
+          .from(returnItems)
+          .innerJoin(returns, eq(returnItems.returnId, returns.id))
+          .where(and(...returnConditions))
+
+        const grossRevenue = revenue[0]?.totalRevenue ?? 0
+        const grossCost = cogs[0]?.totalCost ?? 0
+        const totalReturnAmount = returnRevenue[0]?.totalReturn ?? 0
+        const totalReturnCost = returnCogs[0]?.totalReturnCost ?? 0
+        const totalRevenue = grossRevenue - totalReturnAmount
+        const totalCost = grossCost - totalReturnCost
         const totalExpenses = expenseTotal[0]?.totalExpenses ?? 0
         const grossProfit = totalRevenue - totalCost
         const netProfit = grossProfit - totalExpenses
         const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0
         const netMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0
+
+        // Detail rows: line items from sales and expenses combined, paginated
+        const totalSalesCount = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(sales)
+          .where(and(...salesConditions))
+        const totalExpensesCount = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(expenses)
+          .where(and(...expenseConditions))
+        const totalRows = (totalSalesCount[0]?.count || 0) + (totalExpensesCount[0]?.count || 0)
+
+        const salesDetailRows = await db
+          .select({
+            id: sales.id,
+            type: sql<string>`'sale'`,
+            date: sales.saleDate,
+            reference: sales.invoiceNumber,
+            description: sql<string>`'Sale ' || ${sales.invoiceNumber}`,
+            amount: sales.totalAmount,
+          })
+          .from(sales)
+          .where(and(...salesConditions))
+
+        const expenseDetailRows = await db
+          .select({
+            id: expenses.id,
+            type: sql<string>`'expense'`,
+            date: expenses.expenseDate,
+            reference: sql<string>`coalesce(${expenses.reference}, '')`,
+            description: sql<string>`coalesce(${expenses.description}, '')`,
+            amount: expenses.amount,
+          })
+          .from(expenses)
+          .where(and(...expenseConditions))
+
+        const combinedRows = [...salesDetailRows, ...expenseDetailRows]
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+          .slice((page - 1) * pageSize, page * pageSize)
 
         await createAuditLog({
           userId: session?.userId,
@@ -302,6 +450,12 @@ export function registerReportHandlers(): void {
             expensesByCategory,
             netProfit,
             netMargin,
+            details: {
+              rows: combinedRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -319,16 +473,26 @@ export function registerReportHandlers(): void {
         startDate?: string
         endDate?: string
         limit?: number
+        page?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { startDate, endDate, limit = 20 } = params
+        const { startDate: rawStart, endDate: rawEnd, limit: pageSize = 20, page = 1 } = params
 
         const conditions = [eq(sales.isVoided, false)]
-        if (startDate && endDate) {
-          conditions.push(between(sales.saleDate, startDate, endDate))
+        if (rawStart && rawEnd) {
+          const { start, end } = normalizeDateRange(rawStart, rawEnd)
+          conditions.push(between(sales.saleDate, start, end))
         }
+
+        // Total customer count for pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(distinct ${sales.customerId})` })
+          .from(sales)
+          .innerJoin(customers, eq(sales.customerId, customers.id))
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
 
         // Top customers
         const topCustomers = await db
@@ -346,7 +510,8 @@ export function registerReportHandlers(): void {
           .where(and(...conditions))
           .groupBy(sales.customerId, customers.firstName, customers.lastName, customers.email, customers.phone)
           .orderBy(desc(sql`sum(${sales.totalAmount})`))
-          .limit(limit)
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
 
         // Customer summary
         const customerSummary = await db
@@ -370,6 +535,12 @@ export function registerReportHandlers(): void {
           data: {
             topCustomers,
             summary: customerSummary[0],
+            details: {
+              rows: topCustomers,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -388,14 +559,26 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        categoryId?: number
+        supplierId?: number
+        paymentStatus?: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, categoryId, supplierId, paymentStatus, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
-        const conditions = [between(expenses.expenseDate, startDate, endDate)]
+        const conditions = [
+          between(expenses.expenseDate, startDate, endDate),
+          eq(expenses.isVoided, false),
+        ]
         if (branchId) conditions.push(eq(expenses.branchId, branchId))
+        if (categoryId) conditions.push(eq(expenses.categoryId, categoryId))
+        if (supplierId) conditions.push(eq(expenses.supplierId, supplierId))
+        if (paymentStatus) conditions.push(eq(expenses.paymentStatus, paymentStatus as any))
 
         // Summary
         const summary = await db
@@ -410,13 +593,15 @@ export function registerReportHandlers(): void {
         // By category
         const expensesByCategory = await db
           .select({
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             amount: sql<number>`sum(${expenses.amount})`,
             count: sql<number>`count(*)`,
           })
           .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...conditions))
-          .groupBy(expenses.category)
+          .groupBy(expenses.categoryId, categories.name)
           .orderBy(desc(sql`sum(${expenses.amount})`))
 
         // By branch
@@ -436,7 +621,8 @@ export function registerReportHandlers(): void {
         const topExpenses = await db
           .select({
             id: expenses.id,
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             amount: expenses.amount,
             description: expenses.description,
             date: expenses.expenseDate,
@@ -444,9 +630,36 @@ export function registerReportHandlers(): void {
           })
           .from(expenses)
           .innerJoin(branches, eq(expenses.branchId, branches.id))
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...conditions))
           .orderBy(desc(expenses.amount))
           .limit(10)
+
+        // Detail rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(expenses)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
+          .select({
+            id: expenses.id,
+            expenseDate: expenses.expenseDate,
+            category: categories.name,
+            description: expenses.description,
+            paymentMethod: expenses.paymentMethod,
+            paymentStatus: expenses.paymentStatus,
+            amount: expenses.amount,
+            supplierName: sql<string>`${suppliers.name}`,
+          })
+          .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
+          .leftJoin(suppliers, eq(expenses.supplierId, suppliers.id))
+          .where(and(...conditions))
+          .orderBy(desc(expenses.expenseDate))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
 
         await createAuditLog({
           userId: session?.userId,
@@ -463,6 +676,12 @@ export function registerReportHandlers(): void {
             expensesByCategory,
             expensesByBranch,
             topExpenses,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -481,14 +700,21 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        supplierId?: number
+        status?: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, supplierId, status, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(purchases.createdAt, startDate, endDate)]
         if (branchId) conditions.push(eq(purchases.branchId, branchId))
+        if (supplierId) conditions.push(eq(purchases.supplierId, supplierId))
+        if (status) conditions.push(eq(purchases.status, status as any))
 
         // Summary
         const summary = await db
@@ -526,13 +752,20 @@ export function registerReportHandlers(): void {
           .where(and(...conditions))
           .groupBy(purchases.status)
 
-        // Recent purchases
-        const recentPurchases = await db
+        // Detail rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(purchases)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
           .select({
             id: purchases.id,
             purchaseOrderNumber: purchases.purchaseOrderNumber,
             supplierName: suppliers.name,
             totalAmount: purchases.totalAmount,
+            paymentStatus: purchases.paymentStatus,
             status: purchases.status,
             createdAt: purchases.createdAt,
           })
@@ -540,7 +773,8 @@ export function registerReportHandlers(): void {
           .innerJoin(suppliers, eq(purchases.supplierId, suppliers.id))
           .where(and(...conditions))
           .orderBy(desc(purchases.createdAt))
-          .limit(20)
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
 
         await createAuditLog({
           userId: session?.userId,
@@ -556,7 +790,13 @@ export function registerReportHandlers(): void {
             summary: summary[0],
             purchasesBySupplier,
             purchasesByStatus,
-            recentPurchases,
+            recentPurchases: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -575,14 +815,19 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        reason?: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, reason, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(returns.returnDate, startDate, endDate)]
         if (branchId) conditions.push(eq(returns.branchId, branchId))
+        if (reason) conditions.push(like(returns.reason, `%${reason}%`))
 
         // Total sales for return rate calculation
         const totalSalesResult = await db
@@ -632,6 +877,30 @@ export function registerReportHandlers(): void {
           .orderBy(desc(sql`sum(${returnItems.quantity})`))
           .limit(10)
 
+        // Detail rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(returns)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
+          .select({
+            id: returns.id,
+            returnNumber: returns.returnNumber,
+            invoiceNumber: sales.invoiceNumber,
+            returnDate: returns.returnDate,
+            reason: returns.reason,
+            totalAmount: returns.totalAmount,
+            refundAmount: returns.refundAmount,
+          })
+          .from(returns)
+          .innerJoin(sales, eq(returns.originalSaleId, sales.id))
+          .where(and(...conditions))
+          .orderBy(desc(returns.returnDate))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
+
         await createAuditLog({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -649,6 +918,12 @@ export function registerReportHandlers(): void {
             },
             returnsByReason,
             returnsByProduct,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -667,14 +942,19 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        salespersonId?: number
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, salespersonId, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(commissions.createdAt, startDate, endDate)]
         if (branchId) conditions.push(eq(commissions.branchId, branchId))
+        if (salespersonId) conditions.push(eq(commissions.userId, salespersonId))
 
         // Summary
         const summary = await db
@@ -700,13 +980,21 @@ export function registerReportHandlers(): void {
           .groupBy(commissions.userId, users.fullName)
           .orderBy(desc(sql`sum(${commissions.commissionAmount})`))
 
-        // Recent commissions
-        const recentCommissions = await db
+        // Detail rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(commissions)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
           .select({
             id: commissions.id,
             userName: users.fullName,
             saleInvoice: sales.invoiceNumber,
             amount: commissions.commissionAmount,
+            commissionType: commissions.commissionType,
+            status: commissions.status,
             date: commissions.createdAt,
           })
           .from(commissions)
@@ -714,7 +1002,8 @@ export function registerReportHandlers(): void {
           .innerJoin(sales, eq(commissions.saleId, sales.id))
           .where(and(...conditions))
           .orderBy(desc(commissions.createdAt))
-          .limit(20)
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
 
         await createAuditLog({
           userId: session?.userId,
@@ -729,7 +1018,13 @@ export function registerReportHandlers(): void {
           data: {
             summary: summary[0],
             commissionsBySalesperson,
-            recentCommissions,
+            recentCommissions: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -748,11 +1043,14 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [
           between(sales.saleDate, startDate, endDate),
@@ -793,6 +1091,30 @@ export function registerReportHandlers(): void {
           .where(and(...conditions))
           .groupBy(sales.paymentMethod)
 
+        // Detail rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(sales)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
+          .select({
+            id: sales.id,
+            invoiceNumber: sales.invoiceNumber,
+            saleDate: sales.saleDate,
+            totalAmount: sales.totalAmount,
+            taxAmount: sales.taxAmount,
+            paymentMethod: sales.paymentMethod,
+            branchName: branches.name,
+          })
+          .from(sales)
+          .innerJoin(branches, eq(sales.branchId, branches.id))
+          .where(and(...conditions))
+          .orderBy(desc(sales.saleDate))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
+
         await createAuditLog({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -807,6 +1129,12 @@ export function registerReportHandlers(): void {
             summary: summary[0],
             taxByBranch,
             taxByPaymentMethod,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -824,11 +1152,14 @@ export function registerReportHandlers(): void {
       params: {
         startDate: string
         endDate: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { startDate, endDate } = params
+        const { startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         // Get all branches
         const allBranches = await db.select().from(branches)
@@ -860,7 +1191,8 @@ export function registerReportHandlers(): void {
               .where(
                 and(
                   eq(expenses.branchId, branch.id),
-                  between(expenses.expenseDate, startDate, endDate)
+                  between(expenses.expenseDate, startDate, endDate),
+                  eq(expenses.isVoided, false)
                 )
               )
 
@@ -906,6 +1238,10 @@ export function registerReportHandlers(): void {
           description: `Generated branch performance report: ${startDate} to ${endDate}`,
         })
 
+        // Paginate branchMetrics
+        const totalRows = branchMetrics.length
+        const paginatedMetrics = branchMetrics.slice((page - 1) * pageSize, page * pageSize)
+
         return {
           success: true,
           data: {
@@ -919,6 +1255,12 @@ export function registerReportHandlers(): void {
               branchId: topBranch.branchId,
               branchName: topBranch.branchName,
               revenue: topBranch.revenue,
+            },
+            details: {
+              rows: paginatedMetrics,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
             },
           },
         }
@@ -938,11 +1280,14 @@ export function registerReportHandlers(): void {
         branchId?: number
         startDate: string
         endDate: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = branchId ? [eq(sales.branchId, branchId)] : []
         const expenseConditions = branchId ? [eq(expenses.branchId, branchId)] : []
@@ -981,7 +1326,11 @@ export function registerReportHandlers(): void {
             total: sql<number>`sum(${expenses.amount})`,
           })
           .from(expenses)
-          .where(and(between(expenses.expenseDate, startDate, endDate), ...expenseConditions))
+          .where(and(
+            between(expenses.expenseDate, startDate, endDate),
+            eq(expenses.isVoided, false),
+            ...expenseConditions
+          ))
 
         // Cash out - Commissions
         const commissionsCash = await db
@@ -1026,6 +1375,46 @@ export function registerReportHandlers(): void {
           description: `Generated cash flow report: ${startDate} to ${endDate}`,
         })
 
+        // Detail rows: combine all cash movements, paginated
+        const salesRows = await db
+          .select({
+            id: sales.id,
+            type: sql<string>`'sale'`,
+            date: sales.saleDate,
+            reference: sales.invoiceNumber,
+            amount: sales.totalAmount,
+            direction: sql<string>`'in'`,
+          })
+          .from(sales)
+          .where(
+            and(
+              between(sales.saleDate, startDate, endDate),
+              eq(sales.isVoided, false),
+              ...conditions
+            )
+          )
+
+        const expenseRows = await db
+          .select({
+            id: expenses.id,
+            type: sql<string>`'expense'`,
+            date: expenses.expenseDate,
+            reference: sql<string>`coalesce(${expenses.reference}, ${expenses.description}, '')`,
+            amount: expenses.amount,
+            direction: sql<string>`'out'`,
+          })
+          .from(expenses)
+          .where(and(
+            between(expenses.expenseDate, startDate, endDate),
+            eq(expenses.isVoided, false),
+            ...expenseConditions
+          ))
+
+        const allCashRows = [...salesRows, ...expenseRows]
+          .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+        const totalRows = allCashRows.length
+        const paginatedRows = allCashRows.slice((page - 1) * pageSize, page * pageSize)
+
         return {
           success: true,
           data: {
@@ -1048,6 +1437,12 @@ export function registerReportHandlers(): void {
               refunds: cashOutRefunds,
             },
             cashByBranch: [],
+            details: {
+              rows: paginatedRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -1067,15 +1462,22 @@ export function registerReportHandlers(): void {
         startDate: string
         endDate: string
         userId?: number
+        actionType?: string
+        entityType?: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate, endDate, userId } = params
+        const { branchId, startDate: rawStart, endDate: rawEnd, userId, actionType, entityType, page = 1, limit: pageSize = 50 } = params
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [between(auditLogs.createdAt, startDate, endDate)]
         if (branchId) conditions.push(eq(auditLogs.branchId, branchId))
         if (userId) conditions.push(eq(auditLogs.userId, userId))
+        if (actionType) conditions.push(eq(auditLogs.action, actionType as any))
+        if (entityType) conditions.push(eq(auditLogs.entityType, entityType as any))
 
         // Summary
         const summary = await db
@@ -1110,8 +1512,14 @@ export function registerReportHandlers(): void {
           .groupBy(auditLogs.action)
           .orderBy(desc(sql`count(*)`))
 
-        // Recent actions
-        const recentActions = await db
+        // Detail rows with pagination
+        const totalCountResult = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(auditLogs)
+          .where(and(...conditions))
+        const totalRows = totalCountResult[0]?.count || 0
+
+        const detailRows = await db
           .select({
             id: auditLogs.id,
             userName: users.fullName,
@@ -1124,7 +1532,8 @@ export function registerReportHandlers(): void {
           .leftJoin(users, eq(auditLogs.userId, users.id))
           .where(and(...conditions))
           .orderBy(desc(auditLogs.createdAt))
-          .limit(50)
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
 
         await createAuditLog({
           userId: session?.userId,
@@ -1140,7 +1549,13 @@ export function registerReportHandlers(): void {
             summary: summary[0],
             actionsByUser,
             actionsByType,
-            recentActions,
+            recentActions: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -1160,6 +1575,8 @@ export function registerReportHandlers(): void {
         timePeriod: TimePeriod
         startDate?: string
         endDate?: string
+        page?: number
+        limit?: number
       }
     ) => {
       try {
@@ -1173,7 +1590,7 @@ export function registerReportHandlers(): void {
           }
         }
 
-        const { branchId, timePeriod, startDate, endDate } = params
+        const { branchId, timePeriod, startDate, endDate, page = 1, limit: pageSize = 50 } = params
 
         // Get date range
         const dateRange = getDateRange(timePeriod, startDate, endDate)
@@ -1186,6 +1603,7 @@ export function registerReportHandlers(): void {
 
         const expenseConditions = [
           between(expenses.expenseDate, dateRange.start, dateRange.end),
+          eq(expenses.isVoided, false),
         ]
         if (branchId) expenseConditions.push(eq(expenses.branchId, branchId))
 
@@ -1278,13 +1696,15 @@ export function registerReportHandlers(): void {
         // Expenses by Category
         const expensesByCategory = await db
           .select({
-            category: expenses.category,
+            categoryId: expenses.categoryId,
+            category: categories.name,
             amount: sql<number>`sum(${expenses.amount})`,
             count: sql<number>`count(*)`,
           })
           .from(expenses)
+          .innerJoin(categories, eq(expenses.categoryId, categories.id))
           .where(and(...expenseConditions))
-          .groupBy(expenses.category)
+          .groupBy(expenses.categoryId, categories.name)
           .orderBy(desc(sql`sum(${expenses.amount})`))
 
         // Returns Summary
@@ -1366,6 +1786,70 @@ export function registerReportHandlers(): void {
           timestamp: log.timestamp,
         }))
 
+        // Voided transactions query
+        const voidedSalesConditions = [
+          between(sales.saleDate, dateRange.start, dateRange.end),
+          eq(sales.isVoided, true),
+        ]
+        if (branchId) voidedSalesConditions.push(eq(sales.branchId, branchId))
+
+        const voidedSales = await db
+          .select({
+            type: sql<string>`'sale'`,
+            reference: sales.invoiceNumber,
+            originalAmount: sales.totalAmount,
+            voidReason: sales.voidReason,
+            voidedDate: sales.updatedAt,
+          })
+          .from(sales)
+          .where(and(...voidedSalesConditions))
+
+        const voidedExpenseConditions = [
+          between(expenses.expenseDate, dateRange.start, dateRange.end),
+          eq(expenses.isVoided, true),
+        ]
+        if (branchId) voidedExpenseConditions.push(eq(expenses.branchId, branchId))
+
+        const voidedExpenses = await db
+          .select({
+            type: sql<string>`'expense'`,
+            reference: sql<string>`coalesce(${expenses.description}, ${expenses.reference}, '')`,
+            originalAmount: expenses.amount,
+            voidReason: expenses.voidReason,
+            voidedDate: expenses.updatedAt,
+          })
+          .from(expenses)
+          .where(and(...voidedExpenseConditions))
+
+        const voidedTransactions = [...voidedSales, ...voidedExpenses]
+
+        // Paginated audit log detail rows
+        const totalAuditCount = await db
+          .select({ count: sql<number>`count(*)` })
+          .from(auditLogs)
+          .where(and(...auditLogConditions))
+        const totalRows = totalAuditCount[0]?.count || 0
+
+        const paginatedAuditLogs = await db
+          .select({
+            id: auditLogs.id,
+            userName: users.fullName,
+            action: auditLogs.action,
+            tableName: auditLogs.entityType,
+            timestamp: auditLogs.createdAt,
+          })
+          .from(auditLogs)
+          .leftJoin(users, eq(auditLogs.userId, users.id))
+          .where(and(...auditLogConditions))
+          .orderBy(desc(auditLogs.createdAt))
+          .limit(pageSize)
+          .offset((page - 1) * pageSize)
+
+        const formattedPaginatedLogs = paginatedAuditLogs.map(log => ({
+          ...log,
+          userName: log.userName || 'System',
+        }))
+
         await createAuditLog({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -1400,6 +1884,13 @@ export function registerReportHandlers(): void {
             },
             commissionsSummary: commissionsSummary[0],
             auditLogs: formattedAuditLogs,
+            voidedTransactions,
+            details: {
+              rows: formattedPaginatedLogs,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize),
+            },
           },
         }
       } catch (error) {
@@ -1430,12 +1921,22 @@ export function registerReportHandlers(): void {
         const session = getCurrentSession()
         const { reportType, data, filters } = params
 
-        // Get business info from settings (optional)
+        // Get business info from settings (match the same query as business-settings:get-global)
+        const globalSetting = await db.select().from(businessSettings).where(isNull(businessSettings.branchId)).orderBy(desc(businessSettings.settingId)).limit(1)
+        const settingsRow = globalSetting[0]
+        console.log('[PDF Export] Business settings:', settingsRow ? `found - ${settingsRow.businessName}` : 'NOT FOUND')
         const businessInfo = {
-          name: 'Firearms Retail POS',
-          address: '',
-          phone: '',
-          email: '',
+          name: settingsRow?.businessName || 'POS System',
+          address: settingsRow?.businessAddress || '',
+          city: settingsRow?.businessCity || '',
+          state: settingsRow?.businessState || '',
+          postalCode: settingsRow?.businessPostalCode || '',
+          country: settingsRow?.businessCountry || '',
+          phone: settingsRow?.businessPhone || '',
+          email: settingsRow?.businessEmail || '',
+          website: settingsRow?.businessWebsite || '',
+          registrationNo: settingsRow?.businessRegistrationNo || '',
+          taxId: settingsRow?.taxId || '',
         }
 
         const filePath = await generateReportPDF({
@@ -1443,6 +1944,7 @@ export function registerReportHandlers(): void {
           data,
           filters,
           businessInfo,
+          generatedBy: session?.fullName || session?.username || '',
         })
 
         await createAuditLog({

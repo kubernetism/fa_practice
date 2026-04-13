@@ -1,6 +1,21 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react'
 
 export type ThemeType = 'light' | 'dark' | 'midnight' | 'system'
+export type FontSizeOption = 'small' | 'default' | 'medium' | 'large'
+export type ButtonSizeOption = 'compact' | 'default' | 'large'
+
+export const FONT_SIZE_MAP: Record<FontSizeOption, string> = {
+  small: '13px',
+  default: '14px',
+  medium: '15px',
+  large: '16px',
+}
+
+export const BUTTON_SIZE_MAP: Record<ButtonSizeOption, string> = {
+  compact: '0.85',
+  default: '1',
+  large: '1.15',
+}
 
 export interface Theme {
   id: string
@@ -108,12 +123,18 @@ interface ThemeContextType {
   isSystemTheme: boolean
   useSystemTheme: () => void
   cycleTheme: () => void
+  fontSize: FontSizeOption
+  setFontSize: (size: FontSizeOption) => void
+  buttonSize: ButtonSizeOption
+  setButtonSize: (size: ButtonSizeOption) => void
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
 
 const THEME_STORAGE_KEY = 'firearms-pos-theme'
 const CUSTOM_THEMES_KEY = 'firearms-pos-custom-themes'
+const FONT_SIZE_KEY = 'firearms-pos-font-size'
+const BUTTON_SIZE_KEY = 'firearms-pos-button-size'
 
 function getSystemTheme(): 'light' | 'dark' | 'midnight' {
   if (typeof window !== 'undefined') {
@@ -146,6 +167,16 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     } catch {
       return []
     }
+  })
+
+  const [fontSize, setFontSizeState] = useState<FontSizeOption>(() => {
+    if (typeof window === 'undefined') return 'default'
+    return (localStorage.getItem(FONT_SIZE_KEY) as FontSizeOption) || 'default'
+  })
+
+  const [buttonSize, setButtonSizeState] = useState<ButtonSizeOption>(() => {
+    if (typeof window === 'undefined') return 'default'
+    return (localStorage.getItem(BUTTON_SIZE_KEY) as ButtonSizeOption) || 'default'
   })
 
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark' | 'midnight'>(() => {
@@ -202,6 +233,26 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     return () => mediaQuery.removeEventListener('change', handleChange)
   }, [isSystemTheme])
 
+  // Apply font size to DOM
+  useEffect(() => {
+    document.documentElement.style.setProperty('--base-font-size', FONT_SIZE_MAP[fontSize])
+  }, [fontSize])
+
+  // Apply button size to DOM
+  useEffect(() => {
+    document.documentElement.setAttribute('data-btn-size', buttonSize)
+  }, [buttonSize])
+
+  const setFontSize = useCallback((size: FontSizeOption) => {
+    setFontSizeState(size)
+    localStorage.setItem(FONT_SIZE_KEY, size)
+  }, [])
+
+  const setButtonSize = useCallback((size: ButtonSizeOption) => {
+    setButtonSizeState(size)
+    localStorage.setItem(BUTTON_SIZE_KEY, size)
+  }, [])
+
   const setTheme = useCallback((newTheme: ThemeType) => {
     setIsSystemTheme(false)
     setThemeState(newTheme)
@@ -255,6 +306,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     isSystemTheme,
     useSystemTheme,
     cycleTheme,
+    fontSize,
+    setFontSize,
+    buttonSize,
+    setButtonSize,
   }
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

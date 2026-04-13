@@ -1,59 +1,177 @@
-import { Crosshair, Building2, Sparkles, Shield } from 'lucide-react'
+import { useState } from 'react'
+import { Building2, Sparkles, Shield, RotateCcw, Crosshair, Loader2, CheckCircle2, AlertCircle, Upload } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
-export function WelcomeStep() {
+interface WelcomeStepProps {
+  onRestoreComplete?: () => void
+}
+
+export function WelcomeStep({ onRestoreComplete }: WelcomeStepProps) {
+  const [isRestoring, setIsRestoring] = useState(false)
+  const [restoreResult, setRestoreResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const handleRestore = async () => {
+    setIsRestoring(true)
+    setRestoreResult(null)
+
+    try {
+      const result = await window.api.backup.import()
+      if (result.success) {
+        setRestoreResult({ success: true, message: 'Database restored successfully. Reloading...' })
+        // The main process reloads the window automatically after restore.
+        // If it doesn't reload within 3s, navigate manually as fallback.
+        setTimeout(() => {
+          onRestoreComplete?.()
+        }, 3000)
+      } else {
+        // "Import cancelled" is not an error — user just closed the dialog
+        if (result.message === 'Import cancelled') {
+          setRestoreResult(null)
+        } else {
+          setRestoreResult({ success: false, message: result.message || 'Restore failed.' })
+        }
+      }
+    } catch (err) {
+      setRestoreResult({
+        success: false,
+        message: `Restore failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      })
+    } finally {
+      setIsRestoring(false)
+    }
+  }
+
   return (
-    <div className="text-center space-y-8">
-      {/* Logo/Icon */}
-      <div className="flex justify-center">
-        <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center">
-          <Crosshair className="w-12 h-12 text-primary" />
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+            <Crosshair className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight text-foreground">Welcome to Your POS System</h1>
+            <p className="text-sm text-muted-foreground">Complete Point of Sale & Inventory Management</p>
+          </div>
         </div>
       </div>
 
-      {/* Welcome Text */}
-      <div className="space-y-3">
-        <h1 className="text-3xl font-bold">Welcome to Firearms POS</h1>
-        <p className="text-lg text-muted-foreground max-w-md mx-auto">
-          Your complete Point of Sale solution for firearms retail management
+      {/* Restore from Backup — prominent option */}
+      <div className="rounded-lg border-2 border-dashed border-primary/25 bg-primary/[0.03] p-5">
+        <div className="flex items-start gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+            <RotateCcw className="h-5 w-5 text-primary" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-sm font-semibold text-foreground">Restore from Backup</h3>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              Have an existing database backup? Restore it to skip the setup process and continue where you left off.
+              A safety backup of the current state will be created automatically.
+            </p>
+
+            {/* Result message */}
+            {restoreResult && (
+              <div
+                className={`mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-xs ${
+                  restoreResult.success
+                    ? 'bg-success/10 text-success border border-success/20'
+                    : 'bg-destructive/10 text-destructive border border-destructive/20'
+                }`}
+              >
+                {restoreResult.success ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                ) : (
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                )}
+                <span>{restoreResult.message}</span>
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRestore}
+              disabled={isRestoring || restoreResult?.success}
+              className="mt-3 gap-2 text-xs border-primary/30 hover:bg-primary/5"
+            >
+              {isRestoring ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Restoring...
+                </>
+              ) : restoreResult?.success ? (
+                <>
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Restored — Redirecting...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-3.5 w-3.5" />
+                  Select Backup File
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <div className="w-full border-t border-border/50" />
+        </div>
+        <div className="relative flex justify-center">
+          <span className="bg-background px-3 text-[10px] uppercase tracking-widest text-muted-foreground/50">
+            Or start fresh
+          </span>
+        </div>
+      </div>
+
+      {/* Feature highlights */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-card p-3.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/8">
+            <Building2 className="h-4 w-4 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-xs font-semibold text-foreground">Multi-Branch</h3>
+            <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">
+              Manage multiple store locations with centralized control
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-card p-3.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/8">
+            <Sparkles className="h-4 w-4 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-xs font-semibold text-foreground">Easy to Use</h3>
+            <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">
+              Intuitive interface designed for daily operations
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3 rounded-lg border border-border/50 bg-card p-3.5">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary/8">
+            <Shield className="h-4 w-4 text-primary" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-xs font-semibold text-foreground">Secure</h3>
+            <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">
+              Role-based access control & comprehensive audit logs
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Setup info */}
+      <div className="rounded-lg bg-muted/30 border border-border/30 px-4 py-3">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          This wizard will guide you through configuring your business details, setting up your primary branch,
+          and creating an admin account. Click <span className="font-semibold text-foreground">Next</span> to begin the fresh setup.
         </p>
-      </div>
-
-      {/* Features */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 pt-4">
-        <div className="flex flex-col items-center p-4 rounded-lg bg-muted/50">
-          <Building2 className="w-8 h-8 text-primary mb-3" />
-          <h3 className="font-medium">Multi-Branch</h3>
-          <p className="text-sm text-muted-foreground text-center">
-            Manage multiple store locations
-          </p>
-        </div>
-
-        <div className="flex flex-col items-center p-4 rounded-lg bg-muted/50">
-          <Sparkles className="w-8 h-8 text-primary mb-3" />
-          <h3 className="font-medium">Easy to Use</h3>
-          <p className="text-sm text-muted-foreground text-center">
-            Intuitive interface for daily operations
-          </p>
-        </div>
-
-        <div className="flex flex-col items-center p-4 rounded-lg bg-muted/50">
-          <Shield className="w-8 h-8 text-primary mb-3" />
-          <h3 className="font-medium">Secure</h3>
-          <p className="text-sm text-muted-foreground text-center">
-            Role-based access control & audit logs
-          </p>
-        </div>
-      </div>
-
-      {/* Setup Instructions */}
-      <div className="pt-4">
-        <div className="inline-block p-4 rounded-lg bg-primary/5 border border-primary/20">
-          <p className="text-sm text-muted-foreground">
-            This wizard will help you configure your business settings in just a few steps.
-            <br />
-            Click <span className="font-medium text-foreground">Next</span> to get started.
-          </p>
-        </div>
       </div>
     </div>
   )

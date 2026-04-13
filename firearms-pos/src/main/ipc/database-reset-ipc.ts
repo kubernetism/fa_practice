@@ -33,7 +33,11 @@ export function registerDatabaseResetHandlers(): void {
         // Delete data from all tables in the correct order (respecting dependencies)
         // Start with dependent tables first, then parent tables
 
-        // 1. Delete commission records
+        // 1. Delete reversal requests
+        console.log('Deleting reversal requests...')
+        rawDb.prepare('DELETE FROM reversal_requests').run()
+
+        // 2. Delete commission records
         console.log('Deleting commissions...')
         rawDb.prepare('DELETE FROM commissions').run()
 

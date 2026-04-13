@@ -1,6 +1,6 @@
-import { eq, and, asc, sql } from 'drizzle-orm'
+import { eq, and, asc, desc, sql, isNull } from 'drizzle-orm'
 import { getDatabase } from '../db/index'
-import { inventoryCostLayers, products, type NewInventoryCostLayer } from '../db/schema'
+import { inventoryCostLayers, products, businessSettings, type NewInventoryCostLayer } from '../db/schema'
 
 interface CostLayerResult {
   totalCost: number
@@ -103,6 +103,231 @@ export async function consumeCostLayersFIFO(
   }
 
   return { totalCost, layersConsumed }
+}
+
+/**
+ * Consume inventory cost layers using LIFO (Last-In, First-Out) method.
+ *
+ * Same as FIFO but consumes the newest (most recently received) layers first.
+ * Ordered by receivedDate DESC instead of ASC.
+ *
+ * @param productId - The product to consume from
+ * @param branchId - The branch location
+ * @param quantity - The quantity to consume
+ * @returns The total COGS and details of consumed layers
+ */
+export async function consumeCostLayersLIFO(
+  productId: number,
+  branchId: number,
+  quantity: number
+): Promise<CostLayerResult> {
+  const db = getDatabase()
+
+  // Get active cost layers ordered by received date (LIFO - newest first)
+  const layers = await db.query.inventoryCostLayers.findMany({
+    where: and(
+      eq(inventoryCostLayers.productId, productId),
+      eq(inventoryCostLayers.branchId, branchId),
+      eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: desc(inventoryCostLayers.receivedDate),
+  })
+
+  let remainingQty = quantity
+  let totalCost = 0
+  const layersConsumed: CostLayerResult['layersConsumed'] = []
+
+  for (const layer of layers) {
+    if (remainingQty <= 0) break
+
+    const consumeQty = Math.min(remainingQty, layer.quantity)
+    const layerCost = consumeQty * layer.unitCost
+
+    totalCost += layerCost
+    remainingQty -= consumeQty
+
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: layer.unitCost,
+      cost: layerCost,
+    })
+
+    const newQuantity = layer.quantity - consumeQty
+    const isFullyConsumed = newQuantity <= 0
+
+    await db
+      .update(inventoryCostLayers)
+      .set({
+        quantity: newQuantity,
+        isFullyConsumed,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(inventoryCostLayers.id, layer.id))
+  }
+
+  // Fallback to product cost price for remainder
+  if (remainingQty > 0) {
+    const product = await db.query.products.findFirst({
+      where: eq(products.id, productId),
+    })
+
+    if (product) {
+      const fallbackCost = remainingQty * product.costPrice
+      totalCost += fallbackCost
+
+      layersConsumed.push({
+        layerId: -1,
+        quantityConsumed: remainingQty,
+        unitCost: product.costPrice,
+        cost: fallbackCost,
+      })
+
+      console.warn(
+        `LIFO: Insufficient cost layers for product ${productId}. ` +
+        `Used product.costPrice (${product.costPrice}) for ${remainingQty} units.`
+      )
+    }
+  }
+
+  return { totalCost, layersConsumed }
+}
+
+/**
+ * Consume inventory cost layers using Weighted Average method.
+ *
+ * Calculates the weighted average unit cost across all active layers,
+ * then consumes layers in FIFO order but reports the averaged cost.
+ *
+ * @param productId - The product to consume from
+ * @param branchId - The branch location
+ * @param quantity - The quantity to consume
+ * @returns The total COGS and details of consumed layers
+ */
+export async function consumeCostLayersWeightedAverage(
+  productId: number,
+  branchId: number,
+  quantity: number
+): Promise<CostLayerResult> {
+  const db = getDatabase()
+
+  // Get all active cost layers
+  const layers = await db.query.inventoryCostLayers.findMany({
+    where: and(
+      eq(inventoryCostLayers.productId, productId),
+      eq(inventoryCostLayers.branchId, branchId),
+      eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: asc(inventoryCostLayers.receivedDate),
+  })
+
+  // Calculate weighted average cost
+  let totalValue = 0
+  let totalQuantity = 0
+  for (const layer of layers) {
+    totalValue += layer.quantity * layer.unitCost
+    totalQuantity += layer.quantity
+  }
+
+  let avgCost: number
+  if (totalQuantity > 0) {
+    avgCost = totalValue / totalQuantity
+  } else {
+    // Fall back to product cost price
+    const product = await db.query.products.findFirst({
+      where: eq(products.id, productId),
+    })
+    avgCost = product?.costPrice || 0
+  }
+
+  // Consume layers in FIFO order but report averaged cost
+  let remainingQty = quantity
+  let totalCostResult = 0
+  const layersConsumed: CostLayerResult['layersConsumed'] = []
+
+  for (const layer of layers) {
+    if (remainingQty <= 0) break
+
+    const consumeQty = Math.min(remainingQty, layer.quantity)
+    const layerCost = consumeQty * avgCost
+
+    totalCostResult += layerCost
+    remainingQty -= consumeQty
+
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: avgCost,
+      cost: layerCost,
+    })
+
+    const newQuantity = layer.quantity - consumeQty
+    const isFullyConsumed = newQuantity <= 0
+
+    await db
+      .update(inventoryCostLayers)
+      .set({
+        quantity: newQuantity,
+        isFullyConsumed,
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(inventoryCostLayers.id, layer.id))
+  }
+
+  // Fallback for insufficient layers
+  if (remainingQty > 0) {
+    const fallbackCost = remainingQty * avgCost
+    totalCostResult += fallbackCost
+
+    layersConsumed.push({
+      layerId: -1,
+      quantityConsumed: remainingQty,
+      unitCost: avgCost,
+      cost: fallbackCost,
+    })
+
+    console.warn(
+      `WeightedAverage: Insufficient cost layers for product ${productId}. ` +
+      `Used weighted average cost (${avgCost.toFixed(2)}) for ${remainingQty} units.`
+    )
+  }
+
+  return { totalCost: totalCostResult, layersConsumed }
+}
+
+/**
+ * Consume cost layers using the configured valuation method.
+ * Reads the stockValuationMethod from business settings and delegates
+ * to the appropriate consumption function.
+ *
+ * @param productId - The product to consume from
+ * @param branchId - The branch location
+ * @param quantity - The quantity to consume
+ * @returns The total COGS and details of consumed layers
+ */
+export async function consumeCostLayers(
+  productId: number,
+  branchId: number,
+  quantity: number
+): Promise<CostLayerResult> {
+  const db = getDatabase()
+
+  // Read the valuation method from global settings
+  const settings = await db.query.businessSettings.findFirst({
+    where: isNull(businessSettings.branchId),
+  })
+
+  const method = settings?.stockValuationMethod || 'FIFO'
+
+  switch (method) {
+    case 'LIFO':
+      return consumeCostLayersLIFO(productId, branchId, quantity)
+    case 'Average':
+      return consumeCostLayersWeightedAverage(productId, branchId, quantity)
+    case 'FIFO':
+    default:
+      return consumeCostLayersFIFO(productId, branchId, quantity)
+  }
 }
 
 /**
@@ -252,19 +477,19 @@ export async function getWeightedAverageCost(
 }
 
 /**
- * Consume cost layers for multiple items at once.
+ * Consume cost layers for multiple items using the configured valuation method.
  * Useful for processing an entire sale.
  *
  * @param items - Array of items to consume
  * @returns Array of cost results for each item
  */
-export async function consumeMultipleCostLayersFIFO(
+export async function consumeMultipleCostLayers(
   items: Array<{ productId: number; branchId: number; quantity: number }>
 ): Promise<Array<{ productId: number; result: CostLayerResult }>> {
   const results: Array<{ productId: number; result: CostLayerResult }> = []
 
   for (const item of items) {
-    const result = await consumeCostLayersFIFO(
+    const result = await consumeCostLayers(
       item.productId,
       item.branchId,
       item.quantity
@@ -274,3 +499,6 @@ export async function consumeMultipleCostLayersFIFO(
 
   return results
 }
+
+/** @deprecated Use consumeMultipleCostLayers instead */
+export const consumeMultipleCostLayersFIFO = consumeMultipleCostLayers

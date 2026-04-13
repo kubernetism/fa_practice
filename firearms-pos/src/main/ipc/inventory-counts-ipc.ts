@@ -11,6 +11,7 @@ import {
   type NewInventoryCountItem,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
+import { postStockAdjustmentToGL } from '../utils/gl-posting'
 
 /**
  * Generate a unique count number in format IC-YYYY-NNNN
@@ -390,7 +391,7 @@ export function registerInventoryCountsHandlers(): void {
             .where(eq(inventory.id, inv.id))
 
           // Create stock adjustment record
-          await db.insert(stockAdjustments).values({
+          const [adjustment] = await db.insert(stockAdjustments).values({
             productId: item.productId,
             branchId: count.branchId,
             userId,
@@ -401,7 +402,31 @@ export function registerInventoryCountsHandlers(): void {
             reason: `Cycle count adjustment - Count #${count.countNumber}`,
             reference: count.countNumber,
             createdAt: now,
+          }).returning()
+
+          // Get product for cost price and name
+          const product = await db.query.products.findFirst({
+            where: eq(products.id, item.productId),
           })
+
+          // Post to GL so cycle count variances are reflected in accounting
+          if (product && adjustment) {
+            await postStockAdjustmentToGL(
+              {
+                id: adjustment.id,
+                branchId: count.branchId,
+                adjustmentType: 'correction',
+                quantityChange: varianceQty,
+                unitCost: product.costPrice,
+                reason: `Cycle count adjustment - Count #${count.countNumber}`,
+                reference: count.countNumber,
+                productName: product.name,
+                quantityBefore: inv.quantity,
+                quantityAfter: newQuantity,
+              },
+              userId
+            )
+          }
 
           // Mark item as adjusted
           await db

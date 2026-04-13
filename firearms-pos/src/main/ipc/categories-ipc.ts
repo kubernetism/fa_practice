@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, isNull, desc } from 'drizzle-orm'
+import { eq, isNull, desc, and } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import { categories, type NewCategory } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
@@ -20,10 +20,19 @@ export function registerCategoryHandlers(): void {
   ipcMain.handle('categories:get-all', async () => {
     try {
       const data = await db.query.categories.findMany({
-        orderBy: desc(categories.name),
+        orderBy: categories.name,
       })
 
-      return { success: true, data }
+      // Deduplicate by name+parentId, keeping the first (oldest) entry
+      const seen = new Map<string, boolean>()
+      const uniqueData = data.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? 'root'}`
+        if (seen.has(key)) return false
+        seen.set(key, true)
+        return true
+      })
+
+      return { success: true, data: uniqueData }
     } catch (error) {
       console.error('Get categories error:', error)
       return { success: false, message: 'Failed to fetch categories' }
@@ -36,9 +45,18 @@ export function registerCategoryHandlers(): void {
         where: eq(categories.isActive, true),
       })
 
+      // Deduplicate by name+parentId, keeping the first entry
+      const seen = new Map<string, boolean>()
+      const uniqueCategories = allCategories.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? 'root'}`
+        if (seen.has(key)) return false
+        seen.set(key, true)
+        return true
+      })
+
       // Build tree structure
       const buildTree = (parentId: number | null): CategoryWithChildren[] => {
-        return allCategories
+        return uniqueCategories
           .filter((cat) => cat.parentId === parentId)
           .map((cat) => ({
             ...cat,
@@ -74,6 +92,19 @@ export function registerCategoryHandlers(): void {
   ipcMain.handle('categories:create', async (_, data: NewCategory) => {
     try {
       const session = getCurrentSession()
+
+      // Check for duplicate category name under the same parent
+      const existing = await db.query.categories.findFirst({
+        where: and(
+          eq(categories.name, data.name),
+          data.parentId ? eq(categories.parentId, data.parentId) : isNull(categories.parentId),
+          eq(categories.isActive, true)
+        ),
+      })
+
+      if (existing) {
+        return { success: false, message: `Category "${data.name}" already exists${data.parentId ? ' under this parent' : ''}` }
+      }
 
       const result = await db.insert(categories).values(data).returning()
       const newCategory = result[0]

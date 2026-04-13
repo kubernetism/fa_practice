@@ -5,7 +5,6 @@ import {
   services,
   serviceCategories,
   type NewService,
-  type NewServiceCategory,
 } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -59,183 +58,6 @@ function validateServiceInput(data: Partial<NewService>): { valid: boolean; erro
 
 export function registerServicesHandlers(): void {
   const db = getDatabase()
-
-  // ========================
-  // SERVICE CATEGORIES
-  // ========================
-
-  ipcMain.handle('service-categories:get-all', async () => {
-    try {
-      const data = await db.query.serviceCategories.findMany({
-        orderBy: desc(serviceCategories.name),
-      })
-
-      return { success: true, data }
-    } catch (error) {
-      console.error('Get service categories error:', error)
-      return { success: false, message: 'Failed to fetch service categories' }
-    }
-  })
-
-  ipcMain.handle('service-categories:get-active', async () => {
-    try {
-      const data = await db.query.serviceCategories.findMany({
-        where: eq(serviceCategories.isActive, true),
-        orderBy: desc(serviceCategories.name),
-      })
-
-      return { success: true, data }
-    } catch (error) {
-      console.error('Get active service categories error:', error)
-      return { success: false, message: 'Failed to fetch active service categories' }
-    }
-  })
-
-  ipcMain.handle('service-categories:get-by-id', async (_, id: number) => {
-    try {
-      const category = await db.query.serviceCategories.findFirst({
-        where: eq(serviceCategories.id, id),
-      })
-
-      if (!category) {
-        return { success: false, message: 'Service category not found' }
-      }
-
-      return { success: true, data: category }
-    } catch (error) {
-      console.error('Get service category error:', error)
-      return { success: false, message: 'Failed to fetch service category' }
-    }
-  })
-
-  ipcMain.handle('service-categories:create', async (_, data: NewServiceCategory) => {
-    try {
-      const session = getCurrentSession()
-
-      // Check for duplicate name
-      const existing = await db.query.serviceCategories.findFirst({
-        where: eq(serviceCategories.name, data.name),
-      })
-
-      if (existing) {
-        return { success: false, message: 'Service category with this name already exists' }
-      }
-
-      const result = await db.insert(serviceCategories).values(data).returning()
-      const newCategory = result[0]
-
-      await createAuditLog({
-        userId: session?.userId,
-        branchId: session?.branchId,
-        action: 'create',
-        entityType: 'service_category',
-        entityId: newCategory.id,
-        newValues: sanitizeForAudit(data as Record<string, unknown>),
-        description: `Created service category: ${data.name}`,
-      })
-
-      return { success: true, data: newCategory }
-    } catch (error) {
-      console.error('Create service category error:', error)
-      return { success: false, message: 'Failed to create service category' }
-    }
-  })
-
-  ipcMain.handle(
-    'service-categories:update',
-    async (_, id: number, data: Partial<NewServiceCategory>) => {
-      try {
-        const session = getCurrentSession()
-
-        const existing = await db.query.serviceCategories.findFirst({
-          where: eq(serviceCategories.id, id),
-        })
-
-        if (!existing) {
-          return { success: false, message: 'Service category not found' }
-        }
-
-        // Check for duplicate name if name is being changed
-        if (data.name && data.name !== existing.name) {
-          const duplicate = await db.query.serviceCategories.findFirst({
-            where: eq(serviceCategories.name, data.name),
-          })
-          if (duplicate) {
-            return { success: false, message: 'Service category with this name already exists' }
-          }
-        }
-
-        const result = await db
-          .update(serviceCategories)
-          .set({ ...data, updatedAt: new Date().toISOString() })
-          .where(eq(serviceCategories.id, id))
-          .returning()
-
-        await createAuditLog({
-          userId: session?.userId,
-          branchId: session?.branchId,
-          action: 'update',
-          entityType: 'service_category',
-          entityId: id,
-          oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-          newValues: sanitizeForAudit(data as Record<string, unknown>),
-          description: `Updated service category: ${existing.name}`,
-        })
-
-        return { success: true, data: result[0] }
-      } catch (error) {
-        console.error('Update service category error:', error)
-        return { success: false, message: 'Failed to update service category' }
-      }
-    }
-  )
-
-  ipcMain.handle('service-categories:delete', async (_, id: number) => {
-    try {
-      const session = getCurrentSession()
-
-      const existing = await db.query.serviceCategories.findFirst({
-        where: eq(serviceCategories.id, id),
-      })
-
-      if (!existing) {
-        return { success: false, message: 'Service category not found' }
-      }
-
-      // Check for services using this category
-      const servicesInCategory = await db.query.services.findFirst({
-        where: eq(services.categoryId, id),
-      })
-
-      if (servicesInCategory) {
-        return {
-          success: false,
-          message: 'Cannot delete category with associated services. Reassign services first.',
-        }
-      }
-
-      // Soft delete
-      await db
-        .update(serviceCategories)
-        .set({ isActive: false, updatedAt: new Date().toISOString() })
-        .where(eq(serviceCategories.id, id))
-
-      await createAuditLog({
-        userId: session?.userId,
-        branchId: session?.branchId,
-        action: 'delete',
-        entityType: 'service_category',
-        entityId: id,
-        oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-        description: `Deactivated service category: ${existing.name}`,
-      })
-
-      return { success: true, message: 'Service category deactivated successfully' }
-    } catch (error) {
-      console.error('Delete service category error:', error)
-      return { success: false, message: 'Failed to delete service category' }
-    }
-  })
 
   // ========================
   // SERVICES
@@ -511,6 +333,21 @@ export function registerServicesHandlers(): void {
     } catch (error) {
       console.error('Search services error:', error)
       return { success: false, message: 'Failed to search services' }
+    }
+  })
+
+  // Get service categories (from service_categories table)
+  ipcMain.handle('services:get-categories', async () => {
+    try {
+      const data = await db.query.serviceCategories.findMany({
+        where: eq(serviceCategories.isActive, true),
+        orderBy: asc(serviceCategories.name),
+      })
+
+      return { success: true, data }
+    } catch (error) {
+      console.error('Get service categories error:', error)
+      return { success: false, message: 'Failed to fetch service categories' }
     }
   })
 }

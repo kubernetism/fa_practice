@@ -39,7 +39,13 @@ const DialogContent = React.forwardRef<
         className
       )}
       onOpenAutoFocus={onOpenAutoFocus}
-      onCloseAutoFocus={onCloseAutoFocus}
+      onCloseAutoFocus={(e) => {
+        // Prevent Radix from restoring focus to trigger — in Electron this
+        // can leave the renderer in a broken focus state where inputs stop
+        // responding to clicks.
+        e.preventDefault()
+        if (onCloseAutoFocus) onCloseAutoFocus(e)
+      }}
       {...props}
     >
       {children}

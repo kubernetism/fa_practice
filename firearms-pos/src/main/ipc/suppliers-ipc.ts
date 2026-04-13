@@ -70,7 +70,7 @@ export function registerSupplierHandlers(): void {
     'suppliers:get-all',
     async (_, params: PaginationParams & { search?: string; isActive?: boolean }) => {
       try {
-        const { page = 1, limit = 20, sortBy = 'name', sortOrder = 'asc', search, isActive } = params
+        const { page = 1, limit = 20, sortBy = 'name', sortOrder = 'asc', search, isActive } = params || {}
 
         const conditions = []
 

@@ -1,11 +1,15 @@
 import { ipcMain } from 'electron'
-import { eq, and, sql, desc } from 'drizzle-orm'
+import { eq, and, sql, desc, between, gte, lte } from 'drizzle-orm'
 import { getDatabase } from '../db'
+import { withTransaction } from '../utils/db-transaction'
+import { handleIpcError } from '../utils/error-handling'
 import {
   chartOfAccounts,
   journalEntries,
   journalEntryLines,
   accountBalances,
+  cashRegisterSessions,
+  cashTransactions,
 } from '../db/schema'
 
 export function registerChartOfAccountsHandlers() {
@@ -126,10 +130,7 @@ export function registerChartOfAccountsHandlers() {
   // Get Balance Sheet
   ipcMain.handle('coa:get-balance-sheet', async (_, branchId?: number) => {
     const accounts = await db.query.chartOfAccounts.findMany({
-      where: and(
-        eq(chartOfAccounts.isActive, true),
-        sql`${chartOfAccounts.accountType} IN ('asset', 'liability', 'equity')`
-      ),
+      where: eq(chartOfAccounts.isActive, true),
       orderBy: [chartOfAccounts.accountType, chartOfAccounts.accountCode],
     })
 
@@ -137,10 +138,15 @@ export function registerChartOfAccountsHandlers() {
     const assets = accounts.filter((a) => a.accountType === 'asset')
     const liabilities = accounts.filter((a) => a.accountType === 'liability')
     const equity = accounts.filter((a) => a.accountType === 'equity')
+    const revenue = accounts.filter((a) => a.accountType === 'revenue')
+    const expenses = accounts.filter((a) => a.accountType === 'expense')
 
     const totalAssets = assets.reduce((sum, a) => sum + a.currentBalance, 0)
     const totalLiabilities = liabilities.reduce((sum, a) => sum + a.currentBalance, 0)
     const totalEquity = equity.reduce((sum, a) => sum + a.currentBalance, 0)
+    const totalRevenue = revenue.reduce((sum, a) => sum + a.currentBalance, 0)
+    const totalExpenses = expenses.reduce((sum, a) => sum + a.currentBalance, 0)
+    const netIncome = totalRevenue - totalExpenses
 
     return {
       assets: {
@@ -155,8 +161,9 @@ export function registerChartOfAccountsHandlers() {
         accounts: equity,
         total: totalEquity,
       },
-      totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
-      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01,
+      netIncome,
+      totalLiabilitiesAndEquity: totalLiabilities + totalEquity + netIncome,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + netIncome)) < 0.01,
     }
   })
 
@@ -300,59 +307,67 @@ export function registerChartOfAccountsHandlers() {
 
   // Post Journal Entry
   ipcMain.handle('journal:post', async (_, entryId: number, postedBy: number) => {
-    const entry = await db.query.journalEntries.findFirst({
-      where: eq(journalEntries.id, entryId),
-      with: {
-        lines: {
-          with: {
-            account: true,
+    try {
+      const entry = await db.query.journalEntries.findFirst({
+        where: eq(journalEntries.id, entryId),
+        with: {
+          lines: {
+            with: {
+              account: true,
+            },
           },
         },
-      },
-    })
+      })
 
-    if (!entry) {
-      throw new Error('Journal entry not found')
-    }
-
-    if (entry.status !== 'draft') {
-      throw new Error('Only draft entries can be posted')
-    }
-
-    // Update account balances
-    for (const line of entry.lines) {
-      const account = line.account
-      if (!account) continue
-
-      let newBalance = account.currentBalance
-      if (account.normalBalance === 'debit') {
-        newBalance += line.debitAmount - line.creditAmount
-      } else {
-        newBalance += line.creditAmount - line.debitAmount
+      if (!entry) {
+        return { success: false, message: 'Journal entry not found' }
       }
 
-      await db
-        .update(chartOfAccounts)
-        .set({
-          currentBalance: newBalance,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(chartOfAccounts.id, account.id))
-    }
+      if (entry.status !== 'draft') {
+        return { success: false, message: 'Only draft entries can be posted' }
+      }
 
-    // Update entry status
-    const [updated] = await db
-      .update(journalEntries)
-      .set({
-        status: 'posted',
-        postedBy,
-        postedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+      const updated = await withTransaction(async ({ db: txDb }) => {
+        // Update account balances
+        for (const line of entry.lines) {
+          const account = line.account
+          if (!account) continue
+
+          let newBalance = account.currentBalance
+          if (account.normalBalance === 'debit') {
+            newBalance += line.debitAmount - line.creditAmount
+          } else {
+            newBalance += line.creditAmount - line.debitAmount
+          }
+
+          await txDb
+            .update(chartOfAccounts)
+            .set({
+              currentBalance: newBalance,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(chartOfAccounts.id, account.id))
+        }
+
+        // Update entry status
+        const [result] = await txDb
+          .update(journalEntries)
+          .set({
+            status: 'posted',
+            postedBy,
+            postedAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(journalEntries.id, entryId))
+          .returning()
+
+        return result
       })
-      .where(eq(journalEntries.id, entryId))
-      .returning()
 
-    return updated
+      return { success: true, data: updated }
+    } catch (error) {
+      return handleIpcError('Post journal entry', error)
+    }
   })
 
   // Get Journal Entries with filtering
@@ -444,8 +459,7 @@ export function registerChartOfAccountsHandlers() {
           },
         }
       } catch (error) {
-        console.error('Get journal entries error:', error)
-        return { success: false, message: 'Failed to fetch journal entries' }
+        return handleIpcError('Get journal entries', error)
       }
     }
   )
@@ -523,8 +537,7 @@ export function registerChartOfAccountsHandlers() {
           },
         }
       } catch (error) {
-        console.error('Get journal summary error:', error)
-        return { success: false, message: 'Failed to fetch journal summary' }
+        return handleIpcError('Get journal summary', error)
       }
     }
   )
@@ -598,8 +611,7 @@ export function registerChartOfAccountsHandlers() {
           },
         }
       } catch (error) {
-        console.error('Export journal entries error:', error)
-        return { success: false, message: 'Failed to export journal entries' }
+        return handleIpcError('Export journal entries', error)
       }
     }
   )
@@ -661,6 +673,307 @@ export function registerChartOfAccountsHandlers() {
         account,
         entries: ledgerEntries.reverse(),
         currentBalance: runningBalance,
+      }
+    }
+  )
+
+  // Recalculate all account balances from posted journal entries
+  ipcMain.handle('coa:recalculate-balances', async () => {
+    try {
+      const allAccounts = await db.query.chartOfAccounts.findMany()
+
+      const results = await withTransaction(async ({ db: txDb }) => {
+        const updated: Array<{ id: number; accountCode: string; oldBalance: number; newBalance: number }> = []
+
+        for (const account of allAccounts) {
+          // Sum all posted journal entry lines for this account
+          const lines = await txDb.query.journalEntryLines.findMany({
+            where: eq(journalEntryLines.accountId, account.id),
+            with: {
+              journalEntry: true,
+            },
+          })
+
+          // Only count lines from posted entries
+          const postedLines = lines.filter(
+            (line) => line.journalEntry && line.journalEntry.status === 'posted'
+          )
+
+          let calculatedBalance = 0
+          for (const line of postedLines) {
+            if (account.normalBalance === 'debit') {
+              calculatedBalance += line.debitAmount - line.creditAmount
+            } else {
+              calculatedBalance += line.creditAmount - line.debitAmount
+            }
+          }
+
+          // Round to 2 decimal places to avoid floating point drift
+          calculatedBalance = Math.round(calculatedBalance * 100) / 100
+
+          if (calculatedBalance !== account.currentBalance) {
+            await txDb
+              .update(chartOfAccounts)
+              .set({
+                currentBalance: calculatedBalance,
+                updatedAt: new Date().toISOString(),
+              })
+              .where(eq(chartOfAccounts.id, account.id))
+
+            updated.push({
+              id: account.id,
+              accountCode: account.accountCode,
+              oldBalance: account.currentBalance,
+              newBalance: calculatedBalance,
+            })
+          }
+        }
+
+        return updated
+      })
+
+      return {
+        success: true,
+        data: {
+          totalAccounts: allAccounts.length,
+          adjustedCount: results.length,
+          adjustments: results,
+        },
+      }
+    } catch (error) {
+      return handleIpcError('Recalculate balances', error)
+    }
+  })
+
+  // Adjust a single account balance with an adjusting journal entry
+  ipcMain.handle('coa:adjust-balance', async (_, accountId: number, targetBalance: number, reason: string, postedBy: number) => {
+    try {
+      const account = await db.query.chartOfAccounts.findFirst({
+        where: eq(chartOfAccounts.id, accountId),
+      })
+
+      if (!account) {
+        return { success: false, message: 'Account not found' }
+      }
+
+      const difference = targetBalance - account.currentBalance
+      if (Math.abs(difference) < 0.01) {
+        return { success: true, message: 'Balance is already correct', data: { adjusted: false } }
+      }
+
+      // Find or identify the adjustment equity account (typically retained earnings or an adjustment account)
+      const adjustmentAccount = await db.query.chartOfAccounts.findFirst({
+        where: and(
+          eq(chartOfAccounts.accountCode, '3900'),
+          eq(chartOfAccounts.isActive, true),
+        ),
+      })
+
+      // If no 3900 adjustment account, use retained earnings 3200
+      const offsetAccount = adjustmentAccount || await db.query.chartOfAccounts.findFirst({
+        where: and(
+          eq(chartOfAccounts.accountCode, '3200'),
+          eq(chartOfAccounts.isActive, true),
+        ),
+      })
+
+      if (!offsetAccount) {
+        return { success: false, message: 'No adjustment or retained earnings account found (3900 or 3200)' }
+      }
+
+      const result = await withTransaction(async ({ db: txDb }) => {
+        // Create the adjusting journal entry
+        const now = new Date().toISOString()
+        const entryDate = now.split('T')[0]
+
+        // Generate entry number
+        const year = new Date().getFullYear()
+        const existingEntries = await txDb.query.journalEntries.findMany({
+          where: sql`${journalEntries.entryNumber} LIKE ${'ADJ-' + year + '-%'}`,
+        })
+        const nextNum = existingEntries.length + 1
+        const entryNumber = `ADJ-${year}-${String(nextNum).padStart(4, '0')}`
+
+        const [entry] = await txDb
+          .insert(journalEntries)
+          .values({
+            entryNumber,
+            entryDate,
+            description: `Balance adjustment: ${account.accountCode} ${account.accountName} - ${reason}`,
+            status: 'posted',
+            isAutoGenerated: true,
+            postedBy,
+            postedAt: now,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .returning()
+
+        // Determine debit/credit for the target account
+        let targetDebit = 0
+        let targetCredit = 0
+        if (account.normalBalance === 'debit') {
+          if (difference > 0) {
+            targetDebit = difference
+          } else {
+            targetCredit = Math.abs(difference)
+          }
+        } else {
+          if (difference > 0) {
+            targetCredit = difference
+          } else {
+            targetDebit = Math.abs(difference)
+          }
+        }
+
+        // Target account line
+        await txDb.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: account.id,
+          debitAmount: targetDebit,
+          creditAmount: targetCredit,
+          description: `Adjust ${account.accountCode} balance to ${targetBalance}`,
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        // Offset account line (opposite)
+        await txDb.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: offsetAccount.id,
+          debitAmount: targetCredit, // Opposite of target
+          creditAmount: targetDebit,
+          description: `Offset for ${account.accountCode} balance adjustment`,
+          createdAt: now,
+          updatedAt: now,
+        })
+
+        // Update both account balances
+        await txDb
+          .update(chartOfAccounts)
+          .set({ currentBalance: targetBalance, updatedAt: now })
+          .where(eq(chartOfAccounts.id, account.id))
+
+        // Update offset account balance
+        let offsetDiff = 0
+        if (offsetAccount.normalBalance === 'debit') {
+          offsetDiff = targetCredit - targetDebit
+        } else {
+          offsetDiff = targetDebit - targetCredit
+        }
+        // Wait — offset receives opposite entries, so its net change is the opposite direction
+        // For debit-normal offset: newBalance += debit - credit = targetCredit - targetDebit
+        // For credit-normal offset: newBalance += credit - debit = targetDebit - targetCredit
+        await txDb
+          .update(chartOfAccounts)
+          .set({
+            currentBalance: offsetAccount.currentBalance + offsetDiff,
+            updatedAt: now,
+          })
+          .where(eq(chartOfAccounts.id, offsetAccount.id))
+
+        return { entryNumber, difference, entry }
+      })
+
+      return {
+        success: true,
+        data: {
+          adjusted: true,
+          oldBalance: account.currentBalance,
+          newBalance: targetBalance,
+          difference,
+          journalEntry: result.entryNumber,
+        },
+      }
+    } catch (error) {
+      return handleIpcError('Adjust balance', error)
+    }
+  })
+
+  // Cash Flow Detail for COA screen
+  ipcMain.handle(
+    'coa:get-cash-flow-detail',
+    async (
+      _,
+      params: { branchId: number; startDate: string; endDate: string }
+    ) => {
+      try {
+        const { branchId, startDate, endDate } = params
+
+        const startISO = new Date(startDate)
+        startISO.setHours(0, 0, 0, 0)
+        const endISO = new Date(endDate)
+        endISO.setHours(23, 59, 59, 999)
+
+        // Get individual transactions
+        const transactions = await db
+          .select({
+            id: cashTransactions.id,
+            transactionType: cashTransactions.transactionType,
+            amount: cashTransactions.amount,
+            description: cashTransactions.description,
+            referenceType: cashTransactions.referenceType,
+            referenceId: cashTransactions.referenceId,
+            transactionDate: cashTransactions.transactionDate,
+            sessionDate: cashRegisterSessions.sessionDate,
+          })
+          .from(cashTransactions)
+          .innerJoin(
+            cashRegisterSessions,
+            eq(cashTransactions.sessionId, cashRegisterSessions.id)
+          )
+          .where(
+            and(
+              eq(cashRegisterSessions.branchId, branchId),
+              gte(cashTransactions.transactionDate, startISO.toISOString()),
+              lte(cashTransactions.transactionDate, endISO.toISOString())
+            )
+          )
+          .orderBy(desc(cashTransactions.transactionDate))
+
+        // Summary by type
+        const summaryByType = await db
+          .select({
+            transactionType: cashTransactions.transactionType,
+            totalAmount: sql<number>`COALESCE(SUM(${cashTransactions.amount}), 0)`,
+            count: sql<number>`COUNT(*)`,
+          })
+          .from(cashTransactions)
+          .innerJoin(
+            cashRegisterSessions,
+            eq(cashTransactions.sessionId, cashRegisterSessions.id)
+          )
+          .where(
+            and(
+              eq(cashRegisterSessions.branchId, branchId),
+              gte(cashTransactions.transactionDate, startISO.toISOString()),
+              lte(cashTransactions.transactionDate, endISO.toISOString())
+            )
+          )
+          .groupBy(cashTransactions.transactionType)
+
+        const totalInflows = summaryByType
+          .filter((t) => (t.totalAmount || 0) > 0)
+          .reduce((sum, t) => sum + Number(t.totalAmount || 0), 0)
+
+        const totalOutflows = Math.abs(
+          summaryByType
+            .filter((t) => (t.totalAmount || 0) < 0)
+            .reduce((sum, t) => sum + Number(t.totalAmount || 0), 0)
+        )
+
+        return {
+          success: true,
+          data: {
+            transactions,
+            summaryByType,
+            totalInflows,
+            totalOutflows,
+            netCashFlow: totalInflows - totalOutflows,
+          },
+        }
+      } catch (error) {
+        return handleIpcError('Get cash flow detail', error)
       }
     }
   )

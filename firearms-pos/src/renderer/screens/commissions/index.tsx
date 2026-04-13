@@ -1,11 +1,31 @@
-import React, { useState, useEffect } from 'react'
-import { Plus, Search, Pencil, Trash2, DollarSign, Users, TrendingUp, UserPlus, FileText } from 'lucide-react'
+import React, { useState, useEffect, useMemo } from 'react'
+import {
+  Plus,
+  Search,
+  Pencil,
+  Trash2,
+  DollarSign,
+  TrendingUp,
+  UserPlus,
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight,
+  X,
+  CheckCircle2,
+  Clock,
+  Ban,
+  ArrowUpRight,
+  Receipt,
+  Users,
+  Wallet,
+  BadgePercent,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
@@ -27,7 +47,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useBranch } from '@/contexts/branch-context'
+import { useCurrency } from '@/contexts/settings-context'
+import { ReversalRequestModal } from '@/components/reversal-request-modal'
+import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
 interface Commission {
   id: number
@@ -44,7 +69,6 @@ interface Commission {
   notes: string | null
   createdAt: string
   updatedAt: string
-  // Joined data
   user?: {
     id: number
     username: string
@@ -87,19 +111,6 @@ interface CommissionFormData {
   notes: string
 }
 
-const COMMISSION_TYPES = [
-  { value: 'referral', label: 'Referral Commission' },
-  { value: 'sale', label: 'Employee Commission' },
-  { value: 'bonus', label: 'Bonus' },
-]
-
-const STATUS_OPTIONS = [
-  { value: 'pending', label: 'Pending' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'paid', label: 'Paid' },
-  { value: 'cancelled', label: 'Cancelled' },
-]
-
 const initialFormData: CommissionFormData = {
   saleId: '',
   commissionType: 'referral',
@@ -110,8 +121,11 @@ const initialFormData: CommissionFormData = {
   notes: '',
 }
 
+const ITEMS_PER_PAGE = 12
+
 export default function CommissionsScreen() {
   const { currentBranch } = useBranch()
+  const { formatCurrency } = useCurrency()
   const [commissions, setCommissions] = useState<Commission[]>([])
   const [referralPersons, setReferralPersons] = useState<ReferralPerson[]>([])
   const [availableInvoices, setAvailableInvoices] = useState<Sale[]>([])
@@ -119,18 +133,23 @@ export default function CommissionsScreen() {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [typeFilter, setTypeFilter] = useState<string>('all')
-  const [referralPersonFilter, setReferralPersonFilter] = useState<string>('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [formData, setFormData] = useState<CommissionFormData>(initialFormData)
   const [editingCommission, setEditingCommission] = useState<Commission | null>(null)
-  const [createMode, setCreateMode] = useState<'select' | 'referral' | 'employee'>('referral')
   const [selectedTab, setSelectedTab] = useState<'referral' | 'employee'>('referral')
+  const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
+  const [reversalTarget, setReversalTarget] = useState<Commission | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
 
   useEffect(() => {
     if (currentBranch) {
       fetchInitialData()
     }
   }, [currentBranch])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, statusFilter, typeFilter])
 
   const fetchInitialData = async () => {
     await Promise.all([fetchCommissions(), fetchReferralPersons()])
@@ -144,7 +163,6 @@ export default function CommissionsScreen() {
       const response = await window.api.commissions.getAll({ page: 1, limit: 100, branchId: currentBranch.id })
 
       if (response?.success && response?.data) {
-        // Filter by branch on client side as well
         const filteredData = response.data.filter((item: any) =>
           item.commission.branchId === currentBranch.id
         )
@@ -192,7 +210,6 @@ export default function CommissionsScreen() {
 
   const handleOpenDialog = (commission?: Commission, mode: 'referral' | 'employee' = 'referral') => {
     setSelectedTab(mode)
-    setCreateMode(mode)
     if (commission) {
       setEditingCommission(commission)
       setFormData({
@@ -212,9 +229,7 @@ export default function CommissionsScreen() {
       })
     }
 
-    // Fetch ALL available invoices when opening dialog
     fetchAvailableInvoices()
-
     setIsDialogOpen(true)
   }
 
@@ -225,14 +240,8 @@ export default function CommissionsScreen() {
     setAvailableInvoices([])
   }
 
-  const handleCommissionTypeChange = (type: string) => {
-    setSelectedTab(type === 'referral' ? 'referral' : 'employee')
-    setFormData({ ...formData, commissionType: type })
-  }
-
-  const handleReferralPersonChange = async (referralPersonId: string) => {
+  const handleReferralPersonChange = (referralPersonId: string) => {
     setFormData({ ...formData, referralPersonId })
-    // Invoices are already loaded - no need to refetch
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -350,17 +359,7 @@ export default function CommissionsScreen() {
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      pending: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
-      approved: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-      paid: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-      cancelled: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
-    }
-    return colors[status] || colors.pending
-  }
-
-  const filteredCommissions = commissions.filter((commission) => {
+  const filteredCommissions = useMemo(() => commissions.filter((commission) => {
     const matchesSearch =
       commission.sale?.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       commission.referralPerson?.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -368,333 +367,659 @@ export default function CommissionsScreen() {
 
     const matchesStatus = statusFilter === 'all' || commission.status === statusFilter
     const matchesType = typeFilter === 'all' || commission.commissionType === typeFilter
-    const matchesReferralPerson =
-      referralPersonFilter === 'all' ||
-      (referralPersonFilter === 'unassigned' && !commission.referralPersonId) ||
-      (referralPersonFilter !== 'unassigned' && commission.referralPersonId === parseInt(referralPersonFilter))
 
-    return matchesSearch && matchesStatus && matchesType && matchesReferralPerson
-  })
+    return matchesSearch && matchesStatus && matchesType
+  }), [commissions, searchTerm, statusFilter, typeFilter])
 
-  // Calculate statistics
-  const totalCommission = filteredCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
-  const paidCommissions = filteredCommissions.filter((c) => c.status === 'paid')
-  const totalPaid = paidCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
-  const pendingCommissions = filteredCommissions.filter((c) => c.status === 'pending')
-  const totalPending = pendingCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
-  const referralCommissions = filteredCommissions.filter((c) => c.commissionType === 'referral')
-  const totalReferralCommission = referralCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
+  // Statistics
+  const stats = useMemo(() => {
+    const total = filteredCommissions.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const paid = filteredCommissions.filter((c) => c.status === 'paid')
+    const paidAmt = paid.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const pending = filteredCommissions.filter((c) => c.status === 'pending')
+    const pendingAmt = pending.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const approved = filteredCommissions.filter((c) => c.status === 'approved')
+    const approvedAmt = approved.reduce((sum, c) => sum + c.commissionAmount, 0)
+    const cancelled = filteredCommissions.filter((c) => c.status === 'cancelled')
+    const referralCount = filteredCommissions.filter((c) => c.commissionType === 'referral').length
+    const employeeCount = filteredCommissions.filter((c) => c.commissionType === 'sale').length
+    const avgRate = filteredCommissions.length > 0
+      ? filteredCommissions.reduce((sum, c) => sum + c.rate, 0) / filteredCommissions.length
+      : 0
+    return { total, paid, paidAmt, pending, pendingAmt, approved, approvedAmt, cancelled, referralCount, employeeCount, avgRate }
+  }, [filteredCommissions])
+
+  // Pagination
+  const paginatedCommissions = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE
+    return filteredCommissions.slice(start, start + ITEMS_PER_PAGE)
+  }, [filteredCommissions, currentPage])
+
+  const totalPages = Math.ceil(filteredCommissions.length / ITEMS_PER_PAGE) || 1
+
+  // Status config
+  const statusConfig: Record<string, { icon: React.ElementType; color: string; bg: string; border: string }> = {
+    pending: { icon: Clock, color: 'text-amber-500', bg: 'bg-amber-500/10', border: 'border-amber-500/30' },
+    approved: { icon: TrendingUp, color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/30' },
+    paid: { icon: CheckCircle2, color: 'text-emerald-500', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30' },
+    cancelled: { icon: Ban, color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/30' },
+  }
 
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
-        <p className="text-lg">Loading commissions...</p>
+        <div className="text-center">
+          <BadgePercent className="w-6 h-6 animate-pulse text-primary mx-auto mb-2" />
+          <p className="text-sm text-muted-foreground">Loading commissions...</p>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Commission Management</h1>
-        <p className="text-muted-foreground">
-          Pay commissions to Referral Persons and Employees based on sales invoices {currentBranch && `- ${currentBranch.name}`}
-        </p>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Total Commissions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <p className="text-2xl font-bold">Rs. {totalCommission.toFixed(2)}</p>
+    <TooltipProvider>
+      <div className="flex flex-col h-full">
+        {/* Header Bar */}
+        <div className="border-t-2 border-primary/30 bg-background border-b border-border px-5 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-1.5 rounded bg-primary/10 border border-primary/20 shrink-0">
+              <BadgePercent className="w-4 h-4 text-primary" />
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Paid Commissions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              <p className="text-2xl font-bold">Rs. {totalPaid.toFixed(2)}</p>
+            <div className="min-w-0">
+              <h1 className="text-base font-bold leading-tight tracking-wide">
+                Commission Management
+              </h1>
+              <p className="text-[11px] text-muted-foreground leading-tight">
+                Track referral &amp; employee commissions across sales
+              </p>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Pending Commissions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-muted-foreground" />
-              <p className="text-2xl font-bold">Rs. {totalPending.toFixed(2)}</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Referral Commissions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <UserPlus className="h-4 w-4 text-muted-foreground" />
-              <p className="text-2xl font-bold">Rs. {totalReferralCommission.toFixed(2)}</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-4 mb-6">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search commissions..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[150px]">
-            <SelectValue placeholder="Filter by status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="approved">Approved</SelectItem>
-            <SelectItem value="paid">Paid</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Filter by type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="referral">Referral</SelectItem>
-            <SelectItem value="sale">Employee</SelectItem>
-            <SelectItem value="bonus">Bonus</SelectItem>
-          </SelectContent>
-        </Select>
-        <Select value={referralPersonFilter} onValueChange={setReferralPersonFilter}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Filter by person" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Persons</SelectItem>
-            <SelectItem value="unassigned">Unassigned</SelectItem>
-            {referralPersons.map((rp) => (
-              <SelectItem key={rp.id} value={rp.id.toString()}>
-                {rp.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button onClick={() => handleOpenDialog(undefined, 'referral')}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Commission
-        </Button>
-      </div>
-
-      <div className="border rounded-lg p-6 bg-card flex-1 overflow-auto">
-        {filteredCommissions.length === 0 ? (
-          <div className="text-center py-12">
-            <FileText className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <p className="text-muted-foreground">
-              {searchTerm || statusFilter !== 'all' || typeFilter !== 'all' || referralPersonFilter !== 'all'
-                ? 'No commissions match your filters.'
-                : 'No commissions yet. Click "Create Commission" to get started.'}
-            </p>
           </div>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Found {filteredCommissions.length} commission(s)
-            </p>
-            <div className="space-y-2">
-              {filteredCommissions.map((commission) => (
-                <div key={commission.id} className="border rounded p-4 hover:bg-accent/50 transition-colors">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-medium text-base">
-                          {commission.sale?.invoiceNumber || `Sale #${commission.saleId}`}
-                        </p>
-                        <Badge className={getStatusBadge(commission.status)}>
-                          {commission.status}
-                        </Badge>
-                        <Badge variant="outline">
-                          {commission.commissionType}
-                        </Badge>
-                        {commission.commissionType === 'referral' && commission.referralPerson && (
-                          <Badge variant="secondary">
-                            <UserPlus className="h-3 w-3 mr-1" />
-                            {commission.referralPerson.name}
-                          </Badge>
-                        )}
-                        {commission.commissionType === 'sale' && commission.user && (
-                          <Badge variant="secondary">
-                            {commission.user.fullName}
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-sm text-muted-foreground space-y-1">
-                        <div className="flex items-center gap-4">
-                          <span>Base: Rs. {commission.baseAmount.toFixed(2)}</span>
-                          <span>Rate: {commission.rate}%</span>
-                          <span className="font-semibold text-primary">
-                            Commission: Rs. {commission.commissionAmount.toFixed(2)}
-                          </span>
-                        </div>
-                        {commission.sale?.saleDate && (
-                          <span>Sale Date: {new Date(commission.sale.saleDate).toLocaleDateString()}</span>
-                        )}
-                        {commission.referralPerson?.contact && (
-                          <span>Contact: {commission.referralPerson.contact}</span>
-                        )}
-                      </div>
-                      {commission.notes && (
-                        <p className="text-sm text-muted-foreground italic">{commission.notes}</p>
-                      )}
-                    </div>
-                    <div className="flex gap-1">
-                      {commission.status === 'pending' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleApprove(commission.id)}
-                          title="Approve commission"
-                        >
-                          <TrendingUp className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                        </Button>
-                      )}
-                      {commission.status === 'approved' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleMarkPaid(commission.id)}
-                          title="Mark as paid"
-                        >
-                          <DollarSign className="h-4 w-4 text-green-600 dark:text-green-400" />
-                        </Button>
-                      )}
-                      <Button variant="ghost" size="sm" onClick={() => handleOpenDialog(commission)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(commission.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
+          <Button size="sm" className="h-8 text-xs shrink-0" onClick={() => handleOpenDialog(undefined, 'referral')}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" />
+            New Commission
+          </Button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto px-5 pt-4 pb-4 space-y-4">
+
+          {/* Summary Cards Row */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* Total Commissions */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Total</span>
+                  <div className="p-1 rounded bg-primary/10">
+                    <DollarSign className="w-3 h-3 text-primary" />
                   </div>
                 </div>
-              ))}
-            </div>
+                <p className="text-lg font-bold tabular-nums tracking-tight">{formatCurrency(stats.total)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-muted-foreground">{filteredCommissions.length} entries</span>
+                  <span className="text-[10px] text-muted-foreground">·</span>
+                  <span className="text-[10px] text-muted-foreground">Avg {stats.avgRate.toFixed(1)}%</span>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Paid */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paid</span>
+                  <div className="p-1 rounded bg-emerald-500/10">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                  </div>
+                </div>
+                <p className="text-lg font-bold tabular-nums tracking-tight text-emerald-600 dark:text-emerald-400">{formatCurrency(stats.paidAmt)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400">{stats.paid.length} paid</span>
+                  {stats.total > 0 && (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <span className="text-[10px] text-muted-foreground">{((stats.paidAmt / stats.total) * 100).toFixed(0)}% of total</span>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Pending */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Pending</span>
+                  <div className="p-1 rounded bg-amber-500/10">
+                    <Clock className="w-3 h-3 text-amber-500" />
+                  </div>
+                </div>
+                <p className="text-lg font-bold tabular-nums tracking-tight text-amber-600 dark:text-amber-400">{formatCurrency(stats.pendingAmt)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-amber-600 dark:text-amber-400">{stats.pending.length} awaiting</span>
+                  {stats.approvedAmt > 0 && (
+                    <>
+                      <span className="text-[10px] text-muted-foreground">·</span>
+                      <span className="text-[10px] text-blue-500">{formatCurrency(stats.approvedAmt)} approved</span>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Breakdown */}
+            <Card className="border-border">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Breakdown</span>
+                  <div className="p-1 rounded bg-blue-500/10">
+                    <Users className="w-3 h-3 text-blue-500" />
+                  </div>
+                </div>
+                <div className="flex items-baseline gap-3">
+                  <div>
+                    <p className="text-lg font-bold tabular-nums tracking-tight">{stats.referralCount}</p>
+                    <span className="text-[10px] text-muted-foreground">Referral</span>
+                  </div>
+                  <div className="h-6 w-px bg-border" />
+                  <div>
+                    <p className="text-lg font-bold tabular-nums tracking-tight">{stats.employeeCount}</p>
+                    <span className="text-[10px] text-muted-foreground">Employee</span>
+                  </div>
+                  {stats.cancelled.length > 0 && (
+                    <>
+                      <div className="h-6 w-px bg-border" />
+                      <div>
+                        <p className="text-lg font-bold tabular-nums tracking-tight text-red-500">{stats.cancelled.length}</p>
+                        <span className="text-[10px] text-muted-foreground">Cancelled</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        )}
-      </div>
 
-      {/* Add/Edit Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>
-              {editingCommission ? 'Edit Commission' : 'Create New Commission'}
-            </DialogTitle>
-            <DialogDescription>
-              {editingCommission
-                ? 'Update commission information below.'
-                : 'Select an invoice and referral person/employee to create a commission.'}
-            </DialogDescription>
-          </DialogHeader>
+          {/* Search + Filters */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search by invoice, person, or employee..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-8 pl-8 text-sm"
+              />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="pending">Pending</SelectItem>
+                <SelectItem value="approved">Approved</SelectItem>
+                <SelectItem value="paid">Paid</SelectItem>
+                <SelectItem value="cancelled">Cancelled</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="Type" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="referral">Referral</SelectItem>
+                <SelectItem value="sale">Employee</SelectItem>
+                <SelectItem value="bonus">Bonus</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
 
-          <Tabs value={selectedTab} onValueChange={(v: any) => setSelectedTab(v)}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="referral">
-                <UserPlus className="h-4 w-4 mr-2" />
-                Referral Commission
-              </TabsTrigger>
-              <TabsTrigger value="employee">
-                <Users className="h-4 w-4 mr-2" />
-                Employee Commission
-              </TabsTrigger>
-            </TabsList>
-
-            {/* Referral Commission Tab */}
-            <TabsContent value="referral" className="space-y-4 mt-4">
-              <form onSubmit={handleSubmit}>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2 col-span-2">
-                    <Label htmlFor="referralPerson">Referral Person *</Label>
-                    <Select
-                      value={formData.referralPersonId}
-                      onValueChange={handleReferralPersonChange}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select referral person" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {referralPersons.map((rp) => (
-                          <SelectItem key={rp.id} value={rp.id.toString()}>
-                            <div>
-                              <span className="font-medium">{rp.name}</span>
-                              {rp.commissionRate && (
-                                <span className="text-xs text-muted-foreground ml-2">
-                                  (Default: {rp.commissionRate}%)
-                                </span>
+          {/* Table */}
+          <div className="rounded-lg border border-border overflow-hidden">
+            {filteredCommissions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="p-3 rounded-full bg-muted mb-3">
+                  <Receipt className="w-5 h-5 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-medium text-foreground">No commissions found</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {searchTerm || statusFilter !== 'all' || typeFilter !== 'all'
+                    ? 'Try adjusting your filters'
+                    : 'Create your first commission to get started'}
+                </p>
+              </div>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-muted/40 hover:bg-muted/40">
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-[40px]">#</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Invoice</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Person / Type</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Sale Amt</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Rate</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Commission</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center">Status</TableHead>
+                    <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-center w-[100px]">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedCommissions.map((commission, idx) => {
+                    const sc = statusConfig[commission.status] || statusConfig.pending
+                    const StatusIcon = sc.icon
+                    return (
+                      <TableRow key={commission.id} className="group">
+                        <TableCell className="py-2 text-[11px] text-muted-foreground tabular-nums">
+                          {(currentPage - 1) * ITEMS_PER_PAGE + idx + 1}
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1 rounded bg-muted shrink-0">
+                              <Receipt className="w-3 h-3 text-muted-foreground" />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">
+                                {commission.sale?.invoiceNumber || `Sale #${commission.saleId}`}
+                              </p>
+                              {commission.sale?.saleDate && (
+                                <p className="text-[10px] text-muted-foreground">
+                                  {new Date(commission.sale.saleDate).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </p>
                               )}
                             </div>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2 col-span-2">
-                    <Label htmlFor="saleId-referral">Select Invoice *</Label>
-                    <Select
-                      value={formData.saleId}
-                      onValueChange={(v) => setFormData({ ...formData, saleId: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select invoice" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableInvoices.map((sale) => (
-                          <SelectItem key={sale.id} value={sale.id.toString()}>
-                            <div className="flex justify-between w-full pr-2">
-                              <span>{sale.invoiceNumber}</span>
-                              <span className="text-muted-foreground">
-                                Rs. {(sale.totalAmount || 0).toFixed(2)}
-                              </span>
-                            </div>
-                          </SelectItem>
-                        ))}
-                        {availableInvoices.length === 0 && (
-                          <div className="p-2 text-sm text-muted-foreground text-center">
-                            No completed invoices available
                           </div>
-                        )}
-                      </SelectContent>
-                    </Select>
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {commission.commissionType === 'referral'
+                                ? commission.referralPerson?.name || '—'
+                                : commission.user?.fullName || '—'}
+                            </p>
+                            <Badge
+                              variant="outline"
+                              className={`text-[9px] px-1.5 py-0 mt-0.5 ${
+                                commission.commissionType === 'referral'
+                                  ? 'border-violet-500/30 text-violet-600 dark:text-violet-400'
+                                  : commission.commissionType === 'bonus'
+                                  ? 'border-amber-500/30 text-amber-600 dark:text-amber-400'
+                                  : 'border-blue-500/30 text-blue-600 dark:text-blue-400'
+                              }`}
+                            >
+                              {commission.commissionType}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-2 text-right">
+                          <span className="text-sm tabular-nums text-muted-foreground">
+                            {formatCurrency(commission.baseAmount)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-2 text-center">
+                          <span className="inline-flex items-center gap-0.5 text-sm tabular-nums font-medium">
+                            {commission.rate}
+                            <span className="text-[10px] text-muted-foreground">%</span>
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-2 text-right">
+                          <span className="text-sm font-semibold tabular-nums text-primary">
+                            {formatCurrency(commission.commissionAmount)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] px-1.5 py-0 gap-1 ${sc.color} ${sc.bg} ${sc.border}`}
+                            >
+                              <StatusIcon className="w-2.5 h-2.5" />
+                              {commission.status}
+                            </Badge>
+                            <ReversalStatusBadge entityType="commission" entityId={commission.id} />
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-2">
+                          <div className="flex items-center justify-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {commission.status === 'pending' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => handleApprove(commission.id)}
+                                  >
+                                    <TrendingUp className="h-3.5 w-3.5 text-blue-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Approve</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {commission.status === 'approved' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => handleMarkPaid(commission.id)}
+                                  >
+                                    <DollarSign className="h-3.5 w-3.5 text-emerald-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Mark Paid</TooltipContent>
+                              </Tooltip>
+                            )}
+                            {commission.status !== 'cancelled' && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    onClick={() => {
+                                      setReversalTarget(commission)
+                                      setIsReversalModalOpen(true)
+                                    }}
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5 text-amber-500" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom">Reversal</TooltipContent>
+                              </Tooltip>
+                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => handleOpenDialog(commission)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">Edit</TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  onClick={() => handleDelete(commission.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">Delete</TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+
+          {/* Pagination */}
+          {filteredCommissions.length > ITEMS_PER_PAGE && (
+            <div className="flex items-center justify-between text-xs text-muted-foreground pb-2">
+              <span>
+                Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredCommissions.length)} of {filteredCommissions.length}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage((p) => p - 1)}
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <span className="min-w-[3rem] text-center tabular-nums">{currentPage} / {totalPages}</span>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-7 w-7"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage((p) => p + 1)}
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Add/Edit Dialog */}
+        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {editingCommission ? 'Edit Commission' : 'Create New Commission'}
+              </DialogTitle>
+              <DialogDescription>
+                {editingCommission
+                  ? 'Update commission information below.'
+                  : 'Select an invoice and referral person/employee to create a commission.'}
+              </DialogDescription>
+            </DialogHeader>
+
+            <Tabs value={selectedTab} onValueChange={(v: any) => setSelectedTab(v)}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="referral">
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Referral Commission
+                </TabsTrigger>
+                <TabsTrigger value="employee">
+                  Employee Commission
+                </TabsTrigger>
+              </TabsList>
+
+              {/* Referral Commission Tab */}
+              <TabsContent value="referral" className="space-y-4 mt-4">
+                <form onSubmit={handleSubmit}>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="referralPerson">Referral Person *</Label>
+                      <Select
+                        value={formData.referralPersonId}
+                        onValueChange={handleReferralPersonChange}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select referral person" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {referralPersons.map((rp) => (
+                            <SelectItem key={rp.id} value={rp.id.toString()}>
+                              <div>
+                                <span className="font-medium">{rp.name}</span>
+                                {rp.commissionRate && (
+                                  <span className="text-xs text-muted-foreground ml-2">
+                                    (Default: {rp.commissionRate}%)
+                                  </span>
+                                )}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="saleId-referral">Select Invoice *</Label>
+                      <Select
+                        value={formData.saleId}
+                        onValueChange={(v) => setFormData({ ...formData, saleId: v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select invoice" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {availableInvoices.map((sale) => (
+                            <SelectItem key={sale.id} value={sale.id.toString()}>
+                              <div className="flex justify-between w-full pr-2">
+                                <span>{sale.invoiceNumber}</span>
+                                <span className="text-muted-foreground">
+                                  {formatCurrency(sale.totalAmount || 0)}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          ))}
+                          {availableInvoices.length === 0 && (
+                            <div className="p-2 text-sm text-muted-foreground text-center">
+                              No completed invoices available
+                            </div>
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {formData.saleId && (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="baseAmount-referral">Base Amount *</Label>
+                          <Input
+                            id="baseAmount-referral"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.baseAmount}
+                            onChange={(e) => setFormData({ ...formData, baseAmount: e.target.value })}
+                            placeholder="0.00"
+                            required
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Amount from sale that commission is based on
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="rate-referral">Commission Rate (%) *</Label>
+                          <Input
+                            id="rate-referral"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="100"
+                            value={formData.rate}
+                            onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
+                            placeholder="0.00"
+                            required
+                          />
+                          {formData.referralPersonId && (
+                            <p className="text-xs text-muted-foreground">
+                              {referralPersons.find(
+                                (rp) => rp.id === parseInt(formData.referralPersonId)
+                              )?.commissionRate && (
+                                <span>
+                                  Default for this person:{' '}
+                                  {
+                                    referralPersons.find(
+                                      (rp) => rp.id === parseInt(formData.referralPersonId)
+                                    )?.commissionRate
+                                  }
+                                  %
+                                </span>
+                              )}
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {formData.baseAmount && formData.rate && (
+                      <div className="col-span-2 p-4 bg-muted rounded-md">
+                        <p className="text-sm text-muted-foreground">Commission Amount:</p>
+                        <p className="text-2xl font-bold text-primary">
+                          {formatCurrency((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100)}
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="space-y-2 col-span-2">
+                      <Label htmlFor="notes-referral">Notes</Label>
+                      <Textarea
+                        id="notes-referral"
+                        value={formData.notes}
+                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                        placeholder="Additional notes about this commission..."
+                        rows={3}
+                      />
+                    </div>
                   </div>
 
-                  {formData.saleId && (
-                    <>
+                  <DialogFooter className="mt-4">
+                    <Button type="button" variant="outline" onClick={handleCloseDialog}>
+                      Cancel
+                    </Button>
+                    <Button type="submit">
+                      {editingCommission ? 'Update' : 'Create'} Commission
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </TabsContent>
+
+              {/* Employee Commission Tab */}
+              <TabsContent value="employee" className="space-y-4 mt-4">
+                <form onSubmit={handleSubmit}>
+                  <div className="space-y-4">
+                    <div className="p-4 bg-muted/50 rounded-md border border-dashed">
+                      <p className="text-sm text-muted-foreground flex items-center gap-2">
+                        <UserPlus className="h-4 w-4" />
+                        For referral commissions, use the "Referral Commission" tab above.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="userId">Employee</Label>
+                      <Select
+                        value={formData.userId || "none"}
+                        onValueChange={(v) => setFormData({ ...formData, userId: v === "none" ? "" : v })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select employee (optional)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">No employee selected</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="saleId-employee">Select Invoice *</Label>
+                      <Input
+                        id="saleId-employee"
+                        type="number"
+                        value={formData.saleId}
+                        onChange={(e) => setFormData({ ...formData, saleId: e.target.value })}
+                        placeholder="Enter sale/invoice ID"
+                        required
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Enter the sale/invoice ID to create commission for
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="baseAmount-referral">Base Amount (Rs.) *</Label>
+                        <Label htmlFor="baseAmount-employee">Base Amount *</Label>
                         <Input
-                          id="baseAmount-referral"
+                          id="baseAmount-employee"
                           type="number"
                           step="0.01"
                           min="0"
@@ -703,15 +1028,12 @@ export default function CommissionsScreen() {
                           placeholder="0.00"
                           required
                         />
-                        <p className="text-xs text-muted-foreground">
-                          Amount from sale invoice that commission is based on
-                        </p>
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="rate-referral">Commission Rate (%) *</Label>
+                        <Label htmlFor="rate-employee">Commission Rate (%) *</Label>
                         <Input
-                          id="rate-referral"
+                          id="rate-employee"
                           type="number"
                           step="0.01"
                           min="0"
@@ -721,165 +1043,60 @@ export default function CommissionsScreen() {
                           placeholder="0.00"
                           required
                         />
-                        {formData.referralPersonId && (
-                          <p className="text-xs text-muted-foreground">
-                            {referralPersons.find(
-                              (rp) => rp.id === parseInt(formData.referralPersonId)
-                            )?.commissionRate && (
-                              <span>
-                                Default for this person:{' '}
-                                {
-                                  referralPersons.find(
-                                    (rp) => rp.id === parseInt(formData.referralPersonId)
-                                  )?.commissionRate
-                                }
-                                %
-                              </span>
-                            )}
-                          </p>
-                        )}
                       </div>
-                    </>
-                  )}
-
-                  {formData.baseAmount && formData.rate && (
-                    <div className="col-span-2 p-4 bg-muted rounded-md">
-                      <p className="text-sm text-muted-foreground">Commission Amount:</p>
-                      <p className="text-2xl font-bold text-primary">
-                        Rs. {((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100).toFixed(2)}
-                      </p>
-                    </div>
-                  )}
-
-                  <div className="space-y-2 col-span-2">
-                    <Label htmlFor="notes-referral">Notes</Label>
-                    <Textarea
-                      id="notes-referral"
-                      value={formData.notes}
-                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      placeholder="Additional notes about this commission..."
-                      rows={3}
-                    />
-                  </div>
-                </div>
-
-                <DialogFooter className="mt-4">
-                  <Button type="button" variant="outline" onClick={handleCloseDialog}>
-                    Cancel
-                  </Button>
-                  <Button type="submit">
-                    {editingCommission ? 'Update' : 'Create'} Commission
-                  </Button>
-                </DialogFooter>
-              </form>
-            </TabsContent>
-
-            {/* Employee Commission Tab */}
-            <TabsContent value="employee" className="space-y-4 mt-4">
-              <form onSubmit={handleSubmit}>
-                <div className="space-y-4">
-                  <div className="p-4 bg-muted/50 rounded-md border border-dashed">
-                    <p className="text-sm text-muted-foreground flex items-center gap-2">
-                      <UserPlus className="h-4 w-4" />
-                      For referral commissions, use the "Referral Commission" tab above.
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="userId">Employee</Label>
-                    <Select
-                      value={formData.userId || "none"}
-                      onValueChange={(v) => setFormData({ ...formData, userId: v === "none" ? "" : v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select employee (optional)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No employee selected</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="saleId-employee">Select Invoice *</Label>
-                    <Input
-                      id="saleId-employee"
-                      type="number"
-                      value={formData.saleId}
-                      onChange={(e) => setFormData({ ...formData, saleId: e.target.value })}
-                      placeholder="Enter sale/invoice ID"
-                      required
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Enter the sale/invoice ID to create commission for
-                    </p>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="baseAmount-employee">Base Amount (Rs.) *</Label>
-                      <Input
-                        id="baseAmount-employee"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={formData.baseAmount}
-                        onChange={(e) => setFormData({ ...formData, baseAmount: e.target.value })}
-                        placeholder="0.00"
-                        required
-                      />
                     </div>
 
+                    {formData.baseAmount && formData.rate && (
+                      <div className="p-4 bg-muted rounded-md">
+                        <p className="text-sm text-muted-foreground">Commission Amount:</p>
+                        <p className="text-2xl font-bold text-primary">
+                          {formatCurrency((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100)}
+                        </p>
+                      </div>
+                    )}
+
                     <div className="space-y-2">
-                      <Label htmlFor="rate-employee">Commission Rate (%) *</Label>
-                      <Input
-                        id="rate-employee"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        max="100"
-                        value={formData.rate}
-                        onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
-                        placeholder="0.00"
-                        required
+                      <Label htmlFor="notes-employee">Notes</Label>
+                      <Textarea
+                        id="notes-employee"
+                        value={formData.notes}
+                        onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                        placeholder="Additional notes about this commission..."
+                        rows={3}
                       />
                     </div>
                   </div>
 
-                  {formData.baseAmount && formData.rate && (
-                    <div className="p-4 bg-muted rounded-md">
-                      <p className="text-sm text-muted-foreground">Commission Amount:</p>
-                      <p className="text-2xl font-bold text-primary">
-                        Rs. {((parseFloat(formData.baseAmount) * parseFloat(formData.rate)) / 100).toFixed(2)}
-                      </p>
-                    </div>
-                  )}
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={handleCloseDialog}>
+                      Cancel
+                    </Button>
+                    <Button type="submit">
+                      {editingCommission ? 'Update' : 'Create'} Commission
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </TabsContent>
+            </Tabs>
+          </DialogContent>
+        </Dialog>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="notes-employee">Notes</Label>
-                    <Textarea
-                      id="notes-employee"
-                      value={formData.notes}
-                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                      placeholder="Additional notes about this commission..."
-                      rows={3}
-                    />
-                  </div>
-                </div>
-
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={handleCloseDialog}>
-                    Cancel
-                  </Button>
-                  <Button type="submit">
-                    {editingCommission ? 'Update' : 'Create'} Commission
-                  </Button>
-                </DialogFooter>
-              </form>
-            </TabsContent>
-          </Tabs>
-        </DialogContent>
-      </Dialog>
-    </div>
+        {/* Reversal Request Modal */}
+        {reversalTarget && (
+          <ReversalRequestModal
+            open={isReversalModalOpen}
+            onClose={() => {
+              setIsReversalModalOpen(false)
+              setReversalTarget(null)
+            }}
+            entityType="commission"
+            entityId={reversalTarget.id}
+            entityLabel={`Commission #${reversalTarget.id} (${reversalTarget.sale?.invoiceNumber || `Sale #${reversalTarget.saleId}`})`}
+            branchId={reversalTarget.branchId}
+            onSuccess={fetchCommissions}
+          />
+        )}
+      </div>
+    </TooltipProvider>
   )
 }

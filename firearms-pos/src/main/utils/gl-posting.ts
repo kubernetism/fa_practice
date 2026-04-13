@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm'
+import { desc, eq, like } from 'drizzle-orm'
 import { getDatabase } from '../db/index'
 import {
   chartOfAccounts,
@@ -10,6 +10,7 @@ import {
   type PurchaseItem,
   type NewJournalEntry,
   type NewJournalEntryLine,
+  reversalRequests,
 } from '../db/schema'
 import { createAuditLog } from './audit'
 
@@ -22,6 +23,8 @@ export const ACCOUNT_CODES = {
   ACCOUNTS_PAYABLE: '2000',
   SALES_TAX_PAYABLE: '2100',
   COD_CHARGES_PAYABLE: '2150', // COD charges collected - liability until paid to courier
+  OWNERS_CAPITAL: '3000',
+  RETAINED_EARNINGS: '3100',
   SALES_REVENUE: '4000',
   INVENTORY_ADJUSTMENT: '4900', // Income from inventory surplus
   COGS: '5000',
@@ -58,6 +61,28 @@ function generateJournalEntryNumber(): string {
   const timestamp = Date.now().toString().slice(-6)
   const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0')
   return `JE-${year}-${timestamp}${random}`
+}
+
+/**
+ * Generate a unique reversal request number in format REV-YYYY-NNNN
+ */
+export async function generateReversalNumber(): Promise<string> {
+  const db = getDatabase()
+  const year = new Date().getFullYear()
+  const prefix = `REV-${year}-`
+
+  const lastEntry = await db.query.reversalRequests.findFirst({
+    where: like(reversalRequests.requestNumber, `${prefix}%`),
+    orderBy: [desc(reversalRequests.id)],
+  })
+
+  let nextNum = 1
+  if (lastEntry?.requestNumber) {
+    const lastNum = parseInt(lastEntry.requestNumber.replace(prefix, ''), 10)
+    if (!isNaN(lastNum)) nextNum = lastNum + 1
+  }
+
+  return `${prefix}${String(nextNum).padStart(4, '0')}`
 }
 
 /**
@@ -110,6 +135,18 @@ const DEFAULT_ACCOUNTS: Record<string, {
     accountType: 'liability',
     normalBalance: 'credit',
     description: 'COD charges collected - liability until paid to courier',
+  },
+  '3000': {
+    accountName: "Owner's Capital",
+    accountType: 'equity',
+    normalBalance: 'credit',
+    description: "Owner's invested capital and initial funding",
+  },
+  '3100': {
+    accountName: 'Retained Earnings',
+    accountType: 'equity',
+    normalBalance: 'credit',
+    description: 'Accumulated net income retained in the business',
   },
   '4000': {
     accountName: 'Sales Revenue',
@@ -302,7 +339,7 @@ export async function createJournalEntry(params: CreateJournalEntryParams): Prom
 }
 
 interface PaymentBreakdownForGL {
-  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer'
+  method: 'cash' | 'card' | 'debit_card' | 'mobile' | 'cheque' | 'bank_transfer' | 'cod'
   amount: number
   referenceNumber?: string
 }
@@ -345,6 +382,7 @@ export async function postSaleToGL(
         : payment.method === 'mobile' ? 'Mobile'
         : payment.method === 'cheque' ? 'Cheque'
         : payment.method === 'bank_transfer' ? 'Bank Transfer'
+        : payment.method === 'cod' ? 'COD'
         : 'Cash'
 
       lines.push({
@@ -506,6 +544,7 @@ export async function postPurchaseReceiveToGL(
     referenceId: purchase.id,
     branchId: purchase.branchId,
     userId,
+    lines,
   })
 }
 
@@ -521,7 +560,7 @@ export async function postExpenseToGL(
   expense: {
     id: number
     branchId: number
-    category: string
+    categoryName: string
     amount: number
     paymentStatus: string
     paymentMethod?: string
@@ -531,7 +570,7 @@ export async function postExpenseToGL(
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  // Map expense category to account code
+  // Map expense category name (case-insensitive) to account code
   const categoryToAccount: Record<string, string> = {
     salaries: ACCOUNT_CODES.SALARIES_WAGES,
     rent: ACCOUNT_CODES.RENT_EXPENSE,
@@ -542,14 +581,14 @@ export async function postExpenseToGL(
     other: ACCOUNT_CODES.OTHER_EXPENSE,
   }
 
-  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE
+  const expenseAccount = categoryToAccount[expense.categoryName.toLowerCase()] || ACCOUNT_CODES.OTHER_EXPENSE
 
   // DR Expense Account
   lines.push({
     accountCode: expenseAccount,
     debitAmount: expense.amount,
     creditAmount: 0,
-    description: expense.description || `Expense: ${expense.category}`,
+    description: expense.description || `Expense: ${expense.categoryName}`,
   })
 
   // CR based on payment status
@@ -558,7 +597,7 @@ export async function postExpenseToGL(
       accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payable for expense ${expense.category}`,
+      description: `Payable for expense ${expense.categoryName}`,
     })
   } else {
     const cashAccount = expense.paymentMethod === 'bank_transfer' || expense.paymentMethod === 'cheque'
@@ -568,12 +607,12 @@ export async function postExpenseToGL(
       accountCode: cashAccount,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payment for expense ${expense.category}`,
+      description: `Payment for expense ${expense.categoryName}`,
     })
   }
 
   return createJournalEntry({
-    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ''}`,
+    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ''}`,
     referenceType: 'expense',
     referenceId: expense.id,
     branchId: expense.branchId,
@@ -828,6 +867,18 @@ export async function postVoidSaleToGL(
     })
   }
 
+  // DR COD Charges Payable (reverse the credit)
+  // COD charges = totalAmount - (subtotal - discount + tax)
+  const codCharges = sale.totalAmount - ((sale.subtotal - sale.discountAmount) + sale.taxAmount)
+  if (codCharges > 0.01) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: codCharges,
+      creditAmount: 0,
+      description: `Void - reverse COD charges for sale ${sale.invoiceNumber}`,
+    })
+  }
+
   // Calculate total COGS
   const totalCOGS = saleItems.reduce(
     (sum, item) => sum + item.costPrice * item.quantity,
@@ -870,64 +921,209 @@ export async function postVoidSaleToGL(
  * DR Inventory Shrinkage (5400)  $value
  *     CR Inventory (1200)            $value
  *
- * For inventory addition (surplus found):
- * DR Inventory (1200)            $value
- *     CR Inventory Adjustment (4900) $value
+ * For inventory addition:
+ *   fundingSource = 'owner_capital':  DR Inventory / CR Owner's Capital (3000)
+ *   fundingSource = 'accounts_payable': DR Inventory / CR Accounts Payable (2000)
+ *   fundingSource = 'surplus' (default): DR Inventory / CR Inventory Adjustment Income (4900)
  */
 export async function postStockAdjustmentToGL(
   adjustment: {
     id: number
     branchId: number
-    adjustmentType: 'add' | 'remove'
+    adjustmentType: 'add' | 'remove' | 'damage' | 'theft' | 'correction' | 'expired'
     quantityChange: number
     unitCost: number
     reason: string
     reference?: string
+    fundingSource?: 'owner_capital' | 'accounts_payable' | 'surplus'
+    productName?: string
+    quantityBefore?: number
+    quantityAfter?: number
   },
   userId: number
 ): Promise<number> {
   const lines: JournalLine[] = []
-  const totalValue = adjustment.quantityChange * adjustment.unitCost
+  const totalValue = Math.abs(adjustment.quantityChange) * adjustment.unitCost
 
   if (totalValue <= 0) {
     throw new Error('Cannot post zero-value adjustment to GL')
   }
 
-  if (adjustment.adjustmentType === 'remove') {
-    // Reduction: DR Shrinkage Expense, CR Inventory
+  // Build detailed description with product info
+  const productInfo = adjustment.productName ? `${adjustment.productName}` : 'Unknown product'
+  const qtyInfo = adjustment.quantityBefore !== undefined && adjustment.quantityAfter !== undefined
+    ? ` (${adjustment.quantityBefore} → ${adjustment.quantityAfter} units)`
+    : ` (${Math.abs(adjustment.quantityChange)} units)`
+  const detail = `${productInfo}${qtyInfo}`
+
+  // Shrinkage types: actual loss that should hit the expense account
+  const isShrinkage = ['damage', 'theft', 'expired'].includes(adjustment.adjustmentType)
+  // Administrative removal: cleaning up records, not actual loss
+  const isAdminRemoval = adjustment.adjustmentType === 'remove'
+  // Correction: cycle count or manual correction
+  const isCorrection = adjustment.adjustmentType === 'correction'
+  // Addition
+  const isAddition = adjustment.adjustmentType === 'add'
+
+  if (isShrinkage) {
+    // Actual loss/damage/theft/expiry: DR Shrinkage Expense, CR Inventory
+    const typeLabel = adjustment.adjustmentType === 'damage' ? 'Damaged'
+      : adjustment.adjustmentType === 'theft' ? 'Stolen'
+      : 'Expired'
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
       debitAmount: totalValue,
       creditAmount: 0,
-      description: `Inventory shrinkage: ${adjustment.reason}`,
+      description: `${typeLabel} inventory: ${detail} - ${adjustment.reason}`,
     })
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: 0,
       creditAmount: totalValue,
-      description: `Inventory reduction: ${adjustment.reason}`,
+      description: `Inventory write-off: ${detail}`,
     })
-  } else {
-    // Addition: DR Inventory, CR Inventory Adjustment Income
+  } else if (isAdminRemoval) {
+    // Administrative removal (record cleanup): DR Owner's Capital, CR Inventory
+    // This is NOT an expense — it reverses the equity that funded the inventory
+    lines.push({
+      accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory removed: ${detail} - ${adjustment.reason}`,
+    })
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${detail}`,
+    })
+  } else if (isCorrection) {
+    // Cycle count correction: variance can be positive or negative
+    if (adjustment.quantityChange < 0) {
+      // Shortage found: DR Shrinkage Expense, CR Inventory
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Cycle count shortage: ${detail} - ${adjustment.reason}`,
+      })
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Inventory correction (shortage): ${detail}`,
+      })
+    } else {
+      // Surplus found: DR Inventory, CR Inventory Adjustment Income
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Inventory correction (surplus): ${detail}`,
+      })
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Cycle count surplus: ${detail} - ${adjustment.reason}`,
+      })
+    }
+  } else if (isAddition) {
+    // Addition: DR Inventory
     lines.push({
       accountCode: ACCOUNT_CODES.INVENTORY,
       debitAmount: totalValue,
       creditAmount: 0,
-      description: `Inventory increase: ${adjustment.reason}`,
+      description: `Inventory added: ${detail} - ${adjustment.reason}`,
     })
+
+    // CR based on funding source
+    let creditAccount: string
+    let creditDescription: string
+
+    switch (adjustment.fundingSource) {
+      case 'owner_capital':
+        creditAccount = ACCOUNT_CODES.OWNERS_CAPITAL
+        creditDescription = `Owner capital investment: ${detail}`
+        break
+      case 'accounts_payable':
+        creditAccount = ACCOUNT_CODES.ACCOUNTS_PAYABLE
+        creditDescription = `Supplier payable: ${detail}`
+        break
+      case 'surplus':
+      default:
+        creditAccount = ACCOUNT_CODES.INVENTORY_ADJUSTMENT
+        creditDescription = `Inventory adjustment income: ${detail}`
+        break
+    }
+
     lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+      accountCode: creditAccount,
       debitAmount: 0,
       creditAmount: totalValue,
-      description: `Inventory adjustment income: ${adjustment.reason}`,
+      description: creditDescription,
     })
   }
 
+  const typeLabels: Record<string, string> = {
+    add: 'Addition',
+    remove: 'Removal',
+    damage: 'Damage Write-off',
+    theft: 'Theft Write-off',
+    correction: 'Cycle Count Correction',
+    expired: 'Expiry Write-off',
+  }
+
   return createJournalEntry({
-    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
+    description: `Stock ${typeLabels[adjustment.adjustmentType] || adjustment.adjustmentType}: ${detail} - ${adjustment.reason}`,
     referenceType: 'stock_adjustment',
     referenceId: adjustment.id,
     branchId: adjustment.branchId,
+    userId,
+    lines,
+  })
+}
+
+/**
+ * Post a commission payment to the General Ledger.
+ *
+ * Journal Entry:
+ * DR Commission Expense (5900)  $amount
+ *     CR Cash (1010/1020)           $amount
+ */
+export async function postCommissionPaymentToGL(
+  commission: {
+    id: number
+    branchId: number
+    commissionAmount: number
+    commissionType: string
+    saleId: number
+  },
+  userId: number
+): Promise<number> {
+  const lines: JournalLine[] = []
+
+  // DR Commission Expense
+  lines.push({
+    accountCode: ACCOUNT_CODES.OTHER_EXPENSE,
+    debitAmount: commission.commissionAmount,
+    creditAmount: 0,
+    description: `Commission payment: ${commission.commissionType} for sale #${commission.saleId}`,
+  })
+
+  // CR Cash in Hand (commissions are typically paid in cash)
+  lines.push({
+    accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+    debitAmount: 0,
+    creditAmount: commission.commissionAmount,
+    description: `Cash paid for commission #${commission.id}`,
+  })
+
+  return createJournalEntry({
+    description: `Commission Payment: ${commission.commissionType} commission #${commission.id}`,
+    referenceType: 'commission',
+    referenceId: commission.id,
+    branchId: commission.branchId,
     userId,
     lines,
   })

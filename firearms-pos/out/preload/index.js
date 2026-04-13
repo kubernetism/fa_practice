@@ -17,7 +17,8 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("products:create", data),
     update: (id, data) => electron.ipcRenderer.invoke("products:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("products:delete", id),
-    search: (query) => electron.ipcRenderer.invoke("products:search", query)
+    search: (query) => electron.ipcRenderer.invoke("products:search", query),
+    getAvailable: (params) => electron.ipcRenderer.invoke("products:get-available", params)
   },
   // Categories
   categories: {
@@ -28,15 +29,6 @@ const api = {
     update: (id, data) => electron.ipcRenderer.invoke("categories:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("categories:delete", id)
   },
-  // Service Categories
-  serviceCategories: {
-    getAll: () => electron.ipcRenderer.invoke("service-categories:get-all"),
-    getActive: () => electron.ipcRenderer.invoke("service-categories:get-active"),
-    getById: (id) => electron.ipcRenderer.invoke("service-categories:get-by-id", id),
-    create: (data) => electron.ipcRenderer.invoke("service-categories:create", data),
-    update: (id, data) => electron.ipcRenderer.invoke("service-categories:update", id, data),
-    delete: (id) => electron.ipcRenderer.invoke("service-categories:delete", id)
-  },
   // Services
   services: {
     getAll: (params) => electron.ipcRenderer.invoke("services:get-all", params),
@@ -46,7 +38,8 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("services:create", data),
     update: (id, data) => electron.ipcRenderer.invoke("services:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("services:delete", id),
-    search: (query) => electron.ipcRenderer.invoke("services:search", query)
+    search: (query) => electron.ipcRenderer.invoke("services:search", query),
+    getCategories: () => electron.ipcRenderer.invoke("services:get-categories")
   },
   // Inventory
   inventory: {
@@ -102,20 +95,6 @@ const api = {
     fixPaymentStatus: (invoiceNumber) => electron.ipcRenderer.invoke("sales:fix-payment-status", invoiceNumber),
     fixOrphanedReceivables: () => electron.ipcRenderer.invoke("sales:fix-orphaned-receivables")
   },
-  // Sales Tabs
-  salesTabs: {
-    getAll: (params) => electron.ipcRenderer.invoke("sales-tabs:get-all", params),
-    getById: (id) => electron.ipcRenderer.invoke("sales-tabs:get-by-id", id),
-    create: (data) => electron.ipcRenderer.invoke("sales-tabs:create", data),
-    update: (id, data) => electron.ipcRenderer.invoke("sales-tabs:update", id, data),
-    delete: (id) => electron.ipcRenderer.invoke("sales-tabs:delete", id),
-    addItem: (tabId, data) => electron.ipcRenderer.invoke("sales-tabs:add-item", tabId, data),
-    updateItem: (tabId, itemId, data) => electron.ipcRenderer.invoke("sales-tabs:update-item", tabId, itemId, data),
-    removeItem: (tabId, itemId) => electron.ipcRenderer.invoke("sales-tabs:remove-item", tabId, itemId),
-    getAvailableProducts: (params) => electron.ipcRenderer.invoke("sales-tabs:get-available-products", params),
-    checkout: (tabId, data) => electron.ipcRenderer.invoke("sales-tabs:checkout", tabId, data),
-    clearItems: (tabId) => electron.ipcRenderer.invoke("sales-tabs:clear-items", tabId)
-  },
   // Purchases
   purchases: {
     create: (data) => electron.ipcRenderer.invoke("purchases:create", data),
@@ -130,6 +109,7 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("returns:create", data),
     getAll: (params) => electron.ipcRenderer.invoke("returns:get-all", params),
     getById: (id) => electron.ipcRenderer.invoke("returns:get-by-id", id),
+    update: (data) => electron.ipcRenderer.invoke("returns:update", data),
     delete: (id) => electron.ipcRenderer.invoke("returns:delete", id)
   },
   // Branches
@@ -149,6 +129,15 @@ const api = {
     update: (id, data) => electron.ipcRenderer.invoke("users:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("users:delete", id),
     updatePermissions: (id, permissions) => electron.ipcRenderer.invoke("users:update-permissions", id, permissions)
+  },
+  // Account Recovery
+  recovery: {
+    getSuggestedQuestions: () => electron.ipcRenderer.invoke("recovery:get-suggested-questions"),
+    setQuestions: (userId, questions) => electron.ipcRenderer.invoke("recovery:set-questions", userId, questions),
+    hasQuestions: (userId) => electron.ipcRenderer.invoke("recovery:has-questions", userId),
+    getQuestions: (userId) => electron.ipcRenderer.invoke("recovery:get-questions", userId),
+    lookupUser: (username) => electron.ipcRenderer.invoke("recovery:lookup-user", username),
+    resetPassword: (params) => electron.ipcRenderer.invoke("recovery:reset-password", params)
   },
   // Expenses
   expenses: {
@@ -304,7 +293,10 @@ const api = {
     getBalanceSheet: (branchId) => electron.ipcRenderer.invoke("coa:get-balance-sheet", branchId),
     getIncomeStatement: (startDate, endDate, branchId) => electron.ipcRenderer.invoke("coa:get-income-statement", startDate, endDate, branchId),
     getTrialBalance: (asOfDate) => electron.ipcRenderer.invoke("coa:get-trial-balance", asOfDate),
-    getLedger: (accountId, startDate, endDate) => electron.ipcRenderer.invoke("coa:get-ledger", accountId, startDate, endDate)
+    getLedger: (accountId, startDate, endDate) => electron.ipcRenderer.invoke("coa:get-ledger", accountId, startDate, endDate),
+    recalculateBalances: () => electron.ipcRenderer.invoke("coa:recalculate-balances"),
+    adjustBalance: (accountId, targetBalance, reason, postedBy) => electron.ipcRenderer.invoke("coa:adjust-balance", accountId, targetBalance, reason, postedBy),
+    getCashFlowDetail: (params) => electron.ipcRenderer.invoke("coa:get-cash-flow-detail", params)
   },
   // Journal Entries
   journal: {
@@ -318,8 +310,13 @@ const api = {
   // Receipt Generation
   receipt: {
     generate: (saleId) => electron.ipcRenderer.invoke("receipt:generate", saleId),
+    getData: (saleId) => electron.ipcRenderer.invoke("receipt:get-data", saleId),
     getSettings: (branchId) => electron.ipcRenderer.invoke("receipt:get-settings", branchId),
     generatePaymentHistory: (receivableId) => electron.ipcRenderer.invoke("receipt:generate-payment-history", receivableId)
+  },
+  // Shell
+  shell: {
+    openPath: (filePath) => electron.ipcRenderer.invoke("shell:openPath", filePath)
   },
   // Todos
   todos: {
@@ -350,7 +347,9 @@ const api = {
   },
   // Dashboard
   dashboard: {
-    getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params)
+    getStats: (params) => electron.ipcRenderer.invoke("dashboard:get-stats", params),
+    getTrendData: (params) => electron.ipcRenderer.invoke("dashboard:get-trend-data", params),
+    getFundFlow: (params) => electron.ipcRenderer.invoke("dashboard:get-fund-flow", params)
   },
   // Setup Wizard
   setup: {
@@ -393,6 +392,32 @@ const api = {
     generateCode: () => electron.ipcRenderer.invoke("vouchers:generate-code"),
     validate: (code) => electron.ipcRenderer.invoke("vouchers:validate", code),
     delete: (id) => electron.ipcRenderer.invoke("vouchers:delete", id)
+  },
+  // Reversals
+  reversals: {
+    create: (data) => electron.ipcRenderer.invoke("reversal:create", data),
+    list: (params) => electron.ipcRenderer.invoke("reversal:list", params),
+    get: (id) => electron.ipcRenderer.invoke("reversal:get", id),
+    approve: (id) => electron.ipcRenderer.invoke("reversal:approve", id),
+    reject: (data) => electron.ipcRenderer.invoke("reversal:reject", data),
+    retry: (id) => electron.ipcRenderer.invoke("reversal:retry", id),
+    stats: () => electron.ipcRenderer.invoke("reversal:stats"),
+    check: (data) => electron.ipcRenderer.invoke("reversal:check", data)
+  },
+  // Clipboard
+  clipboard: {
+    copyImage: (dataUrl) => electron.ipcRenderer.invoke("clipboard:copy-image", dataUrl)
+  },
+  // Online Transactions
+  onlineTransactions: {
+    getAll: (params) => electron.ipcRenderer.invoke("online-transactions:get-all", params),
+    create: (data) => electron.ipcRenderer.invoke("online-transactions:create", data),
+    update: (id, data) => electron.ipcRenderer.invoke("online-transactions:update", id, data),
+    delete: (id) => electron.ipcRenderer.invoke("online-transactions:delete", id),
+    confirm: (id) => electron.ipcRenderer.invoke("online-transactions:confirm", id),
+    bulkConfirm: (ids) => electron.ipcRenderer.invoke("online-transactions:bulk-confirm", ids),
+    markFailed: (id, reason) => electron.ipcRenderer.invoke("online-transactions:mark-failed", id, reason),
+    getDashboard: (params) => electron.ipcRenderer.invoke("online-transactions:dashboard", params)
   },
   // Discount Management
   discountManagement: {

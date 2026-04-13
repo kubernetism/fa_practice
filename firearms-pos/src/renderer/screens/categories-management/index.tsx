@@ -5,17 +5,17 @@ import {
   Pencil,
   Trash2,
   FolderTree,
-  Package,
   ChevronRight,
   ChevronDown,
   RefreshCw,
-  AlertCircle,
+  X,
+  FolderOpen,
+  Folder,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -42,6 +42,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
@@ -72,7 +78,7 @@ const initialFormData: CategoryFormData = {
 }
 
 
-// Tree node component
+// Tree node component — compact redesign
 function CategoryTreeNode({
   category,
   level = 0,
@@ -95,31 +101,78 @@ function CategoryTreeNode({
     <div className="select-none">
       <div
         className={cn(
-          'flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-accent group',
-          !category.isActive && 'opacity-50'
+          'flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-muted/40 group transition-colors',
+          !category.isActive && 'opacity-40'
         )}
-        style={{ marginLeft: level * 24 }}
+        style={{ paddingLeft: `${level * 20 + 8}px` }}
       >
+        {/* Expand/collapse toggle */}
         <button
           onClick={() => hasChildren && toggleExpand(category.id)}
-          className={cn('w-5 h-5 flex items-center justify-center', !hasChildren && 'invisible')}
+          className={cn(
+            'w-4 h-4 flex items-center justify-center shrink-0 rounded-sm transition-colors',
+            hasChildren ? 'hover:bg-muted/60 text-muted-foreground/60' : 'invisible'
+          )}
         >
-          {hasChildren && (isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />)}
+          {hasChildren && (isExpanded
+            ? <ChevronDown className="h-3 w-3" />
+            : <ChevronRight className="h-3 w-3" />
+          )}
         </button>
-        <FolderTree className="h-4 w-4 text-muted-foreground" />
-        <span className="flex-1 font-medium">{category.name}</span>
+
+        {/* Folder icon */}
+        {hasChildren && isExpanded ? (
+          <FolderOpen className="h-3.5 w-3.5 text-warning/70 shrink-0" />
+        ) : hasChildren ? (
+          <Folder className="h-3.5 w-3.5 text-muted-foreground/50 shrink-0" />
+        ) : (
+          <div className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
+            <div className="w-1 h-1 rounded-full bg-muted-foreground/30" />
+          </div>
+        )}
+
+        {/* Name */}
+        <span className="flex-1 text-xs font-medium truncate">{category.name}</span>
+
+        {/* Description hint */}
+        {category.description && (
+          <span className="text-[10px] text-muted-foreground/30 truncate max-w-[150px] hidden xl:block">
+            {category.description}
+          </span>
+        )}
+
+        {/* Children count */}
+        {hasChildren && (
+          <span className="text-[9px] tabular-nums text-muted-foreground/40 font-medium">
+            {category.children!.length}
+          </span>
+        )}
+
+        {/* Inactive badge */}
         {!category.isActive && (
-          <Badge variant="secondary" className="text-xs">
-            Inactive
+          <Badge variant="outline" className="h-3.5 px-1 text-[8px] font-medium border-border/40 text-muted-foreground/50">
+            OFF
           </Badge>
         )}
-        <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-          <Button variant="ghost" size="sm" onClick={() => onEdit(category)}>
-            <Pencil className="h-3 w-3" />
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => onDelete(category)}>
-            <Trash2 className="h-3 w-3 text-destructive" />
-          </Button>
+
+        {/* Actions — hover reveal */}
+        <div className="flex items-center gap-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => onEdit(category)}>
+                <Pencil className="h-2.5 w-2.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Edit</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-5 w-5 hover:bg-destructive/10 hover:text-destructive" onClick={() => onDelete(category)}>
+                <Trash2 className="h-2.5 w-2.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Delete</TooltipContent>
+          </Tooltip>
         </div>
       </div>
       {hasChildren && isExpanded && (
@@ -155,24 +208,28 @@ export function CategoriesManagementScreen() {
   const [quickAddName, setQuickAddName] = useState('')
   const [isQuickAdding, setIsQuickAdding] = useState(false)
 
-  // Fetch categories
-  const fetchCategories = useCallback(async () => {
+  // Fetch categories — parallel calls, skip spinner on refetch
+  const fetchCategories = useCallback(async (showSpinner = true) => {
     try {
-      setIsLoading(true)
+      if (showSpinner) setIsLoading(true)
 
-      // Get flat list
-      const response = await window.api.categories.getAll()
+      // Fetch both in parallel instead of sequentially
+      const [response, treeResponse] = await Promise.all([
+        window.api.categories.getAll(),
+        window.api.categories.getTree(),
+      ])
+
       if (response?.success) {
         setCategories(response.data || [])
       }
 
-      // Get tree structure
-      const treeResponse = await window.api.categories.getTree()
       if (treeResponse?.success) {
         setCategoryTree(treeResponse.data || [])
-        // Auto-expand root level
-        const rootIds = new Set((treeResponse.data || []).map((c: Category) => c.id))
-        setExpandedIds(rootIds)
+        // Only auto-expand on first load
+        if (showSpinner) {
+          const rootIds = new Set((treeResponse.data || []).map((c: Category) => c.id))
+          setExpandedIds(rootIds)
+        }
       }
     } catch (error) {
       console.error('Failed to fetch categories:', error)
@@ -196,6 +253,15 @@ export function CategoriesManagementScreen() {
       }
       return next
     })
+  }
+
+  // Expand / collapse all
+  const expandAll = () => {
+    const allIds = new Set(categories.map(c => c.id))
+    setExpandedIds(allIds)
+  }
+  const collapseAll = () => {
+    setExpandedIds(new Set())
   }
 
   // Open dialog for creating
@@ -250,7 +316,7 @@ export function CategoriesManagementScreen() {
       }
 
       if (response?.success) {
-        await fetchCategories()
+        await fetchCategories(false)
         setIsDialogOpen(false)
         setFormData(initialFormData)
         setSelectedCategory(null)
@@ -272,7 +338,7 @@ export function CategoriesManagementScreen() {
     try {
       const response = await window.api.categories.delete(selectedCategory.id)
       if (response?.success) {
-        await fetchCategories()
+        await fetchCategories(false)
         setIsDeleteDialogOpen(false)
         setSelectedCategory(null)
       } else {
@@ -299,7 +365,7 @@ export function CategoriesManagementScreen() {
 
       if (response?.success) {
         setQuickAddName('')
-        await fetchCategories()
+        await fetchCategories(false)
       } else {
         alert(response?.message || 'Failed to add category')
       }
@@ -338,147 +404,139 @@ export function CategoriesManagementScreen() {
     rootLevel: categories.filter((c) => !c.parentId).length,
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <p className="text-lg">Loading categories...</p>
-      </div>
-    )
-  }
-
   return (
-    <div className="flex flex-col h-full p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Categories Management</h1>
-          <p className="text-muted-foreground">
-            Organize categories for products, purchases, receipts, and cart items
-          </p>
+    <TooltipProvider delayDuration={300}>
+    <div className="flex flex-col gap-3" style={{ height: 'calc(100vh - 8rem)' }}>
+      {/* ── Header: Title + Stats + Actions ── */}
+      <div className="flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-4">
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">Categories</h1>
+            <p className="text-xs text-muted-foreground/70">
+              Organize products, services & expenses
+            </p>
+          </div>
+          {/* Inline stats pills */}
+          {!isLoading && stats.total > 0 && (
+            <div className="flex items-center gap-1.5 ml-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                {stats.total} total
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-success/10 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-success">
+                {stats.active} active
+              </span>
+              {stats.inactive > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-muted/60 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground/60">
+                  {stats.inactive} inactive
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-0.5 text-[10px] font-medium tabular-nums text-primary/70">
+                <FolderTree className="h-2.5 w-2.5" />
+                {stats.rootLevel} root
+              </span>
+            </div>
+          )}
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={fetchCategories}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-          <Button onClick={handleOpenCreateDialog}>
-            <Plus className="h-4 w-4 mr-2" />
+        <div className="flex items-center gap-1.5">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" size="icon" className="h-8 w-8 border-border/40" onClick={fetchCategories}>
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-[10px]">Refresh</TooltipContent>
+          </Tooltip>
+          <Button size="sm" onClick={handleOpenCreateDialog} className="h-8 px-3 text-xs font-semibold gap-1.5">
+            <Plus className="h-3.5 w-3.5" />
             Add Category
           </Button>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900">
-                <FolderTree className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.total}</p>
-                <p className="text-xs text-muted-foreground">Total Categories</p>
-              </div>
+      {/* ── Main Content: Tree + Quick Add side panel ── */}
+      <div className="flex gap-3 flex-1 min-h-0">
+        {/* ── Left: Category Tree ── */}
+        <div className="flex-1 min-w-0 flex flex-col rounded-lg border border-border/50 bg-card/40 overflow-hidden">
+          {/* Tree toolbar */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30 bg-muted/20 shrink-0">
+            <div className="relative flex-1 max-w-xs">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50" />
+              <Input
+                placeholder="Search categories..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="h-7 pl-8 pr-7 text-xs bg-card/80 border-border/40 focus:border-primary/40 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/40"
+              />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-muted-foreground/40 hover:text-foreground hover:bg-muted/50 transition-colors"
+                >
+                  <X className="h-2.5 w-2.5" />
+                </button>
+              )}
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900">
-                <Package className="h-5 w-5 text-green-600 dark:text-green-400" />
+            {!searchTerm && categoryTree.length > 0 && (
+              <div className="flex items-center gap-0.5 ml-auto">
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground/50 hover:text-foreground" onClick={expandAll}>
+                  Expand all
+                </Button>
+                <span className="text-muted-foreground/20 text-[10px]">|</span>
+                <Button variant="ghost" size="sm" className="h-6 px-2 text-[10px] text-muted-foreground/50 hover:text-foreground" onClick={collapseAll}>
+                  Collapse
+                </Button>
               </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.active}</p>
-                <p className="text-xs text-muted-foreground">Active</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-yellow-100 dark:bg-yellow-900">
-                <AlertCircle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.inactive}</p>
-                <p className="text-xs text-muted-foreground">Inactive</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900">
-                <FolderTree className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stats.rootLevel}</p>
-                <p className="text-xs text-muted-foreground">Root Categories</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+            )}
+          </div>
 
-      {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1">
-        {/* Category Tree */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle>Category Hierarchy</CardTitle>
-                <CardDescription>View and manage your category structure</CardDescription>
-              </div>
-              <div className="relative w-64">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search categories..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[400px]">
-              {searchTerm ? (
-                // Show filtered flat list when searching
-                <div className="space-y-1">
+          {/* Tree content */}
+          <ScrollArea className="flex-1">
+              {isLoading ? (
+                <div className="flex h-full items-center justify-center gap-2 py-20">
+                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary/50 border-t-transparent" />
+                  <span className="text-xs text-muted-foreground/50">Loading categories...</span>
+                </div>
+              ) : searchTerm ? (
+                // Filtered flat list
+                <div className="p-1.5">
                   {filteredCategories.length === 0 ? (
-                    <p className="text-center text-muted-foreground py-8">No categories found</p>
+                    <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/50 gap-1.5">
+                      <Search className="h-6 w-6 opacity-20" />
+                      <p className="text-xs">No categories match "{searchTerm}"</p>
+                    </div>
                   ) : (
                     filteredCategories.map((category) => (
                       <div
                         key={category.id}
                         className={cn(
-                          'flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-accent group',
-                          !category.isActive && 'opacity-50'
+                          'flex items-center gap-1.5 py-1 px-2 rounded-md hover:bg-muted/40 group transition-colors cursor-pointer',
+                          !category.isActive && 'opacity-40'
                         )}
+                        onClick={() => handleEdit(category)}
                       >
-                        <FolderTree className="h-4 w-4 text-muted-foreground" />
-                        <span className="flex-1 font-medium">{category.name}</span>
+                        <FolderTree className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0" />
+                        <span className="flex-1 text-xs font-medium truncate">{category.name}</span>
                         {category.description && (
-                          <span className="text-sm text-muted-foreground truncate max-w-[200px]">
+                          <span className="text-[10px] text-muted-foreground/30 truncate max-w-[180px] hidden xl:block">
                             {category.description}
                           </span>
                         )}
-                        {!category.isActive && (
-                          <Badge variant="secondary" className="text-xs">
-                            Inactive
+                        {category.parentId && (
+                          <Badge variant="outline" className="h-3.5 px-1 text-[8px] font-medium border-border/30 text-muted-foreground/40">
+                            sub
                           </Badge>
                         )}
-                        <div className="opacity-0 group-hover:opacity-100 flex gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => handleEdit(category)}>
-                            <Pencil className="h-3 w-3" />
+                        {!category.isActive && (
+                          <Badge variant="outline" className="h-3.5 px-1 text-[8px] font-medium border-border/40 text-muted-foreground/50">
+                            OFF
+                          </Badge>
+                        )}
+                        <div className="flex items-center gap-0 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => e.stopPropagation()}>
+                          <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => handleEdit(category)}>
+                            <Pencil className="h-2.5 w-2.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => handleDeleteClick(category)}>
-                            <Trash2 className="h-3 w-3 text-destructive" />
+                          <Button variant="ghost" size="icon" className="h-5 w-5 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleDeleteClick(category)}>
+                            <Trash2 className="h-2.5 w-2.5" />
                           </Button>
                         </div>
                       </div>
@@ -486,15 +544,15 @@ export function CategoriesManagementScreen() {
                   )}
                 </div>
               ) : (
-                // Show tree when not searching
-                <div className="space-y-1">
+                // Tree view
+                <div className="p-1.5">
                   {categoryTree.length === 0 ? (
-                    <div className="text-center py-12">
-                      <FolderTree className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                      <p className="text-muted-foreground">No categories yet</p>
-                      <p className="text-sm text-muted-foreground">
-                        Click "Add Category" to create your first category
-                      </p>
+                    <div className="flex flex-col items-center justify-center py-16 text-muted-foreground/50 gap-2">
+                      <FolderTree className="h-8 w-8 opacity-20" />
+                      <p className="text-xs">No categories yet</p>
+                      <Button variant="link" size="sm" onClick={handleOpenCreateDialog} className="text-xs h-auto p-0 text-primary/70">
+                        Create your first category
+                      </Button>
                     </div>
                   ) : (
                     categoryTree.map((category) => (
@@ -510,20 +568,19 @@ export function CategoriesManagementScreen() {
                   )}
                 </div>
               )}
-            </ScrollArea>
-          </CardContent>
-        </Card>
+          </ScrollArea>
+        </div>
 
-        {/* Quick Add Section */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Quick Add Category</CardTitle>
-            <CardDescription>Quickly add a new root category</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
+        {/* ── Right: Quick Add Panel ── */}
+        <div className="w-64 xl:w-72 shrink-0 rounded-lg border border-border/50 bg-card/40 overflow-hidden flex flex-col">
+          <div className="px-3 py-2 border-b border-border/30 bg-muted/20">
+            <p className="text-xs font-semibold">Quick Add</p>
+            <p className="text-[10px] text-muted-foreground/50">Add a root category instantly</p>
+          </div>
+          <div className="p-3 space-y-2">
+            <div className="flex gap-1.5">
               <Input
-                placeholder="Enter category name..."
+                placeholder="Category name..."
                 value={quickAddName}
                 onChange={(e) => setQuickAddName(e.target.value)}
                 onKeyDown={(e) => {
@@ -531,46 +588,27 @@ export function CategoriesManagementScreen() {
                     handleQuickAdd()
                   }
                 }}
+                className="h-8 text-xs bg-card/80 border-border/40 focus:border-primary/40 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/40 flex-1"
               />
               <Button
-                className="w-full"
+                size="sm"
+                className="h-8 px-2.5 shrink-0"
                 onClick={handleQuickAdd}
                 disabled={!quickAddName.trim() || isQuickAdding}
               >
                 {isQuickAdding ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Adding...
-                  </>
+                  <RefreshCw className="h-3 w-3 animate-spin" />
                 ) : (
-                  <>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Category
-                  </>
+                  <Plus className="h-3.5 w-3.5" />
                 )}
               </Button>
             </div>
-            <div className="border-t pt-4">
-              <p className="text-sm text-muted-foreground mb-3">
-                Need more options? Use the "Add Category" button for:
-              </p>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                <li className="flex items-center gap-2">
-                  <ChevronRight className="h-3 w-3" />
-                  Adding subcategories
-                </li>
-                <li className="flex items-center gap-2">
-                  <ChevronRight className="h-3 w-3" />
-                  Adding descriptions
-                </li>
-                <li className="flex items-center gap-2">
-                  <ChevronRight className="h-3 w-3" />
-                  Setting active status
-                </li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
+            <p className="text-[10px] text-muted-foreground/30 leading-relaxed">
+              Press Enter or click + to add. Use "Add Category" button for subcategories and descriptions.
+            </p>
+          </div>
+
+        </div>
       </div>
 
       {/* Create/Edit Dialog */}
@@ -665,6 +703,7 @@ export function CategoriesManagementScreen() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </TooltipProvider>
   )
 }
 

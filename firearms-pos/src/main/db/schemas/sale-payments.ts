@@ -11,7 +11,7 @@ export const salePayments = sqliteTable('sale_payments', {
     .notNull()
     .references(() => sales.id),
   paymentMethod: text('payment_method', {
-    enum: ['cash', 'card', 'debit_card', 'mobile', 'cheque', 'bank_transfer'],
+    enum: ['cash', 'card', 'debit_card', 'mobile', 'cheque', 'bank_transfer', 'cod'],
   }).notNull(),
   amount: real('amount').notNull(),
   referenceNumber: text('reference_number'), // For card/cheque/transfer reference

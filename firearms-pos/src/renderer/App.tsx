@@ -3,7 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { AuthProvider } from '@/contexts/auth-context'
 import { BranchProvider } from '@/contexts/branch-context'
 import { SettingsProvider } from '@/contexts/settings-context'
-import { TabsProvider } from '@/contexts/tabs-context'
+
 import { ThemeProvider } from '@/contexts/theme-context'
 import { SetupProvider, useSetup } from '@/contexts/setup-context'
 import { AppRoutes } from './routes'
@@ -105,11 +105,9 @@ function App() {
           <AuthProvider>
             <SettingsProvider>
               <BranchProvider>
-                <TabsProvider>
                   <SetupGuard>
                     <AppRoutes />
                   </SetupGuard>
-                </TabsProvider>
               </BranchProvider>
             </SettingsProvider>
           </AuthProvider>

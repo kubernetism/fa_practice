@@ -5,7 +5,7 @@ import { registerInventoryHandlers } from './inventory-ipc'
 import { registerCustomerHandlers } from './customers-ipc'
 import { registerSupplierHandlers } from './suppliers-ipc'
 import { registerSalesHandlers } from './sales-ipc'
-import { registerSalesTabsHandlers } from './sales-tabs-ipc'
+
 import { registerPurchaseHandlers } from './purchases-ipc'
 import { registerReturnHandlers } from './returns-ipc'
 import { registerBranchHandlers } from './branches-ipc'
@@ -36,6 +36,11 @@ import { registerDiscountManagementHandlers } from './discount-management-ipc'
 import { registerInventoryCountsHandlers } from './inventory-counts-ipc'
 import { registerServicesHandlers } from './services-ipc'
 import { registerVoucherHandlers } from './vouchers-ipc'
+import { registerReversalHandlers } from './reversal-ipc'
+import { registerClipboardHandlers } from './clipboard-ipc'
+import { registerShellHandlers } from './shell-ipc'
+import { registerRecoveryHandlers } from './recovery-ipc'
+import { registerOnlineTransactionHandlers } from './online-transactions-ipc'
 
 // Re-export lock state from the centralized module
 export { isApplicationLocked, setApplicationLocked, checkLockGuard } from '../utils/app-lock-state'
@@ -48,7 +53,6 @@ export function registerAllHandlers(): void {
   registerCustomerHandlers()
   registerSupplierHandlers()
   registerSalesHandlers()
-  registerSalesTabsHandlers()
   registerPurchaseHandlers()
   registerReturnHandlers()
   registerBranchHandlers()
@@ -79,6 +83,11 @@ export function registerAllHandlers(): void {
   registerInventoryCountsHandlers()
   registerServicesHandlers()
   registerVoucherHandlers()
+  registerReversalHandlers()
+  registerClipboardHandlers()
+  registerShellHandlers()
+  registerRecoveryHandlers()
+  registerOnlineTransactionHandlers()
 
   console.log('All IPC handlers registered')
 }

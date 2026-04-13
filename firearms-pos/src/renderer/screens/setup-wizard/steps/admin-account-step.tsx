@@ -7,15 +7,15 @@ export function AdminAccountStep() {
   const { adminAccountInfo, updateAdminAccountInfo } = useSetup()
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-          <UserPlus className="w-5 h-5 text-primary" />
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+          <UserPlus className="h-4.5 w-4.5 text-primary" />
         </div>
         <div>
-          <h2 className="text-xl font-semibold">Create Admin Account</h2>
-          <p className="text-sm text-muted-foreground">Set up your administrator credentials</p>
+          <h2 className="text-lg font-bold tracking-tight">Create Admin Account</h2>
+          <p className="text-xs text-muted-foreground">Set up your administrator credentials</p>
         </div>
       </div>
 

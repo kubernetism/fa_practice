@@ -4,6 +4,7 @@ import { applicationInfo } from '../db/schemas/application-info'
 import { branches, type NewBranch } from '../db/schemas/branches'
 import { businessSettings, type InsertBusinessSettings } from '../db/schemas/business_settings'
 import { users } from '../db/schemas/users'
+import { eq } from 'drizzle-orm'
 import { getMachineIdForDisplay } from '../utils/license'
 import bcrypt from 'bcryptjs'
 
@@ -158,13 +159,26 @@ export function registerSetupHandlers(): void {
 
       const newBranch = db.insert(branches).values(branchData).returning().get()
 
-      // 3. Create admin user for the branch
+      // 3. Create or update admin user for the branch
+      const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12)
       const existingAdmin = await db.query.users.findFirst({
         where: (u, { eq }) => eq(u.username, data.adminAccount.username),
       })
 
-      if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12)
+      if (existingAdmin) {
+        // Update existing admin with wizard-provided credentials (e.g. after hard reset)
+        db.update(users)
+          .set({
+            password: hashedPassword,
+            email: data.adminAccount.email || data.business.businessEmail || existingAdmin.email,
+            fullName: data.adminAccount.fullName || existingAdmin.fullName,
+            phone: data.adminAccount.phone || existingAdmin.phone,
+            branchId: newBranch.id,
+          })
+          .where(eq(users.id, existingAdmin.id))
+          .run()
+        console.log('[Setup] Admin user updated for branch:', newBranch.id, 'userId:', existingAdmin.id)
+      } else {
         const newAdmin = db
           .insert(users)
           .values({

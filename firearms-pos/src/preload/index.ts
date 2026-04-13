@@ -36,6 +36,8 @@ const api = {
       ipcRenderer.invoke('products:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('products:delete', id),
     search: (query: string) => ipcRenderer.invoke('products:search', query),
+    getAvailable: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('products:get-available', params),
   },
 
   // Categories
@@ -49,17 +51,6 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('categories:delete', id),
   },
 
-  // Service Categories
-  serviceCategories: {
-    getAll: () => ipcRenderer.invoke('service-categories:get-all'),
-    getActive: () => ipcRenderer.invoke('service-categories:get-active'),
-    getById: (id: number) => ipcRenderer.invoke('service-categories:get-by-id', id),
-    create: (data: Record<string, unknown>) => ipcRenderer.invoke('service-categories:create', data),
-    update: (id: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('service-categories:update', id, data),
-    delete: (id: number) => ipcRenderer.invoke('service-categories:delete', id),
-  },
-
   // Services
   services: {
     getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('services:get-all', params),
@@ -71,6 +62,7 @@ const api = {
       ipcRenderer.invoke('services:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('services:delete', id),
     search: (query: string) => ipcRenderer.invoke('services:search', query),
+    getCategories: () => ipcRenderer.invoke('services:get-categories'),
   },
 
   // Inventory
@@ -148,27 +140,6 @@ const api = {
     fixOrphanedReceivables: () => ipcRenderer.invoke('sales:fix-orphaned-receivables'),
   },
 
-  // Sales Tabs
-  salesTabs: {
-    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('sales-tabs:get-all', params),
-    getById: (id: number) => ipcRenderer.invoke('sales-tabs:get-by-id', id),
-    create: (data: Record<string, unknown>) => ipcRenderer.invoke('sales-tabs:create', data),
-    update: (id: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:update', id, data),
-    delete: (id: number) => ipcRenderer.invoke('sales-tabs:delete', id),
-    addItem: (tabId: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:add-item', tabId, data),
-    updateItem: (tabId: number, itemId: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:update-item', tabId, itemId, data),
-    removeItem: (tabId: number, itemId: number) =>
-      ipcRenderer.invoke('sales-tabs:remove-item', tabId, itemId),
-    getAvailableProducts: (params: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:get-available-products', params),
-    checkout: (tabId: number, data: Record<string, unknown>) =>
-      ipcRenderer.invoke('sales-tabs:checkout', tabId, data),
-    clearItems: (tabId: number) => ipcRenderer.invoke('sales-tabs:clear-items', tabId),
-  },
-
   // Purchases
   purchases: {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('purchases:create', data),
@@ -189,6 +160,8 @@ const api = {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('returns:create', data),
     getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('returns:get-all', params),
     getById: (id: number) => ipcRenderer.invoke('returns:get-by-id', id),
+    update: (data: { id: number; refundAmount: number; reason?: string; notes?: string }) =>
+      ipcRenderer.invoke('returns:update', data),
     delete: (id: number) => ipcRenderer.invoke('returns:delete', id),
   },
 
@@ -213,6 +186,21 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('users:delete', id),
     updatePermissions: (id: number, permissions: string[]) =>
       ipcRenderer.invoke('users:update-permissions', id, permissions),
+  },
+
+  // Account Recovery
+  recovery: {
+    getSuggestedQuestions: () => ipcRenderer.invoke('recovery:get-suggested-questions'),
+    setQuestions: (userId: number, questions: { question: string; answer: string }[]) =>
+      ipcRenderer.invoke('recovery:set-questions', userId, questions),
+    hasQuestions: (userId: number) => ipcRenderer.invoke('recovery:has-questions', userId),
+    getQuestions: (userId: number) => ipcRenderer.invoke('recovery:get-questions', userId),
+    lookupUser: (username: string) => ipcRenderer.invoke('recovery:lookup-user', username),
+    resetPassword: (params: {
+      userId: number
+      answers: { questionId: number; answer: string }[]
+      newPassword: string
+    }) => ipcRenderer.invoke('recovery:reset-password', params),
   },
 
   // Expenses
@@ -433,6 +421,11 @@ const api = {
     getTrialBalance: (asOfDate?: string) => ipcRenderer.invoke('coa:get-trial-balance', asOfDate),
     getLedger: (accountId: number, startDate?: string, endDate?: string) =>
       ipcRenderer.invoke('coa:get-ledger', accountId, startDate, endDate),
+    recalculateBalances: () => ipcRenderer.invoke('coa:recalculate-balances'),
+    adjustBalance: (accountId: number, targetBalance: number, reason: string, postedBy: number) =>
+      ipcRenderer.invoke('coa:adjust-balance', accountId, targetBalance, reason, postedBy),
+    getCashFlowDetail: (params: { branchId: number; startDate: string; endDate: string }) =>
+      ipcRenderer.invoke('coa:get-cash-flow-detail', params),
   },
 
   // Journal Entries
@@ -450,9 +443,15 @@ const api = {
   // Receipt Generation
   receipt: {
     generate: (saleId: number) => ipcRenderer.invoke('receipt:generate', saleId),
+    getData: (saleId: number) => ipcRenderer.invoke('receipt:get-data', saleId),
     getSettings: (branchId?: number) => ipcRenderer.invoke('receipt:get-settings', branchId),
     generatePaymentHistory: (receivableId: number) =>
       ipcRenderer.invoke('receipt:generate-payment-history', receivableId),
+  },
+
+  // Shell
+  shell: {
+    openPath: (filePath: string) => ipcRenderer.invoke('shell:openPath', filePath),
   },
 
   // Todos
@@ -488,8 +487,12 @@ const api = {
 
   // Dashboard
   dashboard: {
-    getStats: (params: { branchId: number; timePeriod: string }) =>
+    getStats: (params: { branchId: number; timePeriod: string; customStart?: string; customEnd?: string }) =>
       ipcRenderer.invoke('dashboard:get-stats', params),
+    getTrendData: (params: { branchId: number; timePeriod: string; chartFilter: string; customStart?: string; customEnd?: string }) =>
+      ipcRenderer.invoke('dashboard:get-trend-data', params),
+    getFundFlow: (params: { branchId: number; timePeriod: string; customStart?: string; customEnd?: string }) =>
+      ipcRenderer.invoke('dashboard:get-fund-flow', params),
   },
 
   // Setup Wizard
@@ -545,6 +548,49 @@ const api = {
     generateCode: () => ipcRenderer.invoke('vouchers:generate-code'),
     validate: (code: string) => ipcRenderer.invoke('vouchers:validate', code),
     delete: (id: number) => ipcRenderer.invoke('vouchers:delete', id),
+  },
+
+  // Reversals
+  reversals: {
+    create: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('reversal:create', data),
+    list: (params?: Record<string, unknown>) =>
+      ipcRenderer.invoke('reversal:list', params),
+    get: (id: number) => ipcRenderer.invoke('reversal:get', id),
+    approve: (id: number) => ipcRenderer.invoke('reversal:approve', id),
+    reject: (data: { id: number; rejectionReason: string }) =>
+      ipcRenderer.invoke('reversal:reject', data),
+    retry: (id: number) => ipcRenderer.invoke('reversal:retry', id),
+    stats: () => ipcRenderer.invoke('reversal:stats'),
+    check: (data: { entityType: string; entityId: number }) =>
+      ipcRenderer.invoke('reversal:check', data),
+  },
+
+  // Clipboard
+  clipboard: {
+    copyImage: (dataUrl: string) => ipcRenderer.invoke('clipboard:copy-image', dataUrl),
+  },
+
+  // Online Transactions
+  onlineTransactions: {
+    getAll: (params: Record<string, unknown>) =>
+      ipcRenderer.invoke('online-transactions:get-all', params),
+    create: (data: Record<string, unknown>) =>
+      ipcRenderer.invoke('online-transactions:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('online-transactions:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('online-transactions:delete', id),
+    confirm: (id: number) => ipcRenderer.invoke('online-transactions:confirm', id),
+    bulkConfirm: (ids: number[]) =>
+      ipcRenderer.invoke('online-transactions:bulk-confirm', ids),
+    markFailed: (id: number, reason?: string) =>
+      ipcRenderer.invoke('online-transactions:mark-failed', id, reason),
+    getDashboard: (params: {
+      branchId: number
+      timePeriod: string
+      customStart?: string
+      customEnd?: string
+    }) => ipcRenderer.invoke('online-transactions:dashboard', params),
   },
 
   // Discount Management

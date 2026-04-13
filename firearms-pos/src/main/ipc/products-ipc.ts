@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { products, categories, type NewProduct } from '../db/schema'
+import { products, categories, inventory, type NewProduct } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -353,4 +353,52 @@ export function registerProductHandlers(): void {
       return { success: false, message: 'Failed to search products' }
     }
   })
+
+  // Get products with available stock for a branch
+  ipcMain.handle(
+    'products:get-available',
+    async (
+      _,
+      params: {
+        branchId: number
+        categoryId?: number
+        searchQuery?: string
+        limit?: number
+      }
+    ) => {
+      try {
+        const db = getDatabase()
+        const { branchId, categoryId, searchQuery, limit = 100 } = params
+
+        const conditions = [eq(products.isActive, true)]
+        if (categoryId) {
+          conditions.push(eq(products.categoryId, categoryId))
+        }
+        if (searchQuery) {
+          conditions.push(
+            sql`(${products.name} LIKE ${`%${searchQuery}%`} OR ${products.code} LIKE ${`%${searchQuery}%`} OR ${products.barcode} LIKE ${`%${searchQuery}%`})`
+          )
+        }
+
+        const results = await db
+          .select({
+            product: products,
+            quantity: inventory.quantity,
+          })
+          .from(products)
+          .leftJoin(inventory, and(eq(inventory.productId, products.id), eq(inventory.branchId, branchId)))
+          .where(and(...conditions))
+          .limit(limit)
+          .orderBy(products.name)
+
+        // Filter to only show products with available stock
+        const availableProducts = results.filter((r) => (r.quantity ?? 0) > 0)
+
+        return { success: true, data: availableProducts }
+      } catch (error) {
+        console.error('Get available products error:', error)
+        return { success: false, message: 'Failed to fetch available products' }
+      }
+    }
+  )
 }

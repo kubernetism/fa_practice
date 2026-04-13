@@ -1,5 +1,50 @@
 @import "tailwindcss";
 
+/* Jameel Noori Nastaleeq — Urdu / Nastaliq font */
+@font-face {
+  font-family: 'Jameel Noori Nastaleeq';
+  src: url('../fonts/Jameel Noori Nastaleeq Kasheeda.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Ubuntu — English UI font */
+@font-face {
+  font-family: 'Ubuntu';
+  src: url('../fonts/Ubuntu-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Ubuntu';
+  src: url('../fonts/Ubuntu-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Ubuntu';
+  src: url('../fonts/Ubuntu-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+.font-urdu {
+  font-family: 'Jameel Noori Nastaleeq', serif;
+  line-height: 2.2;
+  direction: rtl;
+}
+
+.font-urdu h1, .font-urdu h2, .font-urdu h3, .font-urdu h4, .font-urdu h5, .font-urdu h6 {
+  font-family: 'Jameel Noori Nastaleeq', serif;
+  letter-spacing: 0;
+}
+
 /* Light theme (default) */
 @theme {
   --color-background: oklch(100% 0 0);
@@ -25,9 +70,17 @@
   --color-warning: oklch(79.48% 0.165 86.05);
   --color-info: oklch(62.3% 0.214 259.15);
   --radius: 0.5rem;
+  --animate-shimmer: shimmer 6s ease-in-out infinite;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
 }
 
 @layer base {
+  :root {
+    --base-font-size: 14px;
+    --btn-size-scale: 1;
+  }
+
   * {
     @apply border-border;
   }
@@ -35,6 +88,23 @@
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
+    font-size: var(--base-font-size, 14px);
+  }
+
+  /* Button density: compact */
+  html[data-btn-size="compact"] button,
+  html[data-btn-size="compact"] [role="button"] {
+    padding-block: 0.2rem;
+    padding-inline: 0.5rem;
+    font-size: calc(var(--base-font-size, 14px) - 1px);
+  }
+
+  /* Button density: large */
+  html[data-btn-size="large"] button,
+  html[data-btn-size="large"] [role="button"] {
+    padding-block: 0.6rem;
+    padding-inline: 1.25rem;
+    font-size: calc(var(--base-font-size, 14px) + 1px);
   }
 
   /* Dark theme */
@@ -90,6 +160,34 @@
   }
 }
 
+/* Business name shimmer animation */
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
 /* Custom scrollbar - Light */
 ::-webkit-scrollbar {
   width: 8px;
@@ -142,6 +240,7 @@
 
 /* Smooth theme transitions */
 html {
+  font-size: var(--base-font-size, 14px);
   transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
 }
 

@@ -5,6 +5,8 @@ import { join } from 'node:path'
 import { app } from 'electron'
 import { migrateToBusinessSettings } from './migrations/migrate_to_business_settings'
 import { addPhoneToUsers } from './migrations/add_phone_to_users'
+import { fixFinancialIntegrity } from './migrations/fix_financial_integrity'
+import { fixFinancialIntegrityV2 } from './migrations/fix_financial_integrity_v2'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -155,6 +157,78 @@ export async function runMigrations(): Promise<void> {
     await ensureSetupChecklistStatusColumn()
   } catch (error) {
     console.error('Setup checklist status column migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Migrate expenses from hardcoded category enum to category_id FK
+  try {
+    await migrateExpensesToCategoryId()
+  } catch (error) {
+    console.error('Expenses category_id migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure default expense and service categories exist in categories table
+  try {
+    await ensureDefaultExpenseAndServiceCategories()
+  } catch (error) {
+    console.error('Default categories seeding error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure reversal_requests table exists
+  try {
+    await ensureReversalRequestsTable()
+  } catch (error) {
+    console.error('Reversal requests table migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure expenses void fields exist
+  try {
+    await ensureExpensesVoidFields()
+  } catch (error) {
+    console.error('Expenses void fields migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure return_items.cost_price column exists
+  try {
+    await ensureReturnItemsCostPrice()
+  } catch (error) {
+    console.error('Return items cost_price migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure user_security_questions table exists
+  try {
+    await ensureSecurityQuestionsTable()
+  } catch (error) {
+    console.error('Security questions table migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure online_transactions table exists
+  try {
+    await ensureOnlineTransactionsTable()
+  } catch (error) {
+    console.error('Online transactions table migration error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Financial integrity fix: create equity accounts, reclassify phantom revenue, post cash float
+  try {
+    await fixFinancialIntegrity()
+  } catch (error) {
+    console.error('Financial integrity fix error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Financial integrity fix v2: create AP account, backfill missing cash transaction
+  try {
+    await fixFinancialIntegrityV2()
+  } catch (error) {
+    console.error('Financial integrity fix v2 error:', error)
     // Don't throw - log error but continue
   }
 }
@@ -393,11 +467,30 @@ export async function seedInitialData(): Promise<void> {
     { name: 'Shotguns', parentId: firearmsCategory.id, description: 'All shotguns' },
   ])
 
+  // Create default expense categories
+  await db.insert(categories).values([
+    { name: 'Rent', description: 'Rent for premises' },
+    { name: 'Utilities', description: 'Electricity, water, gas expenses' },
+    { name: 'Salaries', description: 'Employee salaries and wages' },
+    { name: 'Supplies', description: 'Office and business supplies' },
+    { name: 'Maintenance', description: 'Equipment and facility maintenance' },
+    { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Other', description: 'Miscellaneous expenses' },
+  ])
+
+  // Create default service categories
+  await db.insert(categories).values([
+    { name: 'Repair', description: 'Weapon repair services' },
+    { name: 'Service Maintenance', description: 'Regular maintenance and servicing' },
+    { name: 'Customization', description: 'Custom painting, coating, and modifications' },
+    { name: 'Testing', description: 'Testing and inspection services' },
+  ])
+
   // Create default settings
   await db.insert(settings).values([
     {
       key: 'company_name',
-      value: JSON.stringify('Firearms POS'),
+      value: JSON.stringify('My Business'),
       category: 'company',
       description: 'Company name displayed on receipts',
     },
@@ -961,32 +1054,34 @@ async function ensureServicesTables(): Promise<void> {
 
   if (!categoriesTableCheck) {
     console.log('Creating service_categories table...')
-    const categoriesMigration = `
-      CREATE TABLE IF NOT EXISTS "service_categories" (
-        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        "name" text NOT NULL UNIQUE,
-        "description" text,
-        "is_active" integer DEFAULT 1 NOT NULL,
-        "created_at" text NOT NULL,
-        "updated_at" text NOT NULL
-      );
-
-      -- Insert default service categories
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Repair', 'Weapon repair services', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Maintenance', 'Regular maintenance and servicing', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Customization', 'Custom painting, coating, and modifications', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Testing', 'Testing and inspection services', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Other', 'Other services', 1, datetime('now'), datetime('now'));
-    `
-    rawDb.exec(categoriesMigration)
+    rawDb.exec(
+      'CREATE TABLE IF NOT EXISTS "service_categories" (' +
+        '"id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,' +
+        '"name" text NOT NULL UNIQUE,' +
+        '"description" text,' +
+        '"is_active" integer DEFAULT 1 NOT NULL,' +
+        '"created_at" text NOT NULL,' +
+        '"updated_at" text NOT NULL' +
+      ')'
+    )
     console.log('service_categories table created successfully!')
   } else {
     console.log('service_categories table exists: true')
+  }
+
+  // Always seed default service categories (INSERT OR IGNORE handles duplicates)
+  const seedCategories = rawDb.prepare(
+    'INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at") VALUES (?, ?, 1, datetime(\'now\'), datetime(\'now\'))'
+  )
+  const defaultServiceCategories = [
+    ['Repair', 'Weapon repair services'],
+    ['Maintenance', 'Regular maintenance and servicing'],
+    ['Customization', 'Custom painting, coating, and modifications'],
+    ['Testing', 'Testing and inspection services'],
+    ['Other', 'Other services'],
+  ]
+  for (const [name, description] of defaultServiceCategories) {
+    seedCategories.run(name, description)
   }
 
   // Check and create services table
@@ -1094,6 +1189,15 @@ async function fixCommissionsUserIdNullable(): Promise<void> {
 
   console.log('Fixing commissions.user_id to be nullable (recreating table)...')
 
+  // Check if a leftover commissions_new table exists from a previous failed attempt
+  const leftoverCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='commissions_new'`
+  ).get()
+  if (leftoverCheck) {
+    rawDb.prepare('DROP TABLE "commissions_new"').run()
+    console.log('Dropped leftover commissions_new table from previous attempt')
+  }
+
   // SQLite does not support ALTER COLUMN, so recreate the table with user_id nullable
   const migrationStatements = [
     `CREATE TABLE "commissions_new" (
@@ -1116,7 +1220,7 @@ async function fixCommissionsUserIdNullable(): Promise<void> {
       FOREIGN KEY ("referral_person_id") REFERENCES "referral_persons"("id") ON UPDATE no action ON DELETE no action,
       FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
     )`,
-    'INSERT INTO "commissions_new" SELECT * FROM "commissions"',
+    `INSERT INTO "commissions_new" ("id", "sale_id", "user_id", "referral_person_id", "branch_id", "commission_type", "base_amount", "rate", "commission_amount", "status", "paid_date", "notes", "created_at", "updated_at") SELECT "id", "sale_id", "user_id", "referral_person_id", "branch_id", COALESCE("commission_type", 'sale'), "base_amount", "rate", "commission_amount", COALESCE("status", 'pending'), "paid_date", "notes", "created_at", "updated_at" FROM "commissions"`,
     'DROP TABLE "commissions"',
     'ALTER TABLE "commissions_new" RENAME TO "commissions"',
   ]
@@ -1158,4 +1262,323 @@ async function ensureSetupChecklistStatusColumn(): Promise<void> {
   console.log('Adding application_info.setup_checklist_status column...')
   rawDb.exec('ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT')
   console.log('application_info.setup_checklist_status column added successfully')
+}
+
+async function migrateExpensesToCategoryId(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check if expenses table exists
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('expenses table does not exist, skipping category_id migration')
+    return
+  }
+
+  // Check if category_id column already exists
+  const tableInfo = rawDb.prepare('PRAGMA table_info(expenses)').all() as Array<{ name: string }>
+  const hasCategoryId = tableInfo.some((col) => col.name === 'category_id')
+  const hasCategory = tableInfo.some((col) => col.name === 'category')
+
+  if (hasCategoryId) {
+    console.log('expenses.category_id column exists: true')
+    return
+  }
+
+  if (!hasCategory) {
+    console.log('expenses.category column does not exist, skipping migration')
+    return
+  }
+
+  console.log('Migrating expenses from category text to category_id FK...')
+
+  // Ensure expense categories exist in the categories table
+  const defaultExpenseCategories = [
+    { name: 'Rent', description: 'Rent for premises' },
+    { name: 'Utilities', description: 'Electricity, water, gas expenses' },
+    { name: 'Salaries', description: 'Employee salaries and wages' },
+    { name: 'Supplies', description: 'Office and business supplies' },
+    { name: 'Maintenance', description: 'Equipment and facility maintenance' },
+    { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Other', description: 'Miscellaneous expenses' },
+  ]
+
+  const now = new Date().toISOString()
+  for (const cat of defaultExpenseCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now)
+  }
+
+  // Add category_id column
+  rawDb.prepare(
+    `ALTER TABLE expenses ADD COLUMN category_id INTEGER REFERENCES categories(id)`
+  ).run()
+
+  // Map old category text values to category IDs
+  const categoryMapping: Record<string, string> = {
+    rent: 'Rent',
+    utilities: 'Utilities',
+    salaries: 'Salaries',
+    supplies: 'Supplies',
+    maintenance: 'Maintenance',
+    marketing: 'Marketing',
+    other: 'Other',
+  }
+
+  for (const [oldValue, categoryName] of Object.entries(categoryMapping)) {
+    const category = rawDb.prepare(
+      `SELECT id FROM categories WHERE name = ?`
+    ).get(categoryName) as { id: number } | undefined
+
+    if (category) {
+      rawDb.prepare(
+        `UPDATE expenses SET category_id = ? WHERE category = ?`
+      ).run(category.id, oldValue)
+    }
+  }
+
+  // Set any remaining NULL category_id to "Other"
+  const otherCategory = rawDb.prepare(
+    `SELECT id FROM categories WHERE name = 'Other'`
+  ).get() as { id: number } | undefined
+
+  if (otherCategory) {
+    rawDb.prepare(
+      `UPDATE expenses SET category_id = ? WHERE category_id IS NULL`
+    ).run(otherCategory.id)
+  }
+
+  console.log('expenses category_id migration completed successfully!')
+}
+
+async function ensureDefaultExpenseAndServiceCategories(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  // Check if categories table exists
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='categories'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('categories table does not exist, skipping default categories seeding')
+    return
+  }
+
+  const now = new Date().toISOString()
+
+  // Expense categories
+  const expenseCategories = [
+    { name: 'Rent', description: 'Rent for premises' },
+    { name: 'Utilities', description: 'Electricity, water, gas expenses' },
+    { name: 'Salaries', description: 'Employee salaries and wages' },
+    { name: 'Supplies', description: 'Office and business supplies' },
+    { name: 'Maintenance', description: 'Equipment and facility maintenance' },
+    { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Other', description: 'Miscellaneous expenses' },
+  ]
+
+  // Service categories
+  const serviceCats = [
+    { name: 'Repair', description: 'Weapon repair services' },
+    { name: 'Service Maintenance', description: 'Regular maintenance and servicing' },
+    { name: 'Customization', description: 'Custom painting, coating, and modifications' },
+    { name: 'Testing', description: 'Testing and inspection services' },
+  ]
+
+  const allCategories = [...expenseCategories, ...serviceCats]
+
+  for (const cat of allCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now)
+  }
+
+  console.log('Default expense and service categories ensured in categories table')
+}
+
+async function ensureReversalRequestsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  // Check if table exists
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='reversal_requests'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('Starting migration for reversal_requests table...')
+
+    const migrationSQL = `
+      CREATE TABLE IF NOT EXISTS "reversal_requests" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "request_number" text NOT NULL UNIQUE,
+        "entity_type" text NOT NULL,
+        "entity_id" integer NOT NULL,
+        "reason" text NOT NULL,
+        "priority" text DEFAULT 'medium' NOT NULL,
+        "status" text DEFAULT 'pending' NOT NULL,
+        "requested_by" integer NOT NULL,
+        "reviewed_by" integer,
+        "reviewed_at" text,
+        "rejection_reason" text,
+        "reversal_details" text,
+        "error_details" text,
+        "branch_id" integer NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("requested_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("reviewed_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "rr_status_idx" ON "reversal_requests" ("status");
+      CREATE INDEX IF NOT EXISTS "rr_entity_idx" ON "reversal_requests" ("entity_type", "entity_id");
+      CREATE INDEX IF NOT EXISTS "rr_branch_idx" ON "reversal_requests" ("branch_id");
+      CREATE INDEX IF NOT EXISTS "rr_priority_idx" ON "reversal_requests" ("priority");
+    `
+
+    db.exec(migrationSQL)
+    console.log('reversal_requests table migration completed successfully!')
+  } else {
+    console.log('reversal_requests table exists: true')
+  }
+}
+
+async function ensureExpensesVoidFields(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  const tableCheck = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get()
+
+  if (!tableCheck) {
+    console.log('expenses table does not exist, skipping void fields migration')
+    return
+  }
+
+  const tableInfo = db.prepare(`PRAGMA table_info(expenses)`).all() as Array<{ name: string }>
+  const existingColumns = new Set(tableInfo.map((col) => col.name))
+
+  const columnsToAdd = [
+    { name: 'is_voided', sql: `ALTER TABLE expenses ADD COLUMN is_voided INTEGER DEFAULT 0 NOT NULL` },
+    { name: 'void_reason', sql: `ALTER TABLE expenses ADD COLUMN void_reason TEXT` },
+  ]
+
+  for (const column of columnsToAdd) {
+    if (!existingColumns.has(column.name)) {
+      console.log(`Adding expenses.${column.name} column...`)
+      try {
+        db.exec(column.sql)
+        console.log(`expenses.${column.name} column added successfully`)
+      } catch (error) {
+        console.error(`Error adding expenses.${column.name} column:`, error)
+      }
+    } else {
+      console.log(`expenses.${column.name} column exists: true`)
+    }
+  }
+
+  console.log('expenses void fields migration completed successfully!')
+}
+
+async function ensureReturnItemsCostPrice(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const db = getRawDatabase()
+
+  const tableInfo = db.prepare(`PRAGMA table_info(return_items)`).all() as Array<{ name: string }>
+  const hasCostPrice = tableInfo.some((col) => col.name === 'cost_price')
+
+  if (hasCostPrice) {
+    console.log('return_items.cost_price column exists: true')
+    return
+  }
+
+  console.log('Adding return_items.cost_price column...')
+  db.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run()
+  console.log('return_items.cost_price column added successfully')
+}
+
+async function ensureSecurityQuestionsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  const exists = rawDb
+    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_security_questions'`)
+    .get()
+
+  if (exists) {
+    console.log('user_security_questions table exists: true')
+    return
+  }
+
+  console.log('Creating user_security_questions table...')
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "user_security_questions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "user_id" integer NOT NULL REFERENCES "users"("id"),
+      "question" text NOT NULL,
+      "answer_hash" text NOT NULL,
+      "sort_order" integer NOT NULL DEFAULT 0,
+      "created_at" text NOT NULL DEFAULT (datetime('now')),
+      "updated_at" text NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "usq_user_idx" ON "user_security_questions" ("user_id")`).run()
+  console.log('user_security_questions table created successfully!')
+}
+
+async function ensureOnlineTransactionsTable(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='online_transactions'`
+  ).get()
+
+  if (tableCheck) {
+    console.log('online_transactions table exists: true')
+    return
+  }
+
+  console.log('Creating online_transactions table...')
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "online_transactions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "branch_id" integer NOT NULL REFERENCES "branches"("id"),
+      "transaction_date" text NOT NULL,
+      "amount" real NOT NULL,
+      "payment_channel" text NOT NULL,
+      "direction" text DEFAULT 'inflow' NOT NULL,
+      "reference_number" text,
+      "customer_name" text,
+      "customer_id" integer REFERENCES "customers"("id"),
+      "invoice_number" text,
+      "bank_account_name" text,
+      "status" text DEFAULT 'pending' NOT NULL,
+      "notes" text,
+      "source_type" text DEFAULT 'manual' NOT NULL,
+      "source_id" integer,
+      "sale_id" integer REFERENCES "sales"("id"),
+      "receivable_id" integer REFERENCES "account_receivables"("id"),
+      "payable_id" integer REFERENCES "account_payables"("id"),
+      "confirmed_by" integer REFERENCES "users"("id"),
+      "confirmed_at" text,
+      "created_by" integer REFERENCES "users"("id"),
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL
+    )
+  `).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_branch_idx" ON "online_transactions" ("branch_id")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_date_idx" ON "online_transactions" ("transaction_date")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_channel_idx" ON "online_transactions" ("payment_channel")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_status_idx" ON "online_transactions" ("status")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_source_idx" ON "online_transactions" ("source_type", "source_id")`).run()
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_sale_idx" ON "online_transactions" ("sale_id")`).run()
+  console.log('online_transactions table created successfully!')
 }

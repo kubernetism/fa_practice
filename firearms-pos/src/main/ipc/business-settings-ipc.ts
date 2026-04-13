@@ -57,7 +57,7 @@ export function registerBusinessSettingsHandlers(): void {
         // Create default global settings if not exists
         const defaultSettings = {
           branchId: null,
-          businessName: 'Firearms Retail POS',
+          businessName: 'My Business',
           businessAddress: '',
           businessCity: '',
           businessState: '',
@@ -96,7 +96,6 @@ export function registerBusinessSettingsHandlers(): void {
           requireCustomerForSale: false,
           enableCustomerLoyalty: false,
           loyaltyPointsRatio: 1,
-          expenseCategories: 'Utilities,Rent,Salaries,Supplies,Maintenance,Other',
           expenseApprovalRequired: false,
           expenseApprovalLimit: 10000,
           enableReturns: true,

@@ -9,6 +9,8 @@ import {
   suppliers,
   accountPayables,
   payablePayments,
+  cashRegisterSessions,
+  cashTransactions,
   type NewPurchase,
   type NewPurchaseItem,
 } from '../db/schema'
@@ -16,7 +18,7 @@ import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generatePurchaseOrderNumber, type PaginationParams, type PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
-import { postPurchaseReceiveToGL } from '../utils/gl-posting'
+import { postPurchaseReceiveToGL, postAPPaymentToGL } from '../utils/gl-posting'
 import { addCostLayer } from '../utils/inventory-valuation'
 
 interface PurchaseItemData {
@@ -426,14 +428,14 @@ export function registerPurchaseHandlers(): void {
 
         if (payable) {
           // Record payment on the payable
-          await db.insert(payablePayments).values({
+          const [payablePayment] = await db.insert(payablePayments).values({
             payableId: payable.id,
             amount: payable.remainingAmount,
             paymentMethod: paymentData.paymentMethod,
             referenceNumber: paymentData.referenceNumber,
             notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
             paidBy: session?.userId,
-          })
+          }).returning()
 
           // Update payable status
           await db
@@ -445,6 +447,44 @@ export function registerPurchaseHandlers(): void {
               updatedAt: new Date().toISOString(),
             })
             .where(eq(accountPayables.id, payable.id))
+
+          // Post to General Ledger
+          await postAPPaymentToGL(
+            {
+              id: payablePayment.id,
+              payableId: payable.id,
+              branchId: purchase.branchId,
+              amount: payable.remainingAmount,
+              paymentMethod: paymentData.paymentMethod,
+              invoiceNumber: payable.invoiceNumber,
+            },
+            session?.userId ?? 0
+          )
+
+          // Record cash register outflow for cash payments
+          if (paymentData.paymentMethod === 'cash') {
+            const today = new Date().toISOString().split('T')[0]
+            const openSession = await db.query.cashRegisterSessions.findFirst({
+              where: and(
+                eq(cashRegisterSessions.branchId, purchase.branchId),
+                eq(cashRegisterSessions.sessionDate, today),
+                eq(cashRegisterSessions.status, 'open')
+              ),
+            })
+
+            if (openSession) {
+              await db.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: purchase.branchId,
+                transactionType: 'ap_payment',
+                amount: -payable.remainingAmount,
+                referenceType: 'payable_payment',
+                referenceId: payablePayment.id,
+                description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
+                recordedBy: session?.userId ?? 0,
+              })
+            }
+          }
         }
 
         await createAuditLog({

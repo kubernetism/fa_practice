@@ -8,6 +8,10 @@ import {
   purchases,
   branches,
   expenses,
+  cashRegisterSessions,
+  cashTransactions,
+  type NewAccountPayable,
+  onlineTransactions,
   type NewAccountPayable,
   type NewPayablePayment,
 } from '../db/schema'
@@ -15,6 +19,7 @@ import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { withTransaction } from '../utils/db-transaction'
 import { postAPPaymentToGL } from '../utils/gl-posting'
+import { mapPaymentMethodToChannel } from './online-transactions-ipc'
 
 interface PaginationParams {
   page?: number
@@ -369,6 +374,50 @@ export function registerAccountPayablesHandlers(): void {
           },
           session.userId
         )
+
+        // Auto-record non-cash payments as online transactions (outflow)
+        if (data.paymentMethod !== 'cash') {
+          await txDb.insert(onlineTransactions).values({
+            branchId: payable.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: 'outflow',
+            referenceNumber: data.referenceNumber,
+            customerName: payable.supplier?.name,
+            invoiceNumber: payable.invoiceNumber,
+            status: 'pending',
+            sourceType: 'payable_payment',
+            sourceId: payment.id,
+            payableId: data.payableId,
+            createdBy: session.userId,
+          })
+        }
+
+        // Record cash register outflow for cash AP payments
+        if (data.paymentMethod === 'cash') {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, payable.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: payable.branchId,
+              transactionType: 'ap_payment',
+              amount: -data.amount,
+              referenceType: 'payable_payment',
+              referenceId: payment.id,
+              description: `AP payment: ${payable.invoiceNumber}`,
+              recordedBy: session.userId,
+            })
+          }
+        }
 
         return payment
       })

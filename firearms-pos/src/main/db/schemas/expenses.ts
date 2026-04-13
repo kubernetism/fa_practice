@@ -4,6 +4,7 @@ import { branches } from './branches'
 import { users } from './users'
 import { suppliers } from './suppliers'
 import { accountPayables } from './account-payables'
+import { categories } from './categories'
 
 export const expenses = sqliteTable(
   'expenses',
@@ -15,11 +16,9 @@ export const expenses = sqliteTable(
     userId: integer('user_id')
       .notNull()
       .references(() => users.id),
-    category: text('category', {
-      enum: ['rent', 'utilities', 'salaries', 'supplies', 'maintenance', 'marketing', 'other'],
-    })
+    categoryId: integer('category_id')
       .notNull()
-      .default('other'),
+      .references(() => categories.id),
     amount: real('amount').notNull(),
     description: text('description'),
     paymentMethod: text('payment_method', { enum: ['cash', 'card', 'check', 'transfer'] })
@@ -37,6 +36,8 @@ export const expenses = sqliteTable(
     payableId: integer('payable_id').references(() => accountPayables.id),
     dueDate: text('due_date'),
     paymentTerms: text('payment_terms'),
+    isVoided: integer('is_voided', { mode: 'boolean' }).notNull().default(false),
+    voidReason: text('void_reason'),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -60,6 +61,10 @@ export const expensesRelations = relations(expenses, ({ one }) => ({
   user: one(users, {
     fields: [expenses.userId],
     references: [users.id],
+  }),
+  category: one(categories, {
+    fields: [expenses.categoryId],
+    references: [categories.id],
   }),
   supplier: one(suppliers, {
     fields: [expenses.supplierId],

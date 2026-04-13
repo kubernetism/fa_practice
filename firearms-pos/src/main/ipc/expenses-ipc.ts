@@ -1,12 +1,13 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, between, gte, lte } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { expenses, type NewExpense, accountPayables } from '../db/schema'
+import { expenses, type NewExpense, accountPayables, cashRegisterSessions, cashTransactions } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
 import { postExpenseToGL } from '../utils/gl-posting'
+import { handleIpcError } from '../utils/error-handling'
 
 export function registerExpenseHandlers(): void {
   const db = getDatabase()
@@ -17,24 +18,18 @@ export function registerExpenseHandlers(): void {
       _,
       params: PaginationParams & {
         branchId?: number
-        category?: string
+        categoryId?: number
         startDate?: string
         endDate?: string
       }
     ) => {
       try {
-        const { page = 1, limit = 20, sortOrder = 'desc', branchId, category, startDate, endDate } = params
+        const { page = 1, limit = 20, sortOrder = 'desc', branchId, categoryId, startDate, endDate } = params
 
         const conditions = []
 
         if (branchId) conditions.push(eq(expenses.branchId, branchId))
-        if (category)
-          conditions.push(
-            eq(
-              expenses.category,
-              category as 'rent' | 'utilities' | 'salaries' | 'supplies' | 'maintenance' | 'marketing' | 'other'
-            )
-          )
+        if (categoryId) conditions.push(eq(expenses.categoryId, categoryId))
         if (startDate && endDate) {
           conditions.push(between(expenses.expenseDate, startDate, endDate))
         } else if (startDate) {
@@ -55,6 +50,7 @@ export function registerExpenseHandlers(): void {
           offset: (page - 1) * limit,
           orderBy: sortOrder === 'desc' ? desc(expenses.expenseDate) : expenses.expenseDate,
           with: {
+            category: true,
             supplier: true,
             payable: true,
             branch: true,
@@ -78,8 +74,7 @@ export function registerExpenseHandlers(): void {
 
         return { success: true, ...result }
       } catch (error) {
-        console.error('Get expenses error:', error)
-        return { success: false, message: 'Failed to fetch expenses' }
+        return handleIpcError('Get expenses', error)
       }
     }
   )
@@ -89,6 +84,7 @@ export function registerExpenseHandlers(): void {
       const expense = await db.query.expenses.findFirst({
         where: eq(expenses.id, id),
         with: {
+          category: true,
           supplier: true,
           payable: true,
           branch: true,
@@ -108,8 +104,7 @@ export function registerExpenseHandlers(): void {
 
       return { success: true, data: expense }
     } catch (error) {
-      console.error('Get expense error:', error)
-      return { success: false, message: 'Failed to fetch expense' }
+      return handleIpcError('Get expense', error)
     }
   })
 
@@ -132,6 +127,13 @@ export function registerExpenseHandlers(): void {
           message: 'Due date is required for unpaid expenses',
         }
       }
+
+      // Look up the category name for GL posting and audit logs
+      const { categories: categoriesTable } = await import('../db/schema')
+      const expenseCategory = await db.query.categories.findFirst({
+        where: eq(categoriesTable.id, data.categoryId),
+      })
+      const categoryName = expenseCategory?.name || 'Other'
 
       // Execute all operations in a transaction
       const result = await withTransaction(async ({ db: txDb }) => {
@@ -167,7 +169,7 @@ export function registerExpenseHandlers(): void {
               status: 'pending',
               dueDate: data.dueDate,
               paymentTerms: data.paymentTerms,
-              notes: `Auto-created from expense: ${data.category} - ${data.description || 'No description'}`,
+              notes: `Auto-created from expense: ${categoryName} - ${data.description || 'No description'}`,
               createdBy: session?.userId,
             })
             .returning()
@@ -187,7 +189,7 @@ export function registerExpenseHandlers(): void {
           {
             id: newExpense.id,
             branchId: data.branchId,
-            category: data.category,
+            categoryName,
             amount: data.amount,
             paymentStatus: data.paymentStatus || 'paid',
             paymentMethod: data.paymentMethod,
@@ -195,6 +197,31 @@ export function registerExpenseHandlers(): void {
           },
           session?.userId ?? 0
         )
+
+        // Record cash register outflow for paid cash expenses
+        if (data.paymentStatus !== 'unpaid' && (!data.paymentMethod || data.paymentMethod === 'cash')) {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, data.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: 'expense',
+              amount: -data.amount,
+              referenceType: 'expense',
+              referenceId: newExpense.id,
+              description: `Expense: ${categoryName} - ${data.description || ''}`.trim(),
+              recordedBy: session?.userId ?? 0,
+            })
+          }
+        }
 
         return { newExpense, payableId }
       })
@@ -229,7 +256,7 @@ export function registerExpenseHandlers(): void {
           ...data,
           payableId: result.payableId,
         } as Record<string, unknown>),
-        description: `Created ${data.paymentStatus || 'paid'} expense: ${data.category} - $${data.amount}`,
+        description: `Created ${data.paymentStatus || 'paid'} expense: ${categoryName} - $${data.amount}`,
       })
 
       return {
@@ -238,8 +265,7 @@ export function registerExpenseHandlers(): void {
         payableCreated: !!result.payableId,
       }
     } catch (error) {
-      console.error('Create expense error:', error)
-      return { success: false, message: 'Failed to create expense' }
+      return handleIpcError('Create expense', error)
     }
   })
 
@@ -267,6 +293,8 @@ export function registerExpenseHandlers(): void {
       }
 
       // Validation: Can't change amount if payable exists and has payments
+      // Track whether we need to update the payable amount inside the transaction
+      let shouldUpdatePayableAmount = false
       if (existing.payableId && data.amount && data.amount !== existing.amount) {
         const payable = await db.query.accountPayables.findFirst({
           where: eq(accountPayables.id, existing.payableId),
@@ -279,16 +307,8 @@ export function registerExpenseHandlers(): void {
           }
         }
 
-        // Update payable amount if no payments yet
         if (payable) {
-          await db
-            .update(accountPayables)
-            .set({
-              totalAmount: data.amount,
-              remainingAmount: data.amount,
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(accountPayables.id, existing.payableId))
+          shouldUpdatePayableAmount = true
         }
       }
 
@@ -309,9 +329,11 @@ export function registerExpenseHandlers(): void {
         }
       }
 
-      // Handle status change: from paid to unpaid
+      // Handle status change: from paid to unpaid - validate before transaction
+      let shouldCreatePayable = false
+      let supplierIdToUse: number | undefined
       if (existing.paymentStatus === 'paid' && data.paymentStatus === 'unpaid') {
-        const supplierIdToUse = data.supplierId || existing.supplierId
+        supplierIdToUse = data.supplierId || existing.supplierId
         if (!supplierIdToUse) {
           return {
             success: false,
@@ -326,11 +348,32 @@ export function registerExpenseHandlers(): void {
           }
         }
 
-        // Create payable if changing to unpaid
         if (!existing.payableId) {
+          shouldCreatePayable = true
+        }
+      }
+
+      // Execute all mutations in a transaction
+      const txResult = await withTransaction(async ({ db: txDb }) => {
+        let createdPayableId: number | undefined
+
+        // Update payable amount if amount changed and no payments yet
+        if (shouldUpdatePayableAmount && existing.payableId && data.amount) {
+          await txDb
+            .update(accountPayables)
+            .set({
+              totalAmount: data.amount,
+              remainingAmount: data.amount,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(accountPayables.id, existing.payableId))
+        }
+
+        // Create payable if changing from paid to unpaid
+        if (shouldCreatePayable && supplierIdToUse) {
           const invoiceNumber = `EXP-${existing.id}-${Date.now()}`
 
-          const payableResult = await db
+          const payableResult = await txDb
             .insert(accountPayables)
             .values({
               supplierId: supplierIdToUse,
@@ -343,37 +386,46 @@ export function registerExpenseHandlers(): void {
               status: 'pending',
               dueDate: data.dueDate || existing.dueDate,
               paymentTerms: data.paymentTerms || existing.paymentTerms,
-              notes: `Created from expense status change: ${existing.category}`,
+              notes: `Created from expense status change: expense #${existing.id}`,
               createdBy: session?.userId,
             })
             .returning()
 
-          data.payableId = payableResult[0].id
-
-          await createAuditLog({
-            userId: session?.userId,
-            branchId: existing.branchId,
-            action: 'create',
-            entityType: 'account_payable',
-            entityId: payableResult[0].id,
-            newValues: {
-              supplierId: supplierIdToUse,
-              invoiceNumber: invoiceNumber,
-              totalAmount: data.amount || existing.amount,
-              source: 'expense_status_change',
-              expenseId: existing.id,
-            },
-            description: `Created payable from expense #${existing.id} status change`,
-          })
+          createdPayableId = payableResult[0].id
+          data.payableId = createdPayableId
         }
+
+        // Update the expense record
+        const result = await txDb
+          .update(expenses)
+          .set({ ...data, updatedAt: new Date().toISOString() })
+          .where(eq(expenses.id, id))
+          .returning()
+
+        return { expenseResult: result, createdPayableId }
+      })
+
+      // Audit log for payable creation (outside transaction)
+      if (txResult.createdPayableId && supplierIdToUse) {
+        const invoiceNumber = `EXP-${existing.id}-${Date.now()}`
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: existing.branchId,
+          action: 'create',
+          entityType: 'account_payable',
+          entityId: txResult.createdPayableId,
+          newValues: {
+            supplierId: supplierIdToUse,
+            invoiceNumber: invoiceNumber,
+            totalAmount: data.amount || existing.amount,
+            source: 'expense_status_change',
+            expenseId: existing.id,
+          },
+          description: `Created payable from expense #${existing.id} status change`,
+        })
       }
 
-      const result = await db
-        .update(expenses)
-        .set({ ...data, updatedAt: new Date().toISOString() })
-        .where(eq(expenses.id, id))
-        .returning()
-
+      // Audit log for expense update (outside transaction)
       await createAuditLog({
         userId: session?.userId,
         branchId: existing.branchId,
@@ -382,13 +434,12 @@ export function registerExpenseHandlers(): void {
         entityId: id,
         oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
         newValues: sanitizeForAudit(data as Record<string, unknown>),
-        description: `Updated expense: ${existing.category}`,
+        description: `Updated expense #${id}`,
       })
 
-      return { success: true, data: result[0] }
+      return { success: true, data: txResult.expenseResult[0] }
     } catch (error) {
-      console.error('Update expense error:', error)
-      return { success: false, message: 'Failed to update expense' }
+      return handleIpcError('Update expense', error)
     }
   })
 
@@ -453,18 +504,19 @@ export function registerExpenseHandlers(): void {
         entityType: 'expense',
         entityId: id,
         oldValues: sanitizeForAudit(existing as unknown as Record<string, unknown>),
-        description: `Deleted expense: ${existing.category}`,
+        description: `Deleted expense #${id}`,
       })
 
       return { success: true, message: 'Expense deleted successfully' }
     } catch (error) {
-      console.error('Delete expense error:', error)
-      return { success: false, message: 'Failed to delete expense' }
+      return handleIpcError('Delete expense', error)
     }
   })
 
   ipcMain.handle('expenses:get-by-category', async (_, branchId: number, startDate?: string, endDate?: string) => {
     try {
+      const { categories: categoriesTable } = await import('../db/schema')
+
       const conditions = [eq(expenses.branchId, branchId)]
 
       if (startDate && endDate) {
@@ -473,18 +525,19 @@ export function registerExpenseHandlers(): void {
 
       const data = await db
         .select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categoriesTable.name,
           total: sql<number>`sum(${expenses.amount})`,
           count: sql<number>`count(*)`,
         })
         .from(expenses)
+        .innerJoin(categoriesTable, eq(expenses.categoryId, categoriesTable.id))
         .where(and(...conditions))
-        .groupBy(expenses.category)
+        .groupBy(expenses.categoryId, categoriesTable.name)
 
       return { success: true, data }
     } catch (error) {
-      console.error('Get expenses by category error:', error)
-      return { success: false, message: 'Failed to fetch expenses by category' }
+      return handleIpcError('Get expenses by category', error)
     }
   })
 }

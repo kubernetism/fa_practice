@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, gte, lte } from 'drizzle-orm'
+import { eq, and, desc, sql, gte, lte, lt, ne } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   cashRegisterSessions,
@@ -9,6 +9,7 @@ import {
   type NewCashTransaction,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
+import { createJournalEntry, ACCOUNT_CODES } from '../utils/gl-posting'
 import { getCurrentSession } from './auth-ipc'
 
 interface OpenSessionData {
@@ -41,6 +42,62 @@ interface RecordTransactionData {
   referenceType?: string
   referenceId?: number
   description?: string
+}
+
+/**
+ * Auto-close any stale open cash register sessions from prior days.
+ * Called at app startup and when opening a new session.
+ * If branchId is omitted, closes stale sessions across ALL branches.
+ * closedByUserId is optional — at startup there's no logged-in user.
+ */
+export async function autoCloseStaleRegisters(branchId?: number, closedByUserId?: number): Promise<number> {
+  const db = getDatabase()
+  const today = new Date().toISOString().split('T')[0]
+
+  const whereConditions = [
+    eq(cashRegisterSessions.status, 'open'),
+    lt(cashRegisterSessions.sessionDate, today),
+  ]
+  if (branchId !== undefined) {
+    whereConditions.push(eq(cashRegisterSessions.branchId, branchId))
+  }
+
+  const staleSessions = await db.query.cashRegisterSessions.findMany({
+    where: and(...whereConditions),
+  })
+
+  for (const stale of staleSessions) {
+    const txSums = await db
+      .select({
+        totalIn: sql<number>`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+        totalOut: sql<number>`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`,
+      })
+      .from(cashTransactions)
+      .where(eq(cashTransactions.sessionId, stale.id))
+
+    const totalIn = txSums[0]?.totalIn || 0
+    const totalOut = txSums[0]?.totalOut || 0
+    const expectedBalance = stale.openingBalance + totalIn - totalOut
+
+    await db
+      .update(cashRegisterSessions)
+      .set({
+        closingBalance: expectedBalance,
+        expectedBalance,
+        actualBalance: expectedBalance,
+        variance: 0,
+        status: 'closed',
+        closedBy: closedByUserId ?? stale.openedBy,
+        closedAt: new Date().toISOString(),
+        notes: `${stale.notes || ''}\nAuto-closed: stale session from ${stale.sessionDate}`.trim(),
+        updatedAt: new Date().toISOString(),
+      })
+      .where(eq(cashRegisterSessions.id, stale.id))
+
+    console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`)
+  }
+
+  return staleSessions.length
 }
 
 export function registerCashRegisterHandlers(): void {
@@ -116,6 +173,9 @@ export function registerCashRegisterHandlers(): void {
 
       const today = new Date().toISOString().split('T')[0]
 
+      // Auto-close any stale open sessions from prior days
+      await autoCloseStaleRegisters(data.branchId, userSession.userId)
+
       // Check if session already exists for today
       const existingSession = await db.query.cashRegisterSessions.findFirst({
         where: and(
@@ -151,6 +211,36 @@ export function registerCashRegisterHandlers(): void {
           notes: data.notes,
         })
         .returning()
+
+      // Post journal entry for capital injection portion of opening float
+      if (data.openingBalance > 0) {
+        const previousClosing = previousSession?.closingBalance ?? 0
+        const capitalInjection = data.openingBalance - previousClosing
+
+        if (capitalInjection > 0) {
+          await createJournalEntry({
+            description: `Cash register capital injection for ${today}`,
+            referenceType: 'cash_register_session',
+            referenceId: newSession.id,
+            branchId: data.branchId,
+            userId: userSession.userId,
+            lines: [
+              {
+                accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+                debitAmount: capitalInjection,
+                creditAmount: 0,
+                description: `Cash float injection for session ${today}`,
+              },
+              {
+                accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+                debitAmount: 0,
+                creditAmount: capitalInjection,
+                description: `Capital contribution: cash float ${today}`,
+              },
+            ],
+          })
+        }
+      }
 
       await createAuditLog({
         userId: userSession.userId,

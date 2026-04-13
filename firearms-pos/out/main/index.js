@@ -9,8 +9,8 @@ const drizzleOrm = require("drizzle-orm");
 const node_crypto = require("node:crypto");
 const node_os = require("node:os");
 const migrator = require("drizzle-orm/better-sqlite3/migrator");
-const bcrypt = require("bcryptjs");
 const os = require("os");
+const bcrypt = require("bcryptjs");
 const dateFns = require("date-fns");
 const crypto = require("crypto");
 const fs = require("fs");
@@ -278,7 +278,7 @@ const salePayments = sqliteCore.sqliteTable("sale_payments", {
   id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
   saleId: sqliteCore.integer("sale_id").notNull().references(() => sales.id),
   paymentMethod: sqliteCore.text("payment_method", {
-    enum: ["cash", "card", "debit_card", "mobile", "cheque", "bank_transfer"]
+    enum: ["cash", "card", "debit_card", "mobile", "cheque", "bank_transfer", "cod"]
   }).notNull(),
   amount: sqliteCore.real("amount").notNull(),
   referenceNumber: sqliteCore.text("reference_number"),
@@ -286,82 +286,6 @@ const salePayments = sqliteCore.sqliteTable("sale_payments", {
   notes: sqliteCore.text("notes"),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
-const salesTabs = sqliteCore.sqliteTable(
-  "sales_tabs",
-  {
-    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-    tabNumber: sqliteCore.text("tab_number").notNull().unique(),
-    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
-    customerId: sqliteCore.integer("customer_id").references(() => customers.id),
-    userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
-    status: sqliteCore.text("status", {
-      enum: ["open", "on_hold", "closed"]
-    }).notNull().default("open"),
-    itemCount: sqliteCore.integer("item_count").notNull().default(0),
-    subtotal: sqliteCore.real("subtotal").notNull().default(0),
-    discount: sqliteCore.real("discount").notNull().default(0),
-    tax: sqliteCore.real("tax").notNull().default(0),
-    finalAmount: sqliteCore.real("final_amount").notNull().default(0),
-    notes: sqliteCore.text("notes"),
-    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-    closedAt: sqliteCore.text("closed_at"),
-    closedBy: sqliteCore.integer("closed_by").references(() => users.id)
-  },
-  (table) => [
-    sqliteCore.index("sales_tabs_branch_idx").on(table.branchId),
-    sqliteCore.index("sales_tabs_status_idx").on(table.status),
-    sqliteCore.index("sales_tabs_created_idx").on(table.createdAt)
-  ]
-);
-const salesTabItems = sqliteCore.sqliteTable(
-  "sales_tab_items",
-  {
-    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-    tabId: sqliteCore.integer("tab_id").notNull().references(() => salesTabs.id, { onDelete: "cascade" }),
-    productId: sqliteCore.integer("product_id").notNull(),
-    productName: sqliteCore.text("product_name").notNull(),
-    productCode: sqliteCore.text("product_code"),
-    quantity: sqliteCore.integer("quantity").notNull(),
-    sellingPrice: sqliteCore.real("selling_price").notNull(),
-    costPrice: sqliteCore.real("cost_price").notNull(),
-    taxPercent: sqliteCore.real("tax_percent").notNull().default(0),
-    subtotal: sqliteCore.real("subtotal").notNull(),
-    serialNumber: sqliteCore.text("serial_number"),
-    batchNumber: sqliteCore.text("batch_number"),
-    addedAt: sqliteCore.text("added_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
-  },
-  (table) => [sqliteCore.index("sales_tab_items_tab_idx").on(table.tabId)]
-);
-const salesTabsRelations = drizzleOrm.relations(salesTabs, ({ one, many }) => ({
-  customer: one(customers, {
-    fields: [salesTabs.customerId],
-    references: [customers.id]
-  }),
-  branch: one(branches, {
-    fields: [salesTabs.branchId],
-    references: [branches.id]
-  }),
-  user: one(users, {
-    fields: [salesTabs.userId],
-    references: [users.id]
-  }),
-  closedByUser: one(users, {
-    fields: [salesTabs.closedBy],
-    references: [users.id]
-  }),
-  items: many(salesTabItems)
-}));
-const salesTabItemsRelations = drizzleOrm.relations(salesTabItems, ({ one }) => ({
-  tab: one(salesTabs, {
-    fields: [salesTabItems.tabId],
-    references: [salesTabs.id]
-  }),
-  product: one(products, {
-    fields: [salesTabItems.productId],
-    references: [products.id]
-  })
-}));
 const purchases = sqliteCore.sqliteTable("purchases", {
   id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
   purchaseOrderNumber: sqliteCore.text("purchase_order_number").notNull().unique(),
@@ -419,6 +343,7 @@ const returnItems = sqliteCore.sqliteTable("return_items", {
   quantity: sqliteCore.integer("quantity").notNull().default(1),
   unitPrice: sqliteCore.real("unit_price").notNull(),
   totalPrice: sqliteCore.real("total_price").notNull(),
+  costPrice: sqliteCore.real("cost_price").notNull().default(0),
   condition: sqliteCore.text("condition", { enum: ["new", "good", "fair", "damaged"] }).notNull().default("good"),
   restockable: sqliteCore.integer("restockable", { mode: "boolean" }).notNull().default(true),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
@@ -510,9 +435,7 @@ const expenses = sqliteCore.sqliteTable(
     id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
     branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
     userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
-    category: sqliteCore.text("category", {
-      enum: ["rent", "utilities", "salaries", "supplies", "maintenance", "marketing", "other"]
-    }).notNull().default("other"),
+    categoryId: sqliteCore.integer("category_id").notNull().references(() => categories.id),
     amount: sqliteCore.real("amount").notNull(),
     description: sqliteCore.text("description"),
     paymentMethod: sqliteCore.text("payment_method", { enum: ["cash", "card", "check", "transfer"] }).notNull().default("cash"),
@@ -524,6 +447,8 @@ const expenses = sqliteCore.sqliteTable(
     payableId: sqliteCore.integer("payable_id").references(() => accountPayables.id),
     dueDate: sqliteCore.text("due_date"),
     paymentTerms: sqliteCore.text("payment_terms"),
+    isVoided: sqliteCore.integer("is_voided", { mode: "boolean" }).notNull().default(false),
+    voidReason: sqliteCore.text("void_reason"),
     createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
     updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
   },
@@ -541,6 +466,10 @@ const expensesRelations = drizzleOrm.relations(expenses, ({ one }) => ({
   user: one(users, {
     fields: [expenses.userId],
     references: [users.id]
+  }),
+  category: one(categories, {
+    fields: [expenses.categoryId],
+    references: [categories.id]
   }),
   supplier: one(suppliers, {
     fields: [expenses.supplierId],
@@ -607,7 +536,11 @@ const auditLogs = sqliteCore.sqliteTable("audit_logs", {
       "adjustment",
       "transfer",
       "export",
-      "view"
+      "view",
+      "reversal_request",
+      "reversal_review",
+      "reversal_executed",
+      "reversal_failed"
     ]
   }).notNull(),
   entityType: sqliteCore.text("entity_type", {
@@ -625,7 +558,8 @@ const auditLogs = sqliteCore.sqliteTable("audit_logs", {
       "expense",
       "commission",
       "setting",
-      "auth"
+      "auth",
+      "reversal_request"
     ]
   }).notNull(),
   entityId: sqliteCore.integer("entity_id"),
@@ -762,7 +696,6 @@ const businessSettings = sqliteCore.sqliteTable("business_settings", {
   enableCustomerLoyalty: sqliteCore.integer("enable_customer_loyalty", { mode: "boolean" }).default(false),
   loyaltyPointsRatio: sqliteCore.real("loyalty_points_ratio").default(1),
   // Expense Settings
-  expenseCategories: sqliteCore.text("expense_categories").default("Utilities,Rent,Salaries,Supplies,Maintenance,Other"),
   expenseApprovalRequired: sqliteCore.integer("expense_approval_required", { mode: "boolean" }).default(false),
   expenseApprovalLimit: sqliteCore.real("expense_approval_limit").default(1e4),
   // Return/Refund Settings
@@ -1470,6 +1403,160 @@ const vouchers = sqliteCore.sqliteTable("vouchers", {
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const reversalRequests = sqliteCore.sqliteTable(
+  "reversal_requests",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    requestNumber: sqliteCore.text("request_number").notNull().unique(),
+    // REV-YYYY-NNNN
+    entityType: sqliteCore.text("entity_type", {
+      enum: [
+        "sale",
+        "purchase",
+        "expense",
+        "journal_entry",
+        "ar_payment",
+        "ap_payment",
+        "stock_adjustment",
+        "stock_transfer",
+        "commission",
+        "return",
+        "receivable",
+        "payable"
+      ]
+    }).notNull(),
+    entityId: sqliteCore.integer("entity_id").notNull(),
+    reason: sqliteCore.text("reason").notNull(),
+    priority: sqliteCore.text("priority", {
+      enum: ["low", "medium", "high", "urgent"]
+    }).notNull().default("medium"),
+    status: sqliteCore.text("status", {
+      enum: ["pending", "approved", "rejected", "completed", "failed"]
+    }).notNull().default("pending"),
+    requestedBy: sqliteCore.integer("requested_by").notNull().references(() => users.id),
+    reviewedBy: sqliteCore.integer("reviewed_by").references(() => users.id),
+    reviewedAt: sqliteCore.text("reviewed_at"),
+    rejectionReason: sqliteCore.text("rejection_reason"),
+    reversalDetails: sqliteCore.text("reversal_details", { mode: "json" }).$type(),
+    errorDetails: sqliteCore.text("error_details"),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    statusIdx: sqliteCore.index("rr_status_idx").on(table.status),
+    entityIdx: sqliteCore.index("rr_entity_idx").on(table.entityType, table.entityId),
+    branchIdx: sqliteCore.index("rr_branch_idx").on(table.branchId),
+    priorityIdx: sqliteCore.index("rr_priority_idx").on(table.priority)
+  })
+);
+const reversalRequestsRelations = drizzleOrm.relations(reversalRequests, ({ one }) => ({
+  requestedByUser: one(users, {
+    fields: [reversalRequests.requestedBy],
+    references: [users.id],
+    relationName: "requestedBy"
+  }),
+  reviewedByUser: one(users, {
+    fields: [reversalRequests.reviewedBy],
+    references: [users.id],
+    relationName: "reviewedBy"
+  }),
+  branch: one(branches, {
+    fields: [reversalRequests.branchId],
+    references: [branches.id]
+  })
+}));
+const userSecurityQuestions = sqliteCore.sqliteTable("user_security_questions", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  userId: sqliteCore.integer("user_id").notNull().references(() => users.id),
+  question: sqliteCore.text("question").notNull(),
+  answerHash: sqliteCore.text("answer_hash").notNull(),
+  sortOrder: sqliteCore.integer("sort_order").notNull().default(0),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const onlineTransactions = sqliteCore.sqliteTable(
+  "online_transactions",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
+    transactionDate: sqliteCore.text("transaction_date").notNull(),
+    // YYYY-MM-DD
+    amount: sqliteCore.real("amount").notNull(),
+    paymentChannel: sqliteCore.text("payment_channel", {
+      enum: ["bank_transfer", "mobile", "card", "cod", "cheque", "other"]
+    }).notNull(),
+    direction: sqliteCore.text("direction", {
+      enum: ["inflow", "outflow"]
+    }).notNull().default("inflow"),
+    referenceNumber: sqliteCore.text("reference_number"),
+    // Transaction ID, cheque #, etc.
+    customerName: sqliteCore.text("customer_name"),
+    // Name of payer/payee
+    customerId: sqliteCore.integer("customer_id").references(() => customers.id),
+    invoiceNumber: sqliteCore.text("invoice_number"),
+    // Linked invoice
+    bankAccountName: sqliteCore.text("bank_account_name"),
+    // Bank/wallet/account name
+    status: sqliteCore.text("status", {
+      enum: ["pending", "confirmed", "failed"]
+    }).notNull().default("pending"),
+    notes: sqliteCore.text("notes"),
+    // Source tracking - what created this record
+    sourceType: sqliteCore.text("source_type", {
+      enum: ["sale", "receivable_payment", "payable_payment", "manual"]
+    }).notNull().default("manual"),
+    sourceId: sqliteCore.integer("source_id"),
+    // ID of the source record
+    saleId: sqliteCore.integer("sale_id").references(() => sales.id),
+    receivableId: sqliteCore.integer("receivable_id").references(() => accountReceivables.id),
+    payableId: sqliteCore.integer("payable_id").references(() => accountPayables.id),
+    // Metadata
+    confirmedBy: sqliteCore.integer("confirmed_by").references(() => users.id),
+    confirmedAt: sqliteCore.text("confirmed_at"),
+    createdBy: sqliteCore.integer("created_by").references(() => users.id),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    branchIdx: sqliteCore.index("online_txn_branch_idx").on(table.branchId),
+    dateIdx: sqliteCore.index("online_txn_date_idx").on(table.transactionDate),
+    channelIdx: sqliteCore.index("online_txn_channel_idx").on(table.paymentChannel),
+    statusIdx: sqliteCore.index("online_txn_status_idx").on(table.status),
+    sourceIdx: sqliteCore.index("online_txn_source_idx").on(table.sourceType, table.sourceId),
+    saleIdx: sqliteCore.index("online_txn_sale_idx").on(table.saleId)
+  })
+);
+const onlineTransactionsRelations = drizzleOrm.relations(onlineTransactions, ({ one }) => ({
+  branch: one(branches, {
+    fields: [onlineTransactions.branchId],
+    references: [branches.id]
+  }),
+  customer: one(customers, {
+    fields: [onlineTransactions.customerId],
+    references: [customers.id]
+  }),
+  sale: one(sales, {
+    fields: [onlineTransactions.saleId],
+    references: [sales.id]
+  }),
+  receivable: one(accountReceivables, {
+    fields: [onlineTransactions.receivableId],
+    references: [accountReceivables.id]
+  }),
+  payable: one(accountPayables, {
+    fields: [onlineTransactions.payableId],
+    references: [accountPayables.id]
+  }),
+  confirmedByUser: one(users, {
+    fields: [onlineTransactions.confirmedBy],
+    references: [users.id]
+  }),
+  createdByUser: one(users, {
+    fields: [onlineTransactions.createdBy],
+    references: [users.id]
+  })
+}));
 const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProperty({
   __proto__: null,
   accountBalances,
@@ -1506,6 +1593,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   journalEntryLinesRelations,
   messages,
   messagesRelations,
+  onlineTransactions,
+  onlineTransactionsRelations,
   payablePayments,
   payablePaymentsRelations,
   products,
@@ -1516,14 +1605,12 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   referralPersons,
   returnItems,
   returns,
+  reversalRequests,
+  reversalRequestsRelations,
   saleItems,
   salePayments,
   saleServices,
   sales,
-  salesTabItems,
-  salesTabItemsRelations,
-  salesTabs,
-  salesTabsRelations,
   serviceCategories,
   services,
   settings,
@@ -1532,6 +1619,7 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   suppliers,
   todos,
   todosRelations,
+  userSecurityQuestions,
   users,
   vouchers
 }, Symbol.toStringTag, { value: "Module" }));
@@ -1556,17 +1644,66 @@ function getMachineId() {
   hash.update(components.join("|"));
   return hash.digest("hex").toUpperCase();
 }
-function generateLicenseKey(machineId) {
-  const hash = node_crypto.createHash("sha256");
-  hash.update(`${machineId}|${LICENSE_SECRET}`);
-  return hash.digest("hex").toUpperCase();
-}
 function getMachineIdForDisplay() {
   return getMachineId();
 }
-function validateLicenseKey(licenseKey, machineId) {
-  const validKey = generateLicenseKey(machineId);
-  return licenseKey.toUpperCase() === validKey.toUpperCase();
+function parseLicenseKey(licenseKey) {
+  const key = licenseKey.toUpperCase().replace(/\s/g, "");
+  if (key.length !== 100) return null;
+  if (!/^[A-F0-9]{100}$/.test(key)) return null;
+  const nonce = key.substring(0, 32);
+  const monthsHex = key.substring(32, 36);
+  const hmac = key.substring(36, 100);
+  const months = parseInt(monthsHex, 16);
+  if (months < 1 || months > 9999) return null;
+  return { nonce, months, hmac };
+}
+function validateNewFormatKey(licenseKey, machineId) {
+  const parsed = parseLicenseKey(licenseKey);
+  if (!parsed) return null;
+  const payload = `${machineId}|${parsed.months}|${parsed.nonce}`;
+  const expectedHmac = node_crypto.createHmac("sha256", LICENSE_SECRET).update(payload).digest("hex").toUpperCase();
+  if (parsed.hmac !== expectedHmac) return null;
+  return parsed.months;
+}
+function validateLegacyKey(licenseKey, machineId) {
+  const key = licenseKey.toUpperCase().replace(/\s/g, "");
+  if (key.length !== 64) return null;
+  const hash = node_crypto.createHash("sha256");
+  hash.update(`${machineId}|${LICENSE_SECRET}`);
+  const validKey = hash.digest("hex").toUpperCase();
+  if (key !== validKey) return null;
+  return 12;
+}
+function validateLicenseKeyWithDuration(licenseKey, machineId) {
+  const newResult = validateNewFormatKey(licenseKey, machineId);
+  if (newResult !== null) return newResult;
+  return validateLegacyKey(licenseKey, machineId);
+}
+function getUsedKeysFilePath() {
+  return node_path.join(electron.app.getPath("userData"), "used-keys.json");
+}
+function getUsedKeys() {
+  const filePath = getUsedKeysFilePath();
+  if (!node_fs.existsSync(filePath)) return [];
+  try {
+    const data = JSON.parse(node_fs.readFileSync(filePath, "utf-8"));
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+function addUsedKey(licenseKey) {
+  const keys = getUsedKeys();
+  const normalizedKey = licenseKey.toUpperCase().replace(/\s/g, "");
+  if (!keys.includes(normalizedKey)) {
+    keys.push(normalizedKey);
+    node_fs.writeFileSync(getUsedKeysFilePath(), JSON.stringify(keys, null, 2));
+  }
+}
+function isKeyAlreadyUsed(licenseKey) {
+  const keys = getUsedKeys();
+  return keys.includes(licenseKey.toUpperCase().replace(/\s/g, ""));
 }
 function getLicenseFilePath() {
   return node_path.join(electron.app.getPath("userData"), "license.json");
@@ -1645,23 +1782,34 @@ function getLicenseStatus() {
 function activateLicense(licenseKey) {
   const machineId = getMachineId();
   const licensePath = getLicenseFilePath();
-  const validKey = generateLicenseKey(machineId);
-  if (licenseKey.toUpperCase() !== validKey.toUpperCase()) {
+  if (isKeyAlreadyUsed(licenseKey)) {
+    return { success: false, message: "This license key has already been used. Each key can only be used once." };
+  }
+  const durationMonths = validateLicenseKeyWithDuration(licenseKey, machineId);
+  if (durationMonths === null) {
     return { success: false, message: "License key is not valid for this machine." };
   }
+  const now = /* @__PURE__ */ new Date();
+  const endDate = new Date(now);
+  endDate.setMonth(endDate.getMonth() + durationMonths);
   const licenseData = {
     machineId,
     licenseKey: licenseKey.toUpperCase(),
-    licenseStartDate: (/* @__PURE__ */ new Date()).toISOString(),
-    licenseEndDate: new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString(),
-    // 1 year
+    licenseStartDate: now.toISOString(),
+    licenseEndDate: endDate.toISOString(),
+    durationMonths,
     isPermanent: false,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString()
   };
   try {
     node_fs.writeFileSync(licensePath, JSON.stringify(licenseData, null, 2));
-    return { success: true, message: "License activated successfully for 1 year." };
+    addUsedKey(licenseKey);
+    return {
+      success: true,
+      message: `License activated successfully for ${durationMonths} month(s).`,
+      durationMonths
+    };
   } catch {
     return { success: false, message: "Failed to save license file." };
   }
@@ -1735,6 +1883,7 @@ function encryptDatabase(dbPath) {
   const key = deriveEncryptionKey();
   try {
     const plainDb = new Database(dbPath);
+    plainDb.pragma("journal_mode=DELETE");
     plainDb.pragma(`rekey='${key}'`);
     plainDb.close();
     setEncryptionStatus(true);
@@ -1779,6 +1928,7 @@ function decryptDatabase(dbPath) {
   try {
     const encDb = new Database(dbPath);
     encDb.pragma(`key='${key}'`);
+    encDb.pragma("journal_mode=DELETE");
     const result = encDb.pragma("integrity_check");
     if (!Array.isArray(result) || result.length === 0) {
       encDb.close();
@@ -1969,7 +2119,7 @@ async function migrateToBusinessSettings() {
       console.log("Creating default global settings...");
       await db2.insert(businessSettings).values({
         branchId: null,
-        businessName: "Firearms Retail POS",
+        businessName: "My Business",
         businessAddress: "",
         businessCity: "",
         businessState: "",
@@ -2008,7 +2158,6 @@ async function migrateToBusinessSettings() {
         requireCustomerForSale: false,
         enableCustomerLoyalty: false,
         loyaltyPointsRatio: 1,
-        expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
         expenseApprovalRequired: false,
         expenseApprovalLimit: 1e4,
         enableReturns: true,
@@ -2096,6 +2245,956 @@ async function addPhoneToUsers() {
     console.error("Migration failed:", error);
     return { success: false, message: `Migration failed: ${error}` };
   }
+}
+function getLocalIpAddress() {
+  try {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      const netInterfaces = nets[name];
+      if (!netInterfaces) continue;
+      for (const net of netInterfaces) {
+        if (net.family === "IPv4" && !net.internal) {
+          return net.address;
+        }
+      }
+    }
+  } catch {
+  }
+  return "127.0.0.1";
+}
+async function createAuditLog$1(params) {
+  const db2 = getDatabase();
+  try {
+    await db2.insert(auditLogs).values({
+      userId: params.userId ?? null,
+      branchId: params.branchId ?? null,
+      action: params.action,
+      entityType: params.entityType,
+      entityId: params.entityId ?? null,
+      oldValues: params.oldValues ?? null,
+      newValues: params.newValues ?? null,
+      description: params.description ?? null,
+      ipAddress: params.ipAddress ?? getLocalIpAddress()
+    });
+  } catch (error) {
+    console.error("Failed to create audit log:", error);
+  }
+}
+function sanitizeForAudit(obj) {
+  const sanitized = { ...obj };
+  const sensitiveFields = ["password", "token", "secret", "apiKey"];
+  for (const field of sensitiveFields) {
+    if (field in sanitized) {
+      sanitized[field] = "[REDACTED]";
+    }
+  }
+  return sanitized;
+}
+const ACCOUNT_CODES = {
+  CASH_IN_HAND: "1010",
+  CASH_IN_BANK: "1020",
+  ACCOUNTS_RECEIVABLE: "1100",
+  INVENTORY: "1200",
+  ACCOUNTS_PAYABLE: "2000",
+  SALES_TAX_PAYABLE: "2100",
+  COD_CHARGES_PAYABLE: "2150",
+  // COD charges collected - liability until paid to courier
+  OWNERS_CAPITAL: "3000",
+  RETAINED_EARNINGS: "3100",
+  SALES_REVENUE: "4000",
+  INVENTORY_ADJUSTMENT: "4900",
+  // Income from inventory surplus
+  COGS: "5000",
+  SALARIES_WAGES: "5100",
+  RENT_EXPENSE: "5200",
+  UTILITIES_EXPENSE: "5300",
+  INVENTORY_SHRINKAGE: "5400",
+  // Expense for inventory loss/damage/theft
+  OTHER_EXPENSE: "5900"
+};
+function generateJournalEntryNumber() {
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
+  return `JE-${year}-${timestamp}${random}`;
+}
+async function generateReversalNumber() {
+  const db2 = getDatabase();
+  const year = (/* @__PURE__ */ new Date()).getFullYear();
+  const prefix = `REV-${year}-`;
+  const lastEntry = await db2.query.reversalRequests.findFirst({
+    where: drizzleOrm.like(reversalRequests.requestNumber, `${prefix}%`),
+    orderBy: [drizzleOrm.desc(reversalRequests.id)]
+  });
+  let nextNum = 1;
+  if (lastEntry?.requestNumber) {
+    const lastNum = parseInt(lastEntry.requestNumber.replace(prefix, ""), 10);
+    if (!isNaN(lastNum)) nextNum = lastNum + 1;
+  }
+  return `${prefix}${String(nextNum).padStart(4, "0")}`;
+}
+const DEFAULT_ACCOUNTS = {
+  "1010": {
+    accountName: "Cash in Hand",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Cash on hand for daily transactions"
+  },
+  "1020": {
+    accountName: "Cash in Bank",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Bank account balances"
+  },
+  "1100": {
+    accountName: "Accounts Receivable",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Amounts owed by customers"
+  },
+  "1200": {
+    accountName: "Inventory",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Merchandise inventory"
+  },
+  "2000": {
+    accountName: "Accounts Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "Amounts owed to suppliers"
+  },
+  "2100": {
+    accountName: "Sales Tax Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "Sales tax collected to be remitted"
+  },
+  "2150": {
+    accountName: "COD Charges Payable",
+    accountType: "liability",
+    normalBalance: "credit",
+    description: "COD charges collected - liability until paid to courier"
+  },
+  "3000": {
+    accountName: "Owner's Capital",
+    accountType: "equity",
+    normalBalance: "credit",
+    description: "Owner's invested capital and initial funding"
+  },
+  "3100": {
+    accountName: "Retained Earnings",
+    accountType: "equity",
+    normalBalance: "credit",
+    description: "Accumulated net income retained in the business"
+  },
+  "4000": {
+    accountName: "Sales Revenue",
+    accountType: "revenue",
+    normalBalance: "credit",
+    description: "Revenue from product sales"
+  },
+  "4900": {
+    accountName: "Inventory Adjustment Income",
+    accountType: "revenue",
+    normalBalance: "credit",
+    description: "Income from inventory surplus adjustments"
+  },
+  "5000": {
+    accountName: "Cost of Goods Sold",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Cost of products sold"
+  },
+  "5100": {
+    accountName: "Salaries & Wages",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Employee salaries and wages"
+  },
+  "5200": {
+    accountName: "Rent Expense",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Rent for premises"
+  },
+  "5300": {
+    accountName: "Utilities Expense",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Electricity, water, gas expenses"
+  },
+  "5400": {
+    accountName: "Inventory Shrinkage",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Expense for inventory loss/damage/theft"
+  },
+  "5900": {
+    accountName: "Other Expenses",
+    accountType: "expense",
+    normalBalance: "debit",
+    description: "Miscellaneous expenses"
+  }
+};
+async function getAccountId(accountCode) {
+  const db2 = getDatabase();
+  let account = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
+  });
+  if (!account) {
+    const defaultAccount = DEFAULT_ACCOUNTS[accountCode];
+    if (defaultAccount) {
+      console.log(`Auto-creating missing GL account: ${accountCode} - ${defaultAccount.accountName}`);
+      const [newAccount] = await db2.insert(chartOfAccounts).values({
+        accountCode,
+        accountName: defaultAccount.accountName,
+        accountType: defaultAccount.accountType,
+        normalBalance: defaultAccount.normalBalance,
+        description: defaultAccount.description,
+        currentBalance: 0,
+        isActive: true,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).returning();
+      account = newAccount;
+    }
+  }
+  if (!account) {
+    throw new Error(`Account with code ${accountCode} not found and could not be auto-created`);
+  }
+  return account.id;
+}
+async function createJournalEntry(params) {
+  const db2 = getDatabase();
+  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
+  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
+  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
+  if (Math.abs(totalDebits - totalCredits) > 0.01) {
+    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
+  }
+  const entryNumber = generateJournalEntryNumber();
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const [entry] = await db2.insert(journalEntries).values({
+    entryNumber,
+    entryDate: entryDate || now.split("T")[0],
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    status: isAutoGenerated ? "posted" : "draft",
+    isAutoGenerated,
+    createdBy: userId,
+    postedBy: isAutoGenerated ? userId : null,
+    postedAt: isAutoGenerated ? now : null
+  }).returning();
+  for (const line of lines) {
+    if (line.debitAmount === 0 && line.creditAmount === 0) {
+      continue;
+    }
+    const accountId = await getAccountId(line.accountCode);
+    await db2.insert(journalEntryLines).values({
+      journalEntryId: entry.id,
+      accountId,
+      debitAmount: line.debitAmount,
+      creditAmount: line.creditAmount,
+      description: line.description
+    });
+    if (isAutoGenerated) {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (account) {
+        let balanceChange;
+        if (account.normalBalance === "debit") {
+          balanceChange = line.debitAmount - line.creditAmount;
+        } else {
+          balanceChange = line.creditAmount - line.debitAmount;
+        }
+        await db2.update(chartOfAccounts).set({
+          currentBalance: account.currentBalance + balanceChange,
+          updatedAt: now
+        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
+      }
+    }
+  }
+  await createAuditLog$1({
+    userId,
+    branchId,
+    action: "CREATE",
+    entityType: "journal_entry",
+    entityId: entry.id,
+    newValues: {
+      entryNumber: entry.entryNumber,
+      description,
+      referenceType,
+      referenceId,
+      status: entry.status,
+      totalDebits: lines.reduce((sum, l) => sum + l.debitAmount, 0),
+      totalCredits: lines.reduce((sum, l) => sum + l.creditAmount, 0),
+      lineCount: lines.length
+    },
+    description: `Journal entry ${entry.entryNumber} created for ${referenceType} #${referenceId}`
+  });
+  return entry.id;
+}
+async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
+  const lines = [];
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (payments && payments.length > 0) {
+    for (const payment of payments) {
+      if (payment.amount <= 0) continue;
+      const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : payment.method === "cod" ? "COD" : "Cash";
+      lines.push({
+        accountCode,
+        debitAmount: payment.amount,
+        creditAmount: 0,
+        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
+      });
+    }
+  } else if (sale.amountPaid > 0) {
+    const netCashReceived = sale.amountPaid - (sale.changeGiven || 0);
+    const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    if (netCashReceived > 0) {
+      lines.push({
+        accountCode: cashAccountCode,
+        debitAmount: netCashReceived,
+        creditAmount: 0,
+        description: `Cash received for sale ${sale.invoiceNumber}`
+      });
+    }
+  }
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: receivableAmount,
+      creditAmount: 0,
+      description: `Receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: 0,
+      creditAmount: netRevenue,
+      description: `Revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: 0,
+      creditAmount: sale.taxAmount,
+      description: `Sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  if (codCharges && codCharges > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: 0,
+      creditAmount: codCharges,
+      description: `COD charges collected for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Cost of goods sold for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Inventory reduction for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
+  const lines = [];
+  const totalValue = receivedItems.reduce(
+    (sum, item) => sum + item.unitCost * item.receivedQuantity,
+    0
+  );
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value purchase to GL");
+  }
+  lines.push({
+    accountCode: ACCOUNT_CODES.INVENTORY,
+    debitAmount: totalValue,
+    creditAmount: 0,
+    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
+  });
+  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payable for PO ${purchase.purchaseOrderNumber}`
+    });
+  } else {
+    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Payment for PO ${purchase.purchaseOrderNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
+    referenceType: "purchase",
+    referenceId: purchase.id,
+    branchId: purchase.branchId,
+    userId,
+    lines
+  });
+}
+async function postExpenseToGL(expense, userId) {
+  const lines = [];
+  const categoryToAccount = {
+    salaries: ACCOUNT_CODES.SALARIES_WAGES,
+    rent: ACCOUNT_CODES.RENT_EXPENSE,
+    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
+    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
+    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
+    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
+    other: ACCOUNT_CODES.OTHER_EXPENSE
+  };
+  const expenseAccount = categoryToAccount[expense.categoryName.toLowerCase()] || ACCOUNT_CODES.OTHER_EXPENSE;
+  lines.push({
+    accountCode: expenseAccount,
+    debitAmount: expense.amount,
+    creditAmount: 0,
+    description: expense.description || `Expense: ${expense.categoryName}`
+  });
+  if (expense.paymentStatus === "unpaid") {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payable for expense ${expense.categoryName}`
+    });
+  } else {
+    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    lines.push({
+      accountCode: cashAccount,
+      debitAmount: 0,
+      creditAmount: expense.amount,
+      description: `Payment for expense ${expense.categoryName}`
+    });
+  }
+  return createJournalEntry({
+    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ""}`,
+    referenceType: "expense",
+    referenceId: expense.id,
+    branchId: expense.branchId,
+    userId,
+    lines
+  });
+}
+async function postReturnToGL(returnData, returnItems2, userId) {
+  const lines = [];
+  const netRevenue = returnData.subtotal;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Revenue reversal for return ${returnData.returnNumber}`
+    });
+  }
+  if (returnData.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: returnData.taxAmount,
+      creditAmount: 0,
+      description: `Tax reversal for return ${returnData.returnNumber}`
+    });
+  }
+  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: returnData.totalAmount,
+    description: `Refund for return ${returnData.returnNumber}`
+  });
+  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
+  if (restockableCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: restockableCOGS,
+      creditAmount: 0,
+      description: `Inventory restored for return ${returnData.returnNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: restockableCOGS,
+      description: `COGS reversal for return ${returnData.returnNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Return: ${returnData.returnNumber}`,
+    referenceType: "return",
+    referenceId: returnData.id,
+    branchId: returnData.branchId,
+    userId,
+    lines
+  });
+}
+async function postARPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `Payment received for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `AR reduction for ${payment.invoiceNumber}`
+  });
+  return createJournalEntry({
+    description: `AR Payment: ${payment.invoiceNumber}`,
+    referenceType: "receivable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId,
+    lines
+  });
+}
+async function postAPPaymentToGL(payment, userId) {
+  const lines = [];
+  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  lines.push({
+    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+    debitAmount: payment.amount,
+    creditAmount: 0,
+    description: `AP payment for ${payment.invoiceNumber}`
+  });
+  lines.push({
+    accountCode: cashAccount,
+    debitAmount: 0,
+    creditAmount: payment.amount,
+    description: `Payment for ${payment.invoiceNumber}`
+  });
+  return createJournalEntry({
+    description: `AP Payment: ${payment.invoiceNumber}`,
+    referenceType: "payable_payment",
+    referenceId: payment.id,
+    branchId: payment.branchId,
+    userId,
+    lines
+  });
+}
+async function postVoidSaleToGL(sale, saleItems2, userId) {
+  const lines = [];
+  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  if (sale.amountPaid > 0) {
+    lines.push({
+      accountCode: cashAccountCode,
+      debitAmount: 0,
+      creditAmount: sale.amountPaid,
+      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
+    });
+  }
+  const receivableAmount = sale.totalAmount - sale.amountPaid;
+  if (receivableAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+      debitAmount: 0,
+      creditAmount: receivableAmount,
+      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
+    });
+  }
+  const netRevenue = sale.subtotal - sale.discountAmount;
+  if (netRevenue > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      debitAmount: netRevenue,
+      creditAmount: 0,
+      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
+    });
+  }
+  if (sale.taxAmount > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
+      debitAmount: sale.taxAmount,
+      creditAmount: 0,
+      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
+    });
+  }
+  const codCharges = sale.totalAmount - (sale.subtotal - sale.discountAmount + sale.taxAmount);
+  if (codCharges > 0.01) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
+      debitAmount: codCharges,
+      creditAmount: 0,
+      description: `Void - reverse COD charges for sale ${sale.invoiceNumber}`
+    });
+  }
+  const totalCOGS = saleItems2.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
+  if (totalCOGS > 0) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.COGS,
+      debitAmount: 0,
+      creditAmount: totalCOGS,
+      description: `Void - reverse COGS for ${sale.invoiceNumber}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalCOGS,
+      creditAmount: 0,
+      description: `Void - restore inventory for ${sale.invoiceNumber}`
+    });
+  }
+  return createJournalEntry({
+    description: `Void Sale: ${sale.invoiceNumber}`,
+    referenceType: "sale_void",
+    referenceId: sale.id,
+    branchId: sale.branchId,
+    userId,
+    lines
+  });
+}
+async function postStockAdjustmentToGL(adjustment, userId) {
+  const lines = [];
+  const totalValue = Math.abs(adjustment.quantityChange) * adjustment.unitCost;
+  if (totalValue <= 0) {
+    throw new Error("Cannot post zero-value adjustment to GL");
+  }
+  const productInfo = adjustment.productName ? `${adjustment.productName}` : "Unknown product";
+  const qtyInfo = adjustment.quantityBefore !== void 0 && adjustment.quantityAfter !== void 0 ? ` (${adjustment.quantityBefore} → ${adjustment.quantityAfter} units)` : ` (${Math.abs(adjustment.quantityChange)} units)`;
+  const detail = `${productInfo}${qtyInfo}`;
+  const isShrinkage = ["damage", "theft", "expired"].includes(adjustment.adjustmentType);
+  const isAdminRemoval = adjustment.adjustmentType === "remove";
+  const isCorrection = adjustment.adjustmentType === "correction";
+  const isAddition = adjustment.adjustmentType === "add";
+  if (isShrinkage) {
+    const typeLabel = adjustment.adjustmentType === "damage" ? "Damaged" : adjustment.adjustmentType === "theft" ? "Stolen" : "Expired";
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `${typeLabel} inventory: ${detail} - ${adjustment.reason}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory write-off: ${detail}`
+    });
+  } else if (isAdminRemoval) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory removed: ${detail} - ${adjustment.reason}`
+    });
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: `Inventory reduction: ${detail}`
+    });
+  } else if (isCorrection) {
+    if (adjustment.quantityChange < 0) {
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Cycle count shortage: ${detail} - ${adjustment.reason}`
+      });
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Inventory correction (shortage): ${detail}`
+      });
+    } else {
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY,
+        debitAmount: totalValue,
+        creditAmount: 0,
+        description: `Inventory correction (surplus): ${detail}`
+      });
+      lines.push({
+        accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+        debitAmount: 0,
+        creditAmount: totalValue,
+        description: `Cycle count surplus: ${detail} - ${adjustment.reason}`
+      });
+    }
+  } else if (isAddition) {
+    lines.push({
+      accountCode: ACCOUNT_CODES.INVENTORY,
+      debitAmount: totalValue,
+      creditAmount: 0,
+      description: `Inventory added: ${detail} - ${adjustment.reason}`
+    });
+    let creditAccount;
+    let creditDescription;
+    switch (adjustment.fundingSource) {
+      case "owner_capital":
+        creditAccount = ACCOUNT_CODES.OWNERS_CAPITAL;
+        creditDescription = `Owner capital investment: ${detail}`;
+        break;
+      case "accounts_payable":
+        creditAccount = ACCOUNT_CODES.ACCOUNTS_PAYABLE;
+        creditDescription = `Supplier payable: ${detail}`;
+        break;
+      case "surplus":
+      default:
+        creditAccount = ACCOUNT_CODES.INVENTORY_ADJUSTMENT;
+        creditDescription = `Inventory adjustment income: ${detail}`;
+        break;
+    }
+    lines.push({
+      accountCode: creditAccount,
+      debitAmount: 0,
+      creditAmount: totalValue,
+      description: creditDescription
+    });
+  }
+  const typeLabels = {
+    add: "Addition",
+    remove: "Removal",
+    damage: "Damage Write-off",
+    theft: "Theft Write-off",
+    correction: "Cycle Count Correction",
+    expired: "Expiry Write-off"
+  };
+  return createJournalEntry({
+    description: `Stock ${typeLabels[adjustment.adjustmentType] || adjustment.adjustmentType}: ${detail} - ${adjustment.reason}`,
+    referenceType: "stock_adjustment",
+    referenceId: adjustment.id,
+    branchId: adjustment.branchId,
+    userId,
+    lines
+  });
+}
+async function postCommissionPaymentToGL(commission, userId) {
+  const lines = [];
+  lines.push({
+    accountCode: ACCOUNT_CODES.OTHER_EXPENSE,
+    debitAmount: commission.commissionAmount,
+    creditAmount: 0,
+    description: `Commission payment: ${commission.commissionType} for sale #${commission.saleId}`
+  });
+  lines.push({
+    accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+    debitAmount: 0,
+    creditAmount: commission.commissionAmount,
+    description: `Cash paid for commission #${commission.id}`
+  });
+  return createJournalEntry({
+    description: `Commission Payment: ${commission.commissionType} commission #${commission.id}`,
+    referenceType: "commission",
+    referenceId: commission.id,
+    branchId: commission.branchId,
+    userId,
+    lines
+  });
+}
+async function fixFinancialIntegrity() {
+  const db2 = getDatabase();
+  const existing = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.eq(journalEntries.referenceType, "audit_correction")
+  });
+  if (existing) {
+    console.log("Financial integrity fix already applied, skipping.");
+    return;
+  }
+  console.log("Running financial integrity fix...");
+  const firstBranch = await db2.query.branches.findFirst();
+  const firstUser = await db2.query.users.findFirst();
+  if (!firstBranch || !firstUser) {
+    console.error("Cannot run financial integrity fix: no branches or users found.");
+    return;
+  }
+  const branchId = firstBranch.id;
+  const userId = firstUser.id;
+  console.log(`Using branchId=${branchId}, userId=${userId}`);
+  const ownerCapital = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "3000")
+  });
+  if (!ownerCapital) {
+    await db2.insert(chartOfAccounts).values({
+      accountCode: "3000",
+      accountName: "Owner's Capital",
+      accountType: "equity",
+      accountSubType: "owner_capital",
+      normalBalance: "credit",
+      description: "Owner's invested capital and initial funding",
+      currentBalance: 0,
+      isActive: true,
+      isSystemAccount: false,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log("Created Owner's Capital account (3000)");
+  }
+  const retainedEarnings = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "3100")
+  });
+  if (!retainedEarnings) {
+    await db2.insert(chartOfAccounts).values({
+      accountCode: "3100",
+      accountName: "Retained Earnings",
+      accountType: "equity",
+      accountSubType: "retained_earnings",
+      normalBalance: "credit",
+      description: "Accumulated net income retained in the business",
+      currentBalance: 0,
+      isActive: true,
+      isSystemAccount: false,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log("Created Retained Earnings account (3100)");
+  }
+  const invAdjAccount = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "4900")
+  });
+  if (!invAdjAccount || invAdjAccount.currentBalance === 0) {
+    console.log("No phantom revenue to correct (4900 balance is 0). Skipping reversal.");
+    return;
+  }
+  const phantomAmount = invAdjAccount.currentBalance;
+  await createJournalEntry({
+    description: `AUDIT CORRECTION: Reclassify Rs ${phantomAmount} from Inventory Adjustment Income to Owner's Capital — initial stock was owner-funded, not surplus`,
+    referenceType: "audit_correction",
+    referenceId: 0,
+    branchId,
+    userId,
+    lines: [
+      {
+        accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
+        debitAmount: phantomAmount,
+        creditAmount: 0,
+        description: `Reverse phantom revenue: initial stock was owner capital, not surplus income`
+      },
+      {
+        accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+        debitAmount: 0,
+        creditAmount: phantomAmount,
+        description: `Owner capital investment: initial inventory funding Rs ${phantomAmount}`
+      }
+    ]
+  });
+  console.log(`Reclassified Rs ${phantomAmount} from Inv Adj Income to Owner's Capital`);
+  await createJournalEntry({
+    description: "AUDIT CORRECTION: Cash register opening float — owner capital injection",
+    referenceType: "audit_correction",
+    referenceId: 0,
+    branchId,
+    userId,
+    lines: [
+      {
+        accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+        debitAmount: 15e3,
+        creditAmount: 0,
+        description: "Cash register opening float (session 2026-03-22)"
+      },
+      {
+        accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+        debitAmount: 0,
+        creditAmount: 15e3,
+        description: "Capital contribution: cash register opening float"
+      }
+    ]
+  });
+  console.log("Posted opening cash float Rs 15,000 as Owner's Capital");
+  console.log("Financial integrity fix completed successfully.");
+  console.log("Expected state:");
+  console.log("  Assets: Cash 70,000 + Inventory 510,000 = 580,000");
+  console.log("  Equity: Owner's Capital 550,000 + Net Income 30,000 = 580,000");
+  console.log("  Balance Sheet: BALANCED");
+}
+async function fixFinancialIntegrityV2() {
+  const db2 = getDatabase();
+  console.log("Running financial integrity fix v2...");
+  const accountsPayable = await db2.query.chartOfAccounts.findFirst({
+    where: drizzleOrm.eq(chartOfAccounts.accountCode, "2000")
+  });
+  if (!accountsPayable) {
+    await db2.insert(chartOfAccounts).values({
+      accountCode: "2000",
+      accountName: "Accounts Payable",
+      accountType: "liability",
+      normalBalance: "credit",
+      description: "Amounts owed to suppliers",
+      currentBalance: 0,
+      isActive: true,
+      isSystemAccount: false,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    console.log("Created Accounts Payable account (2000)");
+  } else {
+    console.log("Accounts Payable (2000) already exists, skipping.");
+  }
+  const missedSale = await db2.query.sales.findFirst({
+    where: drizzleOrm.eq(sales.invoiceNumber, "INV-20260322-R1HB")
+  });
+  if (missedSale) {
+    const existingTx = await db2.query.cashTransactions.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(cashTransactions.referenceType, "sale"),
+        drizzleOrm.eq(cashTransactions.referenceId, missedSale.id)
+      )
+    });
+    if (!existingTx) {
+      const session = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, missedSale.branchId),
+          drizzleOrm.eq(cashRegisterSessions.sessionDate, "2026-03-22")
+        )
+      });
+      if (session) {
+        await db2.insert(cashTransactions).values({
+          sessionId: session.id,
+          branchId: missedSale.branchId,
+          transactionType: "sale",
+          amount: missedSale.totalAmount,
+          referenceType: "sale",
+          referenceId: missedSale.id,
+          description: `Backfill: Cash sale ${missedSale.invoiceNumber} (missed due to sale preceding register opening)`,
+          recordedBy: missedSale.userId
+        });
+        console.log(`Backfilled cash transaction Rs ${missedSale.totalAmount} for ${missedSale.invoiceNumber}`);
+      } else {
+        console.warn("No register session found for backfill — skipping cash transaction.");
+      }
+    } else {
+      console.log(`Cash transaction for ${missedSale.invoiceNumber} already exists, skipping.`);
+    }
+  } else {
+    console.log("Sale INV-20260322-R1HB not found — skipping backfill.");
+  }
+  console.log("Financial integrity fix v2 completed.");
 }
 async function runMigrations() {
   const db2 = getDatabase();
@@ -2202,6 +3301,51 @@ async function runMigrations() {
     await ensureSetupChecklistStatusColumn();
   } catch (error) {
     console.error("Setup checklist status column migration error:", error);
+  }
+  try {
+    await migrateExpensesToCategoryId();
+  } catch (error) {
+    console.error("Expenses category_id migration error:", error);
+  }
+  try {
+    await ensureDefaultExpenseAndServiceCategories();
+  } catch (error) {
+    console.error("Default categories seeding error:", error);
+  }
+  try {
+    await ensureReversalRequestsTable();
+  } catch (error) {
+    console.error("Reversal requests table migration error:", error);
+  }
+  try {
+    await ensureExpensesVoidFields();
+  } catch (error) {
+    console.error("Expenses void fields migration error:", error);
+  }
+  try {
+    await ensureReturnItemsCostPrice();
+  } catch (error) {
+    console.error("Return items cost_price migration error:", error);
+  }
+  try {
+    await ensureSecurityQuestionsTable();
+  } catch (error) {
+    console.error("Security questions table migration error:", error);
+  }
+  try {
+    await ensureOnlineTransactionsTable();
+  } catch (error) {
+    console.error("Online transactions table migration error:", error);
+  }
+  try {
+    await fixFinancialIntegrity();
+  } catch (error) {
+    console.error("Financial integrity fix error:", error);
+  }
+  try {
+    await fixFinancialIntegrityV2();
+  } catch (error) {
+    console.error("Financial integrity fix v2 error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -2371,10 +3515,25 @@ async function seedInitialData() {
     { name: "Rifles", parentId: firearmsCategory.id, description: "All rifles" },
     { name: "Shotguns", parentId: firearmsCategory.id, description: "All shotguns" }
   ]);
+  await db2.insert(categories2).values([
+    { name: "Rent", description: "Rent for premises" },
+    { name: "Utilities", description: "Electricity, water, gas expenses" },
+    { name: "Salaries", description: "Employee salaries and wages" },
+    { name: "Supplies", description: "Office and business supplies" },
+    { name: "Maintenance", description: "Equipment and facility maintenance" },
+    { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Other", description: "Miscellaneous expenses" }
+  ]);
+  await db2.insert(categories2).values([
+    { name: "Repair", description: "Weapon repair services" },
+    { name: "Service Maintenance", description: "Regular maintenance and servicing" },
+    { name: "Customization", description: "Custom painting, coating, and modifications" },
+    { name: "Testing", description: "Testing and inspection services" }
+  ]);
   await db2.insert(settings2).values([
     {
       key: "company_name",
-      value: JSON.stringify("Firearms POS"),
+      value: JSON.stringify("My Business"),
       category: "company",
       description: "Company name displayed on receipts"
     },
@@ -2891,32 +4050,25 @@ async function ensureServicesTables() {
   ).get();
   if (!categoriesTableCheck) {
     console.log("Creating service_categories table...");
-    const categoriesMigration = `
-      CREATE TABLE IF NOT EXISTS "service_categories" (
-        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        "name" text NOT NULL UNIQUE,
-        "description" text,
-        "is_active" integer DEFAULT 1 NOT NULL,
-        "created_at" text NOT NULL,
-        "updated_at" text NOT NULL
-      );
-
-      -- Insert default service categories
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Repair', 'Weapon repair services', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Maintenance', 'Regular maintenance and servicing', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Customization', 'Custom painting, coating, and modifications', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Testing', 'Testing and inspection services', 1, datetime('now'), datetime('now'));
-      INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at")
-      VALUES ('Other', 'Other services', 1, datetime('now'), datetime('now'));
-    `;
-    rawDb.exec(categoriesMigration);
+    rawDb.exec(
+      'CREATE TABLE IF NOT EXISTS "service_categories" ("id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,"name" text NOT NULL UNIQUE,"description" text,"is_active" integer DEFAULT 1 NOT NULL,"created_at" text NOT NULL,"updated_at" text NOT NULL)'
+    );
     console.log("service_categories table created successfully!");
   } else {
     console.log("service_categories table exists: true");
+  }
+  const seedCategories = rawDb.prepare(
+    `INSERT OR IGNORE INTO "service_categories" ("name", "description", "is_active", "created_at", "updated_at") VALUES (?, ?, 1, datetime('now'), datetime('now'))`
+  );
+  const defaultServiceCategories = [
+    ["Repair", "Weapon repair services"],
+    ["Maintenance", "Regular maintenance and servicing"],
+    ["Customization", "Custom painting, coating, and modifications"],
+    ["Testing", "Testing and inspection services"],
+    ["Other", "Other services"]
+  ];
+  for (const [name, description] of defaultServiceCategories) {
+    seedCategories.run(name, description);
   }
   const servicesTableCheck = rawDb.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='services'`
@@ -3004,6 +4156,13 @@ async function fixCommissionsUserIdNullable() {
     return;
   }
   console.log("Fixing commissions.user_id to be nullable (recreating table)...");
+  const leftoverCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='commissions_new'`
+  ).get();
+  if (leftoverCheck) {
+    rawDb.prepare('DROP TABLE "commissions_new"').run();
+    console.log("Dropped leftover commissions_new table from previous attempt");
+  }
   const migrationStatements = [
     `CREATE TABLE "commissions_new" (
       "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -3025,7 +4184,7 @@ async function fixCommissionsUserIdNullable() {
       FOREIGN KEY ("referral_person_id") REFERENCES "referral_persons"("id") ON UPDATE no action ON DELETE no action,
       FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
     )`,
-    'INSERT INTO "commissions_new" SELECT * FROM "commissions"',
+    `INSERT INTO "commissions_new" ("id", "sale_id", "user_id", "referral_person_id", "branch_id", "commission_type", "base_amount", "rate", "commission_amount", "status", "paid_date", "notes", "created_at", "updated_at") SELECT "id", "sale_id", "user_id", "referral_person_id", "branch_id", COALESCE("commission_type", 'sale'), "base_amount", "rate", "commission_amount", COALESCE("status", 'pending'), "paid_date", "notes", "created_at", "updated_at" FROM "commissions"`,
     'DROP TABLE "commissions"',
     'ALTER TABLE "commissions_new" RENAME TO "commissions"'
   ];
@@ -3057,49 +4216,263 @@ async function ensureSetupChecklistStatusColumn() {
   rawDb.exec("ALTER TABLE application_info ADD COLUMN setup_checklist_status TEXT");
   console.log("application_info.setup_checklist_status column added successfully");
 }
-function getLocalIpAddress() {
-  try {
-    const nets = os.networkInterfaces();
-    for (const name of Object.keys(nets)) {
-      const netInterfaces = nets[name];
-      if (!netInterfaces) continue;
-      for (const net of netInterfaces) {
-        if (net.family === "IPv4" && !net.internal) {
-          return net.address;
-        }
+async function migrateExpensesToCategoryId() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get();
+  if (!tableCheck) {
+    console.log("expenses table does not exist, skipping category_id migration");
+    return;
+  }
+  const tableInfo = rawDb.prepare("PRAGMA table_info(expenses)").all();
+  const hasCategoryId = tableInfo.some((col) => col.name === "category_id");
+  const hasCategory = tableInfo.some((col) => col.name === "category");
+  if (hasCategoryId) {
+    console.log("expenses.category_id column exists: true");
+    return;
+  }
+  if (!hasCategory) {
+    console.log("expenses.category column does not exist, skipping migration");
+    return;
+  }
+  console.log("Migrating expenses from category text to category_id FK...");
+  const defaultExpenseCategories = [
+    { name: "Rent", description: "Rent for premises" },
+    { name: "Utilities", description: "Electricity, water, gas expenses" },
+    { name: "Salaries", description: "Employee salaries and wages" },
+    { name: "Supplies", description: "Office and business supplies" },
+    { name: "Maintenance", description: "Equipment and facility maintenance" },
+    { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Other", description: "Miscellaneous expenses" }
+  ];
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  for (const cat of defaultExpenseCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now);
+  }
+  rawDb.prepare(
+    `ALTER TABLE expenses ADD COLUMN category_id INTEGER REFERENCES categories(id)`
+  ).run();
+  const categoryMapping = {
+    rent: "Rent",
+    utilities: "Utilities",
+    salaries: "Salaries",
+    supplies: "Supplies",
+    maintenance: "Maintenance",
+    marketing: "Marketing",
+    other: "Other"
+  };
+  for (const [oldValue, categoryName] of Object.entries(categoryMapping)) {
+    const category = rawDb.prepare(
+      `SELECT id FROM categories WHERE name = ?`
+    ).get(categoryName);
+    if (category) {
+      rawDb.prepare(
+        `UPDATE expenses SET category_id = ? WHERE category = ?`
+      ).run(category.id, oldValue);
+    }
+  }
+  const otherCategory = rawDb.prepare(
+    `SELECT id FROM categories WHERE name = 'Other'`
+  ).get();
+  if (otherCategory) {
+    rawDb.prepare(
+      `UPDATE expenses SET category_id = ? WHERE category_id IS NULL`
+    ).run(otherCategory.id);
+  }
+  console.log("expenses category_id migration completed successfully!");
+}
+async function ensureDefaultExpenseAndServiceCategories() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='categories'`
+  ).get();
+  if (!tableCheck) {
+    console.log("categories table does not exist, skipping default categories seeding");
+    return;
+  }
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const expenseCategories = [
+    { name: "Rent", description: "Rent for premises" },
+    { name: "Utilities", description: "Electricity, water, gas expenses" },
+    { name: "Salaries", description: "Employee salaries and wages" },
+    { name: "Supplies", description: "Office and business supplies" },
+    { name: "Maintenance", description: "Equipment and facility maintenance" },
+    { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Other", description: "Miscellaneous expenses" }
+  ];
+  const serviceCats = [
+    { name: "Repair", description: "Weapon repair services" },
+    { name: "Service Maintenance", description: "Regular maintenance and servicing" },
+    { name: "Customization", description: "Custom painting, coating, and modifications" },
+    { name: "Testing", description: "Testing and inspection services" }
+  ];
+  const allCategories = [...expenseCategories, ...serviceCats];
+  for (const cat of allCategories) {
+    rawDb.prepare(
+      `INSERT OR IGNORE INTO categories (name, description, is_active, created_at, updated_at) VALUES (?, ?, 1, ?, ?)`
+    ).run(cat.name, cat.description, now, now);
+  }
+  console.log("Default expense and service categories ensured in categories table");
+}
+async function ensureReversalRequestsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='reversal_requests'`
+  ).get();
+  if (!tableCheck) {
+    console.log("Starting migration for reversal_requests table...");
+    const migrationSQL = `
+      CREATE TABLE IF NOT EXISTS "reversal_requests" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "request_number" text NOT NULL UNIQUE,
+        "entity_type" text NOT NULL,
+        "entity_id" integer NOT NULL,
+        "reason" text NOT NULL,
+        "priority" text DEFAULT 'medium' NOT NULL,
+        "status" text DEFAULT 'pending' NOT NULL,
+        "requested_by" integer NOT NULL,
+        "reviewed_by" integer,
+        "reviewed_at" text,
+        "rejection_reason" text,
+        "reversal_details" text,
+        "error_details" text,
+        "branch_id" integer NOT NULL,
+        "created_at" text NOT NULL,
+        "updated_at" text NOT NULL,
+        FOREIGN KEY ("requested_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("reviewed_by") REFERENCES "users"("id") ON UPDATE no action ON DELETE no action,
+        FOREIGN KEY ("branch_id") REFERENCES "branches"("id") ON UPDATE no action ON DELETE no action
+      );
+
+      CREATE INDEX IF NOT EXISTS "rr_status_idx" ON "reversal_requests" ("status");
+      CREATE INDEX IF NOT EXISTS "rr_entity_idx" ON "reversal_requests" ("entity_type", "entity_id");
+      CREATE INDEX IF NOT EXISTS "rr_branch_idx" ON "reversal_requests" ("branch_id");
+      CREATE INDEX IF NOT EXISTS "rr_priority_idx" ON "reversal_requests" ("priority");
+    `;
+    db2.exec(migrationSQL);
+    console.log("reversal_requests table migration completed successfully!");
+  } else {
+    console.log("reversal_requests table exists: true");
+  }
+}
+async function ensureExpensesVoidFields() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableCheck = db2.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='expenses'`
+  ).get();
+  if (!tableCheck) {
+    console.log("expenses table does not exist, skipping void fields migration");
+    return;
+  }
+  const tableInfo = db2.prepare(`PRAGMA table_info(expenses)`).all();
+  const existingColumns = new Set(tableInfo.map((col) => col.name));
+  const columnsToAdd = [
+    { name: "is_voided", sql: `ALTER TABLE expenses ADD COLUMN is_voided INTEGER DEFAULT 0 NOT NULL` },
+    { name: "void_reason", sql: `ALTER TABLE expenses ADD COLUMN void_reason TEXT` }
+  ];
+  for (const column of columnsToAdd) {
+    if (!existingColumns.has(column.name)) {
+      console.log(`Adding expenses.${column.name} column...`);
+      try {
+        db2.exec(column.sql);
+        console.log(`expenses.${column.name} column added successfully`);
+      } catch (error) {
+        console.error(`Error adding expenses.${column.name} column:`, error);
       }
-    }
-  } catch {
-  }
-  return "127.0.0.1";
-}
-async function createAuditLog$1(params) {
-  const db2 = getDatabase();
-  try {
-    await db2.insert(auditLogs).values({
-      userId: params.userId ?? null,
-      branchId: params.branchId ?? null,
-      action: params.action,
-      entityType: params.entityType,
-      entityId: params.entityId ?? null,
-      oldValues: params.oldValues ?? null,
-      newValues: params.newValues ?? null,
-      description: params.description ?? null,
-      ipAddress: params.ipAddress ?? getLocalIpAddress()
-    });
-  } catch (error) {
-    console.error("Failed to create audit log:", error);
-  }
-}
-function sanitizeForAudit(obj) {
-  const sanitized = { ...obj };
-  const sensitiveFields = ["password", "token", "secret", "apiKey"];
-  for (const field of sensitiveFields) {
-    if (field in sanitized) {
-      sanitized[field] = "[REDACTED]";
+    } else {
+      console.log(`expenses.${column.name} column exists: true`);
     }
   }
-  return sanitized;
+  console.log("expenses void fields migration completed successfully!");
+}
+async function ensureReturnItemsCostPrice() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const db2 = getRawDatabase2();
+  const tableInfo = db2.prepare(`PRAGMA table_info(return_items)`).all();
+  const hasCostPrice = tableInfo.some((col) => col.name === "cost_price");
+  if (hasCostPrice) {
+    console.log("return_items.cost_price column exists: true");
+    return;
+  }
+  console.log("Adding return_items.cost_price column...");
+  db2.prepare(`ALTER TABLE return_items ADD COLUMN cost_price REAL DEFAULT 0 NOT NULL`).run();
+  console.log("return_items.cost_price column added successfully");
+}
+async function ensureSecurityQuestionsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const exists = rawDb.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='user_security_questions'`).get();
+  if (exists) {
+    console.log("user_security_questions table exists: true");
+    return;
+  }
+  console.log("Creating user_security_questions table...");
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "user_security_questions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "user_id" integer NOT NULL REFERENCES "users"("id"),
+      "question" text NOT NULL,
+      "answer_hash" text NOT NULL,
+      "sort_order" integer NOT NULL DEFAULT 0,
+      "created_at" text NOT NULL DEFAULT (datetime('now')),
+      "updated_at" text NOT NULL DEFAULT (datetime('now'))
+    )
+  `).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "usq_user_idx" ON "user_security_questions" ("user_id")`).run();
+  console.log("user_security_questions table created successfully!");
+}
+async function ensureOnlineTransactionsTable() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='online_transactions'`
+  ).get();
+  if (tableCheck) {
+    console.log("online_transactions table exists: true");
+    return;
+  }
+  console.log("Creating online_transactions table...");
+  rawDb.prepare(`
+    CREATE TABLE IF NOT EXISTS "online_transactions" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "branch_id" integer NOT NULL REFERENCES "branches"("id"),
+      "transaction_date" text NOT NULL,
+      "amount" real NOT NULL,
+      "payment_channel" text NOT NULL,
+      "direction" text DEFAULT 'inflow' NOT NULL,
+      "reference_number" text,
+      "customer_name" text,
+      "customer_id" integer REFERENCES "customers"("id"),
+      "invoice_number" text,
+      "bank_account_name" text,
+      "status" text DEFAULT 'pending' NOT NULL,
+      "notes" text,
+      "source_type" text DEFAULT 'manual' NOT NULL,
+      "source_id" integer,
+      "sale_id" integer REFERENCES "sales"("id"),
+      "receivable_id" integer REFERENCES "account_receivables"("id"),
+      "payable_id" integer REFERENCES "account_payables"("id"),
+      "confirmed_by" integer REFERENCES "users"("id"),
+      "confirmed_at" text,
+      "created_by" integer REFERENCES "users"("id"),
+      "created_at" text NOT NULL,
+      "updated_at" text NOT NULL
+    )
+  `).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_branch_idx" ON "online_transactions" ("branch_id")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_date_idx" ON "online_transactions" ("transaction_date")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_channel_idx" ON "online_transactions" ("payment_channel")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_status_idx" ON "online_transactions" ("status")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_source_idx" ON "online_transactions" ("source_type", "source_id")`).run();
+  rawDb.prepare(`CREATE INDEX IF NOT EXISTS "online_txn_sale_idx" ON "online_transactions" ("sale_id")`).run();
+  console.log("online_transactions table created successfully!");
 }
 let currentSession = null;
 function registerAuthHandlers() {
@@ -3581,15 +4954,49 @@ function registerProductHandlers() {
       return { success: false, message: "Failed to search products" };
     }
   });
+  electron.ipcMain.handle(
+    "products:get-available",
+    async (_, params) => {
+      try {
+        const db22 = getDatabase();
+        const { branchId, categoryId, searchQuery, limit = 100 } = params;
+        const conditions = [drizzleOrm.eq(products.isActive, true)];
+        if (categoryId) {
+          conditions.push(drizzleOrm.eq(products.categoryId, categoryId));
+        }
+        if (searchQuery) {
+          conditions.push(
+            drizzleOrm.sql`(${products.name} LIKE ${`%${searchQuery}%`} OR ${products.code} LIKE ${`%${searchQuery}%`} OR ${products.barcode} LIKE ${`%${searchQuery}%`})`
+          );
+        }
+        const results = await db22.select({
+          product: products,
+          quantity: inventory.quantity
+        }).from(products).leftJoin(inventory, drizzleOrm.and(drizzleOrm.eq(inventory.productId, products.id), drizzleOrm.eq(inventory.branchId, branchId))).where(drizzleOrm.and(...conditions)).limit(limit).orderBy(products.name);
+        const availableProducts = results.filter((r) => (r.quantity ?? 0) > 0);
+        return { success: true, data: availableProducts };
+      } catch (error) {
+        console.error("Get available products error:", error);
+        return { success: false, message: "Failed to fetch available products" };
+      }
+    }
+  );
 }
 function registerCategoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("categories:get-all", async () => {
     try {
       const data = await db2.query.categories.findMany({
-        orderBy: drizzleOrm.desc(categories.name)
+        orderBy: categories.name
       });
-      return { success: true, data };
+      const seen = /* @__PURE__ */ new Map();
+      const uniqueData = data.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? "root"}`;
+        if (seen.has(key)) return false;
+        seen.set(key, true);
+        return true;
+      });
+      return { success: true, data: uniqueData };
     } catch (error) {
       console.error("Get categories error:", error);
       return { success: false, message: "Failed to fetch categories" };
@@ -3600,8 +5007,15 @@ function registerCategoryHandlers() {
       const allCategories = await db2.query.categories.findMany({
         where: drizzleOrm.eq(categories.isActive, true)
       });
+      const seen = /* @__PURE__ */ new Map();
+      const uniqueCategories = allCategories.filter((cat) => {
+        const key = `${cat.name}::${cat.parentId ?? "root"}`;
+        if (seen.has(key)) return false;
+        seen.set(key, true);
+        return true;
+      });
       const buildTree = (parentId) => {
-        return allCategories.filter((cat) => cat.parentId === parentId).map((cat) => ({
+        return uniqueCategories.filter((cat) => cat.parentId === parentId).map((cat) => ({
           ...cat,
           children: buildTree(cat.id)
         }));
@@ -3630,6 +5044,16 @@ function registerCategoryHandlers() {
   electron.ipcMain.handle("categories:create", async (_, data) => {
     try {
       const session = getCurrentSession();
+      const existing = await db2.query.categories.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(categories.name, data.name),
+          data.parentId ? drizzleOrm.eq(categories.parentId, data.parentId) : drizzleOrm.isNull(categories.parentId),
+          drizzleOrm.eq(categories.isActive, true)
+        )
+      });
+      if (existing) {
+        return { success: false, message: `Category "${data.name}" already exists${data.parentId ? " under this parent" : ""}` };
+      }
       const result = await db2.insert(categories).values(data).returning();
       const newCategory = result[0];
       await createAuditLog$1({
@@ -3752,598 +5176,6 @@ async function withTransaction(fn) {
     throw error;
   }
 }
-const ACCOUNT_CODES = {
-  CASH_IN_HAND: "1010",
-  CASH_IN_BANK: "1020",
-  ACCOUNTS_RECEIVABLE: "1100",
-  INVENTORY: "1200",
-  ACCOUNTS_PAYABLE: "2000",
-  SALES_TAX_PAYABLE: "2100",
-  COD_CHARGES_PAYABLE: "2150",
-  // COD charges collected - liability until paid to courier
-  SALES_REVENUE: "4000",
-  INVENTORY_ADJUSTMENT: "4900",
-  // Income from inventory surplus
-  COGS: "5000",
-  SALARIES_WAGES: "5100",
-  RENT_EXPENSE: "5200",
-  UTILITIES_EXPENSE: "5300",
-  INVENTORY_SHRINKAGE: "5400",
-  // Expense for inventory loss/damage/theft
-  OTHER_EXPENSE: "5900"
-};
-function generateJournalEntryNumber() {
-  const year = (/* @__PURE__ */ new Date()).getFullYear();
-  const timestamp = Date.now().toString().slice(-6);
-  const random = Math.floor(Math.random() * 1e3).toString().padStart(3, "0");
-  return `JE-${year}-${timestamp}${random}`;
-}
-const DEFAULT_ACCOUNTS = {
-  "1010": {
-    accountName: "Cash in Hand",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Cash on hand for daily transactions"
-  },
-  "1020": {
-    accountName: "Cash in Bank",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Bank account balances"
-  },
-  "1100": {
-    accountName: "Accounts Receivable",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Amounts owed by customers"
-  },
-  "1200": {
-    accountName: "Inventory",
-    accountType: "asset",
-    normalBalance: "debit",
-    description: "Merchandise inventory"
-  },
-  "2000": {
-    accountName: "Accounts Payable",
-    accountType: "liability",
-    normalBalance: "credit",
-    description: "Amounts owed to suppliers"
-  },
-  "2100": {
-    accountName: "Sales Tax Payable",
-    accountType: "liability",
-    normalBalance: "credit",
-    description: "Sales tax collected to be remitted"
-  },
-  "2150": {
-    accountName: "COD Charges Payable",
-    accountType: "liability",
-    normalBalance: "credit",
-    description: "COD charges collected - liability until paid to courier"
-  },
-  "4000": {
-    accountName: "Sales Revenue",
-    accountType: "revenue",
-    normalBalance: "credit",
-    description: "Revenue from product sales"
-  },
-  "4900": {
-    accountName: "Inventory Adjustment Income",
-    accountType: "revenue",
-    normalBalance: "credit",
-    description: "Income from inventory surplus adjustments"
-  },
-  "5000": {
-    accountName: "Cost of Goods Sold",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Cost of products sold"
-  },
-  "5100": {
-    accountName: "Salaries & Wages",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Employee salaries and wages"
-  },
-  "5200": {
-    accountName: "Rent Expense",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Rent for premises"
-  },
-  "5300": {
-    accountName: "Utilities Expense",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Electricity, water, gas expenses"
-  },
-  "5400": {
-    accountName: "Inventory Shrinkage",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Expense for inventory loss/damage/theft"
-  },
-  "5900": {
-    accountName: "Other Expenses",
-    accountType: "expense",
-    normalBalance: "debit",
-    description: "Miscellaneous expenses"
-  }
-};
-async function getAccountId(accountCode) {
-  const db2 = getDatabase();
-  let account = await db2.query.chartOfAccounts.findFirst({
-    where: drizzleOrm.eq(chartOfAccounts.accountCode, accountCode)
-  });
-  if (!account) {
-    const defaultAccount = DEFAULT_ACCOUNTS[accountCode];
-    if (defaultAccount) {
-      console.log(`Auto-creating missing GL account: ${accountCode} - ${defaultAccount.accountName}`);
-      const [newAccount] = await db2.insert(chartOfAccounts).values({
-        accountCode,
-        accountName: defaultAccount.accountName,
-        accountType: defaultAccount.accountType,
-        normalBalance: defaultAccount.normalBalance,
-        description: defaultAccount.description,
-        currentBalance: 0,
-        isActive: true,
-        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).returning();
-      account = newAccount;
-    }
-  }
-  if (!account) {
-    throw new Error(`Account with code ${accountCode} not found and could not be auto-created`);
-  }
-  return account.id;
-}
-async function createJournalEntry(params) {
-  const db2 = getDatabase();
-  const { description, referenceType, referenceId, branchId, userId, lines, isAutoGenerated = true, entryDate } = params;
-  const totalDebits = lines.reduce((sum, l) => sum + l.debitAmount, 0);
-  const totalCredits = lines.reduce((sum, l) => sum + l.creditAmount, 0);
-  if (Math.abs(totalDebits - totalCredits) > 0.01) {
-    throw new Error(`Journal entry unbalanced: Debits (${totalDebits}) != Credits (${totalCredits})`);
-  }
-  const entryNumber = generateJournalEntryNumber();
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  const [entry] = await db2.insert(journalEntries).values({
-    entryNumber,
-    entryDate: entryDate || now.split("T")[0],
-    description,
-    referenceType,
-    referenceId,
-    branchId,
-    status: isAutoGenerated ? "posted" : "draft",
-    isAutoGenerated,
-    createdBy: userId,
-    postedBy: isAutoGenerated ? userId : null,
-    postedAt: isAutoGenerated ? now : null
-  }).returning();
-  for (const line of lines) {
-    if (line.debitAmount === 0 && line.creditAmount === 0) {
-      continue;
-    }
-    const accountId = await getAccountId(line.accountCode);
-    await db2.insert(journalEntryLines).values({
-      journalEntryId: entry.id,
-      accountId,
-      debitAmount: line.debitAmount,
-      creditAmount: line.creditAmount,
-      description: line.description
-    });
-    if (isAutoGenerated) {
-      const account = await db2.query.chartOfAccounts.findFirst({
-        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
-      });
-      if (account) {
-        let balanceChange;
-        if (account.normalBalance === "debit") {
-          balanceChange = line.debitAmount - line.creditAmount;
-        } else {
-          balanceChange = line.creditAmount - line.debitAmount;
-        }
-        await db2.update(chartOfAccounts).set({
-          currentBalance: account.currentBalance + balanceChange,
-          updatedAt: now
-        }).where(drizzleOrm.eq(chartOfAccounts.id, accountId));
-      }
-    }
-  }
-  await createAuditLog$1({
-    userId,
-    branchId,
-    action: "CREATE",
-    entityType: "journal_entry",
-    entityId: entry.id,
-    newValues: {
-      entryNumber: entry.entryNumber,
-      description,
-      referenceType,
-      referenceId,
-      status: entry.status,
-      totalDebits: lines.reduce((sum, l) => sum + l.debitAmount, 0),
-      totalCredits: lines.reduce((sum, l) => sum + l.creditAmount, 0),
-      lineCount: lines.length
-    },
-    description: `Journal entry ${entry.entryNumber} created for ${referenceType} #${referenceId}`
-  });
-  return entry.id;
-}
-async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
-  const lines = [];
-  const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (payments && payments.length > 0) {
-    for (const payment of payments) {
-      if (payment.amount <= 0) continue;
-      const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-      const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : "Cash";
-      lines.push({
-        accountCode,
-        debitAmount: payment.amount,
-        creditAmount: 0,
-        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
-      });
-    }
-  } else if (sale.amountPaid > 0) {
-    const netCashReceived = sale.amountPaid - (sale.changeGiven || 0);
-    const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    if (netCashReceived > 0) {
-      lines.push({
-        accountCode: cashAccountCode,
-        debitAmount: netCashReceived,
-        creditAmount: 0,
-        description: `Cash received for sale ${sale.invoiceNumber}`
-      });
-    }
-  }
-  if (receivableAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-      debitAmount: receivableAmount,
-      creditAmount: 0,
-      description: `Receivable for sale ${sale.invoiceNumber}`
-    });
-  }
-  const netRevenue = sale.subtotal - sale.discountAmount;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: 0,
-      creditAmount: netRevenue,
-      description: `Revenue from sale ${sale.invoiceNumber}`
-    });
-  }
-  if (sale.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: 0,
-      creditAmount: sale.taxAmount,
-      description: `Sales tax for sale ${sale.invoiceNumber}`
-    });
-  }
-  if (codCharges && codCharges > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COD_CHARGES_PAYABLE,
-      debitAmount: 0,
-      creditAmount: codCharges,
-      description: `COD charges collected for sale ${sale.invoiceNumber}`
-    });
-  }
-  const totalCOGS = saleItems2.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
-  if (totalCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: totalCOGS,
-      creditAmount: 0,
-      description: `Cost of goods sold for ${sale.invoiceNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: 0,
-      creditAmount: totalCOGS,
-      description: `Inventory reduction for ${sale.invoiceNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Sale: ${sale.invoiceNumber}`,
-    referenceType: "sale",
-    referenceId: sale.id,
-    branchId: sale.branchId,
-    userId,
-    lines
-  });
-}
-async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
-  const lines = [];
-  const totalValue = receivedItems.reduce(
-    (sum, item) => sum + item.unitCost * item.receivedQuantity,
-    0
-  );
-  if (totalValue <= 0) {
-    throw new Error("Cannot post zero-value purchase to GL");
-  }
-  lines.push({
-    accountCode: ACCOUNT_CODES.INVENTORY,
-    debitAmount: totalValue,
-    creditAmount: 0,
-    description: `Inventory received for PO ${purchase.purchaseOrderNumber}`
-  });
-  if (purchase.paymentMethod === "pay_later" || purchase.paymentStatus === "pending") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Payable for PO ${purchase.purchaseOrderNumber}`
-    });
-  } else {
-    const cashAccount = purchase.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccount,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Payment for PO ${purchase.purchaseOrderNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Purchase Receive: ${purchase.purchaseOrderNumber}`,
-    referenceType: "purchase",
-    referenceId: purchase.id,
-    branchId: purchase.branchId,
-    userId
-  });
-}
-async function postExpenseToGL(expense, userId) {
-  const lines = [];
-  const categoryToAccount = {
-    salaries: ACCOUNT_CODES.SALARIES_WAGES,
-    rent: ACCOUNT_CODES.RENT_EXPENSE,
-    utilities: ACCOUNT_CODES.UTILITIES_EXPENSE,
-    supplies: ACCOUNT_CODES.OTHER_EXPENSE,
-    maintenance: ACCOUNT_CODES.OTHER_EXPENSE,
-    marketing: ACCOUNT_CODES.OTHER_EXPENSE,
-    other: ACCOUNT_CODES.OTHER_EXPENSE
-  };
-  const expenseAccount = categoryToAccount[expense.category] || ACCOUNT_CODES.OTHER_EXPENSE;
-  lines.push({
-    accountCode: expenseAccount,
-    debitAmount: expense.amount,
-    creditAmount: 0,
-    description: expense.description || `Expense: ${expense.category}`
-  });
-  if (expense.paymentStatus === "unpaid") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-      debitAmount: 0,
-      creditAmount: expense.amount,
-      description: `Payable for expense ${expense.category}`
-    });
-  } else {
-    const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-    lines.push({
-      accountCode: cashAccount,
-      debitAmount: 0,
-      creditAmount: expense.amount,
-      description: `Payment for expense ${expense.category}`
-    });
-  }
-  return createJournalEntry({
-    description: `Expense: ${expense.category}${expense.description ? ` - ${expense.description}` : ""}`,
-    referenceType: "expense",
-    referenceId: expense.id,
-    branchId: expense.branchId,
-    userId,
-    lines
-  });
-}
-async function postReturnToGL(returnData, returnItems2, userId) {
-  const lines = [];
-  const netRevenue = returnData.subtotal;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: netRevenue,
-      creditAmount: 0,
-      description: `Revenue reversal for return ${returnData.returnNumber}`
-    });
-  }
-  if (returnData.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: returnData.taxAmount,
-      creditAmount: 0,
-      description: `Tax reversal for return ${returnData.returnNumber}`
-    });
-  }
-  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: 0,
-    creditAmount: returnData.totalAmount,
-    description: `Refund for return ${returnData.returnNumber}`
-  });
-  const restockableCOGS = returnItems2.filter((item) => item.restockable).reduce((sum, item) => sum + item.costPrice * item.quantity, 0);
-  if (restockableCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: restockableCOGS,
-      creditAmount: 0,
-      description: `Inventory restored for return ${returnData.returnNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: 0,
-      creditAmount: restockableCOGS,
-      description: `COGS reversal for return ${returnData.returnNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Return: ${returnData.returnNumber}`,
-    referenceType: "return",
-    referenceId: returnData.id,
-    branchId: returnData.branchId,
-    userId,
-    lines
-  });
-}
-async function postARPaymentToGL(payment, userId) {
-  const lines = [];
-  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: payment.amount,
-    creditAmount: 0,
-    description: `Payment received for ${payment.invoiceNumber}`
-  });
-  lines.push({
-    accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-    debitAmount: 0,
-    creditAmount: payment.amount,
-    description: `AR reduction for ${payment.invoiceNumber}`
-  });
-  return createJournalEntry({
-    description: `AR Payment: ${payment.invoiceNumber}`,
-    referenceType: "receivable_payment",
-    referenceId: payment.id,
-    branchId: payment.branchId,
-    userId,
-    lines
-  });
-}
-async function postAPPaymentToGL(payment, userId) {
-  const lines = [];
-  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  lines.push({
-    accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
-    debitAmount: payment.amount,
-    creditAmount: 0,
-    description: `AP payment for ${payment.invoiceNumber}`
-  });
-  lines.push({
-    accountCode: cashAccount,
-    debitAmount: 0,
-    creditAmount: payment.amount,
-    description: `Payment for ${payment.invoiceNumber}`
-  });
-  return createJournalEntry({
-    description: `AP Payment: ${payment.invoiceNumber}`,
-    referenceType: "payable_payment",
-    referenceId: payment.id,
-    branchId: payment.branchId,
-    userId,
-    lines
-  });
-}
-async function postVoidSaleToGL(sale, saleItems2, userId) {
-  const lines = [];
-  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
-  if (sale.amountPaid > 0) {
-    lines.push({
-      accountCode: cashAccountCode,
-      debitAmount: 0,
-      creditAmount: sale.amountPaid,
-      description: `Void - reverse cash for sale ${sale.invoiceNumber}`
-    });
-  }
-  const receivableAmount = sale.totalAmount - sale.amountPaid;
-  if (receivableAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
-      debitAmount: 0,
-      creditAmount: receivableAmount,
-      description: `Void - reverse receivable for sale ${sale.invoiceNumber}`
-    });
-  }
-  const netRevenue = sale.subtotal - sale.discountAmount;
-  if (netRevenue > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
-      debitAmount: netRevenue,
-      creditAmount: 0,
-      description: `Void - reverse revenue from sale ${sale.invoiceNumber}`
-    });
-  }
-  if (sale.taxAmount > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.SALES_TAX_PAYABLE,
-      debitAmount: sale.taxAmount,
-      creditAmount: 0,
-      description: `Void - reverse sales tax for sale ${sale.invoiceNumber}`
-    });
-  }
-  const totalCOGS = saleItems2.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
-  if (totalCOGS > 0) {
-    lines.push({
-      accountCode: ACCOUNT_CODES.COGS,
-      debitAmount: 0,
-      creditAmount: totalCOGS,
-      description: `Void - reverse COGS for ${sale.invoiceNumber}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: totalCOGS,
-      creditAmount: 0,
-      description: `Void - restore inventory for ${sale.invoiceNumber}`
-    });
-  }
-  return createJournalEntry({
-    description: `Void Sale: ${sale.invoiceNumber}`,
-    referenceType: "sale_void",
-    referenceId: sale.id,
-    branchId: sale.branchId,
-    userId,
-    lines
-  });
-}
-async function postStockAdjustmentToGL(adjustment, userId) {
-  const lines = [];
-  const totalValue = adjustment.quantityChange * adjustment.unitCost;
-  if (totalValue <= 0) {
-    throw new Error("Cannot post zero-value adjustment to GL");
-  }
-  if (adjustment.adjustmentType === "remove") {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY_SHRINKAGE,
-      debitAmount: totalValue,
-      creditAmount: 0,
-      description: `Inventory shrinkage: ${adjustment.reason}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Inventory reduction: ${adjustment.reason}`
-    });
-  } else {
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY,
-      debitAmount: totalValue,
-      creditAmount: 0,
-      description: `Inventory increase: ${adjustment.reason}`
-    });
-    lines.push({
-      accountCode: ACCOUNT_CODES.INVENTORY_ADJUSTMENT,
-      debitAmount: 0,
-      creditAmount: totalValue,
-      description: `Inventory adjustment income: ${adjustment.reason}`
-    });
-  }
-  return createJournalEntry({
-    description: `Stock Adjustment: ${adjustment.adjustmentType} - ${adjustment.reason}`,
-    referenceType: "stock_adjustment",
-    referenceId: adjustment.id,
-    branchId: adjustment.branchId,
-    userId,
-    lines
-  });
-}
 function registerInventoryHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("inventory:get-by-branch", async (_, branchId) => {
@@ -4408,7 +5240,7 @@ function registerInventoryHandlers() {
     async (_, data) => {
       try {
         const session = getCurrentSession();
-        let currentInventory = await db2.query.inventory.findFirst({
+        const currentInventory = await db2.query.inventory.findFirst({
           where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, data.productId), drizzleOrm.eq(inventory.branchId, data.branchId))
         });
         const product = await db2.query.products.findFirst({
@@ -4422,32 +5254,32 @@ function registerInventoryHandlers() {
         if (quantityAfter < 0) {
           return { success: false, message: "Insufficient stock for this adjustment" };
         }
-        if (currentInventory) {
-          await db2.update(inventory).set({
-            quantity: quantityAfter,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(inventory.id, currentInventory.id));
-        } else {
-          await db2.insert(inventory).values({
+        const result = await withTransaction(async ({ db: txDb }) => {
+          if (currentInventory) {
+            await txDb.update(inventory).set({
+              quantity: quantityAfter,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(inventory.id, currentInventory.id));
+          } else {
+            await txDb.insert(inventory).values({
+              productId: data.productId,
+              branchId: data.branchId,
+              quantity: quantityAfter
+            });
+          }
+          const [adjustment] = await txDb.insert(stockAdjustments).values({
             productId: data.productId,
             branchId: data.branchId,
-            quantity: quantityAfter
-          });
-        }
-        const [adjustment] = await db2.insert(stockAdjustments).values({
-          productId: data.productId,
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          adjustmentType: data.adjustmentType,
-          quantityBefore,
-          quantityChange: data.quantityChange,
-          quantityAfter,
-          serialNumber: data.serialNumber,
-          reason: data.reason,
-          reference: data.reference
-        }).returning();
-        if (data.quantityChange > 0) {
-          try {
+            userId: session?.userId ?? 0,
+            adjustmentType: data.adjustmentType,
+            quantityBefore,
+            quantityChange: data.quantityChange,
+            quantityAfter,
+            serialNumber: data.serialNumber,
+            reason: data.reason,
+            reference: data.reference
+          }).returning();
+          if (data.quantityChange > 0) {
             await postStockAdjustmentToGL(
               {
                 id: adjustment.id,
@@ -4456,14 +5288,17 @@ function registerInventoryHandlers() {
                 quantityChange: data.quantityChange,
                 unitCost: product.costPrice,
                 reason: data.reason,
-                reference: data.reference
+                reference: data.reference,
+                fundingSource: data.fundingSource,
+                productName: product.name,
+                quantityBefore,
+                quantityAfter
               },
               session?.userId ?? 0
             );
-          } catch (glError) {
-            console.error("GL posting for stock adjustment failed:", glError);
           }
-        }
+          return adjustment;
+        });
         await createAuditLog$1({
           userId: session?.userId,
           branchId: data.branchId,
@@ -4831,7 +5666,7 @@ function registerCustomerHandlers() {
     "customers:get-all",
     async (_, params) => {
       try {
-        const { page = 1, limit = 20, sortBy = "createdAt", sortOrder = "desc", search, isActive } = params;
+        const { page = 1, limit = 20, sortBy = "createdAt", sortOrder = "desc", search, isActive } = params || {};
         const conditions = [];
         if (search) {
           conditions.push(
@@ -5067,7 +5902,7 @@ function registerSupplierHandlers() {
     "suppliers:get-all",
     async (_, params) => {
       try {
-        const { page = 1, limit = 20, sortBy = "name", sortOrder = "asc", search, isActive } = params;
+        const { page = 1, limit = 20, sortBy = "name", sortOrder = "asc", search, isActive } = params || {};
         const conditions = [];
         if (search) {
           conditions.push(
@@ -5261,6 +6096,138 @@ async function consumeCostLayersFIFO(productId, branchId, quantity) {
   }
   return { totalCost, layersConsumed };
 }
+async function consumeCostLayersLIFO(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const layers = await db2.query.inventoryCostLayers.findMany({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(inventoryCostLayers.productId, productId),
+      drizzleOrm.eq(inventoryCostLayers.branchId, branchId),
+      drizzleOrm.eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: drizzleOrm.desc(inventoryCostLayers.receivedDate)
+  });
+  let remainingQty = quantity;
+  let totalCost = 0;
+  const layersConsumed = [];
+  for (const layer of layers) {
+    if (remainingQty <= 0) break;
+    const consumeQty = Math.min(remainingQty, layer.quantity);
+    const layerCost = consumeQty * layer.unitCost;
+    totalCost += layerCost;
+    remainingQty -= consumeQty;
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: layer.unitCost,
+      cost: layerCost
+    });
+    const newQuantity = layer.quantity - consumeQty;
+    const isFullyConsumed = newQuantity <= 0;
+    await db2.update(inventoryCostLayers).set({
+      quantity: newQuantity,
+      isFullyConsumed,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(inventoryCostLayers.id, layer.id));
+  }
+  if (remainingQty > 0) {
+    const product = await db2.query.products.findFirst({
+      where: drizzleOrm.eq(products.id, productId)
+    });
+    if (product) {
+      const fallbackCost = remainingQty * product.costPrice;
+      totalCost += fallbackCost;
+      layersConsumed.push({
+        layerId: -1,
+        quantityConsumed: remainingQty,
+        unitCost: product.costPrice,
+        cost: fallbackCost
+      });
+      console.warn(
+        `LIFO: Insufficient cost layers for product ${productId}. Used product.costPrice (${product.costPrice}) for ${remainingQty} units.`
+      );
+    }
+  }
+  return { totalCost, layersConsumed };
+}
+async function consumeCostLayersWeightedAverage(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const layers = await db2.query.inventoryCostLayers.findMany({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(inventoryCostLayers.productId, productId),
+      drizzleOrm.eq(inventoryCostLayers.branchId, branchId),
+      drizzleOrm.eq(inventoryCostLayers.isFullyConsumed, false)
+    ),
+    orderBy: drizzleOrm.asc(inventoryCostLayers.receivedDate)
+  });
+  let totalValue = 0;
+  let totalQuantity = 0;
+  for (const layer of layers) {
+    totalValue += layer.quantity * layer.unitCost;
+    totalQuantity += layer.quantity;
+  }
+  let avgCost;
+  if (totalQuantity > 0) {
+    avgCost = totalValue / totalQuantity;
+  } else {
+    const product = await db2.query.products.findFirst({
+      where: drizzleOrm.eq(products.id, productId)
+    });
+    avgCost = product?.costPrice || 0;
+  }
+  let remainingQty = quantity;
+  let totalCostResult = 0;
+  const layersConsumed = [];
+  for (const layer of layers) {
+    if (remainingQty <= 0) break;
+    const consumeQty = Math.min(remainingQty, layer.quantity);
+    const layerCost = consumeQty * avgCost;
+    totalCostResult += layerCost;
+    remainingQty -= consumeQty;
+    layersConsumed.push({
+      layerId: layer.id,
+      quantityConsumed: consumeQty,
+      unitCost: avgCost,
+      cost: layerCost
+    });
+    const newQuantity = layer.quantity - consumeQty;
+    const isFullyConsumed = newQuantity <= 0;
+    await db2.update(inventoryCostLayers).set({
+      quantity: newQuantity,
+      isFullyConsumed,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(inventoryCostLayers.id, layer.id));
+  }
+  if (remainingQty > 0) {
+    const fallbackCost = remainingQty * avgCost;
+    totalCostResult += fallbackCost;
+    layersConsumed.push({
+      layerId: -1,
+      quantityConsumed: remainingQty,
+      unitCost: avgCost,
+      cost: fallbackCost
+    });
+    console.warn(
+      `WeightedAverage: Insufficient cost layers for product ${productId}. Used weighted average cost (${avgCost.toFixed(2)}) for ${remainingQty} units.`
+    );
+  }
+  return { totalCost: totalCostResult, layersConsumed };
+}
+async function consumeCostLayers(productId, branchId, quantity) {
+  const db2 = getDatabase();
+  const settings2 = await db2.query.businessSettings.findFirst({
+    where: drizzleOrm.isNull(businessSettings.branchId)
+  });
+  const method = settings2?.stockValuationMethod || "FIFO";
+  switch (method) {
+    case "LIFO":
+      return consumeCostLayersLIFO(productId, branchId, quantity);
+    case "Average":
+      return consumeCostLayersWeightedAverage(productId, branchId, quantity);
+    case "FIFO":
+    default:
+      return consumeCostLayersFIFO(productId, branchId, quantity);
+  }
+}
 async function addCostLayer(data) {
   const db2 = getDatabase();
   const [layer] = await db2.insert(inventoryCostLayers).values({
@@ -5290,6 +6257,467 @@ async function restoreCostLayers(data) {
   }).returning();
   return layer.id;
 }
+class AppError extends Error {
+  constructor(message, options = {}) {
+    super(message);
+    this.name = "AppError";
+    this.code = options.code || "UNKNOWN_ERROR";
+    this.category = options.category || "system";
+    this.isRetryable = options.isRetryable || false;
+    if (options.cause) {
+      this.cause = options.cause;
+    }
+  }
+}
+function classifyError(error) {
+  if (error instanceof AppError) {
+    return {
+      message: error.message,
+      code: error.code,
+      category: error.category,
+      isRetryable: error.isRetryable,
+      originalError: error
+    };
+  }
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const errorCode = error?.code;
+  if (errorCode === "SQLITE_BUSY" || errorMessage.includes("SQLITE_BUSY") || errorMessage.includes("database is locked")) {
+    return {
+      message: "Database is busy. Please try again.",
+      code: "SQLITE_BUSY",
+      category: "database",
+      isRetryable: true,
+      originalError: error
+    };
+  }
+  if (errorCode === "SQLITE_LOCKED" || errorMessage.includes("SQLITE_LOCKED")) {
+    return {
+      message: "Database table is locked. Please try again.",
+      code: "SQLITE_LOCKED",
+      category: "database",
+      isRetryable: true,
+      originalError: error
+    };
+  }
+  if (errorCode === "SQLITE_CONSTRAINT" || errorMessage.includes("SQLITE_CONSTRAINT") || errorMessage.includes("UNIQUE constraint") || errorMessage.includes("FOREIGN KEY constraint")) {
+    let userMessage = "A data constraint was violated.";
+    if (errorMessage.includes("UNIQUE constraint")) {
+      userMessage = "A record with this value already exists.";
+    } else if (errorMessage.includes("FOREIGN KEY constraint")) {
+      userMessage = "Referenced record does not exist or cannot be removed.";
+    }
+    return {
+      message: userMessage,
+      code: "SQLITE_CONSTRAINT",
+      category: "database",
+      isRetryable: false,
+      originalError: error
+    };
+  }
+  if (errorCode === "SQLITE_READONLY" || errorMessage.includes("SQLITE_READONLY")) {
+    return {
+      message: "Database is read-only.",
+      code: "SQLITE_READONLY",
+      category: "database",
+      isRetryable: false,
+      originalError: error
+    };
+  }
+  return {
+    message: "An unexpected error occurred.",
+    code: errorCode || "UNKNOWN_ERROR",
+    category: "system",
+    isRetryable: false,
+    originalError: error
+  };
+}
+function handleIpcError(operation, error) {
+  const classified = classifyError(error);
+  console.error(`${operation} error [${classified.category}/${classified.code}]:`, error);
+  return { success: false, message: classified.message };
+}
+function mapPaymentMethodToChannel(method) {
+  switch (method) {
+    case "bank_transfer":
+      return "bank_transfer";
+    case "mobile":
+      return "mobile";
+    case "card":
+    case "debit_card":
+      return "card";
+    case "cod":
+      return "cod";
+    case "cheque":
+      return "cheque";
+    default:
+      return "other";
+  }
+}
+function registerOnlineTransactionHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "online-transactions:get-all",
+    async (_, filters) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const page = filters.page || 1;
+        const limit = filters.limit || 50;
+        const offset = (page - 1) * limit;
+        const conditions = [];
+        if (filters.branchId) {
+          conditions.push(drizzleOrm.eq(onlineTransactions.branchId, filters.branchId));
+        }
+        if (filters.paymentChannel && filters.paymentChannel !== "all") {
+          conditions.push(drizzleOrm.eq(onlineTransactions.paymentChannel, filters.paymentChannel));
+        }
+        if (filters.status && filters.status !== "all") {
+          conditions.push(drizzleOrm.eq(onlineTransactions.status, filters.status));
+        }
+        if (filters.direction && filters.direction !== "all") {
+          conditions.push(drizzleOrm.eq(onlineTransactions.direction, filters.direction));
+        }
+        if (filters.startDate) {
+          conditions.push(drizzleOrm.gte(onlineTransactions.transactionDate, filters.startDate));
+        }
+        if (filters.endDate) {
+          conditions.push(drizzleOrm.lte(onlineTransactions.transactionDate, filters.endDate));
+        }
+        if (filters.search) {
+          const term = `%${filters.search}%`;
+          conditions.push(
+            drizzleOrm.or(
+              drizzleOrm.like(onlineTransactions.referenceNumber, term),
+              drizzleOrm.like(onlineTransactions.customerName, term),
+              drizzleOrm.like(onlineTransactions.invoiceNumber, term),
+              drizzleOrm.like(onlineTransactions.bankAccountName, term),
+              drizzleOrm.like(onlineTransactions.notes, term)
+            )
+          );
+        }
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const [data, countResult] = await Promise.all([
+          db2.select({
+            id: onlineTransactions.id,
+            branchId: onlineTransactions.branchId,
+            transactionDate: onlineTransactions.transactionDate,
+            amount: onlineTransactions.amount,
+            paymentChannel: onlineTransactions.paymentChannel,
+            direction: onlineTransactions.direction,
+            referenceNumber: onlineTransactions.referenceNumber,
+            customerName: onlineTransactions.customerName,
+            customerId: onlineTransactions.customerId,
+            invoiceNumber: onlineTransactions.invoiceNumber,
+            bankAccountName: onlineTransactions.bankAccountName,
+            status: onlineTransactions.status,
+            notes: onlineTransactions.notes,
+            sourceType: onlineTransactions.sourceType,
+            sourceId: onlineTransactions.sourceId,
+            saleId: onlineTransactions.saleId,
+            receivableId: onlineTransactions.receivableId,
+            payableId: onlineTransactions.payableId,
+            confirmedAt: onlineTransactions.confirmedAt,
+            createdAt: onlineTransactions.createdAt,
+            createdByName: users.fullName
+          }).from(onlineTransactions).leftJoin(users, drizzleOrm.eq(onlineTransactions.createdBy, users.id)).where(whereClause).orderBy(drizzleOrm.desc(onlineTransactions.transactionDate), drizzleOrm.desc(onlineTransactions.id)).limit(limit).offset(offset),
+          db2.select({ count: drizzleOrm.sql`count(*)` }).from(onlineTransactions).where(whereClause)
+        ]);
+        const total = countResult[0]?.count || 0;
+        return {
+          success: true,
+          data,
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        };
+      } catch (error) {
+        console.error("Get online transactions error:", error);
+        return { success: false, message: "Failed to fetch online transactions" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "online-transactions:create",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const [record] = await db2.insert(onlineTransactions).values({
+          branchId: data.branchId,
+          transactionDate: data.transactionDate || (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+          amount: data.amount,
+          paymentChannel: data.paymentChannel,
+          direction: data.direction || "inflow",
+          referenceNumber: data.referenceNumber,
+          customerName: data.customerName,
+          customerId: data.customerId,
+          invoiceNumber: data.invoiceNumber,
+          bankAccountName: data.bankAccountName,
+          status: data.status || "pending",
+          notes: data.notes,
+          sourceType: "manual",
+          createdBy: session.userId
+        }).returning();
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: data.branchId,
+          action: "create",
+          entityType: "online_transaction",
+          entityId: record.id,
+          newValues: {
+            amount: record.amount,
+            paymentChannel: record.paymentChannel,
+            direction: record.direction
+          },
+          description: `Created manual online transaction: ${record.paymentChannel} ${record.amount}`
+        });
+        return { success: true, data: record };
+      } catch (error) {
+        console.error("Create online transaction error:", error);
+        return { success: false, message: "Failed to create online transaction" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "online-transactions:update",
+    async (_, id, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const existing = await db2.query.onlineTransactions.findFirst({
+          where: drizzleOrm.eq(onlineTransactions.id, id)
+        });
+        if (!existing) return { success: false, message: "Transaction not found" };
+        if (existing.sourceType !== "manual" && existing.status === "confirmed") {
+          return { success: false, message: "Cannot edit confirmed auto-recorded transactions" };
+        }
+        const updateData = { updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+        const editableFields = [
+          "transactionDate",
+          "amount",
+          "paymentChannel",
+          "direction",
+          "referenceNumber",
+          "customerName",
+          "customerId",
+          "invoiceNumber",
+          "bankAccountName",
+          "status",
+          "notes"
+        ];
+        for (const field of editableFields) {
+          if (data[field] !== void 0) {
+            updateData[field] = data[field];
+          }
+        }
+        const [updated] = await db2.update(onlineTransactions).set(updateData).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: existing.branchId,
+          action: "update",
+          entityType: "online_transaction",
+          entityId: id,
+          oldValues: existing,
+          newValues: updateData,
+          description: `Updated online transaction #${id}`
+        });
+        return { success: true, data: updated };
+      } catch (error) {
+        console.error("Update online transaction error:", error);
+        return { success: false, message: "Failed to update online transaction" };
+      }
+    }
+  );
+  electron.ipcMain.handle("online-transactions:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const existing = await db2.query.onlineTransactions.findFirst({
+        where: drizzleOrm.eq(onlineTransactions.id, id)
+      });
+      if (!existing) return { success: false, message: "Transaction not found" };
+      if (existing.status === "confirmed") {
+        return { success: false, message: "Cannot delete confirmed transactions" };
+      }
+      await db2.delete(onlineTransactions).where(drizzleOrm.eq(onlineTransactions.id, id));
+      await createAuditLog$1({
+        userId: session.userId,
+        branchId: existing.branchId,
+        action: "delete",
+        entityType: "online_transaction",
+        entityId: id,
+        oldValues: existing,
+        description: `Deleted online transaction #${id}`
+      });
+      return { success: true };
+    } catch (error) {
+      console.error("Delete online transaction error:", error);
+      return { success: false, message: "Failed to delete online transaction" };
+    }
+  });
+  electron.ipcMain.handle("online-transactions:confirm", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const existing = await db2.query.onlineTransactions.findFirst({
+        where: drizzleOrm.eq(onlineTransactions.id, id)
+      });
+      if (!existing) return { success: false, message: "Transaction not found" };
+      if (existing.status === "confirmed") {
+        return { success: false, message: "Transaction is already confirmed" };
+      }
+      const [updated] = await db2.update(onlineTransactions).set({
+        status: "confirmed",
+        confirmedBy: session.userId,
+        confirmedAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+      await createAuditLog$1({
+        userId: session.userId,
+        branchId: existing.branchId,
+        action: "update",
+        entityType: "online_transaction",
+        entityId: id,
+        oldValues: { status: existing.status },
+        newValues: { status: "confirmed" },
+        description: `Confirmed online transaction #${id}`
+      });
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error("Confirm online transaction error:", error);
+      return { success: false, message: "Failed to confirm transaction" };
+    }
+  });
+  electron.ipcMain.handle("online-transactions:bulk-confirm", async (_, ids) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      await db2.update(onlineTransactions).set({
+        status: "confirmed",
+        confirmedBy: session.userId,
+        confirmedAt: now,
+        updatedAt: now
+      }).where(
+        drizzleOrm.and(
+          drizzleOrm.inArray(onlineTransactions.id, ids),
+          drizzleOrm.eq(onlineTransactions.status, "pending")
+        )
+      );
+      return { success: true, message: `${ids.length} transactions confirmed` };
+    } catch (error) {
+      console.error("Bulk confirm error:", error);
+      return { success: false, message: "Failed to confirm transactions" };
+    }
+  });
+  electron.ipcMain.handle("online-transactions:mark-failed", async (_, id, reason) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      const [updated] = await db2.update(onlineTransactions).set({
+        status: "failed",
+        notes: reason ? drizzleOrm.sql`CASE WHEN ${onlineTransactions.notes} IS NOT NULL THEN ${onlineTransactions.notes} || ' | Failed: ' || ${reason} ELSE 'Failed: ' || ${reason} END` : onlineTransactions.notes,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+      return { success: true, data: updated };
+    } catch (error) {
+      console.error("Mark failed error:", error);
+      return { success: false, message: "Failed to update transaction" };
+    }
+  });
+  electron.ipcMain.handle(
+    "online-transactions:dashboard",
+    async (_, params) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Unauthorized" };
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        let startDate = today;
+        let endDate = today;
+        if (params.timePeriod === "custom" && params.customStart && params.customEnd) {
+          startDate = params.customStart;
+          endDate = params.customEnd;
+        } else if (params.timePeriod === "week") {
+          const d = /* @__PURE__ */ new Date();
+          d.setDate(d.getDate() - 7);
+          startDate = d.toISOString().split("T")[0];
+        } else if (params.timePeriod === "month") {
+          const d = /* @__PURE__ */ new Date();
+          d.setDate(1);
+          startDate = d.toISOString().split("T")[0];
+        } else if (params.timePeriod === "year") {
+          startDate = `${(/* @__PURE__ */ new Date()).getFullYear()}-01-01`;
+        }
+        const branchCondition = drizzleOrm.eq(onlineTransactions.branchId, params.branchId);
+        const dateRange = drizzleOrm.and(
+          drizzleOrm.gte(onlineTransactions.transactionDate, startDate),
+          drizzleOrm.lte(onlineTransactions.transactionDate, endDate)
+        );
+        const todayCondition = drizzleOrm.and(
+          branchCondition,
+          drizzleOrm.eq(onlineTransactions.transactionDate, today)
+        );
+        const periodCondition = drizzleOrm.and(branchCondition, dateRange);
+        const [todayByChannel, periodByChannel, statusSummary, recentPending] = await Promise.all([
+          // Today's totals per channel
+          db2.select({
+            paymentChannel: onlineTransactions.paymentChannel,
+            direction: onlineTransactions.direction,
+            total: drizzleOrm.sql`COALESCE(SUM(${onlineTransactions.amount}), 0)`,
+            count: drizzleOrm.sql`count(*)`,
+            confirmed: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'confirmed' THEN ${onlineTransactions.amount} ELSE 0 END)`,
+            pending: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'pending' THEN ${onlineTransactions.amount} ELSE 0 END)`
+          }).from(onlineTransactions).where(todayCondition).groupBy(onlineTransactions.paymentChannel, onlineTransactions.direction),
+          // Period totals per channel
+          db2.select({
+            paymentChannel: onlineTransactions.paymentChannel,
+            direction: onlineTransactions.direction,
+            total: drizzleOrm.sql`COALESCE(SUM(${onlineTransactions.amount}), 0)`,
+            count: drizzleOrm.sql`count(*)`,
+            confirmed: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'confirmed' THEN ${onlineTransactions.amount} ELSE 0 END)`,
+            pending: drizzleOrm.sql`SUM(CASE WHEN ${onlineTransactions.status} = 'pending' THEN ${onlineTransactions.amount} ELSE 0 END)`
+          }).from(onlineTransactions).where(periodCondition).groupBy(onlineTransactions.paymentChannel, onlineTransactions.direction),
+          // Overall status summary for the period
+          db2.select({
+            status: onlineTransactions.status,
+            total: drizzleOrm.sql`COALESCE(SUM(${onlineTransactions.amount}), 0)`,
+            count: drizzleOrm.sql`count(*)`
+          }).from(onlineTransactions).where(periodCondition).groupBy(onlineTransactions.status),
+          // Recent pending transactions
+          db2.select({
+            id: onlineTransactions.id,
+            transactionDate: onlineTransactions.transactionDate,
+            amount: onlineTransactions.amount,
+            paymentChannel: onlineTransactions.paymentChannel,
+            customerName: onlineTransactions.customerName,
+            invoiceNumber: onlineTransactions.invoiceNumber,
+            referenceNumber: onlineTransactions.referenceNumber,
+            direction: onlineTransactions.direction
+          }).from(onlineTransactions).where(
+            drizzleOrm.and(
+              branchCondition,
+              drizzleOrm.eq(onlineTransactions.status, "pending")
+            )
+          ).orderBy(drizzleOrm.desc(onlineTransactions.transactionDate)).limit(10)
+        ]);
+        return {
+          success: true,
+          data: {
+            todayByChannel,
+            periodByChannel,
+            statusSummary,
+            recentPending,
+            dateRange: { startDate, endDate }
+          }
+        };
+      } catch (error) {
+        console.error("Online transactions dashboard error:", error);
+        return { success: false, message: "Failed to fetch dashboard data" };
+      }
+    }
+  );
+}
 function registerSalesHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("sales:create", async (_, data) => {
@@ -5299,6 +6727,22 @@ function registerSalesHandlers() {
       const hasServices = data.services && data.services.length > 0;
       if (!hasProducts && !hasServices) {
         return { success: false, message: "No items or services in cart" };
+      }
+      if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const openSession = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+            drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+            drizzleOrm.eq(cashRegisterSessions.status, "open")
+          )
+        });
+        if (!openSession) {
+          return {
+            success: false,
+            message: "Please open the Cash Register before processing cash sales. Go to Finance → Cash Register to open today's session."
+          };
+        }
       }
       if (hasProducts) {
         for (const item of data.items) {
@@ -5372,7 +6816,7 @@ function registerSalesHandlers() {
         const saleServicesData = [];
         if (hasProducts) {
           for (const item of data.items) {
-            const fifoResult = await consumeCostLayersFIFO(
+            const fifoResult = await consumeCostLayers(
               item.productId,
               data.branchId,
               item.quantity
@@ -5504,7 +6948,7 @@ function registerSalesHandlers() {
           }
         } else if (data.amountPaid > 0 && data.paymentMethod !== "receivable") {
           const netPaymentAmount = Math.min(data.amountPaid, totalAmount);
-          const method = data.paymentMethod === "card" ? "card" : data.paymentMethod === "mobile" ? "mobile" : data.paymentMethod === "cod" ? "cash" : "cash";
+          const method = data.paymentMethod === "card" ? "card" : data.paymentMethod === "mobile" ? "mobile" : data.paymentMethod === "cod" ? "cod" : "cash";
           let referenceNumber;
           let paymentNotes;
           if (data.paymentMethod === "mobile" && data.mobileTransactionId) {
@@ -5530,6 +6974,45 @@ function registerSalesHandlers() {
           });
           paymentRecords.push({ method, amount: netPaymentAmount, referenceNumber });
         }
+        for (const payment of paymentRecords) {
+          if (payment.method !== "cash") {
+            await txDb.insert(onlineTransactions).values({
+              branchId: data.branchId,
+              transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+              amount: payment.amount,
+              paymentChannel: mapPaymentMethodToChannel(payment.method),
+              direction: "inflow",
+              referenceNumber: payment.referenceNumber,
+              customerName: data.customerId ? await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }).then((c) => c ? `${c.firstName} ${c.lastName}`.trim() : void 0) : data.codName || void 0,
+              customerId: data.customerId || void 0,
+              invoiceNumber,
+              bankAccountName: data.paymentMethod === "mobile" ? `${data.mobileProvider || ""} ${data.mobileReceiverPhone || ""}`.trim() || void 0 : void 0,
+              status: "pending",
+              sourceType: "sale",
+              sourceId: sale.id,
+              saleId: sale.id,
+              createdBy: session?.userId ?? 0
+            });
+          }
+        }
+        if (data.paymentMethod === "cod") {
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: totalAmount,
+            paymentChannel: "cod",
+            direction: "inflow",
+            referenceNumber: void 0,
+            customerName: data.codName || (data.customerId ? await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }).then((c) => c ? `${c.firstName} ${c.lastName}`.trim() : void 0) : void 0),
+            customerId: data.customerId || void 0,
+            invoiceNumber,
+            status: "pending",
+            sourceType: "sale",
+            sourceId: sale.id,
+            saleId: sale.id,
+            createdBy: session?.userId ?? 0
+          });
+        }
         await postSaleToGL(sale, createdSaleItems, session?.userId ?? 0, paymentRecords, data.paymentMethod === "cod" ? codCharges : 0);
         if (data.voucherId) {
           await txDb.update(vouchers).set({
@@ -5538,6 +7021,51 @@ function registerSalesHandlers() {
             usedInSaleId: sale.id,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(vouchers.id, data.voucherId));
+        }
+        if (data.amountPaid > 0) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            if (data.payments && data.payments.length > 0) {
+              for (const payment of data.payments) {
+                if (payment.method === "cash" || payment.method === "cod") {
+                  const cashAmount = Math.min(payment.amount, totalAmount);
+                  await txDb.insert(cashTransactions).values({
+                    sessionId: openSession.id,
+                    branchId: data.branchId,
+                    transactionType: "sale",
+                    amount: cashAmount,
+                    referenceType: "sale",
+                    referenceId: sale.id,
+                    description: `Cash sale: ${invoiceNumber}`,
+                    recordedBy: session?.userId ?? 0
+                  });
+                }
+              }
+            } else if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
+              const cashAmount = Math.min(data.amountPaid, totalAmount);
+              await txDb.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: data.branchId,
+                transactionType: "sale",
+                amount: cashAmount,
+                referenceType: "sale",
+                referenceId: sale.id,
+                description: `Cash sale: ${invoiceNumber}`,
+                recordedBy: session?.userId ?? 0
+              });
+            }
+          } else if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
+            console.warn(
+              `Cash sale ${invoiceNumber} completed without an open register session. Cash transaction not recorded in register. Branch: ${data.branchId}`
+            );
+          }
         }
         return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
       });
@@ -5563,9 +7091,7 @@ function registerSalesHandlers() {
       });
       return { success: true, data: result.sale };
     } catch (error) {
-      console.error("Create sale error:", error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to create sale";
-      return { success: false, message: errorMessage };
+      return handleIpcError("Create sale", error);
     }
   });
   electron.ipcMain.handle(
@@ -5612,8 +7138,7 @@ function registerSalesHandlers() {
         };
         return { success: true, ...result };
       } catch (error) {
-        console.error("Get sales error:", error);
-        return { success: false, message: "Failed to fetch sales" };
+        return handleIpcError("Get sales", error);
       }
     }
   );
@@ -5644,8 +7169,7 @@ function registerSalesHandlers() {
         }
       };
     } catch (error) {
-      console.error("Get sale error:", error);
-      return { success: false, message: "Failed to fetch sale" };
+      return handleIpcError("Get sale", error);
     }
   });
   electron.ipcMain.handle("sales:void", async (_, id, reason) => {
@@ -5701,6 +7225,29 @@ function registerSalesHandlers() {
           items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
           session?.userId ?? 0
         );
+        if (sale.amountPaid > 0 && (sale.paymentMethod === "cash" || sale.paymentMethod === "cod")) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, sale.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            const cashAmount = Math.min(sale.amountPaid, sale.totalAmount);
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: sale.branchId,
+              transactionType: "refund",
+              amount: -cashAmount,
+              referenceType: "sale_void",
+              referenceId: sale.id,
+              description: `Voided sale: ${sale.invoiceNumber}`,
+              recordedBy: session?.userId ?? 0
+            });
+          }
+        }
       });
       await createAuditLog$1({
         userId: session?.userId,
@@ -5714,8 +7261,7 @@ function registerSalesHandlers() {
       });
       return { success: true, message: "Sale voided successfully" };
     } catch (error) {
-      console.error("Void sale error:", error);
-      return { success: false, message: "Failed to void sale" };
+      return handleIpcError("Void sale", error);
     }
   });
   electron.ipcMain.handle("sales:get-daily-summary", async (_, branchId, date) => {
@@ -5745,8 +7291,7 @@ function registerSalesHandlers() {
         }
       };
     } catch (error) {
-      console.error("Get daily summary error:", error);
-      return { success: false, message: "Failed to fetch daily summary" };
+      return handleIpcError("Get daily summary", error);
     }
   });
   electron.ipcMain.handle("sales:fix-payment-status", async (_, invoiceNumber) => {
@@ -5775,8 +7320,7 @@ function registerSalesHandlers() {
         data: { fixedCount }
       };
     } catch (error) {
-      console.error("Fix payment status error:", error);
-      return { success: false, message: "Failed to fix payment status" };
+      return handleIpcError("Fix payment status", error);
     }
   });
   electron.ipcMain.handle("sales:fix-orphaned-receivables", async () => {
@@ -5816,657 +7360,7 @@ function registerSalesHandlers() {
         data: { createdCount }
       };
     } catch (error) {
-      console.error("Fix orphaned receivables error:", error);
-      return { success: false, message: "Failed to fix orphaned receivables" };
-    }
-  });
-}
-async function generateTabNumber(branchId) {
-  const db2 = getDatabase();
-  const result = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(salesTabs).where(drizzleOrm.eq(salesTabs.branchId, branchId));
-  const count = result[0]?.count ?? 0;
-  const nextNumber = count + 1;
-  return `TAB-${String(nextNumber).padStart(3, "0")}`;
-}
-function registerSalesTabsHandlers() {
-  const db2 = getDatabase();
-  electron.ipcMain.handle(
-    "sales-tabs:get-all",
-    async (_, params) => {
-      try {
-        const {
-          page = 1,
-          limit = 20,
-          sortBy = "createdAt",
-          sortOrder = "desc",
-          branchId,
-          status,
-          userId
-        } = params;
-        const conditions = [];
-        if (branchId) conditions.push(drizzleOrm.eq(salesTabs.branchId, branchId));
-        if (status) conditions.push(drizzleOrm.eq(salesTabs.status, status));
-        if (userId) conditions.push(drizzleOrm.eq(salesTabs.userId, userId));
-        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
-        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(salesTabs).where(whereClause);
-        const total = countResult[0]?.count ?? 0;
-        const data = await db2.query.salesTabs.findMany({
-          where: whereClause,
-          limit,
-          offset: (page - 1) * limit,
-          orderBy: sortOrder === "desc" ? drizzleOrm.desc(salesTabs.createdAt) : salesTabs.createdAt,
-          with: {
-            customer: true,
-            branch: true,
-            user: {
-              columns: {
-                id: true,
-                username: true,
-                fullName: true
-              }
-            }
-          }
-        });
-        const result = {
-          data,
-          total,
-          page,
-          limit,
-          totalPages: Math.ceil(total / limit)
-        };
-        return { success: true, ...result };
-      } catch (error) {
-        console.error("Get sales tabs error:", error);
-        return { success: false, message: "Failed to fetch sales tabs" };
-      }
-    }
-  );
-  electron.ipcMain.handle("sales-tabs:get-by-id", async (_, id) => {
-    try {
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, id),
-        with: {
-          customer: true,
-          branch: true,
-          user: {
-            columns: {
-              id: true,
-              username: true,
-              fullName: true
-            }
-          }
-        }
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      const items = await db2.select().from(salesTabItems).where(drizzleOrm.eq(salesTabItems.tabId, id)).orderBy(drizzleOrm.desc(salesTabItems.addedAt));
-      return {
-        success: true,
-        data: {
-          ...tab,
-          items
-        }
-      };
-    } catch (error) {
-      console.error("Get tab error:", error);
-      return { success: false, message: "Failed to fetch tab" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:create", async (_, data) => {
-    try {
-      const session = getCurrentSession();
-      if (!session) {
-        return { success: false, message: "Unauthorized" };
-      }
-      const branch = await db2.query.branches.findFirst({
-        where: drizzleOrm.eq(branches.id, data.branchId)
-      });
-      if (!branch) {
-        return { success: false, message: "Branch not found" };
-      }
-      if (data.customerId) {
-        const customer = await db2.query.customers.findFirst({
-          where: drizzleOrm.eq(customers.id, data.customerId)
-        });
-        if (!customer) {
-          return { success: false, message: "Customer not found" };
-        }
-      }
-      const tabNumber = await generateTabNumber(data.branchId);
-      const [newTab] = await db2.insert(salesTabs).values({
-        tabNumber,
-        branchId: data.branchId,
-        customerId: data.customerId,
-        userId: session.userId,
-        notes: data.notes
-      }).returning();
-      await createAuditLog$1({
-        userId: session.userId,
-        branchId: data.branchId,
-        action: "create",
-        entityType: "sales_tab",
-        entityId: newTab.id,
-        newValues: {
-          tabNumber
-        },
-        description: `Created sales tab: ${tabNumber}`
-      });
-      return { success: true, data: newTab };
-    } catch (error) {
-      console.error("Create tab error:", error);
-      return { success: false, message: "Failed to create tab" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:update", async (_, id, data) => {
-    try {
-      const session = getCurrentSession();
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, id)
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Cannot modify closed tab" };
-      }
-      if (data.customerId !== void 0 && data.customerId !== tab.customerId) {
-        const customer = await db2.query.customers.findFirst({
-          where: drizzleOrm.eq(customers.id, data.customerId)
-        });
-        if (!customer) {
-          return { success: false, message: "Customer not found" };
-        }
-      }
-      const updateData = {};
-      if (data.customerId !== void 0) updateData.customerId = data.customerId;
-      if (data.status !== void 0) updateData.status = data.status;
-      if (data.notes !== void 0) updateData.notes = data.notes;
-      updateData.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
-      if (data.status === "closed") {
-        updateData.closedAt = (/* @__PURE__ */ new Date()).toISOString();
-        updateData.closedBy = session?.userId;
-      }
-      await db2.update(salesTabs).set(updateData).where(drizzleOrm.eq(salesTabs.id, id));
-      await createAuditLog$1({
-        userId: session?.userId,
-        branchId: tab.branchId,
-        action: "update",
-        entityType: "sales_tab",
-        entityId: id,
-        oldValues: {
-          status: tab.status,
-          customerId: tab.customerId
-        },
-        newValues: {
-          status: data.status,
-          customerId: data.customerId
-        },
-        description: `Updated sales tab: ${tab.tabNumber}`
-      });
-      return { success: true, message: "Tab updated successfully" };
-    } catch (error) {
-      console.error("Update tab error:", error);
-      return { success: false, message: "Failed to update tab" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:delete", async (_, id) => {
-    try {
-      const session = getCurrentSession();
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, id)
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Cannot delete closed tab" };
-      }
-      await db2.delete(salesTabs).where(drizzleOrm.eq(salesTabs.id, id));
-      await createAuditLog$1({
-        userId: session?.userId,
-        branchId: tab.branchId,
-        action: "delete",
-        entityType: "sales_tab",
-        entityId: id,
-        oldValues: {
-          tabNumber: tab.tabNumber
-        },
-        description: `Deleted sales tab: ${tab.tabNumber}`
-      });
-      return { success: true, message: "Tab deleted successfully" };
-    } catch (error) {
-      console.error("Delete tab error:", error);
-      return { success: false, message: "Failed to delete tab" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:add-item", async (_, tabId, data) => {
-    try {
-      const session = getCurrentSession();
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, tabId),
-        with: {
-          items: true
-        }
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Cannot add items to closed tab" };
-      }
-      const product = await db2.query.products.findFirst({
-        where: drizzleOrm.eq(products.id, data.productId)
-      });
-      if (!product) {
-        return { success: false, message: "Product not found" };
-      }
-      if (!product.isActive) {
-        return { success: false, message: "Product is not active" };
-      }
-      const stock = await db2.query.inventory.findFirst({
-        where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, data.productId), drizzleOrm.eq(inventory.branchId, tab.branchId))
-      });
-      const availableQuantity = stock?.quantity ?? 0;
-      const existingQuantity = tab.items.filter((item) => item.productId === data.productId && !item.serialNumber).reduce((sum, item) => sum + item.quantity, 0);
-      if (product.isSerialTracked) {
-        if (!data.serialNumber) {
-          return { success: false, message: "Serial number required for this product" };
-        }
-        const existingSerial = tab.items.find(
-          (item) => item.productId === data.productId && item.serialNumber === data.serialNumber
-        );
-        if (existingSerial) {
-          return { success: false, message: "This serial number is already in the tab" };
-        }
-      } else {
-        if (existingQuantity + data.quantity > availableQuantity) {
-          return {
-            success: false,
-            message: `Insufficient stock. Available: ${availableQuantity}, In tab: ${existingQuantity}, Requested: ${data.quantity}`,
-            availableQuantity: availableQuantity - existingQuantity
-          };
-        }
-      }
-      if (product.isSerialTracked && data.quantity !== 1) {
-        return { success: false, message: "Quantity must be 1 for serial tracked items" };
-      }
-      const sellingPrice = data.sellingPrice ?? product.sellingPrice;
-      const subtotal = sellingPrice * data.quantity;
-      const taxAmount = subtotal * ((product.isTaxable ? product.taxRate : 0) / 100);
-      const [newItem] = await db2.insert(salesTabItems).values({
-        tabId,
-        productId: data.productId,
-        productName: product.name,
-        productCode: product.code,
-        quantity: data.quantity,
-        sellingPrice,
-        costPrice: product.costPrice,
-        taxPercent: product.isTaxable ? product.taxRate : 0,
-        subtotal: subtotal + taxAmount,
-        serialNumber: data.serialNumber,
-        batchNumber: data.batchNumber
-      }).returning();
-      await db2.update(salesTabs).set({
-        itemCount: drizzleOrm.sql`${salesTabs.itemCount} + 1`,
-        subtotal: drizzleOrm.sql`${salesTabs.subtotal} + ${subtotal}`,
-        tax: drizzleOrm.sql`${salesTabs.tax} + ${taxAmount}`,
-        finalAmount: drizzleOrm.sql`${salesTabs.finalAmount} + ${subtotal + taxAmount}`,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(salesTabs.id, tabId));
-      return { success: true, data: newItem };
-    } catch (error) {
-      console.error("Add item error:", error);
-      return { success: false, message: "Failed to add item to tab" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:update-item", async (_, tabId, itemId, data) => {
-    try {
-      const session = getCurrentSession();
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, tabId)
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Cannot modify closed tab" };
-      }
-      const item = await db2.query.salesTabItems.findFirst({
-        where: drizzleOrm.eq(salesTabItems.id, itemId)
-      });
-      if (!item) {
-        return { success: false, message: "Item not found" };
-      }
-      if (item.tabId !== tabId) {
-        return { success: false, message: "Item does not belong to this tab" };
-      }
-      if (item.serialNumber && data.quantity !== 1) {
-        return { success: false, message: "Cannot change quantity of serial tracked items" };
-      }
-      if (data.quantity <= 0) {
-        return { success: false, message: "Quantity must be greater than 0" };
-      }
-      const stock = await db2.query.inventory.findFirst({
-        where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId))
-      });
-      const availableQuantity = stock?.quantity ?? 0;
-      if (data.quantity > availableQuantity) {
-        return {
-          success: false,
-          message: `Insufficient stock. Available: ${availableQuantity}`,
-          availableQuantity
-        };
-      }
-      const oldSubtotal = item.subtotal;
-      const newSubtotal = item.sellingPrice * data.quantity;
-      const newTaxAmount = newSubtotal * (item.taxPercent / 100);
-      const newItemTotal = newSubtotal + newTaxAmount;
-      const subtotalDiff = newSubtotal - oldSubtotal / (1 + item.taxPercent / 100);
-      const taxDiff = newTaxAmount - (oldSubtotal - oldSubtotal / (1 + item.taxPercent / 100));
-      const totalDiff = newItemTotal - oldSubtotal;
-      await db2.update(salesTabItems).set({
-        quantity: data.quantity,
-        subtotal: newItemTotal
-      }).where(drizzleOrm.eq(salesTabItems.id, itemId));
-      await db2.update(salesTabs).set({
-        subtotal: drizzleOrm.sql`${salesTabs.subtotal} + ${subtotalDiff}`,
-        tax: drizzleOrm.sql`${salesTabs.tax} + ${taxDiff}`,
-        finalAmount: drizzleOrm.sql`${salesTabs.finalAmount} + ${totalDiff}`,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(salesTabs.id, tabId));
-      return { success: true, message: "Item updated successfully" };
-    } catch (error) {
-      console.error("Update item error:", error);
-      return { success: false, message: "Failed to update item" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:remove-item", async (_, tabId, itemId) => {
-    try {
-      const session = getCurrentSession();
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, tabId)
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Cannot modify closed tab" };
-      }
-      const item = await db2.query.salesTabItems.findFirst({
-        where: drizzleOrm.eq(salesTabItems.id, itemId)
-      });
-      if (!item) {
-        return { success: false, message: "Item not found" };
-      }
-      if (item.tabId !== tabId) {
-        return { success: false, message: "Item does not belong to this tab" };
-      }
-      await db2.delete(salesTabItems).where(drizzleOrm.eq(salesTabItems.id, itemId));
-      await db2.update(salesTabs).set({
-        itemCount: drizzleOrm.sql`${salesTabs.itemCount} - 1`,
-        subtotal: drizzleOrm.sql`${salesTabs.subtotal} - ${item.sellingPrice * item.quantity}`,
-        tax: drizzleOrm.sql`${salesTabs.tax} - ${item.subtotal - item.sellingPrice * item.quantity}`,
-        finalAmount: drizzleOrm.sql`${salesTabs.finalAmount} - ${item.subtotal}`,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(salesTabs.id, tabId));
-      return { success: true, message: "Item removed successfully" };
-    } catch (error) {
-      console.error("Remove item error:", error);
-      return { success: false, message: "Failed to remove item" };
-    }
-  });
-  electron.ipcMain.handle(
-    "sales-tabs:get-available-products",
-    async (_, params) => {
-      try {
-        const { branchId, categoryId, searchQuery, limit = 100 } = params;
-        let query = db2.select({
-          product: products,
-          quantity: inventory.quantity
-        }).from(products).leftJoin(inventory, drizzleOrm.and(drizzleOrm.eq(inventory.productId, products.id), drizzleOrm.eq(inventory.branchId, branchId))).where(drizzleOrm.eq(products.isActive, true));
-        if (categoryId) {
-          query = query.where(drizzleOrm.eq(products.categoryId, categoryId));
-        }
-        if (searchQuery) {
-          query = query.where(
-            drizzleOrm.sql`(${products.name} LIKE ${`%${searchQuery}%`} OR ${products.code} LIKE ${`%${searchQuery}%`} OR ${products.barcode} LIKE ${`%${searchQuery}%`})`
-          );
-        }
-        query = query.limit(limit).orderBy(products.name);
-        const results = await query;
-        const availableProducts = results.filter((r) => r.quantity > 0);
-        return { success: true, data: availableProducts };
-      } catch (error) {
-        console.error("Get available products error:", error);
-        return { success: false, message: "Failed to fetch available products" };
-      }
-    }
-  );
-  electron.ipcMain.handle("sales-tabs:checkout", async (_, tabId, checkoutData) => {
-    try {
-      const session = getCurrentSession();
-      if (!session) {
-        return { success: false, message: "Unauthorized" };
-      }
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, tabId),
-        with: {
-          items: true,
-          customer: true
-        }
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Tab is already closed" };
-      }
-      if (tab.items.length === 0) {
-        return { success: false, message: "Tab has no items" };
-      }
-      if (checkoutData.paymentMethod === "cod") {
-        if (!checkoutData.codName || !checkoutData.codPhone || !checkoutData.codAddress || !checkoutData.codCity) {
-          return { success: false, message: "COD details are required" };
-        }
-      }
-      if (checkoutData.paymentMethod === "receivable" && !tab.customerId) {
-        return { success: false, message: "Customer is required for Pay Later / Receivable payment method" };
-      }
-      const hasFirearms = tab.items.some((item) => {
-        return tab.items.filter((i) => i.productId === item.productId && !item.serialNumber).length > 0;
-      });
-      for (const item of tab.items) {
-        const product = await db2.query.products.findFirst({
-          where: drizzleOrm.eq(products.id, item.productId)
-        });
-        if (product?.isSerialTracked) {
-          if (!tab.customer) {
-            return { success: false, message: "Customer is required for firearm purchases" };
-          }
-          if (!tab.customer.firearmLicenseNumber) {
-            return { success: false, message: "Customer does not have a firearm license" };
-          }
-          if (isLicenseExpired(tab.customer.licenseExpiryDate)) {
-            return { success: false, message: "Customer firearm license has expired" };
-          }
-        }
-      }
-      for (const item of tab.items) {
-        if (item.serialNumber) {
-          const product = await db2.query.products.findFirst({
-            where: drizzleOrm.eq(products.id, item.productId)
-          });
-          if (!product || !product.isActive) {
-            return { success: false, message: `Product ${item.productName} is not available` };
-          }
-        } else {
-          const stock = await db2.query.inventory.findFirst({
-            where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId))
-          });
-          if (!stock || stock.quantity < item.quantity) {
-            return {
-              success: false,
-              message: `Insufficient stock for ${item.productName}`
-            };
-          }
-        }
-      }
-      const subtotal = tab.subtotal;
-      const taxAmount = tab.tax;
-      const discountAmount = checkoutData.discount ?? 0;
-      const codCharges = checkoutData.codCharges ?? 0;
-      const totalAmount = subtotal + taxAmount - discountAmount + (checkoutData.paymentMethod === "cod" ? codCharges : 0);
-      const amountPaid = checkoutData.amountPaid ?? 0;
-      const changeGiven = amountPaid > totalAmount ? amountPaid - totalAmount : 0;
-      let paymentStatus = "paid";
-      if (checkoutData.paymentMethod === "receivable" || amountPaid === 0) {
-        paymentStatus = "pending";
-      } else if (amountPaid < totalAmount) {
-        paymentStatus = "partial";
-      }
-      const invoiceNumber = generateInvoiceNumber();
-      let saleNotes;
-      if (checkoutData.notes) {
-        saleNotes = `Tab: ${tab.tabNumber}. ${checkoutData.notes}`;
-      } else {
-        saleNotes = `Tab: ${tab.tabNumber}`;
-      }
-      if (checkoutData.paymentMethod === "cod") {
-        saleNotes = `${saleNotes}
-
-COD Details:
-Name: ${checkoutData.codName}
-Phone: ${checkoutData.codPhone}
-Address: ${checkoutData.codAddress}, ${checkoutData.codCity}`;
-        if (codCharges > 0) {
-          saleNotes = `${saleNotes}
-COD Charges: ${codCharges}`;
-        }
-      }
-      const [sale] = await db2.insert(sales).values({
-        invoiceNumber,
-        customerId: tab.customerId,
-        branchId: tab.branchId,
-        userId: session.userId,
-        subtotal,
-        taxAmount,
-        discountAmount,
-        totalAmount,
-        paymentMethod: checkoutData.paymentMethod,
-        paymentStatus,
-        amountPaid,
-        changeGiven,
-        notes: saleNotes
-      }).returning();
-      for (const item of tab.items) {
-        await db2.insert(saleItems).values({
-          saleId: sale.id,
-          productId: item.productId,
-          serialNumber: item.serialNumber,
-          quantity: item.quantity,
-          unitPrice: item.sellingPrice,
-          costPrice: item.costPrice,
-          discountPercent: 0,
-          discountAmount: 0,
-          taxAmount: item.subtotal - item.sellingPrice * item.quantity,
-          totalPrice: item.subtotal
-        });
-        if (!item.serialNumber) {
-          await db2.update(inventory).set({
-            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, tab.branchId)));
-        }
-      }
-      if (checkoutData.paymentMethod === "receivable" && tab.customerId) {
-        await db2.insert(accountReceivables).values({
-          customerId: tab.customerId,
-          saleId: sale.id,
-          branchId: tab.branchId,
-          invoiceNumber,
-          totalAmount,
-          paidAmount: 0,
-          remainingAmount: totalAmount,
-          status: "pending",
-          createdBy: session.userId
-        });
-      }
-      if (checkoutData.paymentMethod === "cod" && codCharges > 0) {
-        await db2.insert(expenses).values({
-          branchId: tab.branchId,
-          userId: session.userId,
-          category: "other",
-          amount: codCharges,
-          description: `COD Delivery Charges for Invoice: ${invoiceNumber}. Customer: ${checkoutData.codName}, Phone: ${checkoutData.codPhone}`,
-          paymentMethod: "cash",
-          reference: invoiceNumber,
-          paymentStatus: "unpaid"
-          // Mark as unpaid - to be paid to courier later
-        });
-      }
-      await db2.update(salesTabs).set({
-        status: "closed",
-        closedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        closedBy: session.userId,
-        discount: discountAmount,
-        finalAmount: totalAmount,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(salesTabs.id, tabId));
-      await createAuditLog$1({
-        userId: session.userId,
-        branchId: tab.branchId,
-        action: "checkout",
-        entityType: "sales_tab",
-        entityId: tabId,
-        oldValues: {
-          status: tab.status
-        },
-        newValues: {
-          status: "closed",
-          saleId: sale.id,
-          invoiceNumber
-        },
-        description: `Checked out sales tab ${tab.tabNumber} as sale ${invoiceNumber}`
-      });
-      return {
-        success: true,
-        data: {
-          sale,
-          invoiceNumber,
-          totalAmount,
-          changeReturned: changeGiven
-        }
-      };
-    } catch (error) {
-      console.error("Checkout tab error:", error);
-      return { success: false, message: "Failed to checkout tab" };
-    }
-  });
-  electron.ipcMain.handle("sales-tabs:clear-items", async (_, tabId) => {
-    try {
-      const session = getCurrentSession();
-      const tab = await db2.query.salesTabs.findFirst({
-        where: drizzleOrm.eq(salesTabs.id, tabId)
-      });
-      if (!tab) {
-        return { success: false, message: "Tab not found" };
-      }
-      if (tab.status === "closed") {
-        return { success: false, message: "Cannot modify closed tab" };
-      }
-      await db2.delete(salesTabItems).where(drizzleOrm.eq(salesTabItems.tabId, tabId));
-      await db2.update(salesTabs).set({
-        itemCount: 0,
-        subtotal: 0,
-        tax: 0,
-        finalAmount: 0,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(salesTabs.id, tabId));
-      return { success: true, message: "Tab cleared successfully" };
-    } catch (error) {
-      console.error("Clear tab error:", error);
-      return { success: false, message: "Failed to clear tab" };
+      return handleIpcError("Fix orphaned receivables", error);
     }
   });
 }
@@ -6754,20 +7648,53 @@ function registerPurchaseHandlers() {
           where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
         });
         if (payable) {
-          await db2.insert(payablePayments).values({
+          const [payablePayment] = await db2.insert(payablePayments).values({
             payableId: payable.id,
             amount: payable.remainingAmount,
             paymentMethod: paymentData.paymentMethod,
             referenceNumber: paymentData.referenceNumber,
             notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
             paidBy: session?.userId
-          });
+          }).returning();
           await db2.update(accountPayables).set({
             paidAmount: payable.totalAmount,
             remainingAmount: 0,
             status: "paid",
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(accountPayables.id, payable.id));
+          await postAPPaymentToGL(
+            {
+              id: payablePayment.id,
+              payableId: payable.id,
+              branchId: purchase.branchId,
+              amount: payable.remainingAmount,
+              paymentMethod: paymentData.paymentMethod,
+              invoiceNumber: payable.invoiceNumber
+            },
+            session?.userId ?? 0
+          );
+          if (paymentData.paymentMethod === "cash") {
+            const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+            const openSession = await db2.query.cashRegisterSessions.findFirst({
+              where: drizzleOrm.and(
+                drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
+                drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+                drizzleOrm.eq(cashRegisterSessions.status, "open")
+              )
+            });
+            if (openSession) {
+              await db2.insert(cashTransactions).values({
+                sessionId: openSession.id,
+                branchId: purchase.branchId,
+                transactionType: "ap_payment",
+                amount: -payable.remainingAmount,
+                referenceType: "payable_payment",
+                referenceId: payablePayment.id,
+                description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
+                recordedBy: session?.userId ?? 0
+              });
+            }
+          }
         }
         await createAuditLog$1({
           userId: session?.userId,
@@ -6850,9 +7777,8 @@ function registerReturnHandlers() {
           notes: data.notes
         }).returning();
         for (const item of returnItemsData) {
-          const { costPrice, ...itemData } = item;
           await txDb.insert(returnItems).values({
-            ...itemData,
+            ...item,
             returnId: returnRecord.id
           });
         }
@@ -6904,6 +7830,28 @@ function registerReturnHandlers() {
           returnItemsForGL,
           session?.userId ?? 0
         );
+        if (data.returnType === "refund" && data.refundMethod === "cash" && totalAmount > 0) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: "refund",
+              amount: -totalAmount,
+              referenceType: "return",
+              referenceId: returnRecord.id,
+              description: `Cash refund: ${returnNumber}`,
+              recordedBy: session?.userId ?? 0
+            });
+          }
+        }
         return { returnRecord, returnNumber, totalAmount };
       });
       await createAuditLog$1({
@@ -6922,8 +7870,7 @@ function registerReturnHandlers() {
       });
       return { success: true, data: result.returnRecord };
     } catch (error) {
-      console.error("Create return error:", error);
-      return { success: false, message: "Failed to create return" };
+      return handleIpcError("Create return", error);
     }
   });
   electron.ipcMain.handle(
@@ -6954,8 +7901,7 @@ function registerReturnHandlers() {
         };
         return { success: true, ...result };
       } catch (error) {
-        console.error("Get returns error:", error);
-        return { success: false, message: "Failed to fetch returns" };
+        return handleIpcError("Get returns", error);
       }
     }
   );
@@ -6990,10 +7936,156 @@ function registerReturnHandlers() {
         }
       };
     } catch (error) {
-      console.error("Get return error:", error);
-      return { success: false, message: "Failed to fetch return" };
+      return handleIpcError("Get return", error);
     }
   });
+  electron.ipcMain.handle(
+    "returns:update",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        const returnRecord = await db2.query.returns.findFirst({
+          where: drizzleOrm.eq(returns.id, data.id)
+        });
+        if (!returnRecord) {
+          return { success: false, message: "Return not found" };
+        }
+        const oldTotalAmount = returnRecord.totalAmount;
+        const newTotalAmount = data.refundAmount;
+        if (newTotalAmount < 0) {
+          return { success: false, message: "Refund amount cannot be negative" };
+        }
+        const items = await db2.query.returnItems.findMany({
+          where: drizzleOrm.eq(returnItems.returnId, data.id)
+        });
+        await withTransaction(async ({ db: txDb }) => {
+          if (items.length === 1) {
+            const item = items[0];
+            const newUnitPrice = newTotalAmount / item.quantity;
+            await txDb.update(returnItems).set({
+              unitPrice: Math.round(newUnitPrice * 100) / 100,
+              totalPrice: newTotalAmount
+            }).where(drizzleOrm.eq(returnItems.id, item.id));
+          } else if (items.length > 1) {
+            const oldItemsTotal = items.reduce((sum, i) => sum + i.totalPrice, 0);
+            for (const item of items) {
+              const ratio = oldItemsTotal > 0 ? item.totalPrice / oldItemsTotal : 1 / items.length;
+              const newItemTotal = Math.round(newTotalAmount * ratio * 100) / 100;
+              const newUnitPrice = Math.round(newItemTotal / item.quantity * 100) / 100;
+              await txDb.update(returnItems).set({
+                unitPrice: newUnitPrice,
+                totalPrice: newItemTotal
+              }).where(drizzleOrm.eq(returnItems.id, item.id));
+            }
+          }
+          await txDb.update(returns).set({
+            subtotal: newTotalAmount,
+            totalAmount: newTotalAmount,
+            refundAmount: returnRecord.returnType === "refund" ? newTotalAmount : 0,
+            reason: data.reason !== void 0 ? data.reason : returnRecord.reason,
+            notes: data.notes !== void 0 ? data.notes : returnRecord.notes,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(returns.id, data.id));
+          const jeEntry = await txDb.query.journalEntries.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(journalEntries.referenceType, "return"),
+              drizzleOrm.eq(journalEntries.referenceId, data.id),
+              drizzleOrm.eq(journalEntries.status, "posted")
+            )
+          });
+          if (jeEntry) {
+            const lines = await txDb.query.journalEntryLines.findMany({
+              where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+            });
+            const reversingLines = [];
+            for (const line of lines) {
+              const account = await txDb.query.chartOfAccounts.findFirst({
+                where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+              });
+              if (account) {
+                reversingLines.push({
+                  accountCode: account.accountCode,
+                  debitAmount: line.creditAmount,
+                  creditAmount: line.debitAmount,
+                  description: `Reversal: ${line.description || ""}`
+                });
+              }
+            }
+            const reversalEntryId = await createJournalEntry({
+              description: `Reversal of return ${returnRecord.returnNumber} (edited)`,
+              referenceType: "return",
+              referenceId: data.id,
+              branchId: returnRecord.branchId,
+              userId: session?.userId ?? 0,
+              lines: reversingLines
+            });
+            await txDb.update(journalEntries).set({
+              status: "reversed",
+              reversedBy: session?.userId ?? 0,
+              reversedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              reversalEntryId,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
+          }
+          const updatedItems = await txDb.query.returnItems.findMany({
+            where: drizzleOrm.eq(returnItems.returnId, data.id)
+          });
+          const returnItemsForGL = updatedItems.map((item) => ({
+            costPrice: item.costPrice,
+            quantity: item.quantity,
+            restockable: item.restockable
+          }));
+          await postReturnToGL(
+            {
+              id: data.id,
+              returnNumber: returnRecord.returnNumber,
+              branchId: returnRecord.branchId,
+              subtotal: newTotalAmount,
+              taxAmount: 0,
+              totalAmount: newTotalAmount,
+              refundMethod: returnRecord.refundMethod
+            },
+            returnItemsForGL,
+            session?.userId ?? 0
+          );
+          if (returnRecord.returnType === "refund" && returnRecord.refundMethod === "cash") {
+            const existingCashTxn = await txDb.select().from(cashTransactions).where(
+              drizzleOrm.and(
+                drizzleOrm.eq(cashTransactions.referenceType, "return"),
+                drizzleOrm.eq(cashTransactions.referenceId, data.id),
+                drizzleOrm.eq(cashTransactions.transactionType, "refund")
+              )
+            ).limit(1);
+            if (existingCashTxn.length > 0) {
+              await txDb.update(cashTransactions).set({
+                amount: -newTotalAmount,
+                description: `Cash refund (edited): ${returnRecord.returnNumber}`
+              }).where(drizzleOrm.eq(cashTransactions.id, existingCashTxn[0].id));
+            }
+          }
+        });
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: returnRecord.branchId,
+          action: "update",
+          entityType: "return",
+          entityId: data.id,
+          oldValues: {
+            totalAmount: oldTotalAmount,
+            refundAmount: returnRecord.refundAmount
+          },
+          newValues: {
+            totalAmount: newTotalAmount,
+            refundAmount: newTotalAmount
+          },
+          description: `Edited return ${returnRecord.returnNumber}: amount ${oldTotalAmount} → ${newTotalAmount}`
+        });
+        return { success: true, message: "Return updated successfully" };
+      } catch (error) {
+        return handleIpcError("Update return", error);
+      }
+    }
+  );
   electron.ipcMain.handle("returns:delete", async (_, id) => {
     try {
       const session = getCurrentSession();
@@ -7006,19 +8098,65 @@ function registerReturnHandlers() {
       const items = await db2.query.returnItems.findMany({
         where: drizzleOrm.eq(returnItems.returnId, id)
       });
-      for (const item of items) {
-        const existingInventory = await db2.query.inventory.findFirst({
-          where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
-        });
-        if (existingInventory && item.restockable) {
-          await db2.update(inventory).set({
-            quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+      await withTransaction(async ({ db: txDb }) => {
+        for (const item of items) {
+          if (item.restockable) {
+            const existingInventory = await txDb.query.inventory.findFirst({
+              where: drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+            });
+            if (existingInventory) {
+              await txDb.update(inventory).set({
+                quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              }).where(drizzleOrm.eq(inventory.id, existingInventory.id));
+            }
+            await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity);
+          }
         }
-      }
-      await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
-      await db2.delete(returns).where(drizzleOrm.eq(returns.id, id));
+        const jeEntry = await txDb.query.journalEntries.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(journalEntries.referenceType, "return"),
+            drizzleOrm.eq(journalEntries.referenceId, id),
+            drizzleOrm.eq(journalEntries.status, "posted")
+          )
+        });
+        if (jeEntry) {
+          const lines = await txDb.query.journalEntryLines.findMany({
+            where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+          });
+          const reversingLines = [];
+          for (const line of lines) {
+            const account = await txDb.query.chartOfAccounts.findFirst({
+              where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+            });
+            if (account) {
+              reversingLines.push({
+                accountCode: account.accountCode,
+                debitAmount: line.creditAmount,
+                creditAmount: line.debitAmount,
+                description: `Reversal: ${line.description || ""}`
+              });
+            }
+          }
+          const reversalEntryId = await createJournalEntry({
+            description: `Reversal of return ${returnRecord.returnNumber} (deleted)`,
+            referenceType: "return",
+            referenceId: id,
+            branchId: returnRecord.branchId,
+            userId: session?.userId ?? 0,
+            lines: reversingLines
+          });
+          await txDb.update(journalEntries).set({
+            status: "reversed",
+            reversedBy: session?.userId ?? 0,
+            reversedAt: (/* @__PURE__ */ new Date()).toISOString(),
+            reversalEntryId,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
+        }
+        await txDb.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, id));
+        await txDb.delete(returns).where(drizzleOrm.eq(returns.id, id));
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: returnRecord.branchId,
@@ -7033,8 +8171,7 @@ function registerReturnHandlers() {
       });
       return { success: true, message: "Return deleted successfully" };
     } catch (error) {
-      console.error("Delete return error:", error);
-      return { success: false, message: "Failed to delete return" };
+      return handleIpcError("Delete return", error);
     }
   });
 }
@@ -7172,7 +8309,7 @@ function registerUserHandlers() {
     "users:get-all",
     async (_, params) => {
       try {
-        const { page = 1, limit = 20, sortBy = "createdAt", sortOrder = "desc", search, role, isActive } = params;
+        const { page = 1, limit = 20, sortBy = "createdAt", sortOrder = "desc", search, role, isActive } = params || {};
         const conditions = [];
         if (search) {
           conditions.push(
@@ -7399,16 +8536,10 @@ function registerExpenseHandlers() {
     "expenses:get-all",
     async (_, params) => {
       try {
-        const { page = 1, limit = 20, sortOrder = "desc", branchId, category, startDate, endDate } = params;
+        const { page = 1, limit = 20, sortOrder = "desc", branchId, categoryId, startDate, endDate } = params;
         const conditions = [];
         if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
-        if (category)
-          conditions.push(
-            drizzleOrm.eq(
-              expenses.category,
-              category
-            )
-          );
+        if (categoryId) conditions.push(drizzleOrm.eq(expenses.categoryId, categoryId));
         if (startDate && endDate) {
           conditions.push(drizzleOrm.between(expenses.expenseDate, startDate, endDate));
         } else if (startDate) {
@@ -7425,6 +8556,7 @@ function registerExpenseHandlers() {
           offset: (page - 1) * limit,
           orderBy: sortOrder === "desc" ? drizzleOrm.desc(expenses.expenseDate) : expenses.expenseDate,
           with: {
+            category: true,
             supplier: true,
             payable: true,
             branch: true,
@@ -7446,8 +8578,7 @@ function registerExpenseHandlers() {
         };
         return { success: true, ...result };
       } catch (error) {
-        console.error("Get expenses error:", error);
-        return { success: false, message: "Failed to fetch expenses" };
+        return handleIpcError("Get expenses", error);
       }
     }
   );
@@ -7456,6 +8587,7 @@ function registerExpenseHandlers() {
       const expense = await db2.query.expenses.findFirst({
         where: drizzleOrm.eq(expenses.id, id),
         with: {
+          category: true,
           supplier: true,
           payable: true,
           branch: true,
@@ -7473,8 +8605,7 @@ function registerExpenseHandlers() {
       }
       return { success: true, data: expense };
     } catch (error) {
-      console.error("Get expense error:", error);
-      return { success: false, message: "Failed to fetch expense" };
+      return handleIpcError("Get expense", error);
     }
   });
   electron.ipcMain.handle("expenses:create", async (_, data) => {
@@ -7492,6 +8623,11 @@ function registerExpenseHandlers() {
           message: "Due date is required for unpaid expenses"
         };
       }
+      const { categories: categoriesTable } = await Promise.resolve().then(() => schema);
+      const expenseCategory = await db2.query.categories.findFirst({
+        where: drizzleOrm.eq(categoriesTable.id, data.categoryId)
+      });
+      const categoryName = expenseCategory?.name || "Other";
       const result = await withTransaction(async ({ db: txDb }) => {
         let payableId = void 0;
         const expenseResult = await txDb.insert(expenses).values({
@@ -7514,7 +8650,7 @@ function registerExpenseHandlers() {
             status: "pending",
             dueDate: data.dueDate,
             paymentTerms: data.paymentTerms,
-            notes: `Auto-created from expense: ${data.category} - ${data.description || "No description"}`,
+            notes: `Auto-created from expense: ${categoryName} - ${data.description || "No description"}`,
             createdBy: session?.userId
           }).returning();
           const newPayable = payableResult[0];
@@ -7525,7 +8661,7 @@ function registerExpenseHandlers() {
           {
             id: newExpense.id,
             branchId: data.branchId,
-            category: data.category,
+            categoryName,
             amount: data.amount,
             paymentStatus: data.paymentStatus || "paid",
             paymentMethod: data.paymentMethod,
@@ -7533,6 +8669,28 @@ function registerExpenseHandlers() {
           },
           session?.userId ?? 0
         );
+        if (data.paymentStatus !== "unpaid" && (!data.paymentMethod || data.paymentMethod === "cash")) {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: data.branchId,
+              transactionType: "expense",
+              amount: -data.amount,
+              referenceType: "expense",
+              referenceId: newExpense.id,
+              description: `Expense: ${categoryName} - ${data.description || ""}`.trim(),
+              recordedBy: session?.userId ?? 0
+            });
+          }
+        }
         return { newExpense, payableId };
       });
       if (result.payableId && data.supplierId) {
@@ -7563,7 +8721,7 @@ function registerExpenseHandlers() {
           ...data,
           payableId: result.payableId
         }),
-        description: `Created ${data.paymentStatus || "paid"} expense: ${data.category} - $${data.amount}`
+        description: `Created ${data.paymentStatus || "paid"} expense: ${categoryName} - $${data.amount}`
       });
       return {
         success: true,
@@ -7571,8 +8729,7 @@ function registerExpenseHandlers() {
         payableCreated: !!result.payableId
       };
     } catch (error) {
-      console.error("Create expense error:", error);
-      return { success: false, message: "Failed to create expense" };
+      return handleIpcError("Create expense", error);
     }
   });
   electron.ipcMain.handle("expenses:update", async (_, id, data) => {
@@ -7593,6 +8750,7 @@ function registerExpenseHandlers() {
           message: "Supplier is required for unpaid expenses"
         };
       }
+      let shouldUpdatePayableAmount = false;
       if (existing.payableId && data.amount && data.amount !== existing.amount) {
         const payable = await db2.query.accountPayables.findFirst({
           where: drizzleOrm.eq(accountPayables.id, existing.payableId)
@@ -7604,11 +8762,7 @@ function registerExpenseHandlers() {
           };
         }
         if (payable) {
-          await db2.update(accountPayables).set({
-            totalAmount: data.amount,
-            remainingAmount: data.amount,
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
+          shouldUpdatePayableAmount = true;
         }
       }
       if (existing.paymentStatus === "unpaid" && data.paymentStatus === "paid") {
@@ -7624,8 +8778,10 @@ function registerExpenseHandlers() {
           }
         }
       }
+      let shouldCreatePayable = false;
+      let supplierIdToUse;
       if (existing.paymentStatus === "paid" && data.paymentStatus === "unpaid") {
-        const supplierIdToUse = data.supplierId || existing.supplierId;
+        supplierIdToUse = data.supplierId || existing.supplierId;
         if (!supplierIdToUse) {
           return {
             success: false,
@@ -7639,8 +8795,21 @@ function registerExpenseHandlers() {
           };
         }
         if (!existing.payableId) {
+          shouldCreatePayable = true;
+        }
+      }
+      const txResult = await withTransaction(async ({ db: txDb }) => {
+        let createdPayableId;
+        if (shouldUpdatePayableAmount && existing.payableId && data.amount) {
+          await txDb.update(accountPayables).set({
+            totalAmount: data.amount,
+            remainingAmount: data.amount,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
+        }
+        if (shouldCreatePayable && supplierIdToUse) {
           const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
-          const payableResult = await db2.insert(accountPayables).values({
+          const payableResult = await txDb.insert(accountPayables).values({
             supplierId: supplierIdToUse,
             purchaseId: null,
             branchId: existing.branchId,
@@ -7651,28 +8820,33 @@ function registerExpenseHandlers() {
             status: "pending",
             dueDate: data.dueDate || existing.dueDate,
             paymentTerms: data.paymentTerms || existing.paymentTerms,
-            notes: `Created from expense status change: ${existing.category}`,
+            notes: `Created from expense status change: expense #${existing.id}`,
             createdBy: session?.userId
           }).returning();
-          data.payableId = payableResult[0].id;
-          await createAuditLog$1({
-            userId: session?.userId,
-            branchId: existing.branchId,
-            action: "create",
-            entityType: "account_payable",
-            entityId: payableResult[0].id,
-            newValues: {
-              supplierId: supplierIdToUse,
-              invoiceNumber,
-              totalAmount: data.amount || existing.amount,
-              source: "expense_status_change",
-              expenseId: existing.id
-            },
-            description: `Created payable from expense #${existing.id} status change`
-          });
+          createdPayableId = payableResult[0].id;
+          data.payableId = createdPayableId;
         }
+        const result = await txDb.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
+        return { expenseResult: result, createdPayableId };
+      });
+      if (txResult.createdPayableId && supplierIdToUse) {
+        const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: existing.branchId,
+          action: "create",
+          entityType: "account_payable",
+          entityId: txResult.createdPayableId,
+          newValues: {
+            supplierId: supplierIdToUse,
+            invoiceNumber,
+            totalAmount: data.amount || existing.amount,
+            source: "expense_status_change",
+            expenseId: existing.id
+          },
+          description: `Created payable from expense #${existing.id} status change`
+        });
       }
-      const result = await db2.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
       await createAuditLog$1({
         userId: session?.userId,
         branchId: existing.branchId,
@@ -7681,12 +8855,11 @@ function registerExpenseHandlers() {
         entityId: id,
         oldValues: sanitizeForAudit(existing),
         newValues: sanitizeForAudit(data),
-        description: `Updated expense: ${existing.category}`
+        description: `Updated expense #${id}`
       });
-      return { success: true, data: result[0] };
+      return { success: true, data: txResult.expenseResult[0] };
     } catch (error) {
-      console.error("Update expense error:", error);
-      return { success: false, message: "Failed to update expense" };
+      return handleIpcError("Update expense", error);
     }
   });
   electron.ipcMain.handle("expenses:delete", async (_, id) => {
@@ -7738,29 +8911,29 @@ Cancelled: Expense deleted`.trim(),
         entityType: "expense",
         entityId: id,
         oldValues: sanitizeForAudit(existing),
-        description: `Deleted expense: ${existing.category}`
+        description: `Deleted expense #${id}`
       });
       return { success: true, message: "Expense deleted successfully" };
     } catch (error) {
-      console.error("Delete expense error:", error);
-      return { success: false, message: "Failed to delete expense" };
+      return handleIpcError("Delete expense", error);
     }
   });
   electron.ipcMain.handle("expenses:get-by-category", async (_, branchId, startDate, endDate) => {
     try {
+      const { categories: categoriesTable } = await Promise.resolve().then(() => schema);
       const conditions = [drizzleOrm.eq(expenses.branchId, branchId)];
       if (startDate && endDate) {
         conditions.push(drizzleOrm.between(expenses.expenseDate, startDate, endDate));
       }
       const data = await db2.select({
-        category: expenses.category,
+        categoryId: expenses.categoryId,
+        category: categoriesTable.name,
         total: drizzleOrm.sql`sum(${expenses.amount})`,
         count: drizzleOrm.sql`count(*)`
-      }).from(expenses).where(drizzleOrm.and(...conditions)).groupBy(expenses.category);
+      }).from(expenses).innerJoin(categoriesTable, drizzleOrm.eq(expenses.categoryId, categoriesTable.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categoriesTable.name);
       return { success: true, data };
     } catch (error) {
-      console.error("Get expenses by category error:", error);
-      return { success: false, message: "Failed to fetch expenses by category" };
+      return handleIpcError("Get expenses by category", error);
     }
   });
 }
@@ -8039,6 +9212,36 @@ function registerCommissionHandlers() {
             totalCommissionPaid: drizzleOrm.sql`${referralPersons.totalCommissionPaid} + ${commission.commissionAmount}`,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(referralPersons.id, commission.referralPersonId));
+        }
+        await postCommissionPaymentToGL(
+          {
+            id: commission.id,
+            branchId: commission.branchId,
+            commissionAmount: commission.commissionAmount,
+            commissionType: commission.commissionType,
+            saleId: commission.saleId
+          },
+          session?.userId ?? 0
+        );
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const openSession = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, commission.branchId),
+            drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+            drizzleOrm.eq(cashRegisterSessions.status, "open")
+          )
+        });
+        if (openSession) {
+          await db2.insert(cashTransactions).values({
+            sessionId: openSession.id,
+            branchId: commission.branchId,
+            transactionType: "expense",
+            amount: -commission.commissionAmount,
+            referenceType: "commission",
+            referenceId: commission.id,
+            description: `Commission payment: ${commission.commissionType} #${commission.id}`,
+            recordedBy: session?.userId ?? 0
+          });
         }
         await createAuditLog$1({
           userId: session?.userId,
@@ -8465,7 +9668,7 @@ function registerBusinessSettingsHandlers() {
       if (!result) {
         const defaultSettings = {
           branchId: null,
-          businessName: "Firearms Retail POS",
+          businessName: "My Business",
           businessAddress: "",
           businessCity: "",
           businessState: "",
@@ -8504,7 +9707,6 @@ function registerBusinessSettingsHandlers() {
           requireCustomerForSale: false,
           enableCustomerLoyalty: false,
           loyaltyPointsRatio: 1,
-          expenseCategories: "Utilities,Rent,Salaries,Supplies,Maintenance,Other",
           expenseApprovalRequired: false,
           expenseApprovalLimit: 1e4,
           enableReturns: true,
@@ -8788,6 +9990,19 @@ function registerBusinessSettingsHandlers() {
     }
   });
 }
+function normalizeDateRange(startDate, endDate) {
+  if (startDate.includes("T") && endDate.includes("T")) {
+    return { start: startDate, end: endDate };
+  }
+  const start = new Date(startDate);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString()
+  };
+}
 function getDateRange(period, customStart, customEnd) {
   const now = /* @__PURE__ */ new Date();
   switch (period) {
@@ -8892,44 +10107,46 @@ function getPeriodLabel(period, startDate, endDate) {
   }
 }
 async function generateReportPDF(options) {
-  const { reportType, data, filters, businessInfo } = options;
+  const { reportType, data, filters, businessInfo, generatedBy } = options;
+  const bizInfo = businessInfo ? { ...businessInfo, generatedBy } : { name: "Business", generatedBy };
   let htmlContent = "";
   switch (reportType) {
     case "sales":
-      htmlContent = generateSalesReportHTML(data, filters, businessInfo);
+      htmlContent = generateSalesReportHTML(data, filters, bizInfo);
       break;
     case "inventory":
-      htmlContent = generateInventoryReportHTML(data, filters, businessInfo);
+      htmlContent = generateInventoryReportHTML(data, filters, bizInfo);
       break;
     case "profit-loss":
-      htmlContent = generateProfitLossReportHTML(data, filters, businessInfo);
+      htmlContent = generateProfitLossReportHTML(data, filters, bizInfo);
       break;
     case "expenses":
-      htmlContent = generateExpenseReportHTML(data, filters, businessInfo);
+      htmlContent = generateExpenseReportHTML(data, filters, bizInfo);
       break;
     case "purchases":
-      htmlContent = generatePurchaseReportHTML(data, filters, businessInfo);
+      htmlContent = generatePurchaseReportHTML(data, filters, bizInfo);
       break;
     case "returns":
-      htmlContent = generateReturnReportHTML(data, filters, businessInfo);
+      htmlContent = generateReturnReportHTML(data, filters, bizInfo);
       break;
     case "commissions":
-      htmlContent = generateCommissionReportHTML(data, filters, businessInfo);
+      htmlContent = generateCommissionReportHTML(data, filters, bizInfo);
       break;
     case "tax":
-      htmlContent = generateTaxReportHTML(data, filters, businessInfo);
+      htmlContent = generateTaxReportHTML(data, filters, bizInfo);
       break;
     case "customer":
-      htmlContent = generateCustomerReportHTML(data, filters, businessInfo);
+      htmlContent = generateCustomerReportHTML(data, filters, bizInfo);
       break;
     case "branch-performance":
-      htmlContent = generateBranchPerformanceHTML(data, filters, businessInfo);
+      htmlContent = generateBranchPerformanceHTML(data, filters, bizInfo);
       break;
     case "cash-flow":
-      htmlContent = generateCashFlowHTML(data, filters, businessInfo);
+      htmlContent = generateCashFlowHTML(data, filters, bizInfo);
       break;
     case "audit-trail":
-      htmlContent = generateAuditTrailHTML(data, filters, businessInfo);
+    case "comprehensive-audit":
+      htmlContent = generateAuditTrailHTML(data, filters, bizInfo);
       break;
     default:
       throw new Error(`Unknown report type: ${reportType}`);
@@ -8950,10 +10167,10 @@ async function generateReportPDF(options) {
     printBackground: true,
     landscape: false,
     margins: {
-      top: 0.2,
-      bottom: 0.2,
-      left: 0.2,
-      right: 0.2
+      top: 0.4,
+      bottom: 0.4,
+      left: 0.4,
+      right: 0.4
     }
   });
   const downloadsPath = electron.app.getPath("downloads");
@@ -8963,457 +10180,587 @@ async function generateReportPDF(options) {
   pdfWindow.close();
   return filePath;
 }
+function fmtCurrency(amount) {
+  return `Rs. ${(amount || 0).toLocaleString("en-PK", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function fmtNum(n) {
+  return (n || 0).toLocaleString("en-PK");
+}
+function fmtPct(n) {
+  return `${(n || 0).toFixed(1)}%`;
+}
 function getReportTemplate(title, content, filters, businessInfo) {
-  return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+  const bizName = businessInfo?.name || "Business";
+  const bizAddress = businessInfo?.address || "";
+  const bizCity = businessInfo?.city || "";
+  const bizState = businessInfo?.state || "";
+  const bizPostalCode = businessInfo?.postalCode || "";
+  const bizCountry = businessInfo?.country || "";
+  const bizPhone = businessInfo?.phone || "";
+  const bizEmail = businessInfo?.email || "";
+  const bizWebsite = businessInfo?.website || "";
+  const bizRegNo = businessInfo?.registrationNo || "";
+  const bizTaxId = businessInfo?.taxId || "";
+  const generatedBy = businessInfo?.generatedBy || "";
+  const addressParts = [bizAddress, bizCity, bizState, bizPostalCode, bizCountry].filter(Boolean);
+  const fullAddress = addressParts.join(", ");
+  const hasContact = fullAddress || bizPhone || bizEmail;
+  const periodLabel = getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate);
+  const generatedAt = formatDateTime(/* @__PURE__ */ new Date());
+  return `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-        @page {
-          size: A4;
-          margin: 10mm;
-        }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @page { size: A4; margin: 12mm 14mm; }
 
-        body {
-          font-family: 'Segoe UI', 'Arial', sans-serif;
-          font-size: 11px;
-          line-height: 1.4;
-          color: #333;
-          background: white;
-          padding: 15px 20px;
-          max-width: 800px;
-          margin: 0 auto;
-        }
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 11px;
+    line-height: 1.5;
+    color: #1e293b;
+    background: #fff;
+  }
 
-        /* Header - Compact */
-        .header {
-          text-align: center;
-          margin-bottom: 12px;
-          padding-bottom: 8px;
-        }
+  /* ── Header ── */
+  .report-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 12px;
+    border-bottom: 1.5px solid #334155;
+    margin-bottom: 14px;
+  }
+  .biz-block {}
+  .biz-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0f172a;
+    letter-spacing: 0.3px;
+    line-height: 1.2;
+  }
+  .biz-contact {
+    font-size: 8.5px;
+    color: #475569;
+    margin-top: 3px;
+    line-height: 1.6;
+  }
+  .biz-ids {
+    font-size: 8px;
+    color: #64748b;
+    margin-top: 2px;
+    line-height: 1.5;
+  }
+  .report-meta {
+    text-align: right;
+  }
+  .report-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+  }
+  .report-period {
+    font-size: 9.5px;
+    color: #475569;
+    margin-top: 3px;
+  }
+  .report-generated {
+    font-size: 8.5px;
+    color: #64748b;
+    margin-top: 2px;
+  }
+  .report-branch {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 2px 7px;
+    border: 1px solid #cbd5e1;
+    border-radius: 3px;
+    font-size: 8.5px;
+    font-weight: 600;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
 
-        .business-name {
-          font-size: 18px;
-          font-weight: bold;
-          color: #1a1a1a;
-          text-transform: uppercase;
-          letter-spacing: 2px;
-          margin-bottom: 6px;
-        }
+  /* ── KPI Cards ── */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .kpi-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .kpi-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .kpi-card {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .kpi-card.highlight {
+    background: #f8fafc;
+    border-color: #334155;
+    border-width: 2px;
+  }
+  .kpi-card.highlight .kpi-label { color: #475569; }
+  .kpi-card.highlight .kpi-value { color: #0f172a; }
+  .kpi-card.accent {
+    background: #fefce8;
+    border-color: #fde68a;
+  }
+  .kpi-card.danger {
+    background: #fef2f2;
+    border-color: #fecaca;
+  }
+  .kpi-card.danger .kpi-value { color: #dc2626; }
+  .kpi-card.success {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+  }
+  .kpi-card.success .kpi-value { color: #16a34a; }
+  .kpi-label {
+    font-size: 8.5px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #64748b;
+    margin-bottom: 4px;
+  }
+  .kpi-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.2;
+  }
+  .kpi-sub {
+    font-size: 9px;
+    color: #94a3b8;
+    margin-top: 2px;
+  }
 
-        .report-title {
-          font-size: 13px;
-          color: #555;
-          margin: 4px 0;
-        }
+  /* ── Sections ── */
+  .section {
+    margin-bottom: 16px;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #0f172a;
+  }
+  .section-badge {
+    font-size: 8px;
+    font-weight: 600;
+    padding: 2px 6px;
+    background: #f1f5f9;
+    border-radius: 3px;
+    color: #64748b;
+  }
 
-        .report-date {
-          font-size: 11px;
-          color: #666;
-          margin-top: 3px;
-        }
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10.5px;
+  }
+  table thead th {
+    text-align: left;
+    font-size: 8.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #64748b;
+    padding: 6px 10px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  table thead th:last-child { text-align: right; }
+  table tbody td {
+    padding: 7px 10px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #334155;
+  }
+  table tbody td:last-child {
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  table tbody tr:last-child td { border-bottom: none; }
+  table tbody tr:nth-child(even) { background: #fafbfc; }
+  .col-num {
+    width: 40px;
+    text-align: center;
+    color: #94a3b8;
+    font-weight: 500;
+  }
 
-        /* Separator Lines - Tighter */
-        .line {
-          border-top: 1px solid #ddd;
-          margin: 8px 0;
-        }
+  /* ── Data Rows (key-value pairs) ── */
+  .data-rows {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 2px 0;
+    overflow: hidden;
+  }
+  .data-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 14px;
+    font-size: 11px;
+  }
+  .data-row + .data-row { border-top: 1px solid #e2e8f0; }
+  .data-row .label {
+    color: #475569;
+    font-weight: 500;
+  }
+  .data-row .value {
+    font-weight: 600;
+    color: #0f172a;
+    font-variant-numeric: tabular-nums;
+  }
+  .data-row.total {
+    background: #f1f5f9;
+    border: 1.5px solid #334155;
+    padding: 10px 14px;
+  }
+  .data-row.total .label { color: #0f172a; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .data-row.total .value { color: #0f172a; font-size: 14px; font-weight: 700; }
+  .data-row.subtotal {
+    background: #f1f5f9;
+  }
+  .data-row.subtotal .label { font-weight: 600; }
+  .data-row.subtotal .value { font-weight: 700; }
+  .data-row.deduction .value { color: #dc2626; }
+  .data-row.positive .value { color: #16a34a; }
 
-        .dashed-line {
-          border-top: 1px dashed #ccc;
-          margin: 8px 0;
-        }
+  /* ── Two Column Layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
 
-        .double-line {
-          border-top: 2px solid #333;
-          margin: 10px 0;
-        }
+  /* ── Alert Box ── */
+  .alert {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 500;
+    margin-bottom: 14px;
+  }
+  .alert.warning {
+    background: #fef3c7;
+    border: 1px solid #fde68a;
+    color: #92400e;
+  }
+  .alert.danger {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+  }
 
-        /* Info Row - Compact */
-        .info-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 3px 0;
-        }
+  /* ── Footer ── */
+  .report-footer {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8.5px;
+    color: #94a3b8;
+  }
+  .footer-left { }
+  .footer-right { text-align: right; }
 
-        .info-row span:first-child {
-          color: #e67e22;
-          font-weight: 500;
-        }
+  /* ── Utility ── */
+  .text-right { text-align: right; }
+  .text-center { text-align: center; }
+  .text-danger { color: #dc2626; }
+  .text-success { color: #16a34a; }
+  .text-muted { color: #94a3b8; }
+  .mb-0 { margin-bottom: 0; }
+  .mt-sm { margin-top: 8px; }
 
-        .info-row span:last-child {
-          color: #2980b9;
-          font-weight: 600;
-        }
+  /* ── Page break ── */
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
 
-        /* Table Header - Compact */
-        .table-header {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          font-weight: bold;
-          text-transform: uppercase;
-          padding: 6px 0;
-          border-bottom: 2px solid #333;
-          margin-bottom: 4px;
-          color: #1a1a1a;
-        }
+  <!-- Header -->
+  <div class="report-header">
+    <div class="biz-block">
+      <div class="biz-name">${bizName}</div>
+      ${hasContact ? `<div class="biz-contact">
+        ${fullAddress ? `${fullAddress}<br>` : ""}
+        ${bizPhone ? `Tel: ${bizPhone}` : ""}${bizPhone && bizEmail ? " &nbsp;|&nbsp; " : ""}${bizEmail ? `Email: ${bizEmail}` : ""}${(bizPhone || bizEmail) && bizWebsite ? " &nbsp;|&nbsp; " : ""}${bizWebsite ? `Web: ${bizWebsite}` : ""}
+      </div>` : ""}
+      ${bizRegNo || bizTaxId ? `<div class="biz-ids">
+        ${bizRegNo ? `Reg #: ${bizRegNo}` : ""}${bizRegNo && bizTaxId ? " &nbsp;|&nbsp; " : ""}${bizTaxId ? `Tax ID: ${bizTaxId}` : ""}
+      </div>` : ""}
+    </div>
+    <div class="report-meta">
+      <div class="report-title">${title}</div>
+      <div class="report-period">${periodLabel}</div>
+      <div class="report-generated">${generatedAt}${generatedBy ? ` &nbsp;|&nbsp; By: ${generatedBy}` : ""}</div>
+      <div class="report-branch">${filters.branchName || "All Branches"}</div>
+    </div>
+  </div>
 
-        .col-qty { width: 50px; }
-        .col-item { flex: 1; padding: 0 10px; }
-        .col-total { width: 100px; text-align: right; }
+  <!-- Content -->
+  ${content}
 
-        /* Table Row - Tight spacing */
-        .table-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 4px 0;
-          border-bottom: 1px solid #eee;
-        }
+  <!-- Footer -->
+  <div class="report-footer">
+    <div class="footer-left">
+      ${bizName}${bizPhone ? ` &nbsp;|&nbsp; Tel: ${bizPhone}` : ""}
+    </div>
+    <div class="footer-right">
+      Page generated: ${generatedAt}${generatedBy ? ` by ${generatedBy}` : ""} &nbsp;|&nbsp; Confidential
+    </div>
+  </div>
 
-        .table-row:last-child {
-          border-bottom: none;
-        }
-
-        .table-row .col-qty { color: #e74c3c; font-weight: 500; }
-        .table-row .col-item { color: #2980b9; }
-        .table-row .col-total { font-weight: 600; color: #27ae60; }
-
-        /* Summary Section - Compact */
-        .summary-row {
-          display: flex;
-          justify-content: space-between;
-          font-size: 11px;
-          padding: 4px 0;
-        }
-
-        .summary-row.subtotal {
-          padding-top: 6px;
-          border-top: 1px dashed #ccc;
-        }
-
-        .summary-row.total {
-          font-size: 12px;
-          font-weight: bold;
-          padding: 6px 0;
-          border-top: 1px solid #333;
-        }
-
-        .summary-row.grand-total {
-          font-size: 14px;
-          font-weight: bold;
-          padding: 8px 6px;
-          margin-top: 6px;
-          border-top: 2px solid #333;
-          background: #f8f9fa;
-        }
-
-        /* Section - Reduced gaps */
-        .section {
-          margin: 10px 0;
-        }
-
-        .section-title {
-          font-size: 11px;
-          font-weight: bold;
-          text-transform: uppercase;
-          text-align: center;
-          padding: 6px 10px;
-          margin-bottom: 6px;
-          background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
-          border-left: 3px solid #3498db;
-          color: #2c3e50;
-        }
-
-        /* Footer - Compact */
-        .footer {
-          margin-top: 15px;
-          text-align: center;
-          padding-top: 10px;
-          border-top: 2px solid #333;
-        }
-
-        .thank-you {
-          font-size: 10px;
-          font-style: italic;
-          color: #7f8c8d;
-          margin: 6px 0;
-        }
-
-        .footer-message {
-          font-size: 12px;
-          font-weight: bold;
-          letter-spacing: 2px;
-          margin: 6px 0;
-          color: #2c3e50;
-        }
-
-        .footer-date {
-          font-size: 10px;
-          color: #95a5a6;
-          margin-top: 6px;
-        }
-
-        /* Utility */
-        .text-center { text-align: center; }
-        .text-right { text-align: right; }
-        .bold { font-weight: bold; }
-        .small { font-size: 10px; }
-        .muted { color: #95a5a6; }
-
-        /* Data List - Tighter */
-        .data-list {
-          margin: 6px 0;
-        }
-
-        .data-item {
-          display: flex;
-          justify-content: space-between;
-          padding: 4px 0;
-          border-bottom: 1px solid #eee;
-          font-size: 11px;
-        }
-
-        .data-item:last-child {
-          border-bottom: none;
-        }
-
-        .data-item .label { color: #e67e22; font-weight: 500; }
-        .data-item .value { font-weight: 600; color: #2980b9; }
-      </style>
-    </head>
-    <body>
-      <div class="header">
-        <div class="business-name">${businessInfo?.name || "STORE"}</div>
-        <div class="report-title">${title}</div>
-        <div class="report-date">${getPeriodLabel(filters.timePeriod, filters.startDate, filters.endDate)}</div>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="info-row">
-        <span>Branch:</span>
-        <span>${filters.branchName || "All Branches"}</span>
-      </div>
-      <div class="info-row">
-        <span>Generated:</span>
-        <span>${formatDateTime(/* @__PURE__ */ new Date())}</span>
-      </div>
-
-      <div class="line"></div>
-
-      ${content}
-
-      <div class="double-line"></div>
-
-      <div class="footer">
-        <div class="thank-you">Thank you for your business!</div>
-        <div class="footer-message">THANK YOU - COME AGAIN!</div>
-        <div class="footer-date">${formatDateTime(/* @__PURE__ */ new Date())}</div>
-      </div>
-    </body>
-    </html>
-  `;
+</body></html>`;
 }
 function generateSalesReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Sales Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Transactions:</span>
-          <span class="value">${data.summary?.totalSales || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average Order:</span>
-          <span class="value">Rs. ${(data.summary?.avgOrderValue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Tax Collected:</span>
-          <span class="value">Rs. ${(data.summary?.totalTax || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalRevenue || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL REVENUE:</span>
-        <span>Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Transactions</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalSales || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Order Value</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgOrderValue || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tax Collected</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalTax || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Payment Method</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Method</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.byPaymentMethod?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.paymentMethod}</span>
-          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Payment Method</div>
+          <div class="section-badge">${data.byPaymentMethod?.length || 0} methods</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+        <table>
+          <thead><tr><th>Method</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.byPaymentMethod?.map((item) => `
+              <tr>
+                <td>${item.paymentMethod}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.total)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Top Products</div>
+          <div class="section-badge">Top 10</div>
+        </div>
+        <table>
+          <thead><tr><th>Product</th><th>Qty</th><th>Revenue</th></tr></thead>
+          <tbody>
+            ${data.topProducts?.slice(0, 10).map((item) => `
+              <tr>
+                <td>${item.productName}</td>
+                <td class="col-num">${fmtNum(item.quantitySold)}</td>
+                <td>${fmtCurrency(item.revenue)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <div class="dashed-line"></div>
-
+    ${data.dailySales && data.dailySales.length > 0 ? `
     <div class="section">
-      <div class="section-title">Top Selling Products</div>
-      <div class="table-header">
-        <span class="col-qty">QTY</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Revenue</span>
+      <div class="section-header">
+        <div class="section-title">Daily Breakdown</div>
+        <div class="section-badge">${data.dailySales.length} days</div>
       </div>
-      ${data.topProducts?.slice(0, 10).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.quantitySold}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">Rs. ${item.revenue.toFixed(2)}</span>
-        </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Date</th><th>Transactions</th><th>Revenue</th></tr></thead>
+        <tbody>
+          ${data.dailySales.map((item) => `
+            <tr>
+              <td>${formatDate(item.date)}</td>
+              <td class="col-num">${fmtNum(item.count)}</td>
+              <td>${fmtCurrency(item.total)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
+    ` : ""}
   `;
   return getReportTemplate("Sales Report", content, filters, businessInfo);
 }
 function generateInventoryReportHTML(data, filters, businessInfo) {
   const totalValue = data.stockValue?.reduce((sum, item) => sum + item.costValue, 0) || 0;
+  const totalRetail = data.stockValue?.reduce((sum, item) => sum + item.retailValue, 0) || 0;
+  const lowCount = data.stockSummary?.[0]?.lowStockItems || 0;
+  const outCount = data.stockSummary?.[0]?.outOfStockItems || 0;
   const content = `
-    <div class="section">
-      <div class="section-title">Inventory Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Low Stock Items:</span>
-          <span class="value">${data.stockSummary?.[0]?.lowStockItems || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Out of Stock:</span>
-          <span class="value">${data.stockSummary?.[0]?.outOfStockItems || 0}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Stock Value (Cost)</div>
+        <div class="kpi-value">${fmtCurrency(totalValue)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>STOCK VALUE:</span>
-        <span>Rs. ${totalValue.toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Retail Value</div>
+        <div class="kpi-value">${fmtCurrency(totalRetail)}</div>
+      </div>
+      <div class="kpi-card${lowCount > 0 ? " accent" : ""}">
+        <div class="kpi-label">Low Stock Items</div>
+        <div class="kpi-value">${fmtNum(lowCount)}</div>
+      </div>
+      <div class="kpi-card${outCount > 0 ? " danger" : ""}">
+        <div class="kpi-label">Out of Stock</div>
+        <div class="kpi-value">${fmtNum(outCount)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
+    ${lowCount > 0 || outCount > 0 ? `
+    <div class="alert ${outCount > 0 ? "danger" : "warning"}">
+      ${outCount > 0 ? `&#9888; ${outCount} product(s) are OUT OF STOCK and need immediate restocking.` : ""}
+      ${lowCount > 0 ? `${outCount > 0 ? "<br>" : "&#9888; "}${lowCount} product(s) are running low on stock.` : ""}
+    </div>
+    ` : ""}
 
     <div class="section">
-      <div class="section-title">Stock by Branch</div>
-      <div class="table-header">
-        <span class="col-qty">Units</span>
-        <span class="col-item">Branch</span>
-        <span class="col-total">Low Stock</span>
+      <div class="section-header">
+        <div class="section-title">Stock by Branch</div>
       </div>
-      ${data.stockSummary?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.totalUnits}</span>
-          <span class="col-item">${item.branchName}</span>
-          <span class="col-total">${item.lowStockItems}</span>
-        </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Branch</th><th>Products</th><th>Units</th><th>Low Stock</th><th>Out of Stock</th></tr></thead>
+        <tbody>
+          ${data.stockSummary?.map((item) => `
+            <tr>
+              <td>${item.branchName}</td>
+              <td class="col-num">${fmtNum(item.totalProducts)}</td>
+              <td class="col-num">${fmtNum(item.totalUnits)}</td>
+              <td class="col-num${item.lowStockItems > 0 ? " text-danger" : ""}">${item.lowStockItems}</td>
+              <td class="col-num${item.outOfStockItems > 0 ? " text-danger" : ""}">${item.outOfStockItems}</td>
+            </tr>
+          `).join("") || '<tr><td colspan="5" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
 
     ${data.lowStock && data.lowStock.length > 0 ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">** LOW STOCK ALERT **</div>
-      <div class="table-header">
-        <span class="col-qty">Qty</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Status</span>
+      <div class="section-header">
+        <div class="section-title">Low Stock Alert</div>
+        <div class="section-badge">${data.lowStock.length} items</div>
       </div>
-      ${data.lowStock.slice(0, 15).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.quantity}/${item.minQuantity}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">${item.quantity === 0 ? "OUT!" : "LOW"}</span>
-        </div>
-      `
-  ).join("")}
+      <table>
+        <thead><tr><th>Product</th><th>Code</th><th>Branch</th><th>Current</th><th>Min Required</th></tr></thead>
+        <tbody>
+          ${data.lowStock.slice(0, 20).map((item) => `
+            <tr>
+              <td>${item.productName}</td>
+              <td>${item.productCode || "-"}</td>
+              <td>${item.branchName}</td>
+              <td class="col-num ${item.quantity === 0 ? "text-danger" : ""}">${item.quantity}</td>
+              <td class="col-num">${item.minQuantity}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
     ` : ""}
   `;
   return getReportTemplate("Inventory Report", content, filters, businessInfo);
 }
 function generateProfitLossReportHTML(data, filters, businessInfo) {
+  const isProfit = (data.netProfit || 0) >= 0;
   const content = `
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card">
+        <div class="kpi-label">Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.revenue || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Gross Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.grossProfit || 0)}</div>
+        <div class="kpi-sub">Margin: ${fmtPct(data.grossMargin || 0)}</div>
+      </div>
+      <div class="kpi-card ${isProfit ? "success" : "danger"}">
+        <div class="kpi-label">Net Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.netProfit || 0)}</div>
+        <div class="kpi-sub">Margin: ${fmtPct(data.netMargin || 0)}</div>
+      </div>
+    </div>
+
     <div class="section">
-      <div class="section-title">Financial Statement</div>
-
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Revenue:</span>
-          <span class="value">Rs. ${(data.revenue || 0).toFixed(2)}</span>
+      <div class="section-header">
+        <div class="section-title">Profit &amp; Loss Statement</div>
+      </div>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Total Revenue</span>
+          <span class="value">${fmtCurrency(data.revenue || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">Cost of Goods Sold:</span>
-          <span class="value">- Rs. ${(data.costOfGoodsSold || 0).toFixed(2)}</span>
+        <div class="data-row deduction">
+          <span class="label">Less: Cost of Goods Sold</span>
+          <span class="value">(${fmtCurrency(data.costOfGoodsSold || 0)})</span>
         </div>
-      </div>
-
-      <div class="dashed-line"></div>
-
-      <div class="summary-row subtotal">
-        <span>Gross Profit:</span>
-        <span>Rs. ${(data.grossProfit || 0).toFixed(2)}</span>
-      </div>
-      <div class="data-item">
-        <span class="label small">Gross Margin:</span>
-        <span class="value">${(data.grossMargin || 0).toFixed(1)}%</span>
-      </div>
-
-      <div class="dashed-line"></div>
-
-      <div class="data-item">
-        <span class="label">Operating Expenses:</span>
-        <span class="value">- Rs. ${(data.expenses || 0).toFixed(2)}</span>
-      </div>
-
-      <div class="line"></div>
-
-      <div class="summary-row grand-total">
-        <span>NET PROFIT:</span>
-        <span>Rs. ${(data.netProfit || 0).toFixed(2)}</span>
-      </div>
-      <div class="data-item">
-        <span class="label small">Net Margin:</span>
-        <span class="value">${(data.netMargin || 0).toFixed(1)}%</span>
+        <div class="data-row subtotal">
+          <span class="label">Gross Profit</span>
+          <span class="value">${fmtCurrency(data.grossProfit || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Operating Expenses</span>
+          <span class="value">(${fmtCurrency(data.expenses || 0)})</span>
+        </div>
+        <div class="data-row total">
+          <span class="label">Net Profit / (Loss)</span>
+          <span class="value">${fmtCurrency(data.netProfit || 0)}</span>
+        </div>
       </div>
     </div>
 
     ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Expenses by Category</div>
-      <div class="table-header">
-        <span class="col-item">Category</span>
-        <span class="col-total">Amount</span>
+      <div class="section-header">
+        <div class="section-title">Expense Breakdown</div>
       </div>
-      ${data.expensesByCategory.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.category}</span>
-          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
-        </div>
-      `
-  ).join("")}
+      <table>
+        <thead><tr><th>Category</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.expensesByCategory.map((item) => `
+            <tr>
+              <td>${item.category}</td>
+              <td>${fmtCurrency(item.total)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
     ` : ""}
   `;
@@ -9421,149 +10768,140 @@ function generateProfitLossReportHTML(data, filters, businessInfo) {
 }
 function generateExpenseReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Expense Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Count:</span>
-          <span class="value">${data.summary?.expenseCount || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average Expense:</span>
-          <span class="value">Rs. ${(data.summary?.avgExpense || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Expenses</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalExpenses || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL EXPENSES:</span>
-        <span>Rs. ${(data.summary?.totalExpenses || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Expense Count</div>
+        <div class="kpi-value">${fmtNum(data.summary?.expenseCount || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Average Expense</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgExpense || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Category</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Category</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.expensesByCategory?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.category}</span>
-          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Category</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    ${data.topExpenses && data.topExpenses.length > 0 ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Recent Expenses</div>
-      <div class="table-header">
-        <span class="col-item">Description</span>
-        <span class="col-total">Amount</span>
+        <table>
+          <thead><tr><th>Category</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.expensesByCategory?.map((item) => `
+              <tr>
+                <td>${item.category}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.amount)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.topExpenses.slice(0, 10).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.category}${item.description ? " - " + item.description.substring(0, 15) : ""}</span>
-          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
+
+      ${data.topExpenses && data.topExpenses.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Recent Expenses</div>
         </div>
-        <div class="small muted" style="padding-left:20px;">${formatDate(item.date)}</div>
-      `
-  ).join("")}
+        <table>
+          <thead><tr><th>Description</th><th>Date</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.topExpenses.slice(0, 10).map((item) => `
+              <tr>
+                <td>${item.category}${item.description ? " - " + item.description.substring(0, 20) : ""}</td>
+                <td>${formatDate(item.date)}</td>
+                <td>${fmtCurrency(item.amount)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
     </div>
-    ` : ""}
   `;
   return getReportTemplate("Expense Report", content, filters, businessInfo);
 }
 function generatePurchaseReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Purchase Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Orders:</span>
-          <span class="value">${data.summary?.totalPurchases || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average Order:</span>
-          <span class="value">Rs. ${(data.summary?.avgPurchaseValue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Pending Payment:</span>
-          <span class="value">Rs. ${(data.summary?.pendingPayments || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Cost</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalCost || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL COST:</span>
-        <span>Rs. ${(data.summary?.totalCost || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Orders</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalPurchases || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Order Value</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgPurchaseValue || 0)}</div>
+      </div>
+      <div class="kpi-card${(data.summary?.pendingPayments || 0) > 0 ? " danger" : ""}">
+        <div class="kpi-label">Pending Payment</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.pendingPayments || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Supplier</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Supplier</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.purchasesBySupplier?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.totalPurchases}</span>
-          <span class="col-item">${item.supplierName}</span>
-          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Supplier</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Status</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Status</span>
-        <span class="col-total">Amount</span>
+        <table>
+          <thead><tr><th>Supplier</th><th>Orders</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.purchasesBySupplier?.map((item) => `
+              <tr>
+                <td>${item.supplierName}</td>
+                <td class="col-num">${fmtNum(item.totalPurchases)}</td>
+                <td>${fmtCurrency(item.totalAmount)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.purchasesByStatus?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.status}</span>
-          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
+
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Status</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+        <table>
+          <thead><tr><th>Status</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.purchasesByStatus?.map((item) => `
+              <tr>
+                <td>${item.status}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.totalAmount)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
 
     ${data.recentPurchases && data.recentPurchases.length > 0 ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Recent Orders</div>
-      <div class="table-header">
-        <span class="col-item">PO Number</span>
-        <span class="col-total">Amount</span>
+      <div class="section-header">
+        <div class="section-title">Recent Orders</div>
       </div>
-      ${data.recentPurchases.slice(0, 8).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.purchaseOrderNumber}</span>
-          <span class="col-total">Rs. ${item.totalAmount.toFixed(2)}</span>
-        </div>
-        <div class="small muted" style="padding-left:20px;">${item.supplierName} | ${formatDate(item.createdAt)}</div>
-      `
-  ).join("")}
+      <table>
+        <thead><tr><th>PO Number</th><th>Supplier</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.recentPurchases.slice(0, 10).map((item) => `
+            <tr>
+              <td>${item.purchaseOrderNumber}</td>
+              <td>${item.supplierName}</td>
+              <td>${formatDate(item.createdAt)}</td>
+              <td>${fmtCurrency(item.totalAmount)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
     ` : ""}
   `;
@@ -9571,126 +10909,116 @@ function generatePurchaseReportHTML(data, filters, businessInfo) {
 }
 function generateReturnReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Returns Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Returns:</span>
-          <span class="value">${data.summary?.totalReturns || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Return Rate:</span>
-          <span class="value">${(data.summary?.returnRate || 0).toFixed(1)}%</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Refund Value</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalValue || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>REFUND VALUE:</span>
-        <span>Rs. ${(data.summary?.totalValue || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Returns</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalReturns || 0)}</div>
+      </div>
+      <div class="kpi-card${(data.summary?.returnRate || 0) > 5 ? " danger" : ""}">
+        <div class="kpi-label">Return Rate</div>
+        <div class="kpi-value">${fmtPct(data.summary?.returnRate || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Reason</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Reason</span>
-        <span class="col-total">Value</span>
-      </div>
-      ${data.returnsByReason?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.reason}</span>
-          <span class="col-total">Rs. ${item.value.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Reason</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    ${data.returnsByProduct && data.returnsByProduct.length > 0 ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Most Returned Products</div>
-      <div class="table-header">
-        <span class="col-qty">QTY</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Value</span>
+        <table>
+          <thead><tr><th>Reason</th><th>Count</th><th>Value</th></tr></thead>
+          <tbody>
+            ${data.returnsByReason?.map((item) => `
+              <tr>
+                <td>${item.reason}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.value)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.returnsByProduct.slice(0, 10).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.returnCount}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">Rs. ${item.totalValue.toFixed(2)}</span>
+
+      ${data.returnsByProduct && data.returnsByProduct.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Most Returned Products</div>
         </div>
-      `
-  ).join("")}
+        <table>
+          <thead><tr><th>Product</th><th>Returns</th><th>Value</th></tr></thead>
+          <tbody>
+            ${data.returnsByProduct.slice(0, 10).map((item) => `
+              <tr>
+                <td>${item.productName}</td>
+                <td class="col-num">${fmtNum(item.returnCount)}</td>
+                <td>${fmtCurrency(item.totalValue)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
     </div>
-    ` : ""}
   `;
   return getReportTemplate("Returns Report", content, filters, businessInfo);
 }
 function generateCommissionReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Commission Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Count:</span>
-          <span class="value">${data.summary?.commissionCount || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Average:</span>
-          <span class="value">Rs. ${(data.summary?.avgCommission || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Paid</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalCommissions || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL PAID:</span>
-        <span>Rs. ${(data.summary?.totalCommissions || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Commission Count</div>
+        <div class="kpi-value">${fmtNum(data.summary?.commissionCount || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Average</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgCommission || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">By Salesperson</div>
-      <div class="table-header">
-        <span class="col-qty">Sales</span>
-        <span class="col-item">Name</span>
-        <span class="col-total">Commission</span>
+      <div class="section-header">
+        <div class="section-title">By Salesperson</div>
       </div>
-      ${data.commissionsBySalesperson?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.salesCount}</span>
-          <span class="col-item">${item.userName}</span>
-          <span class="col-total">Rs. ${item.totalCommission.toFixed(2)}</span>
-        </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Name</th><th>Sales</th><th>Commission</th></tr></thead>
+        <tbody>
+          ${data.commissionsBySalesperson?.map((item) => `
+            <tr>
+              <td>${item.userName}</td>
+              <td class="col-num">${fmtNum(item.salesCount)}</td>
+              <td>${fmtCurrency(item.totalCommission)}</td>
+            </tr>
+          `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
 
     ${data.recentCommissions && data.recentCommissions.length > 0 ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Recent Commissions</div>
-      <div class="table-header">
-        <span class="col-item">Salesperson</span>
-        <span class="col-total">Amount</span>
+      <div class="section-header">
+        <div class="section-title">Recent Commissions</div>
       </div>
-      ${data.recentCommissions.slice(0, 10).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.userName}</span>
-          <span class="col-total">Rs. ${item.amount.toFixed(2)}</span>
-        </div>
-        <div class="small muted" style="padding-left:20px;">${formatDate(item.date)} | ${item.saleInvoice}</div>
-      `
-  ).join("")}
+      <table>
+        <thead><tr><th>Salesperson</th><th>Invoice</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.recentCommissions.slice(0, 10).map((item) => `
+            <tr>
+              <td>${item.userName}</td>
+              <td>${item.saleInvoice}</td>
+              <td>${formatDate(item.date)}</td>
+              <td>${fmtCurrency(item.amount)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
     ` : ""}
   `;
@@ -9698,300 +11026,267 @@ function generateCommissionReportHTML(data, filters, businessInfo) {
 }
 function generateTaxReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Tax Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Taxable Sales:</span>
-          <span class="value">Rs. ${(data.summary?.taxableSales || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Avg Tax per Sale:</span>
-          <span class="value">Rs. ${(data.summary?.avgTaxPerSale || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Tax Collected</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalTaxCollected || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TAX COLLECTED:</span>
-        <span>Rs. ${(data.summary?.totalTaxCollected || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Taxable Sales</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.taxableSales || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Tax per Sale</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.avgTaxPerSale || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Branch</div>
-      <div class="table-header">
-        <span class="col-item">Branch</span>
-        <span class="col-total">Tax</span>
-      </div>
-      ${data.taxByBranch?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.branchName}</span>
-          <span class="col-total">Rs. ${item.taxCollected.toFixed(2)}</span>
+    <div class="two-col">
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Branch</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
-    </div>
-
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">By Payment Method</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Method</span>
-        <span class="col-total">Tax</span>
+        <table>
+          <thead><tr><th>Branch</th><th>Tax Collected</th></tr></thead>
+          <tbody>
+            ${data.taxByBranch?.map((item) => `
+              <tr>
+                <td>${item.branchName}</td>
+                <td>${fmtCurrency(item.taxCollected)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="2" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
       </div>
-      ${data.taxByPaymentMethod?.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.salesCount}</span>
-          <span class="col-item">${item.paymentMethod}</span>
-          <span class="col-total">Rs. ${item.taxCollected.toFixed(2)}</span>
+
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">By Payment Method</div>
         </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+        <table>
+          <thead><tr><th>Method</th><th>Sales</th><th>Tax</th></tr></thead>
+          <tbody>
+            ${data.taxByPaymentMethod?.map((item) => `
+              <tr>
+                <td>${item.paymentMethod}</td>
+                <td class="col-num">${fmtNum(item.salesCount)}</td>
+                <td>${fmtCurrency(item.taxCollected)}</td>
+              </tr>
+            `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+          </tbody>
+        </table>
+      </div>
     </div>
   `;
   return getReportTemplate("Tax Report", content, filters, businessInfo);
 }
 function generateCustomerReportHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Customer Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Customers:</span>
-          <span class="value">${data.summary?.totalCustomers || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Active:</span>
-          <span class="value">${data.summary?.activeCustomers || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">New This Period:</span>
-          <span class="value">${data.summary?.newCustomers || 0}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalRevenue || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL REVENUE:</span>
-        <span>Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Total Customers</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalCustomers || 0)}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Active</div>
+        <div class="kpi-value">${fmtNum(data.summary?.activeCustomers || 0)}</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-label">New This Period</div>
+        <div class="kpi-value">${fmtNum(data.summary?.newCustomers || 0)}</div>
       </div>
     </div>
 
     ${data.customerRetention ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Retention Stats</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Repeat Customers:</span>
-          <span class="value">${data.customerRetention.repeatCustomers || 0}</span>
+      <div class="section-header">
+        <div class="section-title">Retention Metrics</div>
+      </div>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Repeat Customers</span>
+          <span class="value">${fmtNum(data.customerRetention.repeatCustomers || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">One-time Buyers:</span>
-          <span class="value">${data.customerRetention.oneTimeCustomers || 0}</span>
+        <div class="data-row">
+          <span class="label">One-time Buyers</span>
+          <span class="value">${fmtNum(data.customerRetention.oneTimeCustomers || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">Retention Rate:</span>
-          <span class="value">${(data.customerRetention.repeatRate || 0).toFixed(1)}%</span>
+        <div class="data-row subtotal">
+          <span class="label">Retention Rate</span>
+          <span class="value">${fmtPct(data.customerRetention.repeatRate || 0)}</span>
         </div>
       </div>
     </div>
     ` : ""}
 
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Top Customers</div>
-      <div class="table-header">
-        <span class="col-qty">Orders</span>
-        <span class="col-item">Customer</span>
-        <span class="col-total">Spent</span>
+      <div class="section-header">
+        <div class="section-title">Top Customers</div>
+        <div class="section-badge">Top 10</div>
       </div>
-      ${data.topCustomers?.slice(0, 10).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.totalOrders}</span>
-          <span class="col-item">${item.customerName}</span>
-          <span class="col-total">Rs. ${item.totalSpent.toFixed(2)}</span>
-        </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+      <table>
+        <thead><tr><th>Customer</th><th>Orders</th><th>Total Spent</th></tr></thead>
+        <tbody>
+          ${data.topCustomers?.slice(0, 10).map((item) => `
+            <tr>
+              <td>${item.customerName}</td>
+              <td class="col-num">${fmtNum(item.totalOrders)}</td>
+              <td>${fmtCurrency(item.totalSpent)}</td>
+            </tr>
+          `).join("") || '<tr><td colspan="3" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
   `;
   return getReportTemplate("Customer Report", content, filters, businessInfo);
 }
 function generateBranchPerformanceHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Performance Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Branches:</span>
-          <span class="value">${data.summary?.totalBranches || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Total Revenue:</span>
-          <span class="value">Rs. ${(data.summary?.totalRevenue || 0).toFixed(2)}</span>
-        </div>
-        ${data.topPerformingBranch ? `
-        <div class="data-item">
-          <span class="label">Top Branch:</span>
-          <span class="value">${data.topPerformingBranch.branchName}</span>
-        </div>
-        ` : ""}
+    <div class="kpi-grid cols-3">
+      <div class="kpi-card">
+        <div class="kpi-label">Total Branches</div>
+        <div class="kpi-value">${fmtNum(data.summary?.totalBranches || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>TOTAL PROFIT:</span>
-        <span>Rs. ${(data.summary?.totalProfit || 0).toFixed(2)}</span>
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Total Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalRevenue || 0)}</div>
+      </div>
+      <div class="kpi-card success">
+        <div class="kpi-label">Total Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.totalProfit || 0)}</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
+    ${data.topPerformingBranch ? `
+    <div class="alert warning">
+      &#127942; Top Performing Branch: <strong>${data.topPerformingBranch.branchName}</strong>
+    </div>
+    ` : ""}
 
     <div class="section">
-      <div class="section-title">Branch Rankings</div>
-      ${data.branchMetrics?.sort((a, b) => b.revenue - a.revenue).map(
-    (item, index2) => `
-        <div style="margin-bottom:2mm;padding-bottom:1mm;border-bottom:1px dotted #ddd;">
-          <div class="table-row" style="padding:0;">
-            <span class="col-qty bold">#${index2 + 1}</span>
-            <span class="col-item bold">${item.branchName}</span>
-          </div>
-          <div class="data-list" style="padding-left:25px;margin-top:1mm;">
-            <div class="data-item">
-              <span class="label">Sales:</span>
-              <span class="value">${item.salesCount}</span>
-            </div>
-            <div class="data-item">
-              <span class="label">Revenue:</span>
-              <span class="value">Rs. ${item.revenue.toFixed(2)}</span>
-            </div>
-            <div class="data-item">
-              <span class="label">Expenses:</span>
-              <span class="value">Rs. ${item.expenses.toFixed(2)}</span>
-            </div>
-            <div class="data-item">
-              <span class="label">Profit:</span>
-              <span class="value bold">Rs. ${item.profit.toFixed(2)}</span>
-            </div>
-          </div>
-        </div>
-      `
-  ).join("") || '<div class="text-center muted">No data available</div>'}
+      <div class="section-header">
+        <div class="section-title">Branch Rankings</div>
+      </div>
+      <table>
+        <thead><tr><th>#</th><th>Branch</th><th>Sales</th><th>Revenue</th><th>Expenses</th><th>Profit</th></tr></thead>
+        <tbody>
+          ${data.branchMetrics?.sort((a, b) => b.revenue - a.revenue).map((item, i) => `
+            <tr>
+              <td class="col-num">${i + 1}</td>
+              <td><strong>${item.branchName}</strong></td>
+              <td class="col-num">${fmtNum(item.salesCount)}</td>
+              <td>${fmtCurrency(item.revenue)}</td>
+              <td>${fmtCurrency(item.expenses)}</td>
+              <td class="${item.profit >= 0 ? "text-success" : "text-danger"}">${fmtCurrency(item.profit)}</td>
+            </tr>
+          `).join("") || '<tr><td colspan="6" class="text-center text-muted">No data</td></tr>'}
+        </tbody>
+      </table>
     </div>
   `;
   return getReportTemplate("Branch Performance", content, filters, businessInfo);
 }
 function generateCashFlowHTML(data, filters, businessInfo) {
+  const netFlow = data.summary?.netCashFlow || 0;
   const content = `
-    <div class="section">
-      <div class="section-title">Cash Flow Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Opening Balance:</span>
-          <span class="value">Rs. ${(data.summary?.openingBalance || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(+) Cash In:</span>
-          <span class="value">Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) Cash Out:</span>
-          <span class="value">Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Opening Balance</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.openingBalance || 0)}</div>
       </div>
-      <div class="line"></div>
-      <div class="summary-row grand-total">
-        <span>CLOSING BALANCE:</span>
-        <span>Rs. ${(data.summary?.closingBalance || 0).toFixed(2)}</span>
+      <div class="kpi-card success">
+        <div class="kpi-label">Cash In</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.cashIn || 0)}</div>
       </div>
-      <div class="data-item">
-        <span class="label">Net Cash Flow:</span>
-        <span class="value">${(data.summary?.netCashFlow || 0) >= 0 ? "+" : ""}Rs. ${(data.summary?.netCashFlow || 0).toFixed(2)}</span>
+      <div class="kpi-card danger">
+        <div class="kpi-label">Cash Out</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.cashOut || 0)}</div>
+      </div>
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Closing Balance</div>
+        <div class="kpi-value">${fmtCurrency(data.summary?.closingBalance || 0)}</div>
+        <div class="kpi-sub">Net Flow: ${netFlow >= 0 ? "+" : ""}${fmtCurrency(netFlow)}</div>
       </div>
     </div>
 
-    ${data.cashInBreakdown ? `
-    <div class="dashed-line"></div>
+    <div class="two-col">
+      ${data.cashInBreakdown ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Cash Inflow</div>
+        </div>
+        <div class="data-rows">
+          <div class="data-row positive">
+            <span class="label">Sales Revenue</span>
+            <span class="value">+ ${fmtCurrency(data.cashInBreakdown.sales || 0)}</span>
+          </div>
+          <div class="data-row positive">
+            <span class="label">Receivables Collected</span>
+            <span class="value">+ ${fmtCurrency(data.cashInBreakdown.receivables || 0)}</span>
+          </div>
+          <div class="data-row positive">
+            <span class="label">Other Income</span>
+            <span class="value">+ ${fmtCurrency(data.cashInBreakdown.other || 0)}</span>
+          </div>
+          <div class="data-row subtotal">
+            <span class="label">Total Cash In</span>
+            <span class="value">${fmtCurrency(data.summary?.cashIn || 0)}</span>
+          </div>
+        </div>
+      </div>
+      ` : ""}
 
-    <div class="section">
-      <div class="section-title">Cash Inflow</div>
-      <div class="table-header">
-        <span class="col-item">Source</span>
-        <span class="col-total">Amount</span>
+      ${data.cashOutBreakdown ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Cash Outflow</div>
+        </div>
+        <div class="data-rows">
+          <div class="data-row deduction">
+            <span class="label">Purchases</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.purchases || 0)})</span>
+          </div>
+          <div class="data-row deduction">
+            <span class="label">Expenses</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.expenses || 0)})</span>
+          </div>
+          <div class="data-row deduction">
+            <span class="label">Commissions</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.commissions || 0)})</span>
+          </div>
+          <div class="data-row deduction">
+            <span class="label">Refunds</span>
+            <span class="value">(${fmtCurrency(data.cashOutBreakdown.refunds || 0)})</span>
+          </div>
+          <div class="data-row subtotal">
+            <span class="label">Total Cash Out</span>
+            <span class="value">${fmtCurrency(data.summary?.cashOut || 0)}</span>
+          </div>
+        </div>
       </div>
-      <div class="table-row">
-        <span class="col-item">Sales Revenue</span>
-        <span class="col-total">+ Rs. ${(data.cashInBreakdown.sales || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Receivables</span>
-        <span class="col-total">+ Rs. ${(data.cashInBreakdown.receivables || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Other Income</span>
-        <span class="col-total">+ Rs. ${(data.cashInBreakdown.other || 0).toFixed(2)}</span>
-      </div>
-      <div class="summary-row total">
-        <span>Total Cash In:</span>
-        <span>Rs. ${(data.summary?.cashIn || 0).toFixed(2)}</span>
-      </div>
+      ` : ""}
     </div>
-    ` : ""}
-
-    ${data.cashOutBreakdown ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Cash Outflow</div>
-      <div class="table-header">
-        <span class="col-item">Category</span>
-        <span class="col-total">Amount</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Purchases</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.purchases || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Expenses</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.expenses || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Commissions</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.commissions || 0).toFixed(2)}</span>
-      </div>
-      <div class="table-row">
-        <span class="col-item">Refunds</span>
-        <span class="col-total">- Rs. ${(data.cashOutBreakdown.refunds || 0).toFixed(2)}</span>
-      </div>
-      <div class="summary-row total">
-        <span>Total Cash Out:</span>
-        <span>Rs. ${(data.summary?.cashOut || 0).toFixed(2)}</span>
-      </div>
-    </div>
-    ` : ""}
 
     ${data.cashByBranch && data.cashByBranch.length > 0 ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">Cash by Branch</div>
-      <div class="table-header">
-        <span class="col-item">Branch</span>
-        <span class="col-total">Cash in Hand</span>
+      <div class="section-header">
+        <div class="section-title">Cash by Branch</div>
       </div>
-      ${data.cashByBranch.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.branchName}</span>
-          <span class="col-total">Rs. ${item.cashInHand.toFixed(2)}</span>
-        </div>
-      `
-  ).join("")}
+      <table>
+        <thead><tr><th>Branch</th><th>Cash in Hand</th></tr></thead>
+        <tbody>
+          ${data.cashByBranch.map((item) => `
+            <tr>
+              <td>${item.branchName}</td>
+              <td>${fmtCurrency(item.cashInHand)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
     ` : ""}
   `;
@@ -9999,181 +11294,227 @@ function generateCashFlowHTML(data, filters, businessInfo) {
 }
 function generateAuditTrailHTML(data, filters, businessInfo) {
   const content = `
-    <div class="section">
-      <div class="section-title">Business Summary</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Sales:</span>
-          <span class="value">${data.salesSummary?.totalSales || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Revenue:</span>
-          <span class="value">Rs. ${(data.salesSummary?.totalRevenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Expenses:</span>
-          <span class="value">Rs. ${(data.expensesSummary?.totalExpenses || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Inventory Value:</span>
-          <span class="value">Rs. ${(data.inventorySummary?.totalValue || 0).toFixed(2)}</span>
-        </div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight">
+        <div class="kpi-label">Net Profit</div>
+        <div class="kpi-value">${fmtCurrency(data.financialSummary?.netProfit || 0)}</div>
+        <div class="kpi-sub">Margin: ${fmtPct(data.financialSummary?.profitMargin || 0)}</div>
       </div>
-      <div class="summary-row grand-total">
-        <span>NET PROFIT:</span>
-        <span>Rs. ${(data.financialSummary?.netProfit || 0).toFixed(2)}</span>
+      <div class="kpi-card">
+        <div class="kpi-label">Revenue</div>
+        <div class="kpi-value">${fmtCurrency(data.salesSummary?.totalRevenue || 0)}</div>
+        <div class="kpi-sub">${fmtNum(data.salesSummary?.totalSales || 0)} transactions</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Expenses</div>
+        <div class="kpi-value">${fmtCurrency(data.expensesSummary?.totalExpenses || 0)}</div>
+        <div class="kpi-sub">${fmtNum(data.expensesSummary?.expenseCount || 0)} entries</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Inventory Value</div>
+        <div class="kpi-value">${fmtCurrency(data.inventorySummary?.totalValue || 0)}</div>
+        <div class="kpi-sub">${fmtNum(data.inventorySummary?.totalProducts || 0)} products</div>
       </div>
     </div>
 
-    <div class="dashed-line"></div>
-
+    <!-- Sales Section -->
     <div class="section">
-      <div class="section-title">Sales Details</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Transactions:</span>
-          <span class="value">${data.salesSummary?.totalSales || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Avg Order Value:</span>
-          <span class="value">Rs. ${(data.salesSummary?.avgOrderValue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Tax Collected:</span>
-          <span class="value">Rs. ${(data.salesSummary?.totalTax || 0).toFixed(2)}</span>
-        </div>
+      <div class="section-header">
+        <div class="section-title">Sales Overview</div>
       </div>
-    </div>
-
-    ${data.salesByPaymentMethod && data.salesByPaymentMethod.length > 0 ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Sales by Payment</div>
-      <div class="table-header">
-        <span class="col-qty">#</span>
-        <span class="col-item">Method</span>
-        <span class="col-total">Amount</span>
-      </div>
-      ${data.salesByPaymentMethod.map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.count}</span>
-          <span class="col-item">${item.paymentMethod}</span>
-          <span class="col-total">Rs. ${item.total.toFixed(2)}</span>
+      <div class="data-rows mb-0">
+        <div class="data-row">
+          <span class="label">Total Transactions</span>
+          <span class="value">${fmtNum(data.salesSummary?.totalSales || 0)}</span>
         </div>
-      `
-  ).join("")}
-    </div>
-    ` : ""}
-
-    ${data.topProducts && data.topProducts.length > 0 ? `
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Top Products</div>
-      <div class="table-header">
-        <span class="col-qty">QTY</span>
-        <span class="col-item">Product</span>
-        <span class="col-total">Revenue</span>
-      </div>
-      ${data.topProducts.slice(0, 5).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-qty">${item.quantitySold}</span>
-          <span class="col-item">${item.productName}</span>
-          <span class="col-total">Rs. ${item.revenue.toFixed(2)}</span>
+        <div class="data-row">
+          <span class="label">Average Order Value</span>
+          <span class="value">${fmtCurrency(data.salesSummary?.avgOrderValue || 0)}</span>
         </div>
-      `
-  ).join("")}
-    </div>
-    ` : ""}
-
-    <div class="dashed-line"></div>
-
-    <div class="section">
-      <div class="section-title">Inventory Status</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Total Products:</span>
-          <span class="value">${data.inventorySummary?.totalProducts || 0}</span>
+        <div class="data-row">
+          <span class="label">Tax Collected</span>
+          <span class="value">${fmtCurrency(data.salesSummary?.totalTax || 0)}</span>
         </div>
-        <div class="data-item">
-          <span class="label">Low Stock Items:</span>
-          <span class="value">${data.inventorySummary?.lowStockItems || 0}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Out of Stock:</span>
-          <span class="value">${data.inventorySummary?.outOfStockItems || 0}</span>
+        <div class="data-row total">
+          <span class="label">Total Revenue</span>
+          <span class="value">${fmtCurrency(data.salesSummary?.totalRevenue || 0)}</span>
         </div>
       </div>
     </div>
 
+    <div class="two-col">
+      ${data.salesByPaymentMethod && data.salesByPaymentMethod.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Sales by Payment</div>
+        </div>
+        <table>
+          <thead><tr><th>Method</th><th>Count</th><th>Amount</th></tr></thead>
+          <tbody>
+            ${data.salesByPaymentMethod.map((item) => `
+              <tr>
+                <td>${item.paymentMethod}</td>
+                <td class="col-num">${fmtNum(item.count)}</td>
+                <td>${fmtCurrency(item.total)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
+
+      ${data.topProducts && data.topProducts.length > 0 ? `
+      <div class="section">
+        <div class="section-header">
+          <div class="section-title">Top Products</div>
+        </div>
+        <table>
+          <thead><tr><th>Product</th><th>Qty</th><th>Revenue</th></tr></thead>
+          <tbody>
+            ${data.topProducts.slice(0, 5).map((item) => `
+              <tr>
+                <td>${item.productName}</td>
+                <td class="col-num">${fmtNum(item.quantitySold)}</td>
+                <td>${fmtCurrency(item.revenue)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      ` : ""}
+    </div>
+
+    <!-- Inventory Status -->
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Inventory Status</div>
+      </div>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Total Products</span>
+          <span class="value">${fmtNum(data.inventorySummary?.totalProducts || 0)}</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Low Stock Items</span>
+          <span class="value${(data.inventorySummary?.lowStockItems || 0) > 0 ? " text-danger" : ""}">${fmtNum(data.inventorySummary?.lowStockItems || 0)}</span>
+        </div>
+        <div class="data-row">
+          <span class="label">Out of Stock</span>
+          <span class="value${(data.inventorySummary?.outOfStockItems || 0) > 0 ? " text-danger" : ""}">${fmtNum(data.inventorySummary?.outOfStockItems || 0)}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- P&L Statement -->
     ${data.financialSummary ? `
-    <div class="dashed-line"></div>
-
     <div class="section">
-      <div class="section-title">P&L Statement</div>
-      <div class="data-list">
-        <div class="data-item">
-          <span class="label">Gross Revenue:</span>
-          <span class="value">Rs. ${(data.financialSummary.grossRevenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) Refunds:</span>
-          <span class="value">Rs. ${(data.financialSummary.refunds || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Net Revenue:</span>
-          <span class="value">Rs. ${(data.financialSummary.netRevenue || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) COGS:</span>
-          <span class="value">Rs. ${(data.financialSummary.cogs || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">Gross Profit:</span>
-          <span class="value">Rs. ${(data.financialSummary.grossProfit || 0).toFixed(2)}</span>
-        </div>
-        <div class="data-item">
-          <span class="label">(-) Expenses:</span>
-          <span class="value">Rs. ${(data.financialSummary.expenses || 0).toFixed(2)}</span>
-        </div>
+      <div class="section-header">
+        <div class="section-title">Profit &amp; Loss Statement</div>
       </div>
-      <div class="line"></div>
-      <div class="summary-row grand-total">
-        <span>NET PROFIT:</span>
-        <span>Rs. ${(data.financialSummary.netProfit || 0).toFixed(2)}</span>
-      </div>
-      <div class="data-item">
-        <span class="label">Profit Margin:</span>
-        <span class="value">${(data.financialSummary.profitMargin || 0).toFixed(1)}%</span>
+      <div class="data-rows">
+        <div class="data-row">
+          <span class="label">Gross Revenue</span>
+          <span class="value">${fmtCurrency(data.financialSummary.grossRevenue || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Refunds</span>
+          <span class="value">(${fmtCurrency(data.financialSummary.refunds || 0)})</span>
+        </div>
+        <div class="data-row subtotal">
+          <span class="label">Net Revenue</span>
+          <span class="value">${fmtCurrency(data.financialSummary.netRevenue || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Cost of Goods Sold</span>
+          <span class="value">(${fmtCurrency(data.financialSummary.cogs || 0)})</span>
+        </div>
+        <div class="data-row subtotal">
+          <span class="label">Gross Profit</span>
+          <span class="value">${fmtCurrency(data.financialSummary.grossProfit || 0)}</span>
+        </div>
+        <div class="data-row deduction">
+          <span class="label">Less: Operating Expenses</span>
+          <span class="value">(${fmtCurrency(data.financialSummary.expenses || 0)})</span>
+        </div>
+        <div class="data-row total">
+          <span class="label">Net Profit / (Loss)</span>
+          <span class="value">${fmtCurrency(data.financialSummary.netProfit || 0)}</span>
+        </div>
       </div>
     </div>
     ` : ""}
 
-    ${data.auditLogs && data.auditLogs.length > 0 ? `
-    <div class="dashed-line"></div>
-
+    <!-- Expense Breakdown -->
+    ${data.expensesByCategory && data.expensesByCategory.length > 0 ? `
     <div class="section">
-      <div class="section-title">Recent Activity</div>
-      <div class="table-header">
-        <span class="col-item">Action</span>
-        <span class="col-total">User</span>
+      <div class="section-header">
+        <div class="section-title">Expense Breakdown</div>
       </div>
-      ${data.auditLogs.slice(0, 10).map(
-    (item) => `
-        <div class="table-row">
-          <span class="col-item">${item.action} ${item.tableName}</span>
-          <span class="col-total">${item.userName}</span>
-        </div>
-        <div class="small muted" style="padding-left:20px;">${formatDateTime(item.timestamp)}</div>
-      `
-  ).join("")}
+      <table>
+        <thead><tr><th>Category</th><th>Count</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.expensesByCategory.map((item) => `
+            <tr>
+              <td>${item.category}</td>
+              <td class="col-num">${fmtNum(item.count)}</td>
+              <td>${fmtCurrency(item.amount)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+    ` : ""}
+
+    <!-- Audit Logs -->
+    ${data.auditLogs && data.auditLogs.length > 0 ? `
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Recent Activity Log</div>
+        <div class="section-badge">${data.auditLogs.length} entries</div>
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Entity</th></tr></thead>
+        <tbody>
+          ${data.auditLogs.slice(0, 15).map((item) => `
+            <tr>
+              <td>${formatDateTime(item.timestamp)}</td>
+              <td>${item.userName}</td>
+              <td>${item.action}</td>
+              <td>${item.tableName}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+    ` : ""}
+
+    <!-- Voided / Reversed Transactions -->
+    ${data.voidedTransactions && data.voidedTransactions.length > 0 ? `
+    <div class="page-break"></div>
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">Voided / Reversed Transactions</div>
+        <div class="section-badge">${data.voidedTransactions.length} items</div>
+      </div>
+      <div class="alert warning">These transactions have been voided or reversed and are excluded from all totals above.</div>
+      <table>
+        <thead><tr><th>Type</th><th>Reference</th><th>Description</th><th>Date</th><th>Amount</th></tr></thead>
+        <tbody>
+          ${data.voidedTransactions.map((item) => `
+            <tr>
+              <td>${item.type || "—"}</td>
+              <td>${item.reference || item.invoiceNumber || "—"}</td>
+              <td>${item.description || item.customerName || "—"}</td>
+              <td>${item.date ? formatDate(item.date) : "—"}</td>
+              <td class="text-danger">${fmtCurrency(item.amount || item.totalAmount || 0)}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
     ` : ""}
   `;
-  return getReportTemplate("Audit Report", content, filters, businessInfo);
+  return getReportTemplate("Comprehensive Audit Report", content, filters, businessInfo);
 }
 function registerReportHandlers() {
   const db2 = getDatabase();
@@ -10182,12 +11523,16 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate, groupBy = "day" } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, groupBy = "day", paymentMethod, paymentStatus, customerId, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
         ];
         if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
+        if (paymentMethod) conditions.push(drizzleOrm.eq(sales.paymentMethod, paymentMethod));
+        if (paymentStatus) conditions.push(drizzleOrm.eq(sales.paymentStatus, paymentStatus));
+        if (customerId) conditions.push(drizzleOrm.eq(sales.customerId, customerId));
         const summary = await db2.select({
           totalSales: drizzleOrm.sql`count(*)`,
           totalRevenue: drizzleOrm.sql`sum(${sales.totalAmount})`,
@@ -10223,6 +11568,19 @@ function registerReportHandlers() {
           count: drizzleOrm.sql`count(*)`,
           total: drizzleOrm.sql`sum(${sales.totalAmount})`
         }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(drizzleOrm.sql`date(${sales.saleDate})`).orderBy(drizzleOrm.sql`date(${sales.saleDate})`);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: sales.id,
+          invoiceNumber: sales.invoiceNumber,
+          customerName: drizzleOrm.sql`coalesce(${customers.firstName} || ' ' || ${customers.lastName}, 'Walk-in')`,
+          saleDate: sales.saleDate,
+          paymentMethod: sales.paymentMethod,
+          paymentStatus: sales.paymentStatus,
+          totalAmount: sales.totalAmount,
+          taxAmount: sales.taxAmount,
+          discountAmount: sales.discountAmount
+        }).from(sales).leftJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10236,7 +11594,13 @@ function registerReportHandlers() {
             summary: summary[0],
             byPaymentMethod,
             topProducts,
-            dailySales
+            dailySales,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10248,7 +11612,7 @@ function registerReportHandlers() {
   electron.ipcMain.handle("reports:inventory-report", async (_, params) => {
     try {
       const session = getCurrentSession();
-      const { branchId } = params;
+      const { branchId, page = 1, limit: pageSize = 50 } = params;
       const conditions = [];
       if (branchId) conditions.push(drizzleOrm.eq(inventory.branchId, branchId));
       const stockSummary = await db2.select({
@@ -10279,6 +11643,21 @@ function registerReportHandlers() {
           conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0
         )
       ).orderBy(drizzleOrm.sql`${inventory.quantity} - ${inventory.minQuantity}`).limit(50);
+      const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(inventory).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0);
+      const totalRows = totalCountResult[0]?.count || 0;
+      const detailRows = await db2.select({
+        id: inventory.id,
+        productId: inventory.productId,
+        productName: products.name,
+        productCode: products.code,
+        branchId: inventory.branchId,
+        branchName: branches.name,
+        quantity: inventory.quantity,
+        minQuantity: inventory.minQuantity,
+        maxQuantity: inventory.maxQuantity,
+        costValue: drizzleOrm.sql`${inventory.quantity} * ${products.costPrice}`,
+        retailValue: drizzleOrm.sql`${inventory.quantity} * ${products.sellingPrice}`
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).orderBy(products.name).limit(pageSize).offset((page - 1) * pageSize);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: branchId ?? session?.branchId,
@@ -10291,7 +11670,13 @@ function registerReportHandlers() {
         data: {
           stockSummary,
           stockValue,
-          lowStock
+          lowStock,
+          details: {
+            rows: detailRows,
+            total: totalRows,
+            page,
+            totalPages: Math.ceil(totalRows / pageSize)
+          }
         }
       };
     } catch (error) {
@@ -10304,7 +11689,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
@@ -10317,22 +11703,58 @@ function registerReportHandlers() {
         const cogs = await db2.select({
           totalCost: drizzleOrm.sql`sum(${saleItems.costPrice} * ${saleItems.quantity})`
         }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(...salesConditions));
-        const expenseConditions = [drizzleOrm.between(expenses.expenseDate, startDate, endDate)];
+        const expenseConditions = [
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false)
+        ];
         if (branchId) expenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
         const expenseTotal = await db2.select({
           totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`
         }).from(expenses).where(drizzleOrm.and(...expenseConditions));
         const expensesByCategory = await db2.select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           total: drizzleOrm.sql`sum(${expenses.amount})`
-        }).from(expenses).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.category);
-        const totalRevenue = revenue[0]?.totalRevenue ?? 0;
-        const totalCost = cogs[0]?.totalCost ?? 0;
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.categoryId, categories.name);
+        const returnConditions = [drizzleOrm.between(returns.returnDate, startDate, endDate)];
+        if (branchId) returnConditions.push(drizzleOrm.eq(returns.branchId, branchId));
+        const returnRevenue = await db2.select({
+          totalReturn: drizzleOrm.sql`COALESCE(SUM(${returns.totalAmount}), 0)`
+        }).from(returns).where(drizzleOrm.and(...returnConditions));
+        const returnCogs = await db2.select({
+          totalReturnCost: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`
+        }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(drizzleOrm.and(...returnConditions));
+        const grossRevenue = revenue[0]?.totalRevenue ?? 0;
+        const grossCost = cogs[0]?.totalCost ?? 0;
+        const totalReturnAmount = returnRevenue[0]?.totalReturn ?? 0;
+        const totalReturnCost = returnCogs[0]?.totalReturnCost ?? 0;
+        const totalRevenue = grossRevenue - totalReturnAmount;
+        const totalCost = grossCost - totalReturnCost;
         const totalExpenses = expenseTotal[0]?.totalExpenses ?? 0;
         const grossProfit = totalRevenue - totalCost;
         const netProfit = grossProfit - totalExpenses;
         const grossMargin = totalRevenue > 0 ? grossProfit / totalRevenue * 100 : 0;
         const netMargin = totalRevenue > 0 ? netProfit / totalRevenue * 100 : 0;
+        const totalSalesCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...salesConditions));
+        const totalExpensesCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(expenses).where(drizzleOrm.and(...expenseConditions));
+        const totalRows = (totalSalesCount[0]?.count || 0) + (totalExpensesCount[0]?.count || 0);
+        const salesDetailRows = await db2.select({
+          id: sales.id,
+          type: drizzleOrm.sql`'sale'`,
+          date: sales.saleDate,
+          reference: sales.invoiceNumber,
+          description: drizzleOrm.sql`'Sale ' || ${sales.invoiceNumber}`,
+          amount: sales.totalAmount
+        }).from(sales).where(drizzleOrm.and(...salesConditions));
+        const expenseDetailRows = await db2.select({
+          id: expenses.id,
+          type: drizzleOrm.sql`'expense'`,
+          date: expenses.expenseDate,
+          reference: drizzleOrm.sql`coalesce(${expenses.reference}, '')`,
+          description: drizzleOrm.sql`coalesce(${expenses.description}, '')`,
+          amount: expenses.amount
+        }).from(expenses).where(drizzleOrm.and(...expenseConditions));
+        const combinedRows = [...salesDetailRows, ...expenseDetailRows].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice((page - 1) * pageSize, page * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10350,7 +11772,13 @@ function registerReportHandlers() {
             expenses: totalExpenses,
             expensesByCategory,
             netProfit,
-            netMargin
+            netMargin,
+            details: {
+              rows: combinedRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10364,11 +11792,14 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { startDate, endDate, limit = 20 } = params;
+        const { startDate: rawStart, endDate: rawEnd, limit: pageSize = 20, page = 1 } = params;
         const conditions = [drizzleOrm.eq(sales.isVoided, false)];
-        if (startDate && endDate) {
-          conditions.push(drizzleOrm.between(sales.saleDate, startDate, endDate));
+        if (rawStart && rawEnd) {
+          const { start, end } = normalizeDateRange(rawStart, rawEnd);
+          conditions.push(drizzleOrm.between(sales.saleDate, start, end));
         }
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(distinct ${sales.customerId})` }).from(sales).innerJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
         const topCustomers = await db2.select({
           customerId: sales.customerId,
           customerName: drizzleOrm.sql`${customers.firstName} || ' ' || ${customers.lastName}`,
@@ -10377,7 +11808,7 @@ function registerReportHandlers() {
           totalOrders: drizzleOrm.sql`count(*)`,
           totalSpent: drizzleOrm.sql`sum(${sales.totalAmount})`,
           avgOrderValue: drizzleOrm.sql`avg(${sales.totalAmount})`
-        }).from(sales).innerJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.customerId, customers.firstName, customers.lastName, customers.email, customers.phone).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${sales.totalAmount})`)).limit(limit);
+        }).from(sales).innerJoin(customers, drizzleOrm.eq(sales.customerId, customers.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.customerId, customers.firstName, customers.lastName, customers.email, customers.phone).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${sales.totalAmount})`)).limit(pageSize).offset((page - 1) * pageSize);
         const customerSummary = await db2.select({
           totalCustomers: drizzleOrm.sql`count(distinct ${sales.customerId})`,
           totalRevenue: drizzleOrm.sql`sum(${sales.totalAmount})`
@@ -10393,7 +11824,13 @@ function registerReportHandlers() {
           success: true,
           data: {
             topCustomers,
-            summary: customerSummary[0]
+            summary: customerSummary[0],
+            details: {
+              rows: topCustomers,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10407,19 +11844,27 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
-        const conditions = [drizzleOrm.between(expenses.expenseDate, startDate, endDate)];
+        const { branchId, startDate: rawStart, endDate: rawEnd, categoryId, supplierId, paymentStatus, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
+        const conditions = [
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false)
+        ];
         if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
+        if (categoryId) conditions.push(drizzleOrm.eq(expenses.categoryId, categoryId));
+        if (supplierId) conditions.push(drizzleOrm.eq(expenses.supplierId, supplierId));
+        if (paymentStatus) conditions.push(drizzleOrm.eq(expenses.paymentStatus, paymentStatus));
         const summary = await db2.select({
           totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`,
           expenseCount: drizzleOrm.sql`count(*)`,
           avgExpense: drizzleOrm.sql`avg(${expenses.amount})`
         }).from(expenses).where(drizzleOrm.and(...conditions));
         const expensesByCategory = await db2.select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           amount: drizzleOrm.sql`sum(${expenses.amount})`,
           count: drizzleOrm.sql`count(*)`
-        }).from(expenses).where(drizzleOrm.and(...conditions)).groupBy(expenses.category).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
         const expensesByBranch = await db2.select({
           branchId: expenses.branchId,
           branchName: branches.name,
@@ -10428,12 +11873,25 @@ function registerReportHandlers() {
         }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.branchId, branches.name);
         const topExpenses = await db2.select({
           id: expenses.id,
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           amount: expenses.amount,
           description: expenses.description,
           date: expenses.expenseDate,
           branchName: branches.name
-        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
+        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.amount)).limit(10);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(expenses).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: expenses.id,
+          expenseDate: expenses.expenseDate,
+          category: categories.name,
+          description: expenses.description,
+          paymentMethod: expenses.paymentMethod,
+          paymentStatus: expenses.paymentStatus,
+          amount: expenses.amount,
+          supplierName: drizzleOrm.sql`${suppliers.name}`
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).leftJoin(suppliers, drizzleOrm.eq(expenses.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.expenseDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10447,7 +11905,13 @@ function registerReportHandlers() {
             summary: summary[0],
             expensesByCategory,
             expensesByBranch,
-            topExpenses
+            topExpenses,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10461,9 +11925,12 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, supplierId, status, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(purchases.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(purchases.branchId, branchId));
+        if (supplierId) conditions.push(drizzleOrm.eq(purchases.supplierId, supplierId));
+        if (status) conditions.push(drizzleOrm.eq(purchases.status, status));
         const summary = await db2.select({
           totalPurchases: drizzleOrm.sql`count(*)`,
           totalCost: drizzleOrm.sql`sum(${purchases.totalAmount})`,
@@ -10481,14 +11948,17 @@ function registerReportHandlers() {
           count: drizzleOrm.sql`count(*)`,
           totalAmount: drizzleOrm.sql`sum(${purchases.totalAmount})`
         }).from(purchases).where(drizzleOrm.and(...conditions)).groupBy(purchases.status);
-        const recentPurchases = await db2.select({
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(purchases).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
           id: purchases.id,
           purchaseOrderNumber: purchases.purchaseOrderNumber,
           supplierName: suppliers.name,
           totalAmount: purchases.totalAmount,
+          paymentStatus: purchases.paymentStatus,
           status: purchases.status,
           createdAt: purchases.createdAt
-        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(20);
+        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10502,7 +11972,13 @@ function registerReportHandlers() {
             summary: summary[0],
             purchasesBySupplier,
             purchasesByStatus,
-            recentPurchases
+            recentPurchases: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10516,9 +11992,11 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, reason, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(returns.returnDate, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(returns.branchId, branchId));
+        if (reason) conditions.push(drizzleOrm.like(returns.reason, `%${reason}%`));
         const totalSalesResult = await db2.select({
           count: drizzleOrm.sql`count(*)`
         }).from(sales).where(drizzleOrm.between(sales.saleDate, startDate, endDate));
@@ -10539,6 +12017,17 @@ function registerReportHandlers() {
           returnCount: drizzleOrm.sql`sum(${returnItems.quantity})`,
           totalValue: drizzleOrm.sql`sum(${returnItems.totalPrice})`
         }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).innerJoin(products, drizzleOrm.eq(returnItems.productId, products.id)).where(drizzleOrm.and(...conditions)).groupBy(returnItems.productId, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${returnItems.quantity})`)).limit(10);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(returns).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: returns.id,
+          returnNumber: returns.returnNumber,
+          invoiceNumber: sales.invoiceNumber,
+          returnDate: returns.returnDate,
+          reason: returns.reason,
+          totalAmount: returns.totalAmount,
+          refundAmount: returns.refundAmount
+        }).from(returns).innerJoin(sales, drizzleOrm.eq(returns.originalSaleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(returns.returnDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10554,7 +12043,13 @@ function registerReportHandlers() {
               returnRate
             },
             returnsByReason,
-            returnsByProduct
+            returnsByProduct,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10568,9 +12063,11 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, salespersonId, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(commissions.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(commissions.branchId, branchId));
+        if (salespersonId) conditions.push(drizzleOrm.eq(commissions.userId, salespersonId));
         const summary = await db2.select({
           totalCommissions: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
           commissionCount: drizzleOrm.sql`count(*)`,
@@ -10582,13 +12079,17 @@ function registerReportHandlers() {
           totalCommission: drizzleOrm.sql`sum(${commissions.commissionAmount})`,
           salesCount: drizzleOrm.sql`count(*)`
         }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).where(drizzleOrm.and(...conditions)).groupBy(commissions.userId, users.fullName).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${commissions.commissionAmount})`));
-        const recentCommissions = await db2.select({
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(commissions).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
           id: commissions.id,
           userName: users.fullName,
           saleInvoice: sales.invoiceNumber,
           amount: commissions.commissionAmount,
+          commissionType: commissions.commissionType,
+          status: commissions.status,
           date: commissions.createdAt
-        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(commissions.createdAt)).limit(20);
+        }).from(commissions).innerJoin(users, drizzleOrm.eq(commissions.userId, users.id)).innerJoin(sales, drizzleOrm.eq(commissions.saleId, sales.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(commissions.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10601,7 +12102,13 @@ function registerReportHandlers() {
           data: {
             summary: summary[0],
             commissionsBySalesperson,
-            recentCommissions
+            recentCommissions: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10615,7 +12122,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
           drizzleOrm.eq(sales.isVoided, false)
@@ -10636,6 +12144,17 @@ function registerReportHandlers() {
           taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
           salesCount: drizzleOrm.sql`count(*)`
         }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(sales.paymentMethod);
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
+          id: sales.id,
+          invoiceNumber: sales.invoiceNumber,
+          saleDate: sales.saleDate,
+          totalAmount: sales.totalAmount,
+          taxAmount: sales.taxAmount,
+          paymentMethod: sales.paymentMethod,
+          branchName: branches.name
+        }).from(sales).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10648,7 +12167,13 @@ function registerReportHandlers() {
           data: {
             summary: summary[0],
             taxByBranch,
-            taxByPaymentMethod
+            taxByPaymentMethod,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10662,7 +12187,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { startDate, endDate } = params;
+        const { startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const allBranches = await db2.select().from(branches);
         const branchMetrics = await Promise.all(
           allBranches.map(async (branch) => {
@@ -10681,7 +12207,8 @@ function registerReportHandlers() {
             }).from(expenses).where(
               drizzleOrm.and(
                 drizzleOrm.eq(expenses.branchId, branch.id),
-                drizzleOrm.between(expenses.expenseDate, startDate, endDate)
+                drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+                drizzleOrm.eq(expenses.isVoided, false)
               )
             );
             const inventoryResult = await db2.select({
@@ -10713,6 +12240,8 @@ function registerReportHandlers() {
           entityType: "branch",
           description: `Generated branch performance report: ${startDate} to ${endDate}`
         });
+        const totalRows = branchMetrics.length;
+        const paginatedMetrics = branchMetrics.slice((page - 1) * pageSize, page * pageSize);
         return {
           success: true,
           data: {
@@ -10726,6 +12255,12 @@ function registerReportHandlers() {
               branchId: topBranch.branchId,
               branchName: topBranch.branchName,
               revenue: topBranch.revenue
+            },
+            details: {
+              rows: paginatedMetrics,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
             }
           }
         };
@@ -10740,7 +12275,8 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = branchId ? [drizzleOrm.eq(sales.branchId, branchId)] : [];
         const expenseConditions = branchId ? [drizzleOrm.eq(expenses.branchId, branchId)] : [];
         const salesCash = await db2.select({
@@ -10763,7 +12299,11 @@ function registerReportHandlers() {
         );
         const expensesCash = await db2.select({
           total: drizzleOrm.sql`sum(${expenses.amount})`
-        }).from(expenses).where(drizzleOrm.and(drizzleOrm.between(expenses.expenseDate, startDate, endDate), ...expenseConditions));
+        }).from(expenses).where(drizzleOrm.and(
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false),
+          ...expenseConditions
+        ));
         const commissionsCash = await db2.select({
           total: drizzleOrm.sql`sum(${commissions.commissionAmount})`
         }).from(commissions).where(
@@ -10794,6 +12334,35 @@ function registerReportHandlers() {
           entityType: "sale",
           description: `Generated cash flow report: ${startDate} to ${endDate}`
         });
+        const salesRows = await db2.select({
+          id: sales.id,
+          type: drizzleOrm.sql`'sale'`,
+          date: sales.saleDate,
+          reference: sales.invoiceNumber,
+          amount: sales.totalAmount,
+          direction: drizzleOrm.sql`'in'`
+        }).from(sales).where(
+          drizzleOrm.and(
+            drizzleOrm.between(sales.saleDate, startDate, endDate),
+            drizzleOrm.eq(sales.isVoided, false),
+            ...conditions
+          )
+        );
+        const expenseRows = await db2.select({
+          id: expenses.id,
+          type: drizzleOrm.sql`'expense'`,
+          date: expenses.expenseDate,
+          reference: drizzleOrm.sql`coalesce(${expenses.reference}, ${expenses.description}, '')`,
+          amount: expenses.amount,
+          direction: drizzleOrm.sql`'out'`
+        }).from(expenses).where(drizzleOrm.and(
+          drizzleOrm.between(expenses.expenseDate, startDate, endDate),
+          drizzleOrm.eq(expenses.isVoided, false),
+          ...expenseConditions
+        ));
+        const allCashRows = [...salesRows, ...expenseRows].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+        const totalRows = allCashRows.length;
+        const paginatedRows = allCashRows.slice((page - 1) * pageSize, page * pageSize);
         return {
           success: true,
           data: {
@@ -10815,7 +12384,13 @@ function registerReportHandlers() {
               commissions: cashOutCommissions,
               refunds: cashOutRefunds
             },
-            cashByBranch: []
+            cashByBranch: [],
+            details: {
+              rows: paginatedRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10829,10 +12404,13 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate, endDate, userId } = params;
+        const { branchId, startDate: rawStart, endDate: rawEnd, userId, actionType, entityType, page = 1, limit: pageSize = 50 } = params;
+        const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [drizzleOrm.between(auditLogs.createdAt, startDate, endDate)];
         if (branchId) conditions.push(drizzleOrm.eq(auditLogs.branchId, branchId));
         if (userId) conditions.push(drizzleOrm.eq(auditLogs.userId, userId));
+        if (actionType) conditions.push(drizzleOrm.eq(auditLogs.action, actionType));
+        if (entityType) conditions.push(drizzleOrm.eq(auditLogs.entityType, entityType));
         const summary = await db2.select({
           totalActions: drizzleOrm.sql`count(*)`,
           uniqueUsers: drizzleOrm.sql`count(distinct ${auditLogs.userId})`
@@ -10846,14 +12424,16 @@ function registerReportHandlers() {
           action: auditLogs.action,
           count: drizzleOrm.sql`count(*)`
         }).from(auditLogs).where(drizzleOrm.and(...conditions)).groupBy(auditLogs.action).orderBy(drizzleOrm.desc(drizzleOrm.sql`count(*)`));
-        const recentActions = await db2.select({
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(drizzleOrm.and(...conditions));
+        const totalRows = totalCountResult[0]?.count || 0;
+        const detailRows = await db2.select({
           id: auditLogs.id,
           userName: users.fullName,
           action: auditLogs.action,
           entityType: auditLogs.entityType,
           description: auditLogs.description,
           timestamp: auditLogs.createdAt
-        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(50);
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -10867,7 +12447,13 @@ function registerReportHandlers() {
             summary: summary[0],
             actionsByUser,
             actionsByType,
-            recentActions
+            recentActions: detailRows,
+            details: {
+              rows: detailRows,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -10887,7 +12473,7 @@ function registerReportHandlers() {
             message: "Unauthorized: Admin access required"
           };
         }
-        const { branchId, timePeriod, startDate, endDate } = params;
+        const { branchId, timePeriod, startDate, endDate, page = 1, limit: pageSize = 50 } = params;
         const dateRange = getDateRange(timePeriod, startDate, endDate);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
@@ -10895,7 +12481,8 @@ function registerReportHandlers() {
         ];
         if (branchId) salesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
         const expenseConditions = [
-          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end)
+          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(expenses.isVoided, false)
         ];
         if (branchId) expenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
         const purchaseConditions = [
@@ -10945,10 +12532,11 @@ function registerReportHandlers() {
           avgExpense: drizzleOrm.sql`coalesce(avg(${expenses.amount}), 0)`
         }).from(expenses).where(drizzleOrm.and(...expenseConditions));
         const expensesByCategory = await db2.select({
-          category: expenses.category,
+          categoryId: expenses.categoryId,
+          category: categories.name,
           amount: drizzleOrm.sql`sum(${expenses.amount})`,
           count: drizzleOrm.sql`count(*)`
-        }).from(expenses).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.category).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...expenseConditions)).groupBy(expenses.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
         const returnsSummary = await db2.select({
           totalReturns: drizzleOrm.sql`count(*)`,
           totalRefundAmount: drizzleOrm.sql`coalesce(sum(${returns.refundAmount}), 0)`
@@ -10993,6 +12581,44 @@ function registerReportHandlers() {
           tableName: log.tableName,
           timestamp: log.timestamp
         }));
+        const voidedSalesConditions = [
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, true)
+        ];
+        if (branchId) voidedSalesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
+        const voidedSales = await db2.select({
+          type: drizzleOrm.sql`'sale'`,
+          reference: sales.invoiceNumber,
+          originalAmount: sales.totalAmount,
+          voidReason: sales.voidReason,
+          voidedDate: sales.updatedAt
+        }).from(sales).where(drizzleOrm.and(...voidedSalesConditions));
+        const voidedExpenseConditions = [
+          drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(expenses.isVoided, true)
+        ];
+        if (branchId) voidedExpenseConditions.push(drizzleOrm.eq(expenses.branchId, branchId));
+        const voidedExpenses = await db2.select({
+          type: drizzleOrm.sql`'expense'`,
+          reference: drizzleOrm.sql`coalesce(${expenses.description}, ${expenses.reference}, '')`,
+          originalAmount: expenses.amount,
+          voidReason: expenses.voidReason,
+          voidedDate: expenses.updatedAt
+        }).from(expenses).where(drizzleOrm.and(...voidedExpenseConditions));
+        const voidedTransactions = [...voidedSales, ...voidedExpenses];
+        const totalAuditCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(auditLogs).where(drizzleOrm.and(...auditLogConditions));
+        const totalRows = totalAuditCount[0]?.count || 0;
+        const paginatedAuditLogs = await db2.select({
+          id: auditLogs.id,
+          userName: users.fullName,
+          action: auditLogs.action,
+          tableName: auditLogs.entityType,
+          timestamp: auditLogs.createdAt
+        }).from(auditLogs).leftJoin(users, drizzleOrm.eq(auditLogs.userId, users.id)).where(drizzleOrm.and(...auditLogConditions)).orderBy(drizzleOrm.desc(auditLogs.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
+        const formattedPaginatedLogs = paginatedAuditLogs.map((log) => ({
+          ...log,
+          userName: log.userName || "System"
+        }));
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -11025,7 +12651,14 @@ function registerReportHandlers() {
               profitMargin
             },
             commissionsSummary: commissionsSummary[0],
-            auditLogs: formattedAuditLogs
+            auditLogs: formattedAuditLogs,
+            voidedTransactions,
+            details: {
+              rows: formattedPaginatedLogs,
+              total: totalRows,
+              page,
+              totalPages: Math.ceil(totalRows / pageSize)
+            }
           }
         };
       } catch (error) {
@@ -11041,17 +12674,28 @@ function registerReportHandlers() {
       try {
         const session = getCurrentSession();
         const { reportType, data, filters } = params;
+        const globalSetting = await db2.select().from(businessSettings).where(drizzleOrm.isNull(businessSettings.branchId)).orderBy(drizzleOrm.desc(businessSettings.settingId)).limit(1);
+        const settingsRow = globalSetting[0];
+        console.log("[PDF Export] Business settings:", settingsRow ? `found - ${settingsRow.businessName}` : "NOT FOUND");
         const businessInfo = {
-          name: "Firearms Retail POS",
-          address: "",
-          phone: "",
-          email: ""
+          name: settingsRow?.businessName || "POS System",
+          address: settingsRow?.businessAddress || "",
+          city: settingsRow?.businessCity || "",
+          state: settingsRow?.businessState || "",
+          postalCode: settingsRow?.businessPostalCode || "",
+          country: settingsRow?.businessCountry || "",
+          phone: settingsRow?.businessPhone || "",
+          email: settingsRow?.businessEmail || "",
+          website: settingsRow?.businessWebsite || "",
+          registrationNo: settingsRow?.businessRegistrationNo || "",
+          taxId: settingsRow?.taxId || ""
         };
         const filePath = await generateReportPDF({
           reportType,
           data,
           filters,
-          businessInfo
+          businessInfo,
+          generatedBy: session?.fullName || session?.username || ""
         });
         await createAuditLog$1({
           userId: session?.userId,
@@ -11143,8 +12787,7 @@ function checkAndLockIfExpired() {
 }
 function lockApplication() {
   const dbPath = getDbPath();
-  const { closeDatabase: closeDatabase2 } = require("../db");
-  closeDatabase2();
+  closeDatabase();
   const result = encryptDatabase(dbPath);
   if (!result.success) {
     return result;
@@ -11165,13 +12808,11 @@ function registerLicenseHandlers() {
   electron.ipcMain.handle("license:generate-license-request", async () => {
     try {
       const machineId = getMachineIdForDisplay();
-      const expectedLicenseKey = generateLicenseKey(machineId);
       return {
         success: true,
         data: {
           machineId,
-          expectedLicenseKey,
-          instructions: "Run: node generate-license.js <machine_id>"
+          instructions: "Run: node key.js <machine_id> <months>"
         }
       };
     } catch (error) {
@@ -11302,7 +12943,11 @@ function registerLicenseHandlers() {
         return { success: false, message: "Application is not locked." };
       }
       const machineId = getMachineIdForDisplay();
-      if (!validateLicenseKey(licenseKey, machineId)) {
+      if (isKeyAlreadyUsed(licenseKey)) {
+        return { success: false, message: "This license key has already been used. Each key can only be used once." };
+      }
+      const durationMonths = validateLicenseKeyWithDuration(licenseKey, machineId);
+      if (durationMonths === null) {
         return { success: false, message: "Invalid license key for this machine." };
       }
       const dbPath = getDbPath();
@@ -11318,14 +12963,15 @@ function registerLicenseHandlers() {
         return { success: false, message: `Database decrypted but license activation failed: ${activateResult.message}` };
       }
       const db2 = getDatabase();
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString();
+      const now = /* @__PURE__ */ new Date();
+      const licenseEndDate = new Date(now);
+      licenseEndDate.setMonth(licenseEndDate.getMonth() + durationMonths);
       db2.update(applicationInfo).set({
         isLicensed: true,
-        licenseStartDate: now,
-        licenseEndDate,
+        licenseStartDate: now.toISOString(),
+        licenseEndDate: licenseEndDate.toISOString(),
         licenseKey: licenseKey.toUpperCase(),
-        updatedAt: now
+        updatedAt: now.toISOString()
       }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
       try {
         registerAllHandlers();
@@ -11339,7 +12985,7 @@ function registerLicenseHandlers() {
         win.webContents.send("license:application-unlocked");
       }
       console.log("Application unlocked successfully");
-      return { success: true, message: "Application unlocked successfully. License activated for 1 year." };
+      return { success: true, message: `Application unlocked successfully. License activated for ${durationMonths} month(s).` };
     } catch (error) {
       console.error("Unlock application error:", error);
       return {
@@ -11358,23 +13004,24 @@ function registerLicenseHandlers() {
         return { success: false, message: "Only administrators can activate licenses." };
       }
       const result = activateLicense(licenseKey);
-      if (result.success) {
+      if (result.success && result.durationMonths) {
         const db2 = getDatabase();
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const licenseEndDate = new Date(Date.now() + 365 * 24 * 60 * 60 * 1e3).toISOString();
+        const now = /* @__PURE__ */ new Date();
+        const licenseEndDate = new Date(now);
+        licenseEndDate.setMonth(licenseEndDate.getMonth() + result.durationMonths);
         db2.update(applicationInfo).set({
           isLicensed: true,
-          licenseStartDate: now,
-          licenseEndDate,
+          licenseStartDate: now.toISOString(),
+          licenseEndDate: licenseEndDate.toISOString(),
           licenseKey: licenseKey.toUpperCase(),
-          updatedAt: now
+          updatedAt: now.toISOString()
         }).where(drizzleOrm.eq(applicationInfo.infoId, 1)).run();
         await createAuditLog$1({
           userId: session.userId,
           branchId: session.branchId,
           action: "create",
           entityType: "license",
-          description: `License activated. Key: ${licenseKey.substring(0, 8)}...`
+          description: `License activated for ${result.durationMonths} month(s). Key: ${licenseKey.substring(0, 8)}...`
         });
       }
       return result;
@@ -11417,14 +13064,29 @@ function registerLicenseHandlers() {
   electron.ipcMain.handle("license:validate-key", async (_, licenseKey) => {
     try {
       const machineId = getMachineIdForDisplay();
-      const isValid = validateLicenseKey(licenseKey, machineId);
-      const isValidFormat = /^[A-F0-9]{32}$/.test(licenseKey.toUpperCase()) || /^[A-F0-9]{64}$/.test(licenseKey.toUpperCase());
+      const normalizedKey = licenseKey.toUpperCase().replace(/\s/g, "");
+      const durationMonths = validateLicenseKeyWithDuration(normalizedKey, machineId);
+      const isValid = durationMonths !== null;
+      const isDuplicate = isKeyAlreadyUsed(normalizedKey);
+      const isValidFormat = /^[A-F0-9]{64}$/.test(normalizedKey) || /^[A-F0-9]{100}$/.test(normalizedKey);
+      let message;
+      if (isDuplicate) {
+        message = "This key has already been used. Each key can only be used once.";
+      } else if (isValid) {
+        message = `License key is valid for this machine (${durationMonths} month(s)).`;
+      } else if (isValidFormat) {
+        message = "License key format is valid but not for this machine.";
+      } else {
+        message = "Invalid license key format.";
+      }
       return {
         success: true,
         data: {
-          isValid,
+          isValid: isValid && !isDuplicate,
           isValidFormat,
-          message: isValid ? "License key is valid for this machine." : isValidFormat ? "License key format is valid but not for this machine." : "Invalid license key format."
+          isDuplicate,
+          durationMonths,
+          message
         }
       };
     } catch (error) {
@@ -11865,6 +13527,47 @@ function registerAccountReceivablesHandlers() {
           },
           session.userId
         );
+        if (data.paymentMethod !== "cash") {
+          await txDb.insert(onlineTransactions).values({
+            branchId: receivable.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: "inflow",
+            referenceNumber: data.referenceNumber,
+            customerName: receivable.customer?.name,
+            customerId: receivable.customerId,
+            invoiceNumber: receivable.invoiceNumber,
+            status: "pending",
+            sourceType: "receivable_payment",
+            sourceId: payment.id,
+            receivableId: data.receivableId,
+            saleId: receivable.saleId || void 0,
+            createdBy: session.userId
+          });
+        }
+        if (data.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, receivable.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: receivable.branchId,
+              transactionType: "ar_collection",
+              amount: data.amount,
+              referenceType: "receivable_payment",
+              referenceId: payment.id,
+              description: `AR collection: ${receivable.invoiceNumber}`,
+              recordedBy: session.userId
+            });
+          }
+        }
         return payment;
       });
       await createAuditLog$1({
@@ -12437,6 +14140,45 @@ function registerAccountPayablesHandlers() {
           },
           session.userId
         );
+        if (data.paymentMethod !== "cash") {
+          await txDb.insert(onlineTransactions).values({
+            branchId: payable.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: data.amount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: "outflow",
+            referenceNumber: data.referenceNumber,
+            customerName: payable.supplier?.name,
+            invoiceNumber: payable.invoiceNumber,
+            status: "pending",
+            sourceType: "payable_payment",
+            sourceId: payment.id,
+            payableId: data.payableId,
+            createdBy: session.userId
+          });
+        }
+        if (data.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await txDb.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, payable.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (openSession) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openSession.id,
+              branchId: payable.branchId,
+              transactionType: "ap_payment",
+              amount: -data.amount,
+              referenceType: "payable_payment",
+              referenceId: payment.id,
+              description: `AP payment: ${payable.invoiceNumber}`,
+              recordedBy: session.userId
+            });
+          }
+        }
         return payment;
       });
       if (newStatus === "paid") {
@@ -12882,6 +14624,43 @@ function registerReferralPersonHandlers() {
     }
   });
 }
+async function autoCloseStaleRegisters(branchId, closedByUserId) {
+  const db2 = getDatabase();
+  const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const whereConditions = [
+    drizzleOrm.eq(cashRegisterSessions.status, "open"),
+    drizzleOrm.lt(cashRegisterSessions.sessionDate, today)
+  ];
+  if (branchId !== void 0) {
+    whereConditions.push(drizzleOrm.eq(cashRegisterSessions.branchId, branchId));
+  }
+  const staleSessions = await db2.query.cashRegisterSessions.findMany({
+    where: drizzleOrm.and(...whereConditions)
+  });
+  for (const stale of staleSessions) {
+    const txSums = await db2.select({
+      totalIn: drizzleOrm.sql`sum(case when ${cashTransactions.amount} > 0 then ${cashTransactions.amount} else 0 end)`,
+      totalOut: drizzleOrm.sql`sum(case when ${cashTransactions.amount} < 0 then abs(${cashTransactions.amount}) else 0 end)`
+    }).from(cashTransactions).where(drizzleOrm.eq(cashTransactions.sessionId, stale.id));
+    const totalIn = txSums[0]?.totalIn || 0;
+    const totalOut = txSums[0]?.totalOut || 0;
+    const expectedBalance = stale.openingBalance + totalIn - totalOut;
+    await db2.update(cashRegisterSessions).set({
+      closingBalance: expectedBalance,
+      expectedBalance,
+      actualBalance: expectedBalance,
+      variance: 0,
+      status: "closed",
+      closedBy: closedByUserId ?? stale.openedBy,
+      closedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      notes: `${stale.notes || ""}
+Auto-closed: stale session from ${stale.sessionDate}`.trim(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(cashRegisterSessions.id, stale.id));
+    console.log(`Auto-closed stale register session from ${stale.sessionDate} (id=${stale.id})`);
+  }
+  return staleSessions.length;
+}
 function registerCashRegisterHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("cash-register:get-current-session", async (_, branchId) => {
@@ -12939,6 +14718,7 @@ function registerCashRegisterHandlers() {
         return { success: false, message: "Unauthorized" };
       }
       const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      await autoCloseStaleRegisters(data.branchId, userSession.userId);
       const existingSession = await db2.query.cashRegisterSessions.findFirst({
         where: drizzleOrm.and(
           drizzleOrm.eq(cashRegisterSessions.branchId, data.branchId),
@@ -12966,6 +14746,33 @@ function registerCashRegisterHandlers() {
         openedBy: userSession.userId,
         notes: data.notes
       }).returning();
+      if (data.openingBalance > 0) {
+        const previousClosing = previousSession?.closingBalance ?? 0;
+        const capitalInjection = data.openingBalance - previousClosing;
+        if (capitalInjection > 0) {
+          await createJournalEntry({
+            description: `Cash register capital injection for ${today}`,
+            referenceType: "cash_register_session",
+            referenceId: newSession.id,
+            branchId: data.branchId,
+            userId: userSession.userId,
+            lines: [
+              {
+                accountCode: ACCOUNT_CODES.CASH_IN_HAND,
+                debitAmount: capitalInjection,
+                creditAmount: 0,
+                description: `Cash float injection for session ${today}`
+              },
+              {
+                accountCode: ACCOUNT_CODES.OWNERS_CAPITAL,
+                debitAmount: 0,
+                creditAmount: capitalInjection,
+                description: `Capital contribution: cash float ${today}`
+              }
+            ]
+          });
+        }
+      }
       await createAuditLog$1({
         userId: userSession.userId,
         branchId: data.branchId,
@@ -13341,18 +15148,20 @@ function registerChartOfAccountsHandlers() {
   });
   electron.ipcMain.handle("coa:get-balance-sheet", async (_, branchId) => {
     const accounts = await db2.query.chartOfAccounts.findMany({
-      where: drizzleOrm.and(
-        drizzleOrm.eq(chartOfAccounts.isActive, true),
-        drizzleOrm.sql`${chartOfAccounts.accountType} IN ('asset', 'liability', 'equity')`
-      ),
+      where: drizzleOrm.eq(chartOfAccounts.isActive, true),
       orderBy: [chartOfAccounts.accountType, chartOfAccounts.accountCode]
     });
     const assets = accounts.filter((a) => a.accountType === "asset");
     const liabilities = accounts.filter((a) => a.accountType === "liability");
     const equity = accounts.filter((a) => a.accountType === "equity");
+    const revenue = accounts.filter((a) => a.accountType === "revenue");
+    const expenses2 = accounts.filter((a) => a.accountType === "expense");
     const totalAssets = assets.reduce((sum, a) => sum + a.currentBalance, 0);
     const totalLiabilities = liabilities.reduce((sum, a) => sum + a.currentBalance, 0);
     const totalEquity = equity.reduce((sum, a) => sum + a.currentBalance, 0);
+    const totalRevenue = revenue.reduce((sum, a) => sum + a.currentBalance, 0);
+    const totalExpenses = expenses2.reduce((sum, a) => sum + a.currentBalance, 0);
+    const netIncome = totalRevenue - totalExpenses;
     return {
       assets: {
         accounts: assets,
@@ -13366,8 +15175,9 @@ function registerChartOfAccountsHandlers() {
         accounts: equity,
         total: totalEquity
       },
-      totalLiabilitiesAndEquity: totalLiabilities + totalEquity,
-      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity)) < 0.01
+      netIncome,
+      totalLiabilitiesAndEquity: totalLiabilities + totalEquity + netIncome,
+      isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + netIncome)) < 0.01
     };
   });
   electron.ipcMain.handle(
@@ -13464,43 +15274,50 @@ function registerChartOfAccountsHandlers() {
     }
   );
   electron.ipcMain.handle("journal:post", async (_, entryId, postedBy) => {
-    const entry = await db2.query.journalEntries.findFirst({
-      where: drizzleOrm.eq(journalEntries.id, entryId),
-      with: {
-        lines: {
-          with: {
-            account: true
+    try {
+      const entry = await db2.query.journalEntries.findFirst({
+        where: drizzleOrm.eq(journalEntries.id, entryId),
+        with: {
+          lines: {
+            with: {
+              account: true
+            }
           }
         }
+      });
+      if (!entry) {
+        return { success: false, message: "Journal entry not found" };
       }
-    });
-    if (!entry) {
-      throw new Error("Journal entry not found");
-    }
-    if (entry.status !== "draft") {
-      throw new Error("Only draft entries can be posted");
-    }
-    for (const line of entry.lines) {
-      const account = line.account;
-      if (!account) continue;
-      let newBalance = account.currentBalance;
-      if (account.normalBalance === "debit") {
-        newBalance += line.debitAmount - line.creditAmount;
-      } else {
-        newBalance += line.creditAmount - line.debitAmount;
+      if (entry.status !== "draft") {
+        return { success: false, message: "Only draft entries can be posted" };
       }
-      await db2.update(chartOfAccounts).set({
-        currentBalance: newBalance,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+      const updated = await withTransaction(async ({ db: txDb }) => {
+        for (const line of entry.lines) {
+          const account = line.account;
+          if (!account) continue;
+          let newBalance = account.currentBalance;
+          if (account.normalBalance === "debit") {
+            newBalance += line.debitAmount - line.creditAmount;
+          } else {
+            newBalance += line.creditAmount - line.debitAmount;
+          }
+          await txDb.update(chartOfAccounts).set({
+            currentBalance: newBalance,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+        }
+        const [result] = await txDb.update(journalEntries).set({
+          status: "posted",
+          postedBy,
+          postedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(journalEntries.id, entryId)).returning();
+        return result;
+      });
+      return { success: true, data: updated };
+    } catch (error) {
+      return handleIpcError("Post journal entry", error);
     }
-    const [updated] = await db2.update(journalEntries).set({
-      status: "posted",
-      postedBy,
-      postedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }).where(drizzleOrm.eq(journalEntries.id, entryId)).returning();
-    return updated;
   });
   electron.ipcMain.handle(
     "journal:get-all",
@@ -13569,8 +15386,7 @@ function registerChartOfAccountsHandlers() {
           }
         };
       } catch (error) {
-        console.error("Get journal entries error:", error);
-        return { success: false, message: "Failed to fetch journal entries" };
+        return handleIpcError("Get journal entries", error);
       }
     }
   );
@@ -13636,8 +15452,7 @@ function registerChartOfAccountsHandlers() {
           }
         };
       } catch (error) {
-        console.error("Get journal summary error:", error);
-        return { success: false, message: "Failed to fetch journal summary" };
+        return handleIpcError("Get journal summary", error);
       }
     }
   );
@@ -13702,8 +15517,7 @@ function registerChartOfAccountsHandlers() {
           }
         };
       } catch (error) {
-        console.error("Export journal entries error:", error);
-        return { success: false, message: "Failed to export journal entries" };
+        return handleIpcError("Export journal entries", error);
       }
     }
   );
@@ -13755,6 +15569,226 @@ function registerChartOfAccountsHandlers() {
         entries: ledgerEntries.reverse(),
         currentBalance: runningBalance
       };
+    }
+  );
+  electron.ipcMain.handle("coa:recalculate-balances", async () => {
+    try {
+      const allAccounts = await db2.query.chartOfAccounts.findMany();
+      const results = await withTransaction(async ({ db: txDb }) => {
+        const updated = [];
+        for (const account of allAccounts) {
+          const lines = await txDb.query.journalEntryLines.findMany({
+            where: drizzleOrm.eq(journalEntryLines.accountId, account.id),
+            with: {
+              journalEntry: true
+            }
+          });
+          const postedLines = lines.filter(
+            (line) => line.journalEntry && line.journalEntry.status === "posted"
+          );
+          let calculatedBalance = 0;
+          for (const line of postedLines) {
+            if (account.normalBalance === "debit") {
+              calculatedBalance += line.debitAmount - line.creditAmount;
+            } else {
+              calculatedBalance += line.creditAmount - line.debitAmount;
+            }
+          }
+          calculatedBalance = Math.round(calculatedBalance * 100) / 100;
+          if (calculatedBalance !== account.currentBalance) {
+            await txDb.update(chartOfAccounts).set({
+              currentBalance: calculatedBalance,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+            updated.push({
+              id: account.id,
+              accountCode: account.accountCode,
+              oldBalance: account.currentBalance,
+              newBalance: calculatedBalance
+            });
+          }
+        }
+        return updated;
+      });
+      return {
+        success: true,
+        data: {
+          totalAccounts: allAccounts.length,
+          adjustedCount: results.length,
+          adjustments: results
+        }
+      };
+    } catch (error) {
+      return handleIpcError("Recalculate balances", error);
+    }
+  });
+  electron.ipcMain.handle("coa:adjust-balance", async (_, accountId, targetBalance, reason, postedBy) => {
+    try {
+      const account = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+      });
+      if (!account) {
+        return { success: false, message: "Account not found" };
+      }
+      const difference = targetBalance - account.currentBalance;
+      if (Math.abs(difference) < 0.01) {
+        return { success: true, message: "Balance is already correct", data: { adjusted: false } };
+      }
+      const adjustmentAccount = await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(chartOfAccounts.accountCode, "3900"),
+          drizzleOrm.eq(chartOfAccounts.isActive, true)
+        )
+      });
+      const offsetAccount = adjustmentAccount || await db2.query.chartOfAccounts.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(chartOfAccounts.accountCode, "3200"),
+          drizzleOrm.eq(chartOfAccounts.isActive, true)
+        )
+      });
+      if (!offsetAccount) {
+        return { success: false, message: "No adjustment or retained earnings account found (3900 or 3200)" };
+      }
+      const result = await withTransaction(async ({ db: txDb }) => {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const entryDate = now.split("T")[0];
+        const year = (/* @__PURE__ */ new Date()).getFullYear();
+        const existingEntries = await txDb.query.journalEntries.findMany({
+          where: drizzleOrm.sql`${journalEntries.entryNumber} LIKE ${"ADJ-" + year + "-%"}`
+        });
+        const nextNum = existingEntries.length + 1;
+        const entryNumber = `ADJ-${year}-${String(nextNum).padStart(4, "0")}`;
+        const [entry] = await txDb.insert(journalEntries).values({
+          entryNumber,
+          entryDate,
+          description: `Balance adjustment: ${account.accountCode} ${account.accountName} - ${reason}`,
+          status: "posted",
+          isAutoGenerated: true,
+          postedBy,
+          postedAt: now,
+          createdAt: now,
+          updatedAt: now
+        }).returning();
+        let targetDebit = 0;
+        let targetCredit = 0;
+        if (account.normalBalance === "debit") {
+          if (difference > 0) {
+            targetDebit = difference;
+          } else {
+            targetCredit = Math.abs(difference);
+          }
+        } else {
+          if (difference > 0) {
+            targetCredit = difference;
+          } else {
+            targetDebit = Math.abs(difference);
+          }
+        }
+        await txDb.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: account.id,
+          debitAmount: targetDebit,
+          creditAmount: targetCredit,
+          description: `Adjust ${account.accountCode} balance to ${targetBalance}`,
+          createdAt: now,
+          updatedAt: now
+        });
+        await txDb.insert(journalEntryLines).values({
+          journalEntryId: entry.id,
+          accountId: offsetAccount.id,
+          debitAmount: targetCredit,
+          // Opposite of target
+          creditAmount: targetDebit,
+          description: `Offset for ${account.accountCode} balance adjustment`,
+          createdAt: now,
+          updatedAt: now
+        });
+        await txDb.update(chartOfAccounts).set({ currentBalance: targetBalance, updatedAt: now }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+        let offsetDiff = 0;
+        if (offsetAccount.normalBalance === "debit") {
+          offsetDiff = targetCredit - targetDebit;
+        } else {
+          offsetDiff = targetDebit - targetCredit;
+        }
+        await txDb.update(chartOfAccounts).set({
+          currentBalance: offsetAccount.currentBalance + offsetDiff,
+          updatedAt: now
+        }).where(drizzleOrm.eq(chartOfAccounts.id, offsetAccount.id));
+        return { entryNumber, difference, entry };
+      });
+      return {
+        success: true,
+        data: {
+          adjusted: true,
+          oldBalance: account.currentBalance,
+          newBalance: targetBalance,
+          difference,
+          journalEntry: result.entryNumber
+        }
+      };
+    } catch (error) {
+      return handleIpcError("Adjust balance", error);
+    }
+  });
+  electron.ipcMain.handle(
+    "coa:get-cash-flow-detail",
+    async (_, params) => {
+      try {
+        const { branchId, startDate, endDate } = params;
+        const startISO = new Date(startDate);
+        startISO.setHours(0, 0, 0, 0);
+        const endISO = new Date(endDate);
+        endISO.setHours(23, 59, 59, 999);
+        const transactions = await db2.select({
+          id: cashTransactions.id,
+          transactionType: cashTransactions.transactionType,
+          amount: cashTransactions.amount,
+          description: cashTransactions.description,
+          referenceType: cashTransactions.referenceType,
+          referenceId: cashTransactions.referenceId,
+          transactionDate: cashTransactions.transactionDate,
+          sessionDate: cashRegisterSessions.sessionDate
+        }).from(cashTransactions).innerJoin(
+          cashRegisterSessions,
+          drizzleOrm.eq(cashTransactions.sessionId, cashRegisterSessions.id)
+        ).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+            drizzleOrm.gte(cashTransactions.transactionDate, startISO.toISOString()),
+            drizzleOrm.lte(cashTransactions.transactionDate, endISO.toISOString())
+          )
+        ).orderBy(drizzleOrm.desc(cashTransactions.transactionDate));
+        const summaryByType = await db2.select({
+          transactionType: cashTransactions.transactionType,
+          totalAmount: drizzleOrm.sql`COALESCE(SUM(${cashTransactions.amount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`
+        }).from(cashTransactions).innerJoin(
+          cashRegisterSessions,
+          drizzleOrm.eq(cashTransactions.sessionId, cashRegisterSessions.id)
+        ).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+            drizzleOrm.gte(cashTransactions.transactionDate, startISO.toISOString()),
+            drizzleOrm.lte(cashTransactions.transactionDate, endISO.toISOString())
+          )
+        ).groupBy(cashTransactions.transactionType);
+        const totalInflows = summaryByType.filter((t) => (t.totalAmount || 0) > 0).reduce((sum, t) => sum + Number(t.totalAmount || 0), 0);
+        const totalOutflows = Math.abs(
+          summaryByType.filter((t) => (t.totalAmount || 0) < 0).reduce((sum, t) => sum + Number(t.totalAmount || 0), 0)
+        );
+        return {
+          success: true,
+          data: {
+            transactions,
+            summaryByType,
+            totalInflows,
+            totalOutflows,
+            netCashFlow: totalInflows - totalOutflows
+          }
+        };
+      } catch (error) {
+        return handleIpcError("Get cash flow detail", error);
+      }
     }
   );
 }
@@ -15800,6 +17834,109 @@ function registerReceiptHandlers() {
       };
     }
   });
+  electron.ipcMain.handle("receipt:get-data", async (_, saleId) => {
+    try {
+      const sale = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, saleId)
+      });
+      if (!sale) {
+        return { success: false, message: "Sale not found" };
+      }
+      const items = await db2.select({ saleItem: saleItems, product: products }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      const saleServiceItems = await db2.select({ saleService: saleServices, service: services }).from(saleServices).innerJoin(services, drizzleOrm.eq(saleServices.serviceId, services.id)).where(drizzleOrm.eq(saleServices.saleId, saleId));
+      let customer = null;
+      if (sale.customerId) {
+        const customerData = await db2.query.customers.findFirst({
+          where: drizzleOrm.eq(customers.id, sale.customerId)
+        });
+        if (customerData) {
+          customer = {
+            name: `${customerData.firstName} ${customerData.lastName}`.trim(),
+            phone: customerData.phone || void 0,
+            email: customerData.email || void 0,
+            address: [customerData.address, customerData.city, customerData.state].filter(Boolean).join(", ") || void 0
+          };
+        }
+      }
+      let settings2 = null;
+      if (sale.branchId) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.eq(businessSettings.branchId, sale.branchId)
+        });
+      }
+      if (!settings2) {
+        settings2 = await db2.query.businessSettings.findFirst({
+          where: drizzleOrm.isNull(businessSettings.branchId)
+        });
+      }
+      if (!settings2) {
+        return { success: false, message: "Business settings not configured" };
+      }
+      return {
+        success: true,
+        data: {
+          sale: {
+            id: sale.id,
+            invoiceNumber: sale.invoiceNumber,
+            saleDate: sale.saleDate || (/* @__PURE__ */ new Date()).toISOString(),
+            subtotal: sale.subtotal || 0,
+            taxAmount: sale.taxAmount || 0,
+            discountAmount: sale.discountAmount || 0,
+            totalAmount: sale.totalAmount || 0,
+            amountPaid: sale.amountPaid || 0,
+            changeGiven: sale.changeGiven || 0,
+            paymentMethod: sale.paymentMethod || "cash",
+            paymentStatus: sale.paymentStatus || "paid",
+            notes: sale.notes || void 0
+          },
+          items: items.map((item) => ({
+            productName: item.product.name,
+            productCode: item.product.code,
+            quantity: item.saleItem.quantity || 1,
+            unitPrice: item.saleItem.unitPrice || 0,
+            serialNumber: item.saleItem.serialNumber || void 0,
+            discountAmount: item.saleItem.discountAmount || 0,
+            taxAmount: item.saleItem.taxAmount || 0,
+            totalPrice: item.saleItem.totalPrice || 0
+          })),
+          services: saleServiceItems.map((item) => ({
+            serviceName: item.saleService.serviceName || item.service.name,
+            serviceCode: item.service.code || void 0,
+            quantity: item.saleService.quantity || 1,
+            unitPrice: item.saleService.unitPrice || 0,
+            hours: item.saleService.hours || void 0,
+            taxAmount: item.saleService.taxAmount || 0,
+            totalAmount: item.saleService.totalPrice || 0,
+            notes: item.saleService.notes || void 0
+          })),
+          customer,
+          businessSettings: {
+            businessName: settings2.businessName,
+            businessLogo: settings2.businessLogo,
+            currencySymbol: settings2.currencySymbol || "Rs.",
+            currencyPosition: settings2.currencyPosition || "prefix",
+            decimalPlaces: settings2.decimalPlaces || 2,
+            taxRate: settings2.taxRate || 0,
+            showTaxOnReceipt: settings2.showTaxOnReceipt !== false,
+            receiptFooter: settings2.receiptFooter || "",
+            receiptTermsAndConditions: settings2.receiptTermsAndConditions || "",
+            receiptCustomField1Label: settings2.receiptCustomField1Label || "",
+            receiptCustomField1Value: settings2.receiptCustomField1Value || "",
+            receiptCustomField2Label: settings2.receiptCustomField2Label || "",
+            receiptCustomField2Value: settings2.receiptCustomField2Value || "",
+            receiptCustomField3Label: settings2.receiptCustomField3Label || "",
+            receiptCustomField3Value: settings2.receiptCustomField3Value || ""
+          }
+        }
+      };
+    } catch (error) {
+      console.error("Receipt data fetch error:", error);
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to fetch receipt data"
+      };
+    }
+  });
   electron.ipcMain.handle("receipt:get-settings", async (_, branchId) => {
     try {
       let settings2 = null;
@@ -16640,13 +18777,23 @@ function registerDashboardHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("dashboard:get-stats", async (_, params) => {
     try {
-      const { branchId, timePeriod } = params;
-      const dateRange = getDateRange(timePeriod);
+      const { branchId, timePeriod, customStart, customEnd } = params;
+      const dateRange = getDateRange(timePeriod, customStart, customEnd);
       const profitResult = await db2.select({
         revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
         cost: drizzleOrm.sql`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
         tax: drizzleOrm.sql`COALESCE(SUM(${saleItems.taxAmount}), 0)`
       }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const serviceResult = await db2.select({
+        revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+        tax: drizzleOrm.sql`COALESCE(SUM(${saleServices.taxAmount}), 0)`
+      }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
@@ -16663,10 +18810,52 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.isVoided, false)
         )
       );
-      const revenue = profitResult[0]?.revenue || 0;
-      const cost = profitResult[0]?.cost || 0;
-      const taxCollected = profitResult[0]?.tax || 0;
+      const discountResult = await db2.select({
+        gross: drizzleOrm.sql`COALESCE(SUM(${sales.discountAmount}), 0)`,
+        adjusted: drizzleOrm.sql`COALESCE(SUM(
+            ${sales.discountAmount} * (1.0 - MIN(1.0,
+              COALESCE((
+                SELECT SUM(ri.unit_price * ri.quantity)
+                FROM return_items ri
+                INNER JOIN returns r ON ri.return_id = r.id
+                WHERE r.original_sale_id = sales.id
+              ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
+            ))
+          ), 0)`
+      }).from(sales).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(sales.branchId, branchId),
+          drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+          drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const productRevenue = profitResult[0]?.revenue || 0;
+      const productCost = profitResult[0]?.cost || 0;
+      const productTax = profitResult[0]?.tax || 0;
+      const svcRevenue = serviceResult[0]?.revenue || 0;
+      const svcTax = serviceResult[0]?.tax || 0;
+      const grossRevenue = productRevenue + svcRevenue;
+      const grossCost = productCost;
+      const grossTax = productTax + svcTax;
       const commissionTotal = commissionResult[0]?.total || 0;
+      const grossDiscount = discountResult[0]?.gross || 0;
+      const totalDiscount = discountResult[0]?.adjusted || 0;
+      const returnDeductions = await db2.select({
+        returnRevenue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`,
+        returnCost: drizzleOrm.sql`COALESCE(SUM(CASE WHEN ${returnItems.restockable} = 1 THEN ${returnItems.costPrice} * ${returnItems.quantity} ELSE 0 END), 0)`,
+        returnTax: drizzleOrm.sql`COALESCE(SUM(${returns.taxAmount}), 0)`
+      }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(returns.branchId, branchId),
+          drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end)
+        )
+      );
+      const returnRevenue = returnDeductions[0]?.returnRevenue || 0;
+      const returnCost = returnDeductions[0]?.returnCost || 0;
+      const returnTax = returnDeductions[0]?.returnTax || 0;
+      const revenue = grossRevenue - returnRevenue - totalDiscount;
+      const cost = grossCost - returnCost;
+      const taxCollected = grossTax - returnTax;
       const totalProfit = revenue - cost - commissionTotal - taxCollected;
       const salesCountResult = await db2.select({
         count: drizzleOrm.sql`COUNT(*)`
@@ -16674,7 +18863,14 @@ function registerDashboardHandlers() {
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          // Exclude fully-returned sales
+          drizzleOrm.sql`COALESCE((
+              SELECT SUM(ri.unit_price * ri.quantity)
+              FROM return_items ri
+              INNER JOIN returns r ON ri.return_id = r.id
+              WHERE r.original_sale_id = sales.id
+            ), 0) < ${sales.subtotal}`
         )
       );
       const productsResult = await db2.select({ count: drizzleOrm.sql`COUNT(*)` }).from(products).where(drizzleOrm.eq(products.isActive, true));
@@ -16685,6 +18881,14 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
           drizzleOrm.eq(sales.isVoided, false)
+        )
+      );
+      const returnedQtyResult = await db2.select({
+        total: drizzleOrm.sql`COALESCE(SUM(${returnItems.quantity}), 0)`
+      }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(returns.branchId, branchId),
+          drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end)
         )
       );
       const purchasesResult = await db2.select({
@@ -16790,11 +18994,15 @@ function registerDashboardHandlers() {
       const stats = {
         totalProfit,
         totalRevenue: revenue,
+        grossRevenue,
         totalCost: cost,
         totalTaxCollected: taxCollected,
         totalCommission: commissionTotal,
+        totalDiscount,
+        grossDiscount,
+        returnDeductions: returnRevenue,
         totalProducts: productsResult[0]?.count || 0,
-        totalProductsSold: soldResult[0]?.total || 0,
+        totalProductsSold: (soldResult[0]?.total || 0) - (returnedQtyResult[0]?.total || 0),
         totalPurchases: purchasesResult[0]?.total || 0,
         totalExpense: expensesResult[0]?.total || 0,
         totalReturns: returnsResult[0]?.total || 0,
@@ -16813,6 +19021,298 @@ function registerDashboardHandlers() {
     } catch (error) {
       console.error("Dashboard stats error:", error);
       return { success: false, message: "Failed to fetch dashboard stats" };
+    }
+  });
+  electron.ipcMain.handle("dashboard:get-trend-data", async (_, params) => {
+    try {
+      let timeExprs = function(dateCol) {
+        if (timePeriod === "daily") {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%H', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%H:00', ${dateCol})`
+          };
+        } else if (timePeriod === "weekly") {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%Y-%m-%d', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%a', ${dateCol})`
+          };
+        } else if (timePeriod === "monthly") {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%Y-%m-%d', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%d', ${dateCol})`
+          };
+        } else {
+          return {
+            groupExpr: drizzleOrm.sql`strftime('%Y-%m', ${dateCol})`,
+            labelExpr: drizzleOrm.sql`strftime('%b', ${dateCol})`
+          };
+        }
+      };
+      const { branchId, timePeriod, chartFilter, customStart, customEnd } = params;
+      const dateRange = getDateRange(timePeriod, customStart, customEnd);
+      if (chartFilter === "revenue_profit") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
+        const productRows = await db2.select({
+          label: labelExpr,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+          cost: drizzleOrm.sql`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
+          tax: drizzleOrm.sql`COALESCE(SUM(${saleItems.taxAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(DISTINCT ${sales.id})`,
+          groupKey: groupExpr
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        const serviceRows = await db2.select({
+          label: labelExpr,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+          tax: drizzleOrm.sql`COALESCE(SUM(${saleServices.taxAmount}), 0)`,
+          groupKey: groupExpr
+        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        const merged = /* @__PURE__ */ new Map();
+        for (const r of productRows) {
+          merged.set(r.label, {
+            label: r.label,
+            revenue: Number(r.revenue),
+            cost: Number(r.cost),
+            tax: Number(r.tax),
+            count: Number(r.count)
+          });
+        }
+        for (const r of serviceRows) {
+          const existing = merged.get(r.label);
+          if (existing) {
+            existing.revenue += Number(r.revenue);
+            existing.tax += Number(r.tax);
+          } else {
+            merged.set(r.label, {
+              label: r.label,
+              revenue: Number(r.revenue),
+              cost: 0,
+              tax: Number(r.tax),
+              count: 0
+            });
+          }
+        }
+        const points = Array.from(merged.values()).sort((a, b) => a.label.localeCompare(b.label)).map((r) => ({
+          label: r.label,
+          revenue: r.revenue,
+          profit: r.revenue - r.cost - r.tax
+        }));
+        const totalSales = Array.from(merged.values()).reduce((s, r) => s + r.count, 0);
+        return {
+          success: true,
+          data: {
+            series: ["revenue", "profit"],
+            seriesLabels: { revenue: "Revenue", profit: "Profit" },
+            seriesColors: { revenue: "#3b82f6", profit: "#22c55e" },
+            points,
+            badge: `${totalSales} sales`
+          }
+        };
+      }
+      if (chartFilter === "products") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
+        const topProducts = await db2.select({
+          productId: saleItems.productId,
+          name: products.name,
+          totalRev: drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity})`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(saleItems.productId).orderBy(drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity}) DESC`).limit(5);
+        if (topProducts.length === 0) {
+          return { success: true, data: { series: [], seriesLabels: {}, seriesColors: {}, points: [], badge: "0 products" } };
+        }
+        const productColors = ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6"];
+        const series = [];
+        const seriesLabels = {};
+        const seriesColors = {};
+        topProducts.forEach((p, i) => {
+          const key = `p${p.productId}`;
+          series.push(key);
+          seriesLabels[key] = p.name.length > 15 ? p.name.substring(0, 15) + "..." : p.name;
+          seriesColors[key] = productColors[i];
+        });
+        const productIds = topProducts.map((p) => p.productId);
+        const rows = await db2.select({
+          label: labelExpr,
+          productId: saleItems.productId,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.unitPrice} * ${saleItems.quantity}), 0)`,
+          groupKey: groupExpr
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(sales.branchId, branchId),
+            drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
+            drizzleOrm.eq(sales.isVoided, false),
+            drizzleOrm.sql`${saleItems.productId} IN (${drizzleOrm.sql.join(productIds.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
+          )
+        ).groupBy(groupExpr, saleItems.productId).orderBy(groupExpr);
+        const pointsMap = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          if (!pointsMap.has(row.label)) {
+            const point2 = { label: row.label };
+            series.forEach((s) => point2[s] = 0);
+            pointsMap.set(row.label, point2);
+          }
+          const point = pointsMap.get(row.label);
+          point[`p${row.productId}`] = Number(row.revenue);
+        }
+        return {
+          success: true,
+          data: {
+            series,
+            seriesLabels,
+            seriesColors,
+            points: Array.from(pointsMap.values()),
+            badge: `Top ${topProducts.length} products`
+          }
+        };
+      }
+      if (chartFilter === "services") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${sales.saleDate}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["serviceRevenue"],
+            seriesLabels: { serviceRevenue: "Service Revenue" },
+            seriesColors: { serviceRevenue: "#8b5cf6" },
+            points: rows.map((r) => ({ label: r.label, serviceRevenue: Number(r.revenue) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} services`
+          }
+        };
+      }
+      if (chartFilter === "expenses") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${expenses.expenseDate}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          amount: drizzleOrm.sql`COALESCE(SUM(${expenses.amount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(expenses).where(drizzleOrm.and(drizzleOrm.eq(expenses.branchId, branchId), drizzleOrm.between(expenses.expenseDate, dateRange.start, dateRange.end))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["expenseAmount"],
+            seriesLabels: { expenseAmount: "Expenses" },
+            seriesColors: { expenseAmount: "#ef4444" },
+            points: rows.map((r) => ({ label: r.label, expenseAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} entries`
+          }
+        };
+      }
+      if (chartFilter === "purchases") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${purchases.createdAt}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          amount: drizzleOrm.sql`COALESCE(SUM(${purchases.totalAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(purchases).where(drizzleOrm.and(drizzleOrm.eq(purchases.branchId, branchId), drizzleOrm.between(purchases.createdAt, dateRange.start, dateRange.end))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["purchaseAmount"],
+            seriesLabels: { purchaseAmount: "Purchases" },
+            seriesColors: { purchaseAmount: "#f59e0b" },
+            points: rows.map((r) => ({ label: r.label, purchaseAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} orders`
+          }
+        };
+      }
+      if (chartFilter === "returns") {
+        const { groupExpr, labelExpr } = timeExprs(drizzleOrm.sql`${returns.returnDate}`);
+        const rows = await db2.select({
+          label: labelExpr,
+          amount: drizzleOrm.sql`COALESCE(SUM(${returns.totalAmount}), 0)`,
+          count: drizzleOrm.sql`COUNT(*)`,
+          groupKey: groupExpr
+        }).from(returns).where(drizzleOrm.and(drizzleOrm.eq(returns.branchId, branchId), drizzleOrm.between(returns.returnDate, dateRange.start, dateRange.end))).groupBy(groupExpr).orderBy(groupExpr);
+        return {
+          success: true,
+          data: {
+            series: ["returnAmount"],
+            seriesLabels: { returnAmount: "Returns" },
+            seriesColors: { returnAmount: "#f97316" },
+            points: rows.map((r) => ({ label: r.label, returnAmount: Number(r.amount) })),
+            badge: `${rows.reduce((s, r) => s + Number(r.count), 0)} returns`
+          }
+        };
+      }
+      return { success: false, message: "Unknown chart filter" };
+    } catch (error) {
+      console.error("Dashboard trend data error:", error);
+      return { success: false, message: "Failed to fetch trend data" };
+    }
+  });
+  electron.ipcMain.handle("dashboard:get-fund-flow", async (_, params) => {
+    try {
+      const { branchId, timePeriod, customStart, customEnd } = params;
+      const dateRange = getDateRange(timePeriod, customStart, customEnd);
+      const sessions = await db2.select({
+        openingBalance: cashRegisterSessions.openingBalance,
+        closingBalance: cashRegisterSessions.closingBalance,
+        status: cashRegisterSessions.status
+      }).from(cashRegisterSessions).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+          drizzleOrm.between(cashRegisterSessions.sessionDate, dateRange.start.split("T")[0], dateRange.end.split("T")[0])
+        )
+      );
+      const openingCash = sessions.length > 0 ? sessions[0].openingBalance : 0;
+      const txByType = await db2.select({
+        transactionType: cashTransactions.transactionType,
+        total: drizzleOrm.sql`COALESCE(SUM(ABS(${cashTransactions.amount})), 0)`
+      }).from(cashTransactions).innerJoin(
+        cashRegisterSessions,
+        drizzleOrm.eq(cashTransactions.sessionId, cashRegisterSessions.id)
+      ).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+          drizzleOrm.between(cashTransactions.transactionDate, dateRange.start, dateRange.end)
+        )
+      ).groupBy(cashTransactions.transactionType);
+      const txMap = {};
+      for (const row of txByType) {
+        txMap[row.transactionType] = Number(row.total) || 0;
+      }
+      const cashFromSales = txMap["sale"] || 0;
+      const arCollections = txMap["ar_collection"] || 0;
+      const deposits = txMap["deposit"] || 0;
+      const pettyCashIn = txMap["petty_cash_in"] || 0;
+      const cashIn = txMap["cash_in"] || 0;
+      const totalCashIn = cashFromSales + arCollections + deposits + pettyCashIn + cashIn;
+      const apPayments = txMap["ap_payment"] || 0;
+      const expensesPaid = txMap["expense"] || 0;
+      const refunds = txMap["refund"] || 0;
+      const withdrawals = txMap["withdrawal"] || 0;
+      const pettyCashOut = txMap["petty_cash_out"] || 0;
+      const totalCashOut = apPayments + expensesPaid + refunds + withdrawals + pettyCashOut;
+      const lastSession = sessions[sessions.length - 1];
+      const closingCash = lastSession?.status === "closed" ? lastSession.closingBalance ?? openingCash + totalCashIn - totalCashOut : openingCash + totalCashIn - totalCashOut;
+      return {
+        success: true,
+        data: {
+          openingCash,
+          cashFromSales,
+          arCollections,
+          deposits,
+          pettyCashIn,
+          cashIn,
+          totalCashIn,
+          apPayments,
+          expensesPaid,
+          refunds,
+          withdrawals,
+          pettyCashOut,
+          totalCashOut,
+          netCashFlow: totalCashIn - totalCashOut,
+          closingCash
+        }
+      };
+    } catch (error) {
+      console.error("Dashboard fund flow error:", error);
+      return { success: false, message: "Failed to fetch fund flow data" };
     }
   });
 }
@@ -16899,11 +19399,20 @@ function registerSetupHandlers() {
         isMain: true
       };
       const newBranch = db2.insert(branches).values(branchData).returning().get();
+      const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12);
       const existingAdmin = await db2.query.users.findFirst({
-        where: (u, { eq }) => eq(u.username, data.adminAccount.username)
+        where: (u, { eq: eq2 }) => eq2(u.username, data.adminAccount.username)
       });
-      if (!existingAdmin) {
-        const hashedPassword = await bcrypt.hash(data.adminAccount.password, 12);
+      if (existingAdmin) {
+        db2.update(users).set({
+          password: hashedPassword,
+          email: data.adminAccount.email || data.business.businessEmail || existingAdmin.email,
+          fullName: data.adminAccount.fullName || existingAdmin.fullName,
+          phone: data.adminAccount.phone || existingAdmin.phone,
+          branchId: newBranch.id
+        }).where(drizzleOrm.eq(users.id, existingAdmin.id)).run();
+        console.log("[Setup] Admin user updated for branch:", newBranch.id, "userId:", existingAdmin.id);
+      } else {
         const newAdmin = db2.insert(users).values({
           username: data.adminAccount.username,
           password: hashedPassword,
@@ -17080,7 +19589,7 @@ function registerSetupHandlers() {
       let counter = 1;
       while (true) {
         const existing = db2.query.branches.findFirst({
-          where: (b, { eq }) => eq(b.code, finalCode)
+          where: (b, { eq: eq2 }) => eq2(b.code, finalCode)
         });
         if (!existing) break;
         counter++;
@@ -17107,6 +19616,8 @@ function registerDatabaseResetHandlers() {
       console.log("Starting hard reset...");
       rawDb.pragma("foreign_keys = OFF");
       try {
+        console.log("Deleting reversal requests...");
+        rawDb.prepare("DELETE FROM reversal_requests").run();
         console.log("Deleting commissions...");
         rawDb.prepare("DELETE FROM commissions").run();
         console.log("Deleting audit logs...");
@@ -17372,14 +19883,20 @@ async function restoreBackup(backupPath) {
       return { success: false, message: "Backup file not found" };
     }
     const dbPath = getDbPath();
-    closeDatabase();
     const backupDir = getBackupDir();
     const safetyBackupName = `pre-restore-backup-${Date.now()}.db`;
     const safetyBackupPath = node_path.join(backupDir, safetyBackupName);
+    try {
+      const rawDb = getRawDatabase();
+      rawDb.pragma("wal_checkpoint(TRUNCATE)");
+    } catch (walErr) {
+      console.warn("Could not checkpoint WAL before restore:", walErr);
+    }
     if (node_fs.existsSync(dbPath)) {
       node_fs.copyFileSync(dbPath, safetyBackupPath);
       console.log("Safety backup created before restore:", safetyBackupPath);
     }
+    closeDatabase();
     const walPath = dbPath + "-wal";
     const shmPath = dbPath + "-shm";
     if (node_fs.existsSync(dbPath)) node_fs.unlinkSync(dbPath);
@@ -17392,16 +19909,19 @@ async function restoreBackup(backupPath) {
     if (node_fs.existsSync(backupPath + "-shm")) {
       node_fs.copyFileSync(backupPath + "-shm", shmPath);
     }
-    initDatabase();
+    reinitializeDatabase();
     console.log("Database restored successfully from:", backupPath);
+    for (const win of electron.BrowserWindow.getAllWindows()) {
+      win.webContents.reload();
+    }
     return {
       success: true,
-      message: "Database restored successfully. Please restart the application."
+      message: "Database restored successfully."
     };
   } catch (err) {
     console.error("Restore failed:", err);
     try {
-      initDatabase();
+      reinitializeDatabase();
     } catch (_initErr) {
     }
     return {
@@ -18173,20 +20693,30 @@ function registerDiscountManagementHandlers() {
       const whereClause = drizzleOrm.and(...conditions);
       const summaryResult = await db2.select({
         totalDiscountAmount: drizzleOrm.sql`sum(${sales.discountAmount})`,
+        adjustedDiscountAmount: drizzleOrm.sql`COALESCE(SUM(
+            ${sales.discountAmount} * (1.0 - MIN(1.0,
+              COALESCE((
+                SELECT SUM(ri.unit_price * ri.quantity)
+                FROM return_items ri
+                INNER JOIN returns r ON ri.return_id = r.id
+                WHERE r.original_sale_id = ${sales.id}
+              ), 0) / CASE WHEN ${sales.subtotal} > 0 THEN ${sales.subtotal} ELSE 1 END
+            ))
+          ), 0)`,
         salesWithDiscount: drizzleOrm.sql`sum(case when ${sales.discountAmount} > 0 then 1 else 0 end)`,
         totalSales: drizzleOrm.sql`count(*)`,
         totalSubtotal: drizzleOrm.sql`sum(${sales.subtotal})`
       }).from(sales).where(whereClause);
       const salesWithDiscount = summaryResult[0]?.salesWithDiscount || 0;
       const totalSales = summaryResult[0]?.totalSales || 0;
-      const totalDiscountAmount = summaryResult[0]?.totalDiscountAmount || 0;
+      const totalDiscountAmount = summaryResult[0]?.adjustedDiscountAmount || 0;
       const totalSubtotal = summaryResult[0]?.totalSubtotal || 0;
       const averageDiscountPercent = salesWithDiscount > 0 && totalSubtotal > 0 ? totalDiscountAmount / totalSubtotal * 100 : 0;
       const topProducts = await db2.select({
         productName: products.name,
         discountAmount: drizzleOrm.sql`sum(${saleItems.discountAmount})`,
         count: drizzleOrm.sql`count(*)`
-      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(whereClause, drizzleOrm.gt(saleItems.discountAmount, 0))).groupBy(products.id, products.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${saleItems.discountAmount})`)).limit(10);
+      }).from(saleItems).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(whereClause, drizzleOrm.gt(saleItems.discountAmount, 0))).groupBy(drizzleOrm.sql`${products.id}`, drizzleOrm.sql`${products.name}`).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${saleItems.discountAmount})`)).limit(10);
       const summary = {
         totalDiscounts: salesWithDiscount,
         totalDiscountAmount,
@@ -18228,6 +20758,13 @@ function registerDiscountManagementHandlers() {
             userName = user?.username;
           }
           const discountPercent = record.subtotal > 0 ? record.discountAmount / record.subtotal * 100 : 0;
+          const returnResult = await db2.select({
+            returnedValue: drizzleOrm.sql`COALESCE(SUM(${returnItems.unitPrice} * ${returnItems.quantity}), 0)`
+          }).from(returnItems).innerJoin(returns, drizzleOrm.eq(returnItems.returnId, returns.id)).where(drizzleOrm.eq(returns.originalSaleId, record.id));
+          const returnedValue = returnResult[0]?.returnedValue || 0;
+          const returnRatio = record.subtotal > 0 ? Math.min(1, returnedValue / record.subtotal) : 0;
+          const isFullyReturned = returnRatio >= 0.999;
+          const effectiveDiscount = Math.round(record.discountAmount * (1 - returnRatio) * 100) / 100;
           return {
             id: record.id,
             invoiceNumber: record.invoiceNumber,
@@ -18239,7 +20776,10 @@ function registerDiscountManagementHandlers() {
             totalAmount: record.totalAmount,
             paymentStatus: record.paymentStatus,
             userId: record.userId,
-            userName
+            userName,
+            isFullyReturned,
+            effectiveDiscount,
+            returnRatio
           };
         })
       );
@@ -18658,7 +21198,7 @@ function registerInventoryCountsHandlers() {
             quantity: newQuantity,
             updatedAt: now
           }).where(drizzleOrm.eq(inventory.id, inv.id));
-          await db2.insert(stockAdjustments).values({
+          const [adjustment] = await db2.insert(stockAdjustments).values({
             productId: item.productId,
             branchId: count.branchId,
             userId,
@@ -18669,7 +21209,27 @@ function registerInventoryCountsHandlers() {
             reason: `Cycle count adjustment - Count #${count.countNumber}`,
             reference: count.countNumber,
             createdAt: now
+          }).returning();
+          const product = await db2.query.products.findFirst({
+            where: drizzleOrm.eq(products.id, item.productId)
           });
+          if (product && adjustment) {
+            await postStockAdjustmentToGL(
+              {
+                id: adjustment.id,
+                branchId: count.branchId,
+                adjustmentType: "correction",
+                quantityChange: varianceQty,
+                unitCost: product.costPrice,
+                reason: `Cycle count adjustment - Count #${count.countNumber}`,
+                reference: count.countNumber,
+                productName: product.name,
+                quantityBefore: inv.quantity,
+                quantityAfter: newQuantity
+              },
+              userId
+            );
+          }
           await db2.update(inventoryCountItems).set({ adjustmentCreated: true, updatedAt: now }).where(drizzleOrm.eq(inventoryCountItems.id, item.id));
           adjustedCount++;
         }
@@ -18925,140 +21485,6 @@ function validateServiceInput(data) {
 }
 function registerServicesHandlers() {
   const db2 = getDatabase();
-  electron.ipcMain.handle("service-categories:get-all", async () => {
-    try {
-      const data = await db2.query.serviceCategories.findMany({
-        orderBy: drizzleOrm.desc(serviceCategories.name)
-      });
-      return { success: true, data };
-    } catch (error) {
-      console.error("Get service categories error:", error);
-      return { success: false, message: "Failed to fetch service categories" };
-    }
-  });
-  electron.ipcMain.handle("service-categories:get-active", async () => {
-    try {
-      const data = await db2.query.serviceCategories.findMany({
-        where: drizzleOrm.eq(serviceCategories.isActive, true),
-        orderBy: drizzleOrm.desc(serviceCategories.name)
-      });
-      return { success: true, data };
-    } catch (error) {
-      console.error("Get active service categories error:", error);
-      return { success: false, message: "Failed to fetch active service categories" };
-    }
-  });
-  electron.ipcMain.handle("service-categories:get-by-id", async (_, id) => {
-    try {
-      const category = await db2.query.serviceCategories.findFirst({
-        where: drizzleOrm.eq(serviceCategories.id, id)
-      });
-      if (!category) {
-        return { success: false, message: "Service category not found" };
-      }
-      return { success: true, data: category };
-    } catch (error) {
-      console.error("Get service category error:", error);
-      return { success: false, message: "Failed to fetch service category" };
-    }
-  });
-  electron.ipcMain.handle("service-categories:create", async (_, data) => {
-    try {
-      const session = getCurrentSession();
-      const existing = await db2.query.serviceCategories.findFirst({
-        where: drizzleOrm.eq(serviceCategories.name, data.name)
-      });
-      if (existing) {
-        return { success: false, message: "Service category with this name already exists" };
-      }
-      const result = await db2.insert(serviceCategories).values(data).returning();
-      const newCategory = result[0];
-      await createAuditLog$1({
-        userId: session?.userId,
-        branchId: session?.branchId,
-        action: "create",
-        entityType: "service_category",
-        entityId: newCategory.id,
-        newValues: sanitizeForAudit(data),
-        description: `Created service category: ${data.name}`
-      });
-      return { success: true, data: newCategory };
-    } catch (error) {
-      console.error("Create service category error:", error);
-      return { success: false, message: "Failed to create service category" };
-    }
-  });
-  electron.ipcMain.handle(
-    "service-categories:update",
-    async (_, id, data) => {
-      try {
-        const session = getCurrentSession();
-        const existing = await db2.query.serviceCategories.findFirst({
-          where: drizzleOrm.eq(serviceCategories.id, id)
-        });
-        if (!existing) {
-          return { success: false, message: "Service category not found" };
-        }
-        if (data.name && data.name !== existing.name) {
-          const duplicate = await db2.query.serviceCategories.findFirst({
-            where: drizzleOrm.eq(serviceCategories.name, data.name)
-          });
-          if (duplicate) {
-            return { success: false, message: "Service category with this name already exists" };
-          }
-        }
-        const result = await db2.update(serviceCategories).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(serviceCategories.id, id)).returning();
-        await createAuditLog$1({
-          userId: session?.userId,
-          branchId: session?.branchId,
-          action: "update",
-          entityType: "service_category",
-          entityId: id,
-          oldValues: sanitizeForAudit(existing),
-          newValues: sanitizeForAudit(data),
-          description: `Updated service category: ${existing.name}`
-        });
-        return { success: true, data: result[0] };
-      } catch (error) {
-        console.error("Update service category error:", error);
-        return { success: false, message: "Failed to update service category" };
-      }
-    }
-  );
-  electron.ipcMain.handle("service-categories:delete", async (_, id) => {
-    try {
-      const session = getCurrentSession();
-      const existing = await db2.query.serviceCategories.findFirst({
-        where: drizzleOrm.eq(serviceCategories.id, id)
-      });
-      if (!existing) {
-        return { success: false, message: "Service category not found" };
-      }
-      const servicesInCategory = await db2.query.services.findFirst({
-        where: drizzleOrm.eq(services.categoryId, id)
-      });
-      if (servicesInCategory) {
-        return {
-          success: false,
-          message: "Cannot delete category with associated services. Reassign services first."
-        };
-      }
-      await db2.update(serviceCategories).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(serviceCategories.id, id));
-      await createAuditLog$1({
-        userId: session?.userId,
-        branchId: session?.branchId,
-        action: "delete",
-        entityType: "service_category",
-        entityId: id,
-        oldValues: sanitizeForAudit(existing),
-        description: `Deactivated service category: ${existing.name}`
-      });
-      return { success: true, message: "Service category deactivated successfully" };
-    } catch (error) {
-      console.error("Delete service category error:", error);
-      return { success: false, message: "Failed to delete service category" };
-    }
-  });
   electron.ipcMain.handle(
     "services:get-all",
     async (_, params) => {
@@ -19266,6 +21692,18 @@ function registerServicesHandlers() {
       return { success: false, message: "Failed to search services" };
     }
   });
+  electron.ipcMain.handle("services:get-categories", async () => {
+    try {
+      const data = await db2.query.serviceCategories.findMany({
+        where: drizzleOrm.eq(serviceCategories.isActive, true),
+        orderBy: drizzleOrm.asc(serviceCategories.name)
+      });
+      return { success: true, data };
+    } catch (error) {
+      console.error("Get service categories error:", error);
+      return { success: false, message: "Failed to fetch service categories" };
+    }
+  });
 }
 function ensureVouchersTable() {
   try {
@@ -19466,6 +21904,1141 @@ function registerVoucherHandlers() {
     }
   });
 }
+async function reverseGLEntry(referenceType, referenceId, description, branchId, userId) {
+  const db2 = getDatabase();
+  const jeEntry = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(journalEntries.referenceType, referenceType),
+      drizzleOrm.eq(journalEntries.referenceId, referenceId),
+      drizzleOrm.eq(journalEntries.status, "posted")
+    )
+  });
+  if (!jeEntry) return { reversed: false };
+  const lines = await db2.query.journalEntryLines.findMany({
+    where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+  });
+  const reversingLines = [];
+  for (const line of lines) {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+    });
+    if (!account) {
+      throw new Error(`Account #${line.accountId} not found when reversing GL entry`);
+    }
+    reversingLines.push({
+      accountCode: account.accountCode,
+      debitAmount: line.creditAmount,
+      // swap
+      creditAmount: line.debitAmount,
+      // swap
+      description: `Reversal: ${line.description || ""}`
+    });
+  }
+  const reversalEntryId = await createJournalEntry({
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    userId,
+    lines: reversingLines
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db2.update(journalEntries).set({
+    status: "reversed",
+    reversedBy: userId,
+    reversedAt: now,
+    reversalEntryId,
+    updatedAt: now
+  }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
+  return { reversed: true, originalEntryId: jeEntry.id, reversalEntryId };
+}
+async function executeSaleReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const sale = await db2.query.sales.findFirst({
+    where: drizzleOrm.eq(sales.id, entityId)
+  });
+  if (!sale) throw new Error(`Sale #${entityId} not found`);
+  if (sale.isVoided) throw new Error(`Sale #${entityId} is already voided`);
+  const items = await db2.query.saleItems.findMany({
+    where: drizzleOrm.eq(saleItems.saleId, entityId)
+  });
+  for (const item of items) {
+    await db2.update(inventory).set({
+      quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(
+      drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, sale.branchId))
+    );
+    await restoreCostLayers({
+      productId: item.productId,
+      branchId: sale.branchId,
+      quantity: item.quantity,
+      unitCost: item.costPrice,
+      referenceId: sale.id
+    });
+  }
+  await db2.update(sales).set({
+    isVoided: true,
+    voidReason: "Reversed via reversal system",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(sales.id, entityId));
+  const cancelledCommissions = await db2.update(commissions).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(commissions.saleId, entityId)).returning();
+  const linkedReceivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.saleId, entityId)
+  });
+  if (linkedReceivable) {
+    await db2.update(accountReceivables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
+  }
+  const reversalJEId = await postVoidSaleToGL(
+    sale,
+    items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
+    userId
+  );
+  let cashRefundAmount = 0;
+  const hasCashPayment = ["cash", "cod"].includes(sale.paymentMethod);
+  if (hasCashPayment) {
+    cashRefundAmount = Math.min(sale.amountPaid, sale.totalAmount);
+  } else if (sale.paymentMethod === "mixed") {
+    const payments = await db2.query.salePayments.findMany({
+      where: drizzleOrm.eq(salePayments.saleId, entityId)
+    });
+    cashRefundAmount = payments.filter((p) => ["cash", "cod"].includes(p.paymentMethod)).reduce((sum, p) => sum + p.amount, 0);
+  }
+  if (cashRefundAmount > 0) {
+    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const openSession = await db2.query.cashRegisterSessions.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(cashRegisterSessions.branchId, sale.branchId),
+        drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+        drizzleOrm.eq(cashRegisterSessions.status, "open")
+      )
+    });
+    if (openSession) {
+      await db2.insert(cashTransactions).values({
+        sessionId: openSession.id,
+        branchId: sale.branchId,
+        transactionType: "refund",
+        amount: -cashRefundAmount,
+        referenceType: "sale_void",
+        referenceId: sale.id,
+        description: `Cash refund (reversed): ${sale.invoiceNumber}`,
+        recordedBy: userId
+      });
+    }
+  }
+  return {
+    reversalDetails: {
+      saleId: entityId,
+      invoiceNumber: sale.invoiceNumber,
+      itemsRestored: items.length,
+      commissionssCancelled: cancelledCommissions.length,
+      receivableCancelled: linkedReceivable?.id ?? null,
+      reversalJournalEntryId: reversalJEId,
+      cashRefundAmount
+    }
+  };
+}
+async function executeExpenseReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const expense = await db2.query.expenses.findFirst({
+    where: drizzleOrm.eq(expenses.id, entityId)
+  });
+  if (!expense) throw new Error(`Expense #${entityId} not found`);
+  if (expense.isVoided) throw new Error(`Expense #${entityId} is already voided`);
+  let cancelledPayableId = null;
+  if (expense.payableId) {
+    await db2.update(accountPayables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountPayables.id, expense.payableId));
+    cancelledPayableId = expense.payableId;
+  }
+  await db2.update(expenses).set({
+    isVoided: true,
+    voidReason: "Reversed via reversal system",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(expenses.id, entityId));
+  const glResult = await reverseGLEntry(
+    "expense",
+    entityId,
+    `Reversal of expense #${entityId}`,
+    expense.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      expenseId: entityId,
+      amount: expense.amount,
+      cancelledPayableId,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeJournalEntryReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const jeEntry = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.eq(journalEntries.id, entityId)
+  });
+  if (!jeEntry) throw new Error(`Journal entry #${entityId} not found`);
+  if (jeEntry.status === "draft") {
+    throw new Error(`Journal entry #${entityId} is a draft and cannot be reversed — delete it instead`);
+  }
+  if (jeEntry.status === "reversed") {
+    throw new Error(`Journal entry #${entityId} is already reversed`);
+  }
+  const lines = await db2.query.journalEntryLines.findMany({
+    where: drizzleOrm.eq(journalEntryLines.journalEntryId, entityId)
+  });
+  const reversingLines = [];
+  for (const line of lines) {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+    });
+    if (!account) {
+      throw new Error(`Account #${line.accountId} not found when reversing journal entry`);
+    }
+    reversingLines.push({
+      accountCode: account.accountCode,
+      debitAmount: line.creditAmount,
+      // swap
+      creditAmount: line.debitAmount,
+      // swap
+      description: `Reversal: ${line.description || ""}`
+    });
+  }
+  const reversalEntryId = await createJournalEntry({
+    description: `Reversal of ${jeEntry.entryNumber}: ${jeEntry.description}`,
+    referenceType: jeEntry.referenceType || "journal_entry",
+    referenceId: jeEntry.referenceId || entityId,
+    branchId: jeEntry.branchId || 1,
+    userId,
+    lines: reversingLines
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db2.update(journalEntries).set({
+    status: "reversed",
+    reversedBy: userId,
+    reversedAt: now,
+    reversalEntryId,
+    updatedAt: now
+  }).where(drizzleOrm.eq(journalEntries.id, entityId));
+  return {
+    reversalDetails: {
+      journalEntryId: entityId,
+      entryNumber: jeEntry.entryNumber,
+      originalDescription: jeEntry.description,
+      linesReversed: lines.length,
+      reversalEntryId
+    }
+  };
+}
+async function executePurchaseReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const purchase = await db2.query.purchases.findFirst({
+    where: drizzleOrm.eq(purchases.id, entityId)
+  });
+  if (!purchase) throw new Error(`Purchase #${entityId} not found`);
+  if (purchase.status === "cancelled") {
+    throw new Error(`Purchase #${entityId} is already cancelled`);
+  }
+  const items = await db2.query.purchaseItems.findMany({
+    where: drizzleOrm.eq(purchaseItems.purchaseId, entityId)
+  });
+  let inventoryDeducted = false;
+  if (purchase.status === "received" || purchase.status === "partial") {
+    for (const item of items) {
+      if (item.receivedQuantity > 0) {
+        await db2.update(inventory).set({
+          quantity: drizzleOrm.sql`${inventory.quantity} - ${item.receivedQuantity}`,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(inventory.productId, item.productId),
+            drizzleOrm.eq(inventory.branchId, purchase.branchId)
+          )
+        );
+        await db2.update(inventoryCostLayers).set({
+          quantity: 0,
+          isFullyConsumed: true,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(inventoryCostLayers.purchaseItemId, item.id));
+      }
+    }
+    inventoryDeducted = true;
+  }
+  let cancelledPayableId = null;
+  const linkedPayable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.purchaseId, entityId)
+  });
+  if (linkedPayable && linkedPayable.status !== "cancelled") {
+    await db2.update(accountPayables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountPayables.id, linkedPayable.id));
+    cancelledPayableId = linkedPayable.id;
+  }
+  await db2.update(purchases).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(purchases.id, entityId));
+  const glResult = await reverseGLEntry(
+    "purchase",
+    entityId,
+    `Reversal of purchase ${purchase.purchaseOrderNumber}`,
+    purchase.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      purchaseId: entityId,
+      purchaseOrderNumber: purchase.purchaseOrderNumber,
+      inventoryDeducted,
+      itemsAffected: items.length,
+      cancelledPayableId,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeARPaymentReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payment = await db2.query.receivablePayments.findFirst({
+    where: drizzleOrm.eq(receivablePayments.id, entityId)
+  });
+  if (!payment) throw new Error(`Receivable payment #${entityId} not found`);
+  const receivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.id, payment.receivableId)
+  });
+  if (!receivable) throw new Error(`Account receivable #${payment.receivableId} not found`);
+  const newPaidAmount = receivable.paidAmount - payment.amount;
+  const newRemainingAmount = receivable.totalAmount - newPaidAmount;
+  let newStatus;
+  if (newPaidAmount <= 0) {
+    newStatus = "pending";
+  } else if (newPaidAmount < receivable.totalAmount) {
+    newStatus = "partial";
+  } else {
+    newStatus = "paid";
+  }
+  await db2.update(accountReceivables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: newRemainingAmount,
+    status: newStatus,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountReceivables.id, payment.receivableId));
+  const glResult = await reverseGLEntry(
+    "receivable_payment",
+    entityId,
+    `Reversal of AR payment #${entityId} for invoice ${receivable.invoiceNumber}`,
+    receivable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      paymentId: entityId,
+      receivableId: payment.receivableId,
+      invoiceNumber: receivable.invoiceNumber,
+      amountReversed: payment.amount,
+      newPaidAmount,
+      newRemainingAmount,
+      newReceivableStatus: newStatus,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeAPPaymentReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payment = await db2.query.payablePayments.findFirst({
+    where: drizzleOrm.eq(payablePayments.id, entityId)
+  });
+  if (!payment) throw new Error(`Payable payment #${entityId} not found`);
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.id, payment.payableId)
+  });
+  if (!payable) throw new Error(`Account payable #${payment.payableId} not found`);
+  const newPaidAmount = payable.paidAmount - payment.amount;
+  const newRemainingAmount = payable.totalAmount - newPaidAmount;
+  let newStatus;
+  if (newPaidAmount <= 0) {
+    newStatus = "pending";
+  } else if (newPaidAmount < payable.totalAmount) {
+    newStatus = "partial";
+  } else {
+    newStatus = "paid";
+  }
+  await db2.update(accountPayables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: newRemainingAmount,
+    status: newStatus,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountPayables.id, payment.payableId));
+  const glResult = await reverseGLEntry(
+    "payable_payment",
+    entityId,
+    `Reversal of AP payment #${entityId} for invoice ${payable.invoiceNumber}`,
+    payable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      paymentId: entityId,
+      payableId: payment.payableId,
+      invoiceNumber: payable.invoiceNumber,
+      amountReversed: payment.amount,
+      newPaidAmount,
+      newRemainingAmount,
+      newPayableStatus: newStatus,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeCommissionReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const commission = await db2.query.commissions.findFirst({
+    where: drizzleOrm.eq(commissions.id, entityId)
+  });
+  if (!commission) throw new Error(`Commission #${entityId} not found`);
+  if (commission.status === "cancelled") {
+    throw new Error(`Commission #${entityId} is already cancelled`);
+  }
+  await db2.update(commissions).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(commissions.id, entityId));
+  const glResult = await reverseGLEntry(
+    "commission",
+    entityId,
+    `Reversal of commission #${entityId}`,
+    commission.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      commissionId: entityId,
+      saleId: commission.saleId,
+      commissionAmount: commission.commissionAmount,
+      previousStatus: commission.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReceivableReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const receivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.id, entityId)
+  });
+  if (!receivable) throw new Error(`Receivable #${entityId} not found`);
+  if (receivable.status === "cancelled") {
+    throw new Error(`Receivable #${entityId} is already cancelled`);
+  }
+  await db2.update(accountReceivables).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountReceivables.id, entityId));
+  const glResult = await reverseGLEntry(
+    "receivable",
+    entityId,
+    `Reversal of receivable #${entityId} (${receivable.invoiceNumber})`,
+    receivable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      receivableId: entityId,
+      invoiceNumber: receivable.invoiceNumber,
+      totalAmount: receivable.totalAmount,
+      previousStatus: receivable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executePayableReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.id, entityId)
+  });
+  if (!payable) throw new Error(`Payable #${entityId} not found`);
+  if (payable.status === "cancelled") {
+    throw new Error(`Payable #${entityId} is already cancelled`);
+  }
+  await db2.update(accountPayables).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountPayables.id, entityId));
+  const glResult = await reverseGLEntry(
+    "payable",
+    entityId,
+    `Reversal of payable #${entityId} (${payable.invoiceNumber})`,
+    payable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      payableId: entityId,
+      invoiceNumber: payable.invoiceNumber,
+      totalAmount: payable.totalAmount,
+      previousStatus: payable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReturnReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const returnRecord = await db2.query.returns.findFirst({
+    where: drizzleOrm.eq(returns.id, entityId)
+  });
+  if (!returnRecord) throw new Error(`Return #${entityId} not found`);
+  const items = await db2.query.returnItems.findMany({
+    where: drizzleOrm.eq(returnItems.returnId, entityId)
+  });
+  for (const item of items) {
+    if (item.restockable) {
+      await db2.update(inventory).set({
+        quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(
+        drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+      );
+      await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity);
+    }
+  }
+  const glResult = await reverseGLEntry(
+    "return",
+    entityId,
+    `Reversal of return ${returnRecord.returnNumber}`,
+    returnRecord.branchId,
+    userId
+  );
+  await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, entityId));
+  await db2.delete(returns).where(drizzleOrm.eq(returns.id, entityId));
+  return {
+    reversalDetails: {
+      returnId: entityId,
+      returnNumber: returnRecord.returnNumber,
+      totalAmount: returnRecord.totalAmount,
+      itemsReversed: items.length,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReversal(entityType, entityId, userId) {
+  switch (entityType) {
+    case "sale":
+      return executeSaleReversal(entityId, userId);
+    case "expense":
+      return executeExpenseReversal(entityId, userId);
+    case "journal_entry":
+      return executeJournalEntryReversal(entityId, userId);
+    case "purchase":
+      return executePurchaseReversal(entityId, userId);
+    case "receivable_payment":
+      return executeARPaymentReversal(entityId, userId);
+    case "payable_payment":
+      return executeAPPaymentReversal(entityId, userId);
+    case "commission":
+      return executeCommissionReversal(entityId, userId);
+    case "receivable":
+      return executeReceivableReversal(entityId, userId);
+    case "payable":
+      return executePayableReversal(entityId, userId);
+    case "return":
+      return executeReturnReversal(entityId, userId);
+    case "stock_adjustment":
+    case "stock_transfer":
+      throw new Error(`Reversal for entity type '${entityType}' is not yet implemented`);
+    default:
+      throw new Error(`Unknown entity type for reversal: '${entityType}'`);
+  }
+}
+async function lookupEntityReference(db2, entityType, entityId) {
+  switch (entityType) {
+    case "sale": {
+      const row = await db2.query.sales.findFirst({
+        where: drizzleOrm.eq(sales.id, entityId),
+        columns: { invoiceNumber: true }
+      });
+      return row?.invoiceNumber ?? null;
+    }
+    case "purchase": {
+      const row = await db2.query.purchases.findFirst({
+        where: drizzleOrm.eq(purchases.id, entityId),
+        columns: { purchaseOrderNumber: true }
+      });
+      return row?.purchaseOrderNumber ?? null;
+    }
+    case "expense": {
+      const row = await db2.query.expenses.findFirst({
+        where: drizzleOrm.eq(expenses.id, entityId),
+        columns: { id: true }
+      });
+      return row ? `EXP-${row.id}` : null;
+    }
+    case "journal_entry": {
+      const row = await db2.query.journalEntries.findFirst({
+        where: drizzleOrm.eq(journalEntries.id, entityId),
+        columns: { entryNumber: true }
+      });
+      return row?.entryNumber ?? null;
+    }
+    case "receivable":
+    case "ar_payment": {
+      const row = await db2.query.accountReceivables.findFirst({
+        where: drizzleOrm.eq(accountReceivables.id, entityId),
+        columns: { invoiceNumber: true }
+      });
+      return row?.invoiceNumber ?? null;
+    }
+    case "payable":
+    case "ap_payment": {
+      const row = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.id, entityId),
+        columns: { invoiceNumber: true }
+      });
+      return row?.invoiceNumber ?? null;
+    }
+    case "commission": {
+      return `COM-${entityId}`;
+    }
+    case "return": {
+      const row = await db2.query.returns.findFirst({
+        where: drizzleOrm.eq(returns.id, entityId),
+        columns: { returnNumber: true }
+      });
+      return row?.returnNumber ?? null;
+    }
+    default:
+      return null;
+  }
+}
+function registerReversalHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "reversal:create",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Not authenticated" };
+        const existing = await db2.query.reversalRequests.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(reversalRequests.entityType, data.entityType),
+            drizzleOrm.eq(reversalRequests.entityId, data.entityId),
+            drizzleOrm.inArray(reversalRequests.status, ["pending", "approved"])
+          )
+        });
+        if (existing) {
+          return {
+            success: false,
+            message: `An active reversal request (${existing.requestNumber}) already exists for this ${data.entityType}`
+          };
+        }
+        const requestNumber = await generateReversalNumber();
+        const [created] = await db2.insert(reversalRequests).values({
+          requestNumber,
+          entityType: data.entityType,
+          entityId: data.entityId,
+          reason: data.reason,
+          priority: data.priority || "medium",
+          status: "pending",
+          requestedBy: session.userId,
+          branchId: data.branchId
+        }).returning();
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: data.branchId,
+          action: "reversal_request",
+          entityType: "reversal_request",
+          entityId: created.id,
+          newValues: {
+            requestNumber,
+            entityType: data.entityType,
+            entityId: data.entityId,
+            reason: data.reason,
+            priority: data.priority || "medium"
+          },
+          description: `Created reversal request ${requestNumber} for ${data.entityType} #${data.entityId}`
+        });
+        return { success: true, data: created };
+      } catch (error) {
+        return handleIpcError("Create reversal request", error);
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reversal:list",
+    async (_, params = {}) => {
+      try {
+        const { page = 1, limit = 20, status, entityType, priority, branchId } = params;
+        const conditions = [];
+        if (status) conditions.push(drizzleOrm.eq(reversalRequests.status, status));
+        if (entityType) conditions.push(drizzleOrm.eq(reversalRequests.entityType, entityType));
+        if (priority) conditions.push(drizzleOrm.eq(reversalRequests.priority, priority));
+        if (branchId) conditions.push(drizzleOrm.eq(reversalRequests.branchId, branchId));
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(reversalRequests).where(whereClause);
+        const total = countResult[0].count;
+        const data = await db2.query.reversalRequests.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: drizzleOrm.desc(reversalRequests.createdAt),
+          with: {
+            requestedByUser: true,
+            reviewedByUser: true,
+            branch: true
+          }
+        });
+        const enriched = await Promise.all(
+          data.map(async (req) => {
+            const entityReference = await lookupEntityReference(db2, req.entityType, req.entityId);
+            return { ...req, entityReference };
+          })
+        );
+        return {
+          success: true,
+          data: enriched,
+          pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+        };
+      } catch (error) {
+        return handleIpcError("List reversal requests", error);
+      }
+    }
+  );
+  electron.ipcMain.handle("reversal:get", async (_, id) => {
+    try {
+      const request = await db2.query.reversalRequests.findFirst({
+        where: drizzleOrm.eq(reversalRequests.id, id),
+        with: {
+          requestedByUser: true,
+          reviewedByUser: true,
+          branch: true
+        }
+      });
+      if (!request) {
+        return { success: false, message: `Reversal request #${id} not found` };
+      }
+      return { success: true, data: request };
+    } catch (error) {
+      return handleIpcError("Get reversal request", error);
+    }
+  });
+  electron.ipcMain.handle("reversal:approve", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Not authenticated" };
+      const request = await db2.query.reversalRequests.findFirst({
+        where: drizzleOrm.eq(reversalRequests.id, id)
+      });
+      if (!request) {
+        return { success: false, message: `Reversal request #${id} not found` };
+      }
+      if (request.status !== "pending") {
+        return {
+          success: false,
+          message: `Cannot approve: request is '${request.status}', not 'pending'`
+        };
+      }
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      await db2.update(reversalRequests).set({
+        status: "approved",
+        reviewedBy: session.userId,
+        reviewedAt: now,
+        updatedAt: now
+      }).where(drizzleOrm.eq(reversalRequests.id, id));
+      try {
+        const result = await withTransaction(async () => {
+          return executeReversal(request.entityType, request.entityId, session.userId);
+        });
+        await db2.update(reversalRequests).set({
+          status: "completed",
+          reversalDetails: result.reversalDetails,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_executed",
+          entityType: "reversal_request",
+          entityId: id,
+          newValues: { status: "completed", reversalDetails: result.reversalDetails },
+          description: `Approved and executed reversal ${request.requestNumber} for ${request.entityType} #${request.entityId}`
+        });
+        return { success: true, data: result.reversalDetails };
+      } catch (execError) {
+        const errorMessage = execError instanceof Error ? execError.message : String(execError);
+        await db2.update(reversalRequests).set({
+          status: "failed",
+          errorDetails: errorMessage,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_failed",
+          entityType: "reversal_request",
+          entityId: id,
+          newValues: { status: "failed", errorDetails: errorMessage },
+          description: `Reversal ${request.requestNumber} failed: ${errorMessage}`
+        });
+        return { success: false, message: `Reversal execution failed: ${errorMessage}` };
+      }
+    } catch (error) {
+      return handleIpcError("Approve reversal request", error);
+    }
+  });
+  electron.ipcMain.handle(
+    "reversal:reject",
+    async (_, data) => {
+      try {
+        const session = getCurrentSession();
+        if (!session) return { success: false, message: "Not authenticated" };
+        const request = await db2.query.reversalRequests.findFirst({
+          where: drizzleOrm.eq(reversalRequests.id, data.id)
+        });
+        if (!request) {
+          return { success: false, message: `Reversal request #${data.id} not found` };
+        }
+        if (request.status !== "pending") {
+          return {
+            success: false,
+            message: `Cannot reject: request is '${request.status}', not 'pending'`
+          };
+        }
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        await db2.update(reversalRequests).set({
+          status: "rejected",
+          rejectionReason: data.rejectionReason,
+          reviewedBy: session.userId,
+          reviewedAt: now,
+          updatedAt: now
+        }).where(drizzleOrm.eq(reversalRequests.id, data.id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_review",
+          entityType: "reversal_request",
+          entityId: data.id,
+          newValues: { status: "rejected", rejectionReason: data.rejectionReason },
+          description: `Rejected reversal ${request.requestNumber}: ${data.rejectionReason}`
+        });
+        return { success: true, message: "Reversal request rejected" };
+      } catch (error) {
+        return handleIpcError("Reject reversal request", error);
+      }
+    }
+  );
+  electron.ipcMain.handle("reversal:retry", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Not authenticated" };
+      const request = await db2.query.reversalRequests.findFirst({
+        where: drizzleOrm.eq(reversalRequests.id, id)
+      });
+      if (!request) {
+        return { success: false, message: `Reversal request #${id} not found` };
+      }
+      if (request.status !== "failed") {
+        return {
+          success: false,
+          message: `Only failed requests can be retried (current: '${request.status}')`
+        };
+      }
+      await db2.update(reversalRequests).set({
+        status: "approved",
+        errorDetails: null,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(reversalRequests.id, id));
+      try {
+        const result = await withTransaction(async () => {
+          return executeReversal(request.entityType, request.entityId, session.userId);
+        });
+        await db2.update(reversalRequests).set({
+          status: "completed",
+          reversalDetails: result.reversalDetails,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: request.branchId,
+          action: "reversal_executed",
+          entityType: "reversal_request",
+          entityId: id,
+          newValues: { status: "completed", reversalDetails: result.reversalDetails },
+          description: `Retried and completed reversal ${request.requestNumber}`
+        });
+        return { success: true, data: result.reversalDetails };
+      } catch (execError) {
+        const errorMessage = execError instanceof Error ? execError.message : String(execError);
+        await db2.update(reversalRequests).set({
+          status: "failed",
+          errorDetails: errorMessage,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(reversalRequests.id, id));
+        return { success: false, message: `Reversal retry failed: ${errorMessage}` };
+      }
+    } catch (error) {
+      return handleIpcError("Retry reversal request", error);
+    }
+  });
+  electron.ipcMain.handle("reversal:stats", async () => {
+    try {
+      const statusCounts = await db2.select({ status: reversalRequests.status, count: drizzleOrm.sql`count(*)` }).from(reversalRequests).groupBy(reversalRequests.status);
+      const pendingByType = await db2.select({ entityType: reversalRequests.entityType, count: drizzleOrm.sql`count(*)` }).from(reversalRequests).where(drizzleOrm.eq(reversalRequests.status, "pending")).groupBy(reversalRequests.entityType);
+      const pendingByPriority = await db2.select({ priority: reversalRequests.priority, count: drizzleOrm.sql`count(*)` }).from(reversalRequests).where(drizzleOrm.eq(reversalRequests.status, "pending")).groupBy(reversalRequests.priority);
+      return {
+        success: true,
+        data: {
+          byStatus: Object.fromEntries(statusCounts.map((s) => [s.status, s.count])),
+          pendingByType: Object.fromEntries(pendingByType.map((t) => [t.entityType, t.count])),
+          pendingByPriority: Object.fromEntries(pendingByPriority.map((p) => [p.priority, p.count]))
+        }
+      };
+    } catch (error) {
+      return handleIpcError("Get reversal stats", error);
+    }
+  });
+  electron.ipcMain.handle(
+    "reversal:check",
+    async (_, data) => {
+      try {
+        const request = await db2.query.reversalRequests.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(reversalRequests.entityType, data.entityType),
+            drizzleOrm.eq(reversalRequests.entityId, data.entityId)
+          ),
+          orderBy: drizzleOrm.desc(reversalRequests.createdAt)
+        });
+        return { success: true, data: request || null };
+      } catch (error) {
+        return handleIpcError("Check reversal status", error);
+      }
+    }
+  );
+}
+function registerClipboardHandlers() {
+  electron.ipcMain.handle("clipboard:copy-image", async (_, dataUrl) => {
+    try {
+      const image = electron.nativeImage.createFromDataURL(dataUrl);
+      electron.clipboard.writeImage(image);
+      return { success: true };
+    } catch (error) {
+      console.error("Clipboard copy image error:", error);
+      return { success: false, message: "Failed to copy image to clipboard" };
+    }
+  });
+}
+function registerShellHandlers() {
+  electron.ipcMain.handle("shell:openPath", async (_, filePath) => {
+    try {
+      const result = await electron.shell.openPath(filePath);
+      if (result) {
+        return { success: false, message: result };
+      }
+      return { success: true };
+    } catch (error) {
+      return { success: false, message: String(error) };
+    }
+  });
+}
+const SUGGESTED_QUESTIONS = [
+  "What is the name of your first pet?",
+  "What city were you born in?",
+  "What is your mother's maiden name?",
+  "What was the name of your first school?",
+  "What is your favorite childhood game?",
+  "What is the name of the street you grew up on?",
+  "What was your childhood nickname?",
+  "What is your father's middle name?",
+  "What was the make of your first vehicle?",
+  "What is your favorite book?"
+];
+function registerRecoveryHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("recovery:get-suggested-questions", () => {
+    return { success: true, data: SUGGESTED_QUESTIONS };
+  });
+  electron.ipcMain.handle(
+    "recovery:set-questions",
+    async (_, userId, questions) => {
+      try {
+        if (!questions || questions.length < 2) {
+          return { success: false, message: "At least 2 security questions are required" };
+        }
+        if (questions.length > 3) {
+          return { success: false, message: "Maximum 3 security questions allowed" };
+        }
+        const user = await db2.query.users.findFirst({
+          where: drizzleOrm.eq(users.id, userId)
+        });
+        if (!user) {
+          return { success: false, message: "User not found" };
+        }
+        for (const q of questions) {
+          if (!q.question.trim() || !q.answer.trim()) {
+            return { success: false, message: "All questions and answers must be filled" };
+          }
+          if (q.answer.trim().length < 2) {
+            return { success: false, message: "Answers must be at least 2 characters" };
+          }
+        }
+        await db2.delete(userSecurityQuestions).where(drizzleOrm.eq(userSecurityQuestions.userId, userId));
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        for (let i = 0; i < questions.length; i++) {
+          const answerHash = await bcrypt.hash(questions[i].answer.trim().toLowerCase(), 10);
+          await db2.insert(userSecurityQuestions).values({
+            userId,
+            question: questions[i].question.trim(),
+            answerHash,
+            sortOrder: i,
+            createdAt: now,
+            updatedAt: now
+          });
+        }
+        await createAuditLog$1({
+          action: "set_security_questions",
+          entity: "user",
+          entityId: userId,
+          description: `Security questions set for user: ${user.username} (${questions.length} questions)`
+        });
+        return { success: true, message: "Security questions saved successfully" };
+      } catch (error) {
+        console.error("Set security questions error:", error);
+        return { success: false, message: "Failed to save security questions" };
+      }
+    }
+  );
+  electron.ipcMain.handle("recovery:has-questions", async (_, userId) => {
+    try {
+      const questions = await db2.query.userSecurityQuestions.findMany({
+        where: drizzleOrm.eq(userSecurityQuestions.userId, userId),
+        columns: { id: true }
+      });
+      return { success: true, data: questions.length >= 2 };
+    } catch (error) {
+      console.error("Check security questions error:", error);
+      return { success: false, data: false };
+    }
+  });
+  electron.ipcMain.handle("recovery:get-questions", async (_, userId) => {
+    try {
+      const questions = await db2.query.userSecurityQuestions.findMany({
+        where: drizzleOrm.eq(userSecurityQuestions.userId, userId),
+        columns: { id: true, question: true, sortOrder: true },
+        orderBy: (q, { asc }) => [asc(q.sortOrder)]
+      });
+      return { success: true, data: questions };
+    } catch (error) {
+      console.error("Get security questions error:", error);
+      return { success: false, message: "Failed to fetch security questions" };
+    }
+  });
+  electron.ipcMain.handle("recovery:lookup-user", async (_, username) => {
+    try {
+      const user = await db2.query.users.findFirst({
+        where: drizzleOrm.and(drizzleOrm.eq(users.username, username), drizzleOrm.eq(users.isActive, true)),
+        columns: { id: true, username: true, fullName: true }
+      });
+      if (!user) {
+        return { success: false, message: "No active user found with this username" };
+      }
+      const questions = await db2.query.userSecurityQuestions.findMany({
+        where: drizzleOrm.eq(userSecurityQuestions.userId, user.id),
+        columns: { id: true, question: true, sortOrder: true },
+        orderBy: (q, { asc }) => [asc(q.sortOrder)]
+      });
+      if (questions.length < 2) {
+        return {
+          success: false,
+          message: "This account has no security questions configured. Please contact an administrator."
+        };
+      }
+      return {
+        success: true,
+        data: {
+          userId: user.id,
+          username: user.username,
+          fullName: user.fullName,
+          questions: questions.map((q) => ({ id: q.id, question: q.question }))
+        }
+      };
+    } catch (error) {
+      console.error("Lookup user for recovery error:", error);
+      return { success: false, message: "Failed to look up user" };
+    }
+  });
+  electron.ipcMain.handle(
+    "recovery:reset-password",
+    async (_, params) => {
+      try {
+        const { userId, answers, newPassword } = params;
+        if (!newPassword || newPassword.length < 6) {
+          return { success: false, message: "New password must be at least 6 characters" };
+        }
+        const storedQuestions = await db2.query.userSecurityQuestions.findMany({
+          where: drizzleOrm.eq(userSecurityQuestions.userId, userId)
+        });
+        if (storedQuestions.length < 2) {
+          return { success: false, message: "Security questions not configured for this user" };
+        }
+        for (const stored of storedQuestions) {
+          const provided = answers.find((a) => a.questionId === stored.id);
+          if (!provided) {
+            return { success: false, message: "All security questions must be answered" };
+          }
+          const isMatch = await bcrypt.compare(
+            provided.answer.trim().toLowerCase(),
+            stored.answerHash
+          );
+          if (!isMatch) {
+            await createAuditLog$1({
+              action: "password_reset_failed",
+              entity: "user",
+              entityId: userId,
+              description: `Failed password reset attempt - incorrect security answers`
+            });
+            return { success: false, message: "One or more answers are incorrect" };
+          }
+        }
+        const hashedPassword = await bcrypt.hash(newPassword, 12);
+        await db2.update(users).set({ password: hashedPassword, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(users.id, userId));
+        const user = await db2.query.users.findFirst({
+          where: drizzleOrm.eq(users.id, userId),
+          columns: { username: true }
+        });
+        await createAuditLog$1({
+          action: "password_reset",
+          entity: "user",
+          entityId: userId,
+          description: `Password reset via security questions for user: ${user?.username || userId}`
+        });
+        return { success: true, message: "Password has been reset successfully" };
+      } catch (error) {
+        console.error("Reset password error:", error);
+        return { success: false, message: "Failed to reset password" };
+      }
+    }
+  );
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -19474,7 +23047,6 @@ function registerAllHandlers() {
   registerCustomerHandlers();
   registerSupplierHandlers();
   registerSalesHandlers();
-  registerSalesTabsHandlers();
   registerPurchaseHandlers();
   registerReturnHandlers();
   registerBranchHandlers();
@@ -19505,6 +23077,11 @@ function registerAllHandlers() {
   registerInventoryCountsHandlers();
   registerServicesHandlers();
   registerVoucherHandlers();
+  registerReversalHandlers();
+  registerClipboardHandlers();
+  registerShellHandlers();
+  registerRecoveryHandlers();
+  registerOnlineTransactionHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {
@@ -19543,6 +23120,9 @@ function createWindow() {
   mainWindow.on("ready-to-show", () => {
     mainWindow?.show();
   });
+  mainWindow.on("focus", () => {
+    mainWindow?.webContents.focus();
+  });
   mainWindow.webContents.setWindowOpenHandler((details) => {
     require("electron").shell.openExternal(details.url);
     return { action: "deny" };
@@ -19553,6 +23133,7 @@ function createWindow() {
     mainWindow.loadFile(node_path.join(__dirname, "../renderer/index.html"));
   }
 }
+electron.app.commandLine.appendSwitch("disable-gpu-compositing");
 electron.app.whenReady().then(async () => {
   electronApp.setAppUserModelId("com.firearms.pos");
   electron.app.on("browser-window-created", (_, window) => {
@@ -19576,18 +23157,30 @@ electron.app.whenReady().then(async () => {
       const shouldLock = checkAndLockIfExpired();
       if (shouldLock) {
         console.log("Trial/License expired - locking application...");
-        const lockResult = lockApplication();
-        if (lockResult.success) {
-          isAppLocked = true;
-          console.log("Application locked and database encrypted");
-          registerLicenseOnlyHandlers();
-        } else {
-          console.error("Failed to lock application:", lockResult.message);
-          registerAllHandlers();
+        try {
+          const lockResult = lockApplication();
+          if (lockResult.success) {
+            console.log("Application locked and database encrypted");
+          } else {
+            console.error("Failed to lock application:", lockResult.message);
+          }
+        } catch (lockError) {
+          console.error("Error during lock application:", lockError);
         }
+        isAppLocked = true;
+        setApplicationLocked(true);
+        registerLicenseOnlyHandlers();
       } else {
         registerAllHandlers();
         console.log("IPC handlers registered");
+        try {
+          const closedCount = await autoCloseStaleRegisters();
+          if (closedCount > 0) {
+            console.log(`Startup: Auto-closed ${closedCount} stale cash register session(s)`);
+          }
+        } catch (err) {
+          console.error("Startup: Failed to auto-close stale register sessions:", err);
+        }
       }
     }
   } catch (error) {
@@ -19629,11 +23222,4 @@ electron.app.on("window-all-closed", async () => {
   if (process.platform !== "darwin") {
     electron.app.quit();
   }
-});
-electron.app.on("before-quit", async () => {
-  if (!isAppLocked) {
-    await performCloseBackup();
-    stopBackupScheduler();
-  }
-  closeDatabase();
 });
