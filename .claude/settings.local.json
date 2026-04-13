@@ -61,7 +61,11 @@
       "Bash(npm i:*)",
       "mcp__ide__getDiagnostics",
       "Bash(npm view:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_close"
     ]
   }
 }
