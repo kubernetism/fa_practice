@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { ReversalDetailPanel } from './audit-logs/reversal-detail-panel'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
 import { Button } from '@/components/ui/button'
@@ -94,6 +95,7 @@ const ACTIONS = [
   { value: 'transfer', label: 'Transfer', color: 'bg-cyan-100 text-cyan-800' },
   { value: 'export', label: 'Export', color: 'bg-teal-100 text-teal-800' },
   { value: 'view', label: 'View', color: 'bg-slate-100 text-slate-800' },
+  { value: 'reversal_executed', label: 'Reversal', color: 'bg-rose-100 text-rose-800' },
 ] as const
 
 const ENTITY_TYPES = [
@@ -128,6 +130,7 @@ const ACTION_BADGE_STYLES: Record<string, string> = {
   transfer:   'bg-cyan-500/15 text-cyan-500 border border-cyan-500/20',
   export:     'bg-teal-500/15 text-teal-500 border border-teal-500/20',
   view:       'bg-slate-500/15 text-slate-400 border border-slate-500/20',
+  reversal_executed: 'bg-rose-500/15 text-rose-500 border border-rose-500/20',
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -160,6 +163,9 @@ export function AuditLogsScreen() {
   // Detail dialog
   const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null)
   const [isDetailOpen, setIsDetailOpen] = useState(false)
+
+  // Reversal detail panel (specialized view)
+  const [reversalLog, setReversalLog] = useState<AuditLogEntry | null>(null)
 
   // ── Data fetchers ─────────────────────────────────────────────────────────
 
@@ -322,6 +328,10 @@ export function AuditLogsScreen() {
   }
 
   const handleViewDetails = (log: AuditLogEntry) => {
+    if (log.auditLog.action === 'reversal_executed') {
+      setReversalLog(log)
+      return
+    }
     setSelectedLog(log)
     setIsDetailOpen(true)
   }
@@ -968,6 +978,12 @@ export function AuditLogsScreen() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ReversalDetailPanel
+        log={reversalLog}
+        open={!!reversalLog}
+        onClose={() => setReversalLog(null)}
+      />
     </div>
   )
 }
