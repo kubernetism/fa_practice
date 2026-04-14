@@ -38,6 +38,8 @@ export const expenses = sqliteTable(
     paymentTerms: text('payment_terms'),
     isVoided: integer('is_voided', { mode: 'boolean' }).notNull().default(false),
     voidReason: text('void_reason'),
+    isReversed: integer('is_reversed', { mode: 'boolean' }).notNull().default(false),
+    reversalExpenseId: integer('reversal_expense_id'),
     createdAt: text('created_at')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

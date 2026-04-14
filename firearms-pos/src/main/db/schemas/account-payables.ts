@@ -21,7 +21,7 @@ export const accountPayables = sqliteTable(
     totalAmount: real('total_amount').notNull(), // Original amount owed
     paidAmount: real('paid_amount').notNull().default(0), // Amount paid so far
     remainingAmount: real('remaining_amount').notNull(), // Amount still owed
-    status: text('status', { enum: ['pending', 'partial', 'paid', 'overdue', 'cancelled'] })
+    status: text('status', { enum: ['pending', 'partial', 'paid', 'overdue', 'cancelled', 'reversed'] })
       .notNull()
       .default('pending'),
     dueDate: text('due_date'), // Payment due date
