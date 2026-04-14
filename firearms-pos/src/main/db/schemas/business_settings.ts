@@ -90,6 +90,9 @@ export const businessSettings = sqliteTable("business_settings", {
   expenseApprovalRequired: integer("expense_approval_required", { mode: "boolean" }).default(false),
   expenseApprovalLimit: real("expense_approval_limit").default(10000),
 
+  // Purchase Reversal Settings
+  purchaseReversalMaxDays: integer("purchase_reversal_max_days").notNull().default(90),
+
   // Return/Refund Settings
   enableReturns: integer("enable_returns", { mode: "boolean" }).default(true),
   returnWindowDays: integer("return_window_days").default(30),
