@@ -79,6 +79,7 @@
   :root {
     --base-font-size: 14px;
     --btn-size-scale: 1;
+    --icon-scale: 1;
   }
 
   * {
@@ -91,21 +92,33 @@
     font-size: var(--base-font-size, 14px);
   }
 
-  /* Button density: compact */
-  html[data-btn-size="compact"] button,
-  html[data-btn-size="compact"] [role="button"] {
+  /*
+   * Button density — scoped to text buttons only.
+   * Excludes: icon-only buttons (svg as sole child), buttons opting out with
+   * data-no-density, and buttons with a fixed-size class (prevents clobbering
+   * tiny h-5/h-6/h-7 controls like cart +/- and close glyphs).
+   */
+  html[data-btn-size="compact"] button:not(:has(> svg:only-child)):not([data-no-density]):not([class*="h-5"]):not([class*="h-6"]):not([class*="h-7"]):not([class*="size-5"]):not([class*="size-6"]):not([class*="size-7"]),
+  html[data-btn-size="compact"] [role="button"]:not(:has(> svg:only-child)):not([data-no-density]):not([class*="h-5"]):not([class*="h-6"]):not([class*="h-7"]):not([class*="size-5"]):not([class*="size-6"]):not([class*="size-7"]) {
     padding-block: 0.2rem;
     padding-inline: 0.5rem;
     font-size: calc(var(--base-font-size, 14px) - 1px);
   }
 
-  /* Button density: large */
-  html[data-btn-size="large"] button,
-  html[data-btn-size="large"] [role="button"] {
+  html[data-btn-size="large"] button:not(:has(> svg:only-child)):not([data-no-density]):not([class*="h-5"]):not([class*="h-6"]):not([class*="h-7"]):not([class*="size-5"]):not([class*="size-6"]):not([class*="size-7"]),
+  html[data-btn-size="large"] [role="button"]:not(:has(> svg:only-child)):not([data-no-density]):not([class*="h-5"]):not([class*="h-6"]):not([class*="h-7"]):not([class*="size-5"]):not([class*="size-6"]):not([class*="size-7"]) {
     padding-block: 0.6rem;
     padding-inline: 1.25rem;
     font-size: calc(var(--base-font-size, 14px) + 1px);
   }
+
+  /*
+   * Icon sizing — scales lucide-react SVGs (all render with className="lucide").
+   * Uses CSS zoom (Chromium/Electron) so surrounding flex layouts reflow.
+   */
+  html[data-icon-size="small"] svg.lucide { zoom: 0.85; }
+  html[data-icon-size="medium"] svg.lucide { zoom: 1.15; }
+  html[data-icon-size="large"] svg.lucide { zoom: 1.3; }
 
   /* Dark theme */
   .dark {

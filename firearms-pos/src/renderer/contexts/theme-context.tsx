@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useState, useCallback } fr
 export type ThemeType = 'light' | 'dark' | 'midnight' | 'system'
 export type FontSizeOption = 'small' | 'default' | 'medium' | 'large'
 export type ButtonSizeOption = 'compact' | 'default' | 'large'
+export type IconSizeOption = 'small' | 'default' | 'medium' | 'large'
 
 export const FONT_SIZE_MAP: Record<FontSizeOption, string> = {
   small: '13px',
@@ -15,6 +16,13 @@ export const BUTTON_SIZE_MAP: Record<ButtonSizeOption, string> = {
   compact: '0.85',
   default: '1',
   large: '1.15',
+}
+
+export const ICON_SIZE_MAP: Record<IconSizeOption, string> = {
+  small: '0.85',
+  default: '1',
+  medium: '1.15',
+  large: '1.3',
 }
 
 export interface Theme {
@@ -127,6 +135,8 @@ interface ThemeContextType {
   setFontSize: (size: FontSizeOption) => void
   buttonSize: ButtonSizeOption
   setButtonSize: (size: ButtonSizeOption) => void
+  iconSize: IconSizeOption
+  setIconSize: (size: IconSizeOption) => void
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
@@ -135,6 +145,7 @@ const THEME_STORAGE_KEY = 'firearms-pos-theme'
 const CUSTOM_THEMES_KEY = 'firearms-pos-custom-themes'
 const FONT_SIZE_KEY = 'firearms-pos-font-size'
 const BUTTON_SIZE_KEY = 'firearms-pos-button-size'
+const ICON_SIZE_KEY = 'firearms-pos-icon-size'
 
 function getSystemTheme(): 'light' | 'dark' | 'midnight' {
   if (typeof window !== 'undefined') {
@@ -177,6 +188,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [buttonSize, setButtonSizeState] = useState<ButtonSizeOption>(() => {
     if (typeof window === 'undefined') return 'default'
     return (localStorage.getItem(BUTTON_SIZE_KEY) as ButtonSizeOption) || 'default'
+  })
+
+  const [iconSize, setIconSizeState] = useState<IconSizeOption>(() => {
+    if (typeof window === 'undefined') return 'default'
+    return (localStorage.getItem(ICON_SIZE_KEY) as IconSizeOption) || 'default'
   })
 
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark' | 'midnight'>(() => {
@@ -243,6 +259,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.setAttribute('data-btn-size', buttonSize)
   }, [buttonSize])
 
+  // Apply icon size to DOM
+  useEffect(() => {
+    document.documentElement.setAttribute('data-icon-size', iconSize)
+    document.documentElement.style.setProperty('--icon-scale', ICON_SIZE_MAP[iconSize])
+  }, [iconSize])
+
   const setFontSize = useCallback((size: FontSizeOption) => {
     setFontSizeState(size)
     localStorage.setItem(FONT_SIZE_KEY, size)
@@ -251,6 +273,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const setButtonSize = useCallback((size: ButtonSizeOption) => {
     setButtonSizeState(size)
     localStorage.setItem(BUTTON_SIZE_KEY, size)
+  }, [])
+
+  const setIconSize = useCallback((size: IconSizeOption) => {
+    setIconSizeState(size)
+    localStorage.setItem(ICON_SIZE_KEY, size)
   }, [])
 
   const setTheme = useCallback((newTheme: ThemeType) => {
@@ -310,6 +337,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setFontSize,
     buttonSize,
     setButtonSize,
+    iconSize,
+    setIconSize,
   }
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>

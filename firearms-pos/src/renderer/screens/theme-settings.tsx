@@ -6,6 +6,7 @@ import {
   type Theme,
   type FontSizeOption,
   type ButtonSizeOption,
+  type IconSizeOption,
 } from '@/contexts/theme-context'
 import { cn } from '@/lib/utils'
 import {
@@ -48,6 +49,7 @@ import {
   MousePointer2,
   Info,
   RotateCcw,
+  Maximize2,
 } from 'lucide-react'
 
 // ─── Theme icon map ───────────────────────────────────────────────
@@ -151,6 +153,14 @@ const BUTTON_SIZE_OPTIONS: { value: ButtonSizeOption; label: string; desc: strin
   { value: 'large', label: 'Large', desc: 'Larger buttons, more padding' },
 ]
 
+// ─── Icon size options ────────────────────────────────────────────
+const ICON_SIZE_OPTIONS: { value: IconSizeOption; label: string; scale: string }[] = [
+  { value: 'small', label: 'Small', scale: '85%' },
+  { value: 'default', label: 'Default', scale: '100%' },
+  { value: 'medium', label: 'Medium', scale: '115%' },
+  { value: 'large', label: 'Large', scale: '130%' },
+]
+
 // ─── Swatch colors to display ─────────────────────────────────────
 const SWATCH_KEYS = ['background', 'primary', 'accent', 'muted', 'destructive', 'border'] as const
 
@@ -172,6 +182,8 @@ export function ThemeSettingsScreen() {
     setFontSize,
     buttonSize,
     setButtonSize,
+    iconSize,
+    setIconSize,
   } = useTheme()
 
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -260,7 +272,7 @@ export function ThemeSettingsScreen() {
           </Card>
 
           {/* ── Section 2: Display Settings ───────────────────── */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* Font Size Card */}
             <Card>
               <CardHeader className="pb-3">
@@ -376,6 +388,65 @@ export function ThemeSettingsScreen() {
                 {buttonSize !== 'default' && (
                   <button
                     onClick={() => setButtonSize('default')}
+                    className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                    Reset to default
+                  </button>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Icon Size Card */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <Maximize2 className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <CardTitle className="text-sm">Icon Size</CardTitle>
+                    <CardDescription className="text-xs mt-0.5">
+                      Scale icons across the app for better readability on large displays
+                    </CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Segmented control */}
+                <div className="flex rounded-lg border bg-muted/30 p-0.5">
+                  {ICON_SIZE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setIconSize(opt.value)}
+                      className={cn(
+                        'flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition-all',
+                        iconSize === opt.value
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground'
+                      )}
+                    >
+                      <span>{opt.label}</span>
+                      <span className="block text-[10px] opacity-70 mt-0.5">{opt.scale}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Preview */}
+                <div className="rounded-lg border bg-card/50 p-3 space-y-2">
+                  <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Preview</p>
+                  <div className="flex items-center gap-3">
+                    <Plus className="h-4 w-4" />
+                    <MousePointer2 className="h-4 w-4" />
+                    <Type className="h-4 w-4" />
+                    <Palette className="h-4 w-4" />
+                    <Info className="h-4 w-4" />
+                    <Sparkles className="h-4 w-4" />
+                  </div>
+                </div>
+
+                {/* Reset */}
+                {iconSize !== 'default' && (
+                  <button
+                    onClick={() => setIconSize('default')}
                     className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
                   >
                     <RotateCcw className="h-3 w-3" />

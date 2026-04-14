@@ -962,7 +962,7 @@ export function POSScreen() {
       </div>
 
       {/* ═══ RIGHT: Cart Panel ═══ */}
-      <div className="w-80 xl:w-[22rem] flex flex-col rounded-lg border border-border bg-card overflow-hidden shrink-0">
+      <div className="w-80 xl:w-[22rem] 2xl:w-[24rem] flex flex-col rounded-lg border border-border bg-card overflow-hidden shrink-0">
         {/* Cart Header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/30">
           <div className="flex items-center gap-2">
@@ -1082,7 +1082,7 @@ export function POSScreen() {
                       </div>
 
                       {/* Line total */}
-                      <span className="w-16 text-right text-[11px] font-semibold tabular-nums shrink-0">
+                      <span className="min-w-[4rem] text-right text-[11px] font-semibold tabular-nums shrink-0 whitespace-nowrap">
                         {formatCurrency(lineTotal)}
                       </span>
                     </div>
