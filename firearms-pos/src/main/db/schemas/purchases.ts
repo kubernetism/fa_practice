@@ -26,12 +26,15 @@ export const purchases = sqliteTable('purchases', {
   paymentStatus: text('payment_status', { enum: ['paid', 'partial', 'pending'] })
     .notNull()
     .default('pending'),
-  status: text('status', { enum: ['draft', 'ordered', 'partial', 'received', 'cancelled'] })
+  status: text('status', { enum: ['draft', 'ordered', 'partial', 'received', 'cancelled', 'reversed'] })
     .notNull()
     .default('draft'),
   expectedDeliveryDate: text('expected_delivery_date'),
   receivedDate: text('received_date'),
   notes: text('notes'),
+  reversedByPurchaseId: integer('reversed_by_purchase_id'),
+  reversesPurchaseId: integer('reverses_purchase_id'),
+  reversalReason: text('reversal_reason'),
   createdAt: text('created_at')
     .notNull()
     .$defaultFn(() => new Date().toISOString()),
