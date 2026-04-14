@@ -153,6 +153,10 @@ const api = {
       purchaseId: number,
       paymentData: { paymentMethod: string; referenceNumber?: string; notes?: string }
     ) => ipcRenderer.invoke('purchases:pay-off', purchaseId, paymentData),
+    checkReversible: (purchaseId: number) =>
+      ipcRenderer.invoke('purchases:check-reversible', purchaseId),
+    reverseAndReenter: (purchaseId: number, reason: string) =>
+      ipcRenderer.invoke('purchases:reverse-and-reenter', purchaseId, reason),
   },
 
   // Returns
