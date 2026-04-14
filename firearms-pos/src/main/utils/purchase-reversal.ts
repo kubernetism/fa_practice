@@ -1,17 +1,17 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
-  purchases,
-  purchaseItems,
-  inventoryCostLayers,
   accountPayables,
-  payablePayments,
   businessSettings,
-  products,
   expenses,
+  inventoryCostLayers,
+  payablePayments,
+  products,
+  purchaseItems,
+  purchases,
 } from '../db/schema'
-import { withTransaction } from './db-transaction'
 import { createAuditLog } from './audit'
+import { withTransaction } from './db-transaction'
 import { executePurchaseReversal } from './reversal-executors'
 
 export interface ReversalSession {
@@ -73,7 +73,10 @@ export async function checkReversible(
 
   const blockers: string[] = []
 
-  const items = await db.select().from(purchaseItems).where(eq(purchaseItems.purchaseId, purchaseId))
+  const items = await db
+    .select()
+    .from(purchaseItems)
+    .where(eq(purchaseItems.purchaseId, purchaseId))
   const itemIds = items.map((i) => i.id)
 
   if (itemIds.length > 0) {
@@ -100,9 +103,7 @@ export async function checkReversible(
 
   const settingsRow = await db.query.businessSettings.findFirst()
   const maxDays = settingsRow?.purchaseReversalMaxDays ?? DEFAULT_MAX_DAYS
-  const ageDays = Math.floor(
-    (Date.now() - new Date(purchase.createdAt).getTime()) / 86_400_000,
-  )
+  const ageDays = Math.floor((Date.now() - new Date(purchase.createdAt).getTime()) / 86_400_000)
   if (ageDays > maxDays) {
     blockers.push(`Purchase is ${ageDays} days old; policy allows only ${maxDays} days.`)
   }
@@ -111,7 +112,9 @@ export async function checkReversible(
     where: eq(accountPayables.purchaseId, purchaseId),
   })
   if (payable && payable.status === 'paid') {
-    blockers.push('Linked payable is fully paid. Reverse or unlink the payment before reversing the purchase.')
+    blockers.push(
+      'Linked payable is fully paid. Reverse or unlink the payment before reversing the purchase.',
+    )
   }
 
   return { allowed: blockers.length === 0, blockers }
@@ -138,7 +141,10 @@ export async function reversePurchaseAndReenter(
       })
       if (!original) throw new Error('Purchase disappeared between preflight and execution.')
 
-      const items = await db.select().from(purchaseItems).where(eq(purchaseItems.purchaseId, purchaseId))
+      const items = await db
+        .select()
+        .from(purchaseItems)
+        .where(eq(purchaseItems.purchaseId, purchaseId))
       const payable = await db.query.accountPayables.findFirst({
         where: eq(accountPayables.purchaseId, purchaseId),
       })

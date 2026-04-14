@@ -1,13 +1,13 @@
+import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog'
-import { Badge } from '@/components/ui/badge'
-import { RotateCcw, Package, User, MapPin, Calendar, Info } from 'lucide-react'
 import { formatCurrency, formatDateTime } from '@/lib/utils'
+import { Calendar, Info, MapPin, Package, RotateCcw, User } from 'lucide-react'
 
 interface AuditLogEntry {
   auditLog: {
@@ -84,9 +84,7 @@ export function ReversalDetailPanel({ log, open, onClose }: Props) {
               </span>
             )}
           </DialogTitle>
-          <DialogDescription>
-            Immutable record of the reversal cascade.
-          </DialogDescription>
+          <DialogDescription>Immutable record of the reversal cascade.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -118,8 +116,11 @@ export function ReversalDetailPanel({ log, open, onClose }: Props) {
           {old.items && old.items.length > 0 && (
             <Section title={`Items reversed (${old.items.length})`}>
               <div className="divide-y divide-border/50">
-                {old.items.map((it, i) => (
-                  <div key={i} className="flex items-center justify-between px-3 py-1.5 text-xs">
+                {old.items.map((it) => (
+                  <div
+                    key={`${it.productId}-${it.quantity}-${it.unitCost}`}
+                    className="flex items-center justify-between px-3 py-1.5 text-xs"
+                  >
                     <span className="font-mono text-muted-foreground">Product #{it.productId}</span>
                     <span>
                       {it.quantity} × {formatCurrency(it.unitCost)}
