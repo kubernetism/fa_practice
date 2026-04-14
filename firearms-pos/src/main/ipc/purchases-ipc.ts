@@ -20,6 +20,7 @@ import { generatePurchaseOrderNumber, type PaginationParams, type PaginatedResul
 import { withTransaction } from '../utils/db-transaction'
 import { postPurchaseReceiveToGL, postAPPaymentToGL } from '../utils/gl-posting'
 import { addCostLayer } from '../utils/inventory-valuation'
+import { checkReversible, reversePurchaseAndReenter } from '../utils/purchase-reversal'
 
 interface PurchaseItemData {
   productId: number
@@ -503,6 +504,33 @@ export function registerPurchaseHandlers(): void {
         console.error('Pay off purchase error:', error)
         return { success: false, message: 'Failed to pay off purchase' }
       }
+    }
+  )
+
+  ipcMain.handle('purchases:check-reversible', async (_, purchaseId: number) => {
+    const session = getCurrentSession()
+    if (!session) {
+      return { allowed: false, blockers: ['Not authenticated.'] }
+    }
+    return checkReversible(purchaseId, {
+      userId: session.userId,
+      role: session.role,
+      branchId: session.branchId,
+    })
+  })
+
+  ipcMain.handle(
+    'purchases:reverse-and-reenter',
+    async (_, purchaseId: number, reason: string) => {
+      const session = getCurrentSession()
+      if (!session) {
+        return { success: false, error: 'Not authenticated.' }
+      }
+      return reversePurchaseAndReenter(purchaseId, reason, {
+        userId: session.userId,
+        role: session.role,
+        branchId: session.branchId,
+      })
     }
   )
 }
