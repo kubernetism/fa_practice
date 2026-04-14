@@ -298,10 +298,13 @@ const purchases = sqliteCore.sqliteTable("purchases", {
   totalAmount: sqliteCore.real("total_amount").notNull().default(0),
   paymentMethod: sqliteCore.text("payment_method", { enum: ["cash", "cheque", "pay_later"] }).notNull().default("cash"),
   paymentStatus: sqliteCore.text("payment_status", { enum: ["paid", "partial", "pending"] }).notNull().default("pending"),
-  status: sqliteCore.text("status", { enum: ["draft", "ordered", "partial", "received", "cancelled"] }).notNull().default("draft"),
+  status: sqliteCore.text("status", { enum: ["draft", "ordered", "partial", "received", "cancelled", "reversed"] }).notNull().default("draft"),
   expectedDeliveryDate: sqliteCore.text("expected_delivery_date"),
   receivedDate: sqliteCore.text("received_date"),
   notes: sqliteCore.text("notes"),
+  reversedByPurchaseId: sqliteCore.integer("reversed_by_purchase_id"),
+  reversesPurchaseId: sqliteCore.integer("reverses_purchase_id"),
+  reversalReason: sqliteCore.text("reversal_reason"),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
@@ -362,7 +365,7 @@ const accountPayables = sqliteCore.sqliteTable(
     // Amount paid so far
     remainingAmount: sqliteCore.real("remaining_amount").notNull(),
     // Amount still owed
-    status: sqliteCore.text("status", { enum: ["pending", "partial", "paid", "overdue", "cancelled"] }).notNull().default("pending"),
+    status: sqliteCore.text("status", { enum: ["pending", "partial", "paid", "overdue", "cancelled", "reversed"] }).notNull().default("pending"),
     dueDate: sqliteCore.text("due_date"),
     // Payment due date
     paymentTerms: sqliteCore.text("payment_terms"),
@@ -449,6 +452,8 @@ const expenses = sqliteCore.sqliteTable(
     paymentTerms: sqliteCore.text("payment_terms"),
     isVoided: sqliteCore.integer("is_voided", { mode: "boolean" }).notNull().default(false),
     voidReason: sqliteCore.text("void_reason"),
+    isReversed: sqliteCore.integer("is_reversed", { mode: "boolean" }).notNull().default(false),
+    reversalExpenseId: sqliteCore.integer("reversal_expense_id"),
     createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
     updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
   },
@@ -698,6 +703,8 @@ const businessSettings = sqliteCore.sqliteTable("business_settings", {
   // Expense Settings
   expenseApprovalRequired: sqliteCore.integer("expense_approval_required", { mode: "boolean" }).default(false),
   expenseApprovalLimit: sqliteCore.real("expense_approval_limit").default(1e4),
+  // Purchase Reversal Settings
+  purchaseReversalMaxDays: sqliteCore.integer("purchase_reversal_max_days").notNull().default(90),
   // Return/Refund Settings
   enableReturns: sqliteCore.integer("enable_returns", { mode: "boolean" }).default(true),
   returnWindowDays: sqliteCore.integer("return_window_days").default(30),
@@ -7364,6 +7371,702 @@ function registerSalesHandlers() {
     }
   });
 }
+async function reverseGLEntry(referenceType, referenceId, description, branchId, userId) {
+  const db2 = getDatabase();
+  const jeEntry = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(journalEntries.referenceType, referenceType),
+      drizzleOrm.eq(journalEntries.referenceId, referenceId),
+      drizzleOrm.eq(journalEntries.status, "posted")
+    )
+  });
+  if (!jeEntry) return { reversed: false };
+  const lines = await db2.query.journalEntryLines.findMany({
+    where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
+  });
+  const reversingLines = [];
+  for (const line of lines) {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+    });
+    if (!account) {
+      throw new Error(`Account #${line.accountId} not found when reversing GL entry`);
+    }
+    reversingLines.push({
+      accountCode: account.accountCode,
+      debitAmount: line.creditAmount,
+      // swap
+      creditAmount: line.debitAmount,
+      // swap
+      description: `Reversal: ${line.description || ""}`
+    });
+  }
+  const reversalEntryId = await createJournalEntry({
+    description,
+    referenceType,
+    referenceId,
+    branchId,
+    userId,
+    lines: reversingLines
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db2.update(journalEntries).set({
+    status: "reversed",
+    reversedBy: userId,
+    reversedAt: now,
+    reversalEntryId,
+    updatedAt: now
+  }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
+  return { reversed: true, originalEntryId: jeEntry.id, reversalEntryId };
+}
+async function executeSaleReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const sale = await db2.query.sales.findFirst({
+    where: drizzleOrm.eq(sales.id, entityId)
+  });
+  if (!sale) throw new Error(`Sale #${entityId} not found`);
+  if (sale.isVoided) throw new Error(`Sale #${entityId} is already voided`);
+  const items = await db2.query.saleItems.findMany({
+    where: drizzleOrm.eq(saleItems.saleId, entityId)
+  });
+  for (const item of items) {
+    await db2.update(inventory).set({
+      quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(
+      drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, sale.branchId))
+    );
+    await restoreCostLayers({
+      productId: item.productId,
+      branchId: sale.branchId,
+      quantity: item.quantity,
+      unitCost: item.costPrice,
+      referenceId: sale.id
+    });
+  }
+  await db2.update(sales).set({
+    isVoided: true,
+    voidReason: "Reversed via reversal system",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(sales.id, entityId));
+  const cancelledCommissions = await db2.update(commissions).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(commissions.saleId, entityId)).returning();
+  const linkedReceivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.saleId, entityId)
+  });
+  if (linkedReceivable) {
+    await db2.update(accountReceivables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
+  }
+  const reversalJEId = await postVoidSaleToGL(
+    sale,
+    items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
+    userId
+  );
+  let cashRefundAmount = 0;
+  const hasCashPayment = ["cash", "cod"].includes(sale.paymentMethod);
+  if (hasCashPayment) {
+    cashRefundAmount = Math.min(sale.amountPaid, sale.totalAmount);
+  } else if (sale.paymentMethod === "mixed") {
+    const payments = await db2.query.salePayments.findMany({
+      where: drizzleOrm.eq(salePayments.saleId, entityId)
+    });
+    cashRefundAmount = payments.filter((p) => ["cash", "cod"].includes(p.paymentMethod)).reduce((sum, p) => sum + p.amount, 0);
+  }
+  if (cashRefundAmount > 0) {
+    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+    const openSession = await db2.query.cashRegisterSessions.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(cashRegisterSessions.branchId, sale.branchId),
+        drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+        drizzleOrm.eq(cashRegisterSessions.status, "open")
+      )
+    });
+    if (openSession) {
+      await db2.insert(cashTransactions).values({
+        sessionId: openSession.id,
+        branchId: sale.branchId,
+        transactionType: "refund",
+        amount: -cashRefundAmount,
+        referenceType: "sale_void",
+        referenceId: sale.id,
+        description: `Cash refund (reversed): ${sale.invoiceNumber}`,
+        recordedBy: userId
+      });
+    }
+  }
+  return {
+    reversalDetails: {
+      saleId: entityId,
+      invoiceNumber: sale.invoiceNumber,
+      itemsRestored: items.length,
+      commissionssCancelled: cancelledCommissions.length,
+      receivableCancelled: linkedReceivable?.id ?? null,
+      reversalJournalEntryId: reversalJEId,
+      cashRefundAmount
+    }
+  };
+}
+async function executeExpenseReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const expense = await db2.query.expenses.findFirst({
+    where: drizzleOrm.eq(expenses.id, entityId)
+  });
+  if (!expense) throw new Error(`Expense #${entityId} not found`);
+  if (expense.isVoided) throw new Error(`Expense #${entityId} is already voided`);
+  let cancelledPayableId = null;
+  if (expense.payableId) {
+    await db2.update(accountPayables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountPayables.id, expense.payableId));
+    cancelledPayableId = expense.payableId;
+  }
+  await db2.update(expenses).set({
+    isVoided: true,
+    voidReason: "Reversed via reversal system",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(expenses.id, entityId));
+  const glResult = await reverseGLEntry(
+    "expense",
+    entityId,
+    `Reversal of expense #${entityId}`,
+    expense.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      expenseId: entityId,
+      amount: expense.amount,
+      cancelledPayableId,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeJournalEntryReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const jeEntry = await db2.query.journalEntries.findFirst({
+    where: drizzleOrm.eq(journalEntries.id, entityId)
+  });
+  if (!jeEntry) throw new Error(`Journal entry #${entityId} not found`);
+  if (jeEntry.status === "draft") {
+    throw new Error(`Journal entry #${entityId} is a draft and cannot be reversed — delete it instead`);
+  }
+  if (jeEntry.status === "reversed") {
+    throw new Error(`Journal entry #${entityId} is already reversed`);
+  }
+  const lines = await db2.query.journalEntryLines.findMany({
+    where: drizzleOrm.eq(journalEntryLines.journalEntryId, entityId)
+  });
+  const reversingLines = [];
+  for (const line of lines) {
+    const account = await db2.query.chartOfAccounts.findFirst({
+      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
+    });
+    if (!account) {
+      throw new Error(`Account #${line.accountId} not found when reversing journal entry`);
+    }
+    reversingLines.push({
+      accountCode: account.accountCode,
+      debitAmount: line.creditAmount,
+      // swap
+      creditAmount: line.debitAmount,
+      // swap
+      description: `Reversal: ${line.description || ""}`
+    });
+  }
+  const reversalEntryId = await createJournalEntry({
+    description: `Reversal of ${jeEntry.entryNumber}: ${jeEntry.description}`,
+    referenceType: jeEntry.referenceType || "journal_entry",
+    referenceId: jeEntry.referenceId || entityId,
+    branchId: jeEntry.branchId || 1,
+    userId,
+    lines: reversingLines
+  });
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  await db2.update(journalEntries).set({
+    status: "reversed",
+    reversedBy: userId,
+    reversedAt: now,
+    reversalEntryId,
+    updatedAt: now
+  }).where(drizzleOrm.eq(journalEntries.id, entityId));
+  return {
+    reversalDetails: {
+      journalEntryId: entityId,
+      entryNumber: jeEntry.entryNumber,
+      originalDescription: jeEntry.description,
+      linesReversed: lines.length,
+      reversalEntryId
+    }
+  };
+}
+async function executePurchaseReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const purchase = await db2.query.purchases.findFirst({
+    where: drizzleOrm.eq(purchases.id, entityId)
+  });
+  if (!purchase) throw new Error(`Purchase #${entityId} not found`);
+  if (purchase.status === "cancelled") {
+    throw new Error(`Purchase #${entityId} is already cancelled`);
+  }
+  const items = await db2.query.purchaseItems.findMany({
+    where: drizzleOrm.eq(purchaseItems.purchaseId, entityId)
+  });
+  let inventoryDeducted = false;
+  if (purchase.status === "received" || purchase.status === "partial") {
+    for (const item of items) {
+      if (item.receivedQuantity > 0) {
+        await db2.update(inventory).set({
+          quantity: drizzleOrm.sql`${inventory.quantity} - ${item.receivedQuantity}`,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(
+          drizzleOrm.and(
+            drizzleOrm.eq(inventory.productId, item.productId),
+            drizzleOrm.eq(inventory.branchId, purchase.branchId)
+          )
+        );
+        await db2.update(inventoryCostLayers).set({
+          quantity: 0,
+          isFullyConsumed: true,
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).where(drizzleOrm.eq(inventoryCostLayers.purchaseItemId, item.id));
+      }
+    }
+    inventoryDeducted = true;
+  }
+  let cancelledPayableId = null;
+  const linkedPayable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.purchaseId, entityId)
+  });
+  if (linkedPayable && linkedPayable.status !== "cancelled") {
+    await db2.update(accountPayables).set({
+      status: "cancelled",
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    }).where(drizzleOrm.eq(accountPayables.id, linkedPayable.id));
+    cancelledPayableId = linkedPayable.id;
+  }
+  await db2.update(purchases).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(purchases.id, entityId));
+  const glResult = await reverseGLEntry(
+    "purchase",
+    entityId,
+    `Reversal of purchase ${purchase.purchaseOrderNumber}`,
+    purchase.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      purchaseId: entityId,
+      purchaseOrderNumber: purchase.purchaseOrderNumber,
+      inventoryDeducted,
+      itemsAffected: items.length,
+      cancelledPayableId,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeARPaymentReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payment = await db2.query.receivablePayments.findFirst({
+    where: drizzleOrm.eq(receivablePayments.id, entityId)
+  });
+  if (!payment) throw new Error(`Receivable payment #${entityId} not found`);
+  const receivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.id, payment.receivableId)
+  });
+  if (!receivable) throw new Error(`Account receivable #${payment.receivableId} not found`);
+  const newPaidAmount = receivable.paidAmount - payment.amount;
+  const newRemainingAmount = receivable.totalAmount - newPaidAmount;
+  let newStatus;
+  if (newPaidAmount <= 0) {
+    newStatus = "pending";
+  } else if (newPaidAmount < receivable.totalAmount) {
+    newStatus = "partial";
+  } else {
+    newStatus = "paid";
+  }
+  await db2.update(accountReceivables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: newRemainingAmount,
+    status: newStatus,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountReceivables.id, payment.receivableId));
+  const glResult = await reverseGLEntry(
+    "receivable_payment",
+    entityId,
+    `Reversal of AR payment #${entityId} for invoice ${receivable.invoiceNumber}`,
+    receivable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      paymentId: entityId,
+      receivableId: payment.receivableId,
+      invoiceNumber: receivable.invoiceNumber,
+      amountReversed: payment.amount,
+      newPaidAmount,
+      newRemainingAmount,
+      newReceivableStatus: newStatus,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeAPPaymentReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payment = await db2.query.payablePayments.findFirst({
+    where: drizzleOrm.eq(payablePayments.id, entityId)
+  });
+  if (!payment) throw new Error(`Payable payment #${entityId} not found`);
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.id, payment.payableId)
+  });
+  if (!payable) throw new Error(`Account payable #${payment.payableId} not found`);
+  const newPaidAmount = payable.paidAmount - payment.amount;
+  const newRemainingAmount = payable.totalAmount - newPaidAmount;
+  let newStatus;
+  if (newPaidAmount <= 0) {
+    newStatus = "pending";
+  } else if (newPaidAmount < payable.totalAmount) {
+    newStatus = "partial";
+  } else {
+    newStatus = "paid";
+  }
+  await db2.update(accountPayables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: newRemainingAmount,
+    status: newStatus,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountPayables.id, payment.payableId));
+  const glResult = await reverseGLEntry(
+    "payable_payment",
+    entityId,
+    `Reversal of AP payment #${entityId} for invoice ${payable.invoiceNumber}`,
+    payable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      paymentId: entityId,
+      payableId: payment.payableId,
+      invoiceNumber: payable.invoiceNumber,
+      amountReversed: payment.amount,
+      newPaidAmount,
+      newRemainingAmount,
+      newPayableStatus: newStatus,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeCommissionReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const commission = await db2.query.commissions.findFirst({
+    where: drizzleOrm.eq(commissions.id, entityId)
+  });
+  if (!commission) throw new Error(`Commission #${entityId} not found`);
+  if (commission.status === "cancelled") {
+    throw new Error(`Commission #${entityId} is already cancelled`);
+  }
+  await db2.update(commissions).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(commissions.id, entityId));
+  const glResult = await reverseGLEntry(
+    "commission",
+    entityId,
+    `Reversal of commission #${entityId}`,
+    commission.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      commissionId: entityId,
+      saleId: commission.saleId,
+      commissionAmount: commission.commissionAmount,
+      previousStatus: commission.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReceivableReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const receivable = await db2.query.accountReceivables.findFirst({
+    where: drizzleOrm.eq(accountReceivables.id, entityId)
+  });
+  if (!receivable) throw new Error(`Receivable #${entityId} not found`);
+  if (receivable.status === "cancelled") {
+    throw new Error(`Receivable #${entityId} is already cancelled`);
+  }
+  await db2.update(accountReceivables).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountReceivables.id, entityId));
+  const glResult = await reverseGLEntry(
+    "receivable",
+    entityId,
+    `Reversal of receivable #${entityId} (${receivable.invoiceNumber})`,
+    receivable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      receivableId: entityId,
+      invoiceNumber: receivable.invoiceNumber,
+      totalAmount: receivable.totalAmount,
+      previousStatus: receivable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executePayableReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.id, entityId)
+  });
+  if (!payable) throw new Error(`Payable #${entityId} not found`);
+  if (payable.status === "cancelled") {
+    throw new Error(`Payable #${entityId} is already cancelled`);
+  }
+  await db2.update(accountPayables).set({
+    status: "cancelled",
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  }).where(drizzleOrm.eq(accountPayables.id, entityId));
+  const glResult = await reverseGLEntry(
+    "payable",
+    entityId,
+    `Reversal of payable #${entityId} (${payable.invoiceNumber})`,
+    payable.branchId,
+    userId
+  );
+  return {
+    reversalDetails: {
+      payableId: entityId,
+      invoiceNumber: payable.invoiceNumber,
+      totalAmount: payable.totalAmount,
+      previousStatus: payable.status,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReturnReversal(entityId, userId) {
+  const db2 = getDatabase();
+  const returnRecord = await db2.query.returns.findFirst({
+    where: drizzleOrm.eq(returns.id, entityId)
+  });
+  if (!returnRecord) throw new Error(`Return #${entityId} not found`);
+  const items = await db2.query.returnItems.findMany({
+    where: drizzleOrm.eq(returnItems.returnId, entityId)
+  });
+  for (const item of items) {
+    if (item.restockable) {
+      await db2.update(inventory).set({
+        quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(
+        drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
+      );
+      await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity);
+    }
+  }
+  const glResult = await reverseGLEntry(
+    "return",
+    entityId,
+    `Reversal of return ${returnRecord.returnNumber}`,
+    returnRecord.branchId,
+    userId
+  );
+  await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, entityId));
+  await db2.delete(returns).where(drizzleOrm.eq(returns.id, entityId));
+  return {
+    reversalDetails: {
+      returnId: entityId,
+      returnNumber: returnRecord.returnNumber,
+      totalAmount: returnRecord.totalAmount,
+      itemsReversed: items.length,
+      glReversed: glResult.reversed,
+      originalJournalEntryId: glResult.originalEntryId ?? null,
+      reversalJournalEntryId: glResult.reversalEntryId ?? null
+    }
+  };
+}
+async function executeReversal(entityType, entityId, userId) {
+  switch (entityType) {
+    case "sale":
+      return executeSaleReversal(entityId, userId);
+    case "expense":
+      return executeExpenseReversal(entityId, userId);
+    case "journal_entry":
+      return executeJournalEntryReversal(entityId, userId);
+    case "purchase":
+      return executePurchaseReversal(entityId, userId);
+    case "receivable_payment":
+      return executeARPaymentReversal(entityId, userId);
+    case "payable_payment":
+      return executeAPPaymentReversal(entityId, userId);
+    case "commission":
+      return executeCommissionReversal(entityId, userId);
+    case "receivable":
+      return executeReceivableReversal(entityId, userId);
+    case "payable":
+      return executePayableReversal(entityId, userId);
+    case "return":
+      return executeReturnReversal(entityId, userId);
+    case "stock_adjustment":
+    case "stock_transfer":
+      throw new Error(`Reversal for entity type '${entityType}' is not yet implemented`);
+    default:
+      throw new Error(`Unknown entity type for reversal: '${entityType}'`);
+  }
+}
+const DEFAULT_MAX_DAYS = 90;
+const MIN_REASON_LENGTH = 10;
+async function checkReversible(purchaseId, session) {
+  if (session.role !== "admin") {
+    return { allowed: false, blockers: ["Only an admin can reverse a purchase order."] };
+  }
+  const db2 = getDatabase();
+  const purchase = await db2.query.purchases.findFirst({
+    where: drizzleOrm.eq(purchases.id, purchaseId)
+  });
+  if (!purchase) {
+    return { allowed: false, blockers: [`Purchase #${purchaseId} not found.`] };
+  }
+  if (purchase.status === "reversed" || purchase.status === "cancelled") {
+    return { allowed: false, blockers: [`Purchase is already ${purchase.status}.`] };
+  }
+  const blockers = [];
+  const items = await db2.select().from(purchaseItems).where(drizzleOrm.eq(purchaseItems.purchaseId, purchaseId));
+  const itemIds = items.map((i) => i.id);
+  if (itemIds.length > 0) {
+    const layers = await db2.select().from(inventoryCostLayers).where(drizzleOrm.inArray(inventoryCostLayers.purchaseItemId, itemIds));
+    const consumedByProduct = /* @__PURE__ */ new Map();
+    for (const l of layers) {
+      const consumed = (l.originalQuantity ?? 0) - (l.quantity ?? 0);
+      if (consumed > 0) {
+        consumedByProduct.set(l.productId, (consumedByProduct.get(l.productId) ?? 0) + consumed);
+      }
+    }
+    for (const [productId, consumed] of consumedByProduct) {
+      const prod = await db2.query.products.findFirst({ where: drizzleOrm.eq(products.id, productId) });
+      blockers.push(
+        `${prod?.name ?? `Product #${productId}`}: ${consumed} units already sold — use Stock Adjustment instead.`
+      );
+    }
+  }
+  const settingsRow = await db2.query.businessSettings.findFirst();
+  const maxDays = settingsRow?.purchaseReversalMaxDays ?? DEFAULT_MAX_DAYS;
+  const ageDays = Math.floor((Date.now() - new Date(purchase.createdAt).getTime()) / 864e5);
+  if (ageDays > maxDays) {
+    blockers.push(`Purchase is ${ageDays} days old; policy allows only ${maxDays} days.`);
+  }
+  const payable = await db2.query.accountPayables.findFirst({
+    where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+  });
+  if (payable && payable.status === "paid") {
+    blockers.push(
+      "Linked payable is fully paid. Reverse or unlink the payment before reversing the purchase."
+    );
+  }
+  return { allowed: blockers.length === 0, blockers };
+}
+async function reversePurchaseAndReenter(purchaseId, reason, session) {
+  const pre = await checkReversible(purchaseId, session);
+  if (!pre.allowed) {
+    return { success: false, error: pre.blockers.join(" ") };
+  }
+  const trimmed = (reason ?? "").trim();
+  if (trimmed.length < MIN_REASON_LENGTH) {
+    return { success: false, error: `Reason must be at least ${MIN_REASON_LENGTH} characters.` };
+  }
+  try {
+    const result = await withTransaction(async ({ db: db2 }) => {
+      const original = await db2.query.purchases.findFirst({
+        where: drizzleOrm.eq(purchases.id, purchaseId)
+      });
+      if (!original) throw new Error("Purchase disappeared between preflight and execution.");
+      const items = await db2.select().from(purchaseItems).where(drizzleOrm.eq(purchaseItems.purchaseId, purchaseId));
+      const payable = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+      });
+      const payments = payable ? await db2.select().from(payablePayments).where(drizzleOrm.eq(payablePayments.payableId, payable.id)) : [];
+      const linkedExpense = payable ? await db2.query.expenses.findFirst({ where: drizzleOrm.eq(expenses.payableId, payable.id) }) : null;
+      const oldValues = {
+        purchase: original,
+        items,
+        payable: payable ?? null,
+        payablePayments: payments,
+        expense: linkedExpense ?? null
+      };
+      const execResult = await executePurchaseReversal(purchaseId, session.userId);
+      await db2.update(purchases).set({
+        status: "reversed",
+        reversalReason: trimmed,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(drizzleOrm.eq(purchases.id, purchaseId));
+      if (payable) {
+        await db2.update(accountPayables).set({ status: "reversed", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(accountPayables.id, payable.id));
+      }
+      if (linkedExpense) {
+        await db2.update(expenses).set({ isReversed: true, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+      }
+      const newValues = {
+        status: "reversed",
+        reason: trimmed,
+        reversalDetails: execResult.reversalDetails
+      };
+      await createAuditLog$1({
+        userId: session.userId,
+        branchId: session.branchId,
+        action: "reversal_executed",
+        entityType: "purchase",
+        entityId: original.id,
+        oldValues,
+        newValues,
+        description: trimmed
+      });
+      const prefillDraft = {
+        supplierId: original.supplierId,
+        branchId: original.branchId,
+        items: items.map((it) => ({
+          productId: it.productId,
+          quantity: it.quantity,
+          unitCost: it.unitCost
+        })),
+        shippingCost: original.shippingCost,
+        taxAmount: original.taxAmount,
+        paymentMethod: original.paymentMethod,
+        notes: `Re-entry of reversed ${original.purchaseOrderNumber}`
+      };
+      return { prefillDraft, reversalDetails: execResult.reversalDetails };
+    });
+    return { success: true, ...result };
+  } catch (err) {
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : String(err)
+    };
+  }
+}
 function registerPurchaseHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("purchases:create", async (_, data) => {
@@ -7711,6 +8414,31 @@ function registerPurchaseHandlers() {
         console.error("Pay off purchase error:", error);
         return { success: false, message: "Failed to pay off purchase" };
       }
+    }
+  );
+  electron.ipcMain.handle("purchases:check-reversible", async (_, purchaseId) => {
+    const session = getCurrentSession();
+    if (!session) {
+      return { allowed: false, blockers: ["Not authenticated."] };
+    }
+    return checkReversible(purchaseId, {
+      userId: session.userId,
+      role: session.role,
+      branchId: session.branchId
+    });
+  });
+  electron.ipcMain.handle(
+    "purchases:reverse-and-reenter",
+    async (_, purchaseId, reason) => {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, error: "Not authenticated." };
+      }
+      return reversePurchaseAndReenter(purchaseId, reason, {
+        userId: session.userId,
+        role: session.role,
+        branchId: session.branchId
+      });
     }
   );
 }
@@ -21903,573 +22631,6 @@ function registerVoucherHandlers() {
       return { success: false, message: "Failed to delete voucher" };
     }
   });
-}
-async function reverseGLEntry(referenceType, referenceId, description, branchId, userId) {
-  const db2 = getDatabase();
-  const jeEntry = await db2.query.journalEntries.findFirst({
-    where: drizzleOrm.and(
-      drizzleOrm.eq(journalEntries.referenceType, referenceType),
-      drizzleOrm.eq(journalEntries.referenceId, referenceId),
-      drizzleOrm.eq(journalEntries.status, "posted")
-    )
-  });
-  if (!jeEntry) return { reversed: false };
-  const lines = await db2.query.journalEntryLines.findMany({
-    where: drizzleOrm.eq(journalEntryLines.journalEntryId, jeEntry.id)
-  });
-  const reversingLines = [];
-  for (const line of lines) {
-    const account = await db2.query.chartOfAccounts.findFirst({
-      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
-    });
-    if (!account) {
-      throw new Error(`Account #${line.accountId} not found when reversing GL entry`);
-    }
-    reversingLines.push({
-      accountCode: account.accountCode,
-      debitAmount: line.creditAmount,
-      // swap
-      creditAmount: line.debitAmount,
-      // swap
-      description: `Reversal: ${line.description || ""}`
-    });
-  }
-  const reversalEntryId = await createJournalEntry({
-    description,
-    referenceType,
-    referenceId,
-    branchId,
-    userId,
-    lines: reversingLines
-  });
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  await db2.update(journalEntries).set({
-    status: "reversed",
-    reversedBy: userId,
-    reversedAt: now,
-    reversalEntryId,
-    updatedAt: now
-  }).where(drizzleOrm.eq(journalEntries.id, jeEntry.id));
-  return { reversed: true, originalEntryId: jeEntry.id, reversalEntryId };
-}
-async function executeSaleReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const sale = await db2.query.sales.findFirst({
-    where: drizzleOrm.eq(sales.id, entityId)
-  });
-  if (!sale) throw new Error(`Sale #${entityId} not found`);
-  if (sale.isVoided) throw new Error(`Sale #${entityId} is already voided`);
-  const items = await db2.query.saleItems.findMany({
-    where: drizzleOrm.eq(saleItems.saleId, entityId)
-  });
-  for (const item of items) {
-    await db2.update(inventory).set({
-      quantity: drizzleOrm.sql`${inventory.quantity} + ${item.quantity}`,
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }).where(
-      drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, sale.branchId))
-    );
-    await restoreCostLayers({
-      productId: item.productId,
-      branchId: sale.branchId,
-      quantity: item.quantity,
-      unitCost: item.costPrice,
-      referenceId: sale.id
-    });
-  }
-  await db2.update(sales).set({
-    isVoided: true,
-    voidReason: "Reversed via reversal system",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(sales.id, entityId));
-  const cancelledCommissions = await db2.update(commissions).set({
-    status: "cancelled",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(commissions.saleId, entityId)).returning();
-  const linkedReceivable = await db2.query.accountReceivables.findFirst({
-    where: drizzleOrm.eq(accountReceivables.saleId, entityId)
-  });
-  if (linkedReceivable) {
-    await db2.update(accountReceivables).set({
-      status: "cancelled",
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }).where(drizzleOrm.eq(accountReceivables.id, linkedReceivable.id));
-  }
-  const reversalJEId = await postVoidSaleToGL(
-    sale,
-    items.map((item) => ({ costPrice: item.costPrice, quantity: item.quantity })),
-    userId
-  );
-  let cashRefundAmount = 0;
-  const hasCashPayment = ["cash", "cod"].includes(sale.paymentMethod);
-  if (hasCashPayment) {
-    cashRefundAmount = Math.min(sale.amountPaid, sale.totalAmount);
-  } else if (sale.paymentMethod === "mixed") {
-    const payments = await db2.query.salePayments.findMany({
-      where: drizzleOrm.eq(salePayments.saleId, entityId)
-    });
-    cashRefundAmount = payments.filter((p) => ["cash", "cod"].includes(p.paymentMethod)).reduce((sum, p) => sum + p.amount, 0);
-  }
-  if (cashRefundAmount > 0) {
-    const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-    const openSession = await db2.query.cashRegisterSessions.findFirst({
-      where: drizzleOrm.and(
-        drizzleOrm.eq(cashRegisterSessions.branchId, sale.branchId),
-        drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
-        drizzleOrm.eq(cashRegisterSessions.status, "open")
-      )
-    });
-    if (openSession) {
-      await db2.insert(cashTransactions).values({
-        sessionId: openSession.id,
-        branchId: sale.branchId,
-        transactionType: "refund",
-        amount: -cashRefundAmount,
-        referenceType: "sale_void",
-        referenceId: sale.id,
-        description: `Cash refund (reversed): ${sale.invoiceNumber}`,
-        recordedBy: userId
-      });
-    }
-  }
-  return {
-    reversalDetails: {
-      saleId: entityId,
-      invoiceNumber: sale.invoiceNumber,
-      itemsRestored: items.length,
-      commissionssCancelled: cancelledCommissions.length,
-      receivableCancelled: linkedReceivable?.id ?? null,
-      reversalJournalEntryId: reversalJEId,
-      cashRefundAmount
-    }
-  };
-}
-async function executeExpenseReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const expense = await db2.query.expenses.findFirst({
-    where: drizzleOrm.eq(expenses.id, entityId)
-  });
-  if (!expense) throw new Error(`Expense #${entityId} not found`);
-  if (expense.isVoided) throw new Error(`Expense #${entityId} is already voided`);
-  let cancelledPayableId = null;
-  if (expense.payableId) {
-    await db2.update(accountPayables).set({
-      status: "cancelled",
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }).where(drizzleOrm.eq(accountPayables.id, expense.payableId));
-    cancelledPayableId = expense.payableId;
-  }
-  await db2.update(expenses).set({
-    isVoided: true,
-    voidReason: "Reversed via reversal system",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(expenses.id, entityId));
-  const glResult = await reverseGLEntry(
-    "expense",
-    entityId,
-    `Reversal of expense #${entityId}`,
-    expense.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      expenseId: entityId,
-      amount: expense.amount,
-      cancelledPayableId,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeJournalEntryReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const jeEntry = await db2.query.journalEntries.findFirst({
-    where: drizzleOrm.eq(journalEntries.id, entityId)
-  });
-  if (!jeEntry) throw new Error(`Journal entry #${entityId} not found`);
-  if (jeEntry.status === "draft") {
-    throw new Error(`Journal entry #${entityId} is a draft and cannot be reversed — delete it instead`);
-  }
-  if (jeEntry.status === "reversed") {
-    throw new Error(`Journal entry #${entityId} is already reversed`);
-  }
-  const lines = await db2.query.journalEntryLines.findMany({
-    where: drizzleOrm.eq(journalEntryLines.journalEntryId, entityId)
-  });
-  const reversingLines = [];
-  for (const line of lines) {
-    const account = await db2.query.chartOfAccounts.findFirst({
-      where: drizzleOrm.eq(chartOfAccounts.id, line.accountId)
-    });
-    if (!account) {
-      throw new Error(`Account #${line.accountId} not found when reversing journal entry`);
-    }
-    reversingLines.push({
-      accountCode: account.accountCode,
-      debitAmount: line.creditAmount,
-      // swap
-      creditAmount: line.debitAmount,
-      // swap
-      description: `Reversal: ${line.description || ""}`
-    });
-  }
-  const reversalEntryId = await createJournalEntry({
-    description: `Reversal of ${jeEntry.entryNumber}: ${jeEntry.description}`,
-    referenceType: jeEntry.referenceType || "journal_entry",
-    referenceId: jeEntry.referenceId || entityId,
-    branchId: jeEntry.branchId || 1,
-    userId,
-    lines: reversingLines
-  });
-  const now = (/* @__PURE__ */ new Date()).toISOString();
-  await db2.update(journalEntries).set({
-    status: "reversed",
-    reversedBy: userId,
-    reversedAt: now,
-    reversalEntryId,
-    updatedAt: now
-  }).where(drizzleOrm.eq(journalEntries.id, entityId));
-  return {
-    reversalDetails: {
-      journalEntryId: entityId,
-      entryNumber: jeEntry.entryNumber,
-      originalDescription: jeEntry.description,
-      linesReversed: lines.length,
-      reversalEntryId
-    }
-  };
-}
-async function executePurchaseReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const purchase = await db2.query.purchases.findFirst({
-    where: drizzleOrm.eq(purchases.id, entityId)
-  });
-  if (!purchase) throw new Error(`Purchase #${entityId} not found`);
-  if (purchase.status === "cancelled") {
-    throw new Error(`Purchase #${entityId} is already cancelled`);
-  }
-  const items = await db2.query.purchaseItems.findMany({
-    where: drizzleOrm.eq(purchaseItems.purchaseId, entityId)
-  });
-  let inventoryDeducted = false;
-  if (purchase.status === "received" || purchase.status === "partial") {
-    for (const item of items) {
-      if (item.receivedQuantity > 0) {
-        await db2.update(inventory).set({
-          quantity: drizzleOrm.sql`${inventory.quantity} - ${item.receivedQuantity}`,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(
-          drizzleOrm.and(
-            drizzleOrm.eq(inventory.productId, item.productId),
-            drizzleOrm.eq(inventory.branchId, purchase.branchId)
-          )
-        );
-        await db2.update(inventoryCostLayers).set({
-          quantity: 0,
-          isFullyConsumed: true,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(inventoryCostLayers.purchaseItemId, item.id));
-      }
-    }
-    inventoryDeducted = true;
-  }
-  let cancelledPayableId = null;
-  const linkedPayable = await db2.query.accountPayables.findFirst({
-    where: drizzleOrm.eq(accountPayables.purchaseId, entityId)
-  });
-  if (linkedPayable && linkedPayable.status !== "cancelled") {
-    await db2.update(accountPayables).set({
-      status: "cancelled",
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }).where(drizzleOrm.eq(accountPayables.id, linkedPayable.id));
-    cancelledPayableId = linkedPayable.id;
-  }
-  await db2.update(purchases).set({
-    status: "cancelled",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(purchases.id, entityId));
-  const glResult = await reverseGLEntry(
-    "purchase",
-    entityId,
-    `Reversal of purchase ${purchase.purchaseOrderNumber}`,
-    purchase.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      purchaseId: entityId,
-      purchaseOrderNumber: purchase.purchaseOrderNumber,
-      inventoryDeducted,
-      itemsAffected: items.length,
-      cancelledPayableId,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeARPaymentReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const payment = await db2.query.receivablePayments.findFirst({
-    where: drizzleOrm.eq(receivablePayments.id, entityId)
-  });
-  if (!payment) throw new Error(`Receivable payment #${entityId} not found`);
-  const receivable = await db2.query.accountReceivables.findFirst({
-    where: drizzleOrm.eq(accountReceivables.id, payment.receivableId)
-  });
-  if (!receivable) throw new Error(`Account receivable #${payment.receivableId} not found`);
-  const newPaidAmount = receivable.paidAmount - payment.amount;
-  const newRemainingAmount = receivable.totalAmount - newPaidAmount;
-  let newStatus;
-  if (newPaidAmount <= 0) {
-    newStatus = "pending";
-  } else if (newPaidAmount < receivable.totalAmount) {
-    newStatus = "partial";
-  } else {
-    newStatus = "paid";
-  }
-  await db2.update(accountReceivables).set({
-    paidAmount: newPaidAmount,
-    remainingAmount: newRemainingAmount,
-    status: newStatus,
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(accountReceivables.id, payment.receivableId));
-  const glResult = await reverseGLEntry(
-    "receivable_payment",
-    entityId,
-    `Reversal of AR payment #${entityId} for invoice ${receivable.invoiceNumber}`,
-    receivable.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      paymentId: entityId,
-      receivableId: payment.receivableId,
-      invoiceNumber: receivable.invoiceNumber,
-      amountReversed: payment.amount,
-      newPaidAmount,
-      newRemainingAmount,
-      newReceivableStatus: newStatus,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeAPPaymentReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const payment = await db2.query.payablePayments.findFirst({
-    where: drizzleOrm.eq(payablePayments.id, entityId)
-  });
-  if (!payment) throw new Error(`Payable payment #${entityId} not found`);
-  const payable = await db2.query.accountPayables.findFirst({
-    where: drizzleOrm.eq(accountPayables.id, payment.payableId)
-  });
-  if (!payable) throw new Error(`Account payable #${payment.payableId} not found`);
-  const newPaidAmount = payable.paidAmount - payment.amount;
-  const newRemainingAmount = payable.totalAmount - newPaidAmount;
-  let newStatus;
-  if (newPaidAmount <= 0) {
-    newStatus = "pending";
-  } else if (newPaidAmount < payable.totalAmount) {
-    newStatus = "partial";
-  } else {
-    newStatus = "paid";
-  }
-  await db2.update(accountPayables).set({
-    paidAmount: newPaidAmount,
-    remainingAmount: newRemainingAmount,
-    status: newStatus,
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(accountPayables.id, payment.payableId));
-  const glResult = await reverseGLEntry(
-    "payable_payment",
-    entityId,
-    `Reversal of AP payment #${entityId} for invoice ${payable.invoiceNumber}`,
-    payable.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      paymentId: entityId,
-      payableId: payment.payableId,
-      invoiceNumber: payable.invoiceNumber,
-      amountReversed: payment.amount,
-      newPaidAmount,
-      newRemainingAmount,
-      newPayableStatus: newStatus,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeCommissionReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const commission = await db2.query.commissions.findFirst({
-    where: drizzleOrm.eq(commissions.id, entityId)
-  });
-  if (!commission) throw new Error(`Commission #${entityId} not found`);
-  if (commission.status === "cancelled") {
-    throw new Error(`Commission #${entityId} is already cancelled`);
-  }
-  await db2.update(commissions).set({
-    status: "cancelled",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(commissions.id, entityId));
-  const glResult = await reverseGLEntry(
-    "commission",
-    entityId,
-    `Reversal of commission #${entityId}`,
-    commission.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      commissionId: entityId,
-      saleId: commission.saleId,
-      commissionAmount: commission.commissionAmount,
-      previousStatus: commission.status,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeReceivableReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const receivable = await db2.query.accountReceivables.findFirst({
-    where: drizzleOrm.eq(accountReceivables.id, entityId)
-  });
-  if (!receivable) throw new Error(`Receivable #${entityId} not found`);
-  if (receivable.status === "cancelled") {
-    throw new Error(`Receivable #${entityId} is already cancelled`);
-  }
-  await db2.update(accountReceivables).set({
-    status: "cancelled",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(accountReceivables.id, entityId));
-  const glResult = await reverseGLEntry(
-    "receivable",
-    entityId,
-    `Reversal of receivable #${entityId} (${receivable.invoiceNumber})`,
-    receivable.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      receivableId: entityId,
-      invoiceNumber: receivable.invoiceNumber,
-      totalAmount: receivable.totalAmount,
-      previousStatus: receivable.status,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executePayableReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const payable = await db2.query.accountPayables.findFirst({
-    where: drizzleOrm.eq(accountPayables.id, entityId)
-  });
-  if (!payable) throw new Error(`Payable #${entityId} not found`);
-  if (payable.status === "cancelled") {
-    throw new Error(`Payable #${entityId} is already cancelled`);
-  }
-  await db2.update(accountPayables).set({
-    status: "cancelled",
-    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-  }).where(drizzleOrm.eq(accountPayables.id, entityId));
-  const glResult = await reverseGLEntry(
-    "payable",
-    entityId,
-    `Reversal of payable #${entityId} (${payable.invoiceNumber})`,
-    payable.branchId,
-    userId
-  );
-  return {
-    reversalDetails: {
-      payableId: entityId,
-      invoiceNumber: payable.invoiceNumber,
-      totalAmount: payable.totalAmount,
-      previousStatus: payable.status,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeReturnReversal(entityId, userId) {
-  const db2 = getDatabase();
-  const returnRecord = await db2.query.returns.findFirst({
-    where: drizzleOrm.eq(returns.id, entityId)
-  });
-  if (!returnRecord) throw new Error(`Return #${entityId} not found`);
-  const items = await db2.query.returnItems.findMany({
-    where: drizzleOrm.eq(returnItems.returnId, entityId)
-  });
-  for (const item of items) {
-    if (item.restockable) {
-      await db2.update(inventory).set({
-        quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(
-        drizzleOrm.and(drizzleOrm.eq(inventory.productId, item.productId), drizzleOrm.eq(inventory.branchId, returnRecord.branchId))
-      );
-      await consumeCostLayers(item.productId, returnRecord.branchId, item.quantity);
-    }
-  }
-  const glResult = await reverseGLEntry(
-    "return",
-    entityId,
-    `Reversal of return ${returnRecord.returnNumber}`,
-    returnRecord.branchId,
-    userId
-  );
-  await db2.delete(returnItems).where(drizzleOrm.eq(returnItems.returnId, entityId));
-  await db2.delete(returns).where(drizzleOrm.eq(returns.id, entityId));
-  return {
-    reversalDetails: {
-      returnId: entityId,
-      returnNumber: returnRecord.returnNumber,
-      totalAmount: returnRecord.totalAmount,
-      itemsReversed: items.length,
-      glReversed: glResult.reversed,
-      originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
-    }
-  };
-}
-async function executeReversal(entityType, entityId, userId) {
-  switch (entityType) {
-    case "sale":
-      return executeSaleReversal(entityId, userId);
-    case "expense":
-      return executeExpenseReversal(entityId, userId);
-    case "journal_entry":
-      return executeJournalEntryReversal(entityId, userId);
-    case "purchase":
-      return executePurchaseReversal(entityId, userId);
-    case "receivable_payment":
-      return executeARPaymentReversal(entityId, userId);
-    case "payable_payment":
-      return executeAPPaymentReversal(entityId, userId);
-    case "commission":
-      return executeCommissionReversal(entityId, userId);
-    case "receivable":
-      return executeReceivableReversal(entityId, userId);
-    case "payable":
-      return executePayableReversal(entityId, userId);
-    case "return":
-      return executeReturnReversal(entityId, userId);
-    case "stock_adjustment":
-    case "stock_transfer":
-      throw new Error(`Reversal for entity type '${entityType}' is not yet implemented`);
-    default:
-      throw new Error(`Unknown entity type for reversal: '${entityType}'`);
-  }
 }
 async function lookupEntityReference(db2, entityType, entityId) {
   switch (entityType) {

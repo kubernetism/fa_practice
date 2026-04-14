@@ -102,7 +102,9 @@ const api = {
     getById: (id) => electron.ipcRenderer.invoke("purchases:get-by-id", id),
     receive: (purchaseId, receivedItems) => electron.ipcRenderer.invoke("purchases:receive", purchaseId, receivedItems),
     updateStatus: (id, status) => electron.ipcRenderer.invoke("purchases:update-status", id, status),
-    payOff: (purchaseId, paymentData) => electron.ipcRenderer.invoke("purchases:pay-off", purchaseId, paymentData)
+    payOff: (purchaseId, paymentData) => electron.ipcRenderer.invoke("purchases:pay-off", purchaseId, paymentData),
+    checkReversible: (purchaseId) => electron.ipcRenderer.invoke("purchases:check-reversible", purchaseId),
+    reverseAndReenter: (purchaseId, reason) => electron.ipcRenderer.invoke("purchases:reverse-and-reenter", purchaseId, reason)
   },
   // Returns
   returns: {

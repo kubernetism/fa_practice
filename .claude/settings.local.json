@@ -65,7 +65,11 @@
       "mcp__plugin_playwright_playwright__browser_navigate",
       "mcp__plugin_playwright_playwright__browser_evaluate",
       "mcp__plugin_playwright_playwright__browser_take_screenshot",
-      "mcp__plugin_playwright_playwright__browser_close"
+      "mcp__plugin_playwright_playwright__browser_close",
+      "Bash(script -q -c \"printf '\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n' | pnpm db:generate\" /dev/null)",
+      "Bash(pnpm typecheck:*)",
+      "Bash(pnpm typecheck:node)",
+      "Bash(pnpm lint:*)"
     ]
   }
 }
