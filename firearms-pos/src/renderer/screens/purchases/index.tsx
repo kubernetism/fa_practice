@@ -17,7 +17,10 @@ import {
   CreditCard,
   Banknote,
   Filter,
+  RotateCcw,
 } from 'lucide-react'
+import { ReverseDialog } from './reverse-dialog'
+import { useAuth } from '@/contexts/auth-context'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -68,7 +71,7 @@ interface Purchase {
   totalAmount: number
   paymentMethod: 'cash' | 'cheque' | 'pay_later'
   paymentStatus: 'paid' | 'partial' | 'pending'
-  status: 'draft' | 'ordered' | 'partial' | 'received' | 'cancelled'
+  status: 'draft' | 'ordered' | 'partial' | 'received' | 'cancelled' | 'reversed'
   expectedDeliveryDate: string | null
   receivedDate: string | null
   notes: string | null
@@ -123,6 +126,7 @@ const ORDER_STATUSES = [
   { value: 'partial', label: 'Partial' },
   { value: 'received', label: 'Received' },
   { value: 'cancelled', label: 'Cancelled' },
+  { value: 'reversed', label: 'Reversed' },
 ]
 
 const PAYMENT_STATUSES = [
@@ -141,6 +145,8 @@ const ITEMS_PER_PAGE = 10
 
 export function PurchasesScreen() {
   const { currentBranch, branches } = useBranch()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
 
   // Data
   const [purchases, setPurchases] = useState<Purchase[]>([])
@@ -190,6 +196,11 @@ export function PurchasesScreen() {
   const [viewingItems, setViewingItems] = useState<PurchaseItem[]>([])
   const [viewingSupplier, setViewingSupplier] = useState<Supplier | null>(null)
   const [isLoadingDetails, setIsLoadingDetails] = useState(false)
+
+  // Reverse dialog state
+  const [reversingPurchase, setReversingPurchase] = useState<Purchase | null>(null)
+  const [isReentry, setIsReentry] = useState(false)
+  const [reentrySourcePO, setReentrySourcePO] = useState<string>('')
 
   // Receive dialog state
   const [isReceiveDialogOpen, setIsReceiveDialogOpen] = useState(false)
@@ -288,6 +299,8 @@ export function PurchasesScreen() {
         return <Badge variant="success">Received</Badge>
       case 'cancelled':
         return <Badge variant="destructive">Cancelled</Badge>
+      case 'reversed':
+        return <Badge variant="destructive">Reversed</Badge>
       default:
         return <Badge variant="outline">{status}</Badge>
     }
@@ -410,6 +423,8 @@ export function PurchasesScreen() {
   // Open create dialog
   const handleOpenCreateDialog = () => {
     resetForm()
+    setIsReentry(false)
+    setReentrySourcePO('')
     setSelectedBranchId(currentBranch?.id?.toString() || '')
     setIsCreateDialogOpen(true)
   }
@@ -439,6 +454,8 @@ export function PurchasesScreen() {
 
       if (result.success) {
         setIsCreateDialogOpen(false)
+        setIsReentry(false)
+        setReentrySourcePO('')
         resetForm()
         fetchData()
       } else {
@@ -579,6 +596,35 @@ export function PurchasesScreen() {
     } finally {
       setIsPayingOff(false)
     }
+  }
+
+  // Reverse purchase
+  const handleOpenReverseDialog = (purchase: Purchase) => {
+    setReversingPurchase(purchase)
+  }
+
+  const handleReversalConfirmed = (prefillDraft: Record<string, unknown>) => {
+    const draft = prefillDraft as {
+      supplierId: number
+      branchId: number
+      items: { productId: number; quantity: number; unitCost: number }[]
+      shippingCost: number
+      paymentMethod: 'cash' | 'cheque' | 'pay_later'
+      notes: string
+    }
+    const sourcePO = reversingPurchase?.purchaseOrderNumber ?? ''
+    setReversingPurchase(null)
+    resetForm()
+    setSelectedSupplierId(draft.supplierId.toString())
+    setSelectedBranchId(draft.branchId.toString())
+    setShippingCost(draft.shippingCost.toString())
+    setPaymentMethod(draft.paymentMethod)
+    setNotes(draft.notes)
+    setPurchaseItems(draft.items)
+    setIsReentry(true)
+    setReentrySourcePO(sourcePO)
+    setIsCreateDialogOpen(true)
+    fetchData()
   }
 
   // Clear filters
@@ -925,7 +971,7 @@ export function PurchasesScreen() {
                         </Tooltip>
 
                         {/* Receive */}
-                        {purchase.status !== 'received' && purchase.status !== 'cancelled' && (
+                        {purchase.status !== 'received' && purchase.status !== 'cancelled' && purchase.status !== 'reversed' && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -942,7 +988,7 @@ export function PurchasesScreen() {
                         )}
 
                         {/* Pay off */}
-                        {purchase.paymentStatus === 'pending' && purchase.status !== 'cancelled' && (
+                        {purchase.paymentStatus === 'pending' && purchase.status !== 'cancelled' && purchase.status !== 'reversed' && (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -955,6 +1001,23 @@ export function PurchasesScreen() {
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>Pay Off</TooltipContent>
+                          </Tooltip>
+                        )}
+
+                        {/* Reverse (admin only) */}
+                        {isAdmin && purchase.status !== 'cancelled' && purchase.status !== 'reversed' && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 opacity-0 group-hover:opacity-100"
+                                onClick={() => handleOpenReverseDialog(purchase)}
+                              >
+                                <RotateCcw className="h-3.5 w-3.5 text-destructive" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>Reverse &amp; Re-enter</TooltipContent>
                           </Tooltip>
                         )}
                       </div>
@@ -1018,6 +1081,17 @@ export function PurchasesScreen() {
                 Add a new purchase order from a supplier
               </DialogDescription>
             </DialogHeader>
+
+            {isReentry && (
+              <div className="flex items-start gap-2 rounded border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-700 dark:text-amber-400">
+                <RotateCcw className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                <div>
+                  Re-entry of reversed{' '}
+                  <span className="font-mono font-medium">{reentrySourcePO}</span>. Edit any
+                  fields before saving — a fresh purchase order will be created.
+                </div>
+              </div>
+            )}
 
             <div className="space-y-6">
               {/* Supplier and Branch */}
@@ -1540,6 +1614,24 @@ export function PurchasesScreen() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Reverse Dialog */}
+        <ReverseDialog
+          purchase={
+            reversingPurchase
+              ? {
+                  id: reversingPurchase.id,
+                  purchaseOrderNumber: reversingPurchase.purchaseOrderNumber,
+                  supplierName: getSupplierName(reversingPurchase.supplierId),
+                  totalAmount: reversingPurchase.totalAmount,
+                  createdAt: reversingPurchase.createdAt,
+                }
+              : null
+          }
+          open={!!reversingPurchase}
+          onClose={() => setReversingPurchase(null)}
+          onConfirmed={handleReversalConfirmed}
+        />
 
       </div>
     </TooltipProvider>
