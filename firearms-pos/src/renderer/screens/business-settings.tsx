@@ -1556,6 +1556,28 @@ export function BusinessSettingsScreen() {
                           }
                         />
                       </div>
+                      <div>
+                        <Label htmlFor="purchaseReversalMaxDays" className="text-xs font-medium mb-1 block">
+                          Purchase Reversal Window (days)
+                        </Label>
+                        <Input
+                          id="purchaseReversalMaxDays"
+                          type="number"
+                          min="1"
+                          max="3650"
+                          className="h-8 text-sm"
+                          value={currentSettings.purchaseReversalMaxDays ?? 90}
+                          onChange={(e) =>
+                            setCurrentSettings({
+                              ...currentSettings,
+                              purchaseReversalMaxDays: parseInt(e.target.value) || 90,
+                            })
+                          }
+                        />
+                        <p className="text-[10px] text-muted-foreground mt-1">
+                          Admins can reverse purchase orders within this many days of creation.
+                        </p>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
