@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { suppliers, type NewSupplier } from '../db/schema'
+import { suppliers, type NewSupplier, payees } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -173,6 +173,23 @@ export function registerSupplierHandlers(): void {
         description: `Created supplier: ${sanitizedData.name}`,
       })
 
+      // Mirror supplier as vendor payee
+      try {
+        await db.insert(payees).values({
+          name: sanitizedData.name,
+          payeeType: 'vendor',
+          linkedSupplierId: newSupplier.id,
+          contactPhone: sanitizedData.phone || undefined,
+          contactEmail: sanitizedData.email || undefined,
+          address: sanitizedData.address || undefined,
+          notes: sanitizedData.notes || undefined,
+          isActive: sanitizedData.isActive !== false,
+        })
+      } catch (mirrorError) {
+        console.error('Failed to mirror supplier as payee:', mirrorError)
+        // Non-fatal: supplier was created, payee mirroring can be retried
+      }
+
       // Return decrypted data to client
       return { success: true, data: decryptedForAudit }
     } catch (error) {
@@ -225,6 +242,24 @@ export function registerSupplierHandlers(): void {
         newValues: sanitizeForAudit(decryptedNew as Record<string, unknown>),
         description: `Updated supplier: ${existing.name}`,
       })
+
+      // Cascade name/contact changes to mirrored payee
+      try {
+        const mirroredPayee = await db.query.payees.findFirst({
+          where: eq(payees.linkedSupplierId, id),
+        })
+        if (mirroredPayee) {
+          const payeeUpdates: Record<string, unknown> = { updatedAt: new Date().toISOString() }
+          if (sanitizedData.name) payeeUpdates.name = sanitizedData.name
+          if (sanitizedData.phone !== undefined) payeeUpdates.contactPhone = sanitizedData.phone
+          if (sanitizedData.email !== undefined) payeeUpdates.contactEmail = sanitizedData.email
+          if (sanitizedData.address !== undefined) payeeUpdates.address = sanitizedData.address
+          if (sanitizedData.isActive !== undefined) payeeUpdates.isActive = sanitizedData.isActive
+          await db.update(payees).set(payeeUpdates).where(eq(payees.id, mirroredPayee.id))
+        }
+      } catch (mirrorError) {
+        console.error('Failed to cascade supplier update to payee:', mirrorError)
+      }
 
       // Return decrypted data to client
       return { success: true, data: decryptedNew }
