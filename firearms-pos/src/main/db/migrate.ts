@@ -7,6 +7,7 @@ import { migrateToBusinessSettings } from './migrations/migrate_to_business_sett
 import { addPhoneToUsers } from './migrations/add_phone_to_users'
 import { fixFinancialIntegrity } from './migrations/fix_financial_integrity'
 import { fixFinancialIntegrityV2 } from './migrations/fix_financial_integrity_v2'
+import { migrateToPayees } from './migrations/migrate_to_payees'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -229,6 +230,14 @@ export async function runMigrations(): Promise<void> {
     await fixFinancialIntegrityV2()
   } catch (error) {
     console.error('Financial integrity fix v2 error:', error)
+    // Don't throw - log error but continue
+  }
+
+  // Ensure payees table exists and suppliers are mirrored
+  try {
+    await migrateToPayees()
+  } catch (error) {
+    console.error('Payees migration error:', error)
     // Don't throw - log error but continue
   }
 }
@@ -475,6 +484,7 @@ export async function seedInitialData(): Promise<void> {
     { name: 'Supplies', description: 'Office and business supplies' },
     { name: 'Maintenance', description: 'Equipment and facility maintenance' },
     { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Shipping', description: 'Freight and shipping on inbound purchases' },
     { name: 'Other', description: 'Miscellaneous expenses' },
   ])
 
@@ -762,6 +772,7 @@ async function ensureFinancialSystemTables(): Promise<void> {
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5200', 'Rent Expense', 'expense', 'rent_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5300', 'Utilities Expense', 'expense', 'utilities_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5400', 'Inventory Shrinkage', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5500', 'Freight and Shipping', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5900', 'Other Expenses', 'expense', 'other_expense', 'debit', 0, datetime('now'), datetime('now'));
     `
     db.exec(coaMigration)
@@ -772,8 +783,9 @@ async function ensureFinancialSystemTables(): Promise<void> {
     db.exec(`
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4900', 'Inventory Adjustment Income', 'revenue', 'other_revenue', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5400', 'Inventory Shrinkage', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5500', 'Freight and Shipping', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
     `)
-    console.log('Ensured inventory adjustment accounts exist (4900, 5400)')
+    console.log('Ensured inventory adjustment and freight accounts exist (4900, 5400, 5500)')
   }
 
   // Check and create journal_entries table
@@ -1303,6 +1315,7 @@ async function migrateExpensesToCategoryId(): Promise<void> {
     { name: 'Supplies', description: 'Office and business supplies' },
     { name: 'Maintenance', description: 'Equipment and facility maintenance' },
     { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Shipping', description: 'Freight and shipping on inbound purchases' },
     { name: 'Other', description: 'Miscellaneous expenses' },
   ]
 
@@ -1379,6 +1392,7 @@ async function ensureDefaultExpenseAndServiceCategories(): Promise<void> {
     { name: 'Supplies', description: 'Office and business supplies' },
     { name: 'Maintenance', description: 'Equipment and facility maintenance' },
     { name: 'Marketing', description: 'Marketing and advertising expenses' },
+    { name: 'Shipping', description: 'Freight and shipping on inbound purchases' },
     { name: 'Other', description: 'Miscellaneous expenses' },
   ]
 
