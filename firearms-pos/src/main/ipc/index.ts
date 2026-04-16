@@ -41,6 +41,7 @@ import { registerClipboardHandlers } from './clipboard-ipc'
 import { registerShellHandlers } from './shell-ipc'
 import { registerRecoveryHandlers } from './recovery-ipc'
 import { registerOnlineTransactionHandlers } from './online-transactions-ipc'
+import { registerPayeeHandlers } from './payees-ipc'
 
 // Re-export lock state from the centralized module
 export { isApplicationLocked, setApplicationLocked, checkLockGuard } from '../utils/app-lock-state'
@@ -88,6 +89,7 @@ export function registerAllHandlers(): void {
   registerShellHandlers()
   registerRecoveryHandlers()
   registerOnlineTransactionHandlers()
+  registerPayeeHandlers()
 
   console.log('All IPC handlers registered')
 }

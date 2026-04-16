@@ -73,6 +73,8 @@ const api = {
     getProductStock: (productId: number, branchId: number) =>
       ipcRenderer.invoke('inventory:get-product-stock', productId, branchId),
     adjust: (data: Record<string, unknown>) => ipcRenderer.invoke('inventory:adjust', data),
+    setMinQuantity: (data: { productId: number; branchId: number; minQuantity: number }) =>
+      ipcRenderer.invoke('inventory:set-min-quantity', data),
     transfer: (data: Record<string, unknown>) => ipcRenderer.invoke('inventory:transfer', data),
     completeTransfer: (transferId: number) =>
       ipcRenderer.invoke('inventory:complete-transfer', transferId),
@@ -125,6 +127,16 @@ const api = {
     update: (id: number, data: Record<string, unknown>) =>
       ipcRenderer.invoke('suppliers:update', id, data),
     delete: (id: number) => ipcRenderer.invoke('suppliers:delete', id),
+  },
+
+  // Payees
+  payees: {
+    getAll: (params: Record<string, unknown>) => ipcRenderer.invoke('payees:getAll', params),
+    getById: (id: number) => ipcRenderer.invoke('payees:getById', id),
+    create: (data: Record<string, unknown>) => ipcRenderer.invoke('payees:create', data),
+    update: (id: number, data: Record<string, unknown>) =>
+      ipcRenderer.invoke('payees:update', id, data),
+    delete: (id: number) => ipcRenderer.invoke('payees:delete', id),
   },
 
   // Sales
@@ -446,7 +458,8 @@ const api = {
 
   // Receipt Generation
   receipt: {
-    generate: (saleId: number) => ipcRenderer.invoke('receipt:generate', saleId),
+    generate: (saleId: number, customFileName?: string) =>
+      ipcRenderer.invoke('receipt:generate', saleId, customFileName),
     getData: (saleId: number) => ipcRenderer.invoke('receipt:get-data', saleId),
     getSettings: (branchId?: number) => ipcRenderer.invoke('receipt:get-settings', branchId),
     generatePaymentHistory: (receivableId: number) =>
