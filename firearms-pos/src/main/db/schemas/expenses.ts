@@ -2,7 +2,7 @@ import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core
 import { relations } from 'drizzle-orm'
 import { branches } from './branches'
 import { users } from './users'
-import { suppliers } from './suppliers'
+import { payees } from './payees'
 import { accountPayables } from './account-payables'
 import { categories } from './categories'
 
@@ -32,7 +32,7 @@ export const expenses = sqliteTable(
     paymentStatus: text('payment_status', { enum: ['paid', 'unpaid'] })
       .notNull()
       .default('paid'),
-    supplierId: integer('supplier_id').references(() => suppliers.id),
+    payeeId: integer('payee_id').references(() => payees.id),
     payableId: integer('payable_id').references(() => accountPayables.id),
     dueDate: text('due_date'),
     paymentTerms: text('payment_terms'),
@@ -49,7 +49,7 @@ export const expenses = sqliteTable(
   },
   (table) => ({
     paymentStatusIdx: index('expenses_payment_status_idx').on(table.paymentStatus),
-    supplierIdx: index('expenses_supplier_idx').on(table.supplierId),
+    payeeIdx: index('expenses_payee_idx').on(table.payeeId),
     payableIdx: index('expenses_payable_idx').on(table.payableId),
   })
 )
@@ -68,9 +68,9 @@ export const expensesRelations = relations(expenses, ({ one }) => ({
     fields: [expenses.categoryId],
     references: [categories.id],
   }),
-  supplier: one(suppliers, {
-    fields: [expenses.supplierId],
-    references: [suppliers.id],
+  payee: one(payees, {
+    fields: [expenses.payeeId],
+    references: [payees.id],
   }),
   payable: one(accountPayables, {
     fields: [expenses.payableId],
