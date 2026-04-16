@@ -4,15 +4,15 @@ import { suppliers } from './suppliers'
 import { purchases } from './purchases'
 import { branches } from './branches'
 import { users } from './users'
+import { payees } from './payees'
 
 // Account Payables - tracks unpaid amounts to suppliers
 export const accountPayables = sqliteTable(
   'account_payables',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
-    supplierId: integer('supplier_id')
-      .notNull()
-      .references(() => suppliers.id),
+    supplierId: integer('supplier_id').references(() => suppliers.id),
+    payeeId: integer('payee_id').references(() => payees.id),
     purchaseId: integer('purchase_id').references(() => purchases.id),
     branchId: integer('branch_id')
       .notNull()
@@ -37,6 +37,7 @@ export const accountPayables = sqliteTable(
   },
   (table) => ({
     supplierIdx: index('payables_supplier_idx').on(table.supplierId),
+    payeeIdx: index('payables_payee_idx').on(table.payeeId),
     statusIdx: index('payables_status_idx').on(table.status),
     branchIdx: index('payables_branch_idx').on(table.branchId),
     dueDateIdx: index('payables_due_date_idx').on(table.dueDate),
@@ -78,6 +79,10 @@ export const accountPayablesRelations = relations(accountPayables, ({ one, many 
   supplier: one(suppliers, {
     fields: [accountPayables.supplierId],
     references: [suppliers.id],
+  }),
+  payee: one(payees, {
+    fields: [accountPayables.payeeId],
+    references: [payees.id],
   }),
   purchase: one(purchases, {
     fields: [accountPayables.purchaseId],
