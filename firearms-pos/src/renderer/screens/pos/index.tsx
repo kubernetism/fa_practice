@@ -877,6 +877,17 @@ export function POSScreen() {
                           )}
                         </div>
 
+                        {(() => {
+                          const caliberName = (item.product as typeof item.product & {
+                            _caliberName?: string | null
+                          })._caliberName
+                          return caliberName ? (
+                            <span className="absolute top-1 right-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[9px] font-mono">
+                              {caliberName}
+                            </span>
+                          ) : null
+                        })()}
+
                         <p className="text-[10px] font-mono text-muted-foreground/70 mb-1.5">{item.product.code}</p>
 
                         <div className="mt-auto flex items-end justify-between gap-1 pt-1.5 border-t border-border">
@@ -1045,6 +1056,20 @@ export function POSScreen() {
                           {isService && <Wrench className="h-2.5 w-2.5 text-blue-500 shrink-0" />}
                           <span className="font-medium truncate">{name}</span>
                         </div>
+                        {(() => {
+                          if (isService || !item.product) return null
+                          const p = item.product as typeof item.product & {
+                            _modelName?: string | null
+                            _caliberName?: string | null
+                            make?: string | null
+                          }
+                          const parts = [p._modelName, p._caliberName, p.make].filter(Boolean)
+                          return parts.length > 0 ? (
+                            <div className="text-[10px] text-muted-foreground/70 truncate">
+                              {parts.join(' · ')}
+                            </div>
+                          ) : null
+                        })()}
                         <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
                           <span className="tabular-nums">{formatCurrency(price)}</span>
                           {item.serialNumber && <span className="font-mono">SN:{item.serialNumber}</span>}

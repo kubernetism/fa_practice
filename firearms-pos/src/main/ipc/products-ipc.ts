@@ -1,7 +1,14 @@
 import { ipcMain } from 'electron'
 import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { products, categories, inventory, type NewProduct } from '../db/schema'
+import {
+  products,
+  categories,
+  inventory,
+  firearmModels,
+  firearmCalibers,
+  type NewProduct,
+} from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -360,19 +367,40 @@ export function registerProductHandlers(): void {
 
   ipcMain.handle('products:search', async (_, query: string) => {
     try {
-      const results = await db.query.products.findMany({
-        where: and(
-          eq(products.isActive, true),
-          or(
-            like(products.name, `%${query}%`),
-            like(products.code, `%${query}%`),
-            like(products.barcode, `%${query}%`)
-          )
-        ),
-        limit: 20,
-      })
+      const q = `%${query.toLowerCase()}%`
+      const rows = await db
+        .select({
+          p: products,
+          modelName: firearmModels.name,
+          caliberName: firearmCalibers.name,
+        })
+        .from(products)
+        .leftJoin(firearmModels, eq(products.firearmModelId, firearmModels.id))
+        .leftJoin(firearmCalibers, eq(products.caliberId, firearmCalibers.id))
+        .where(
+          and(
+            eq(products.isActive, true),
+            or(
+              like(sql`lower(${products.name})`, q),
+              like(sql`lower(${products.code})`, q),
+              like(sql`lower(${products.barcode})`, q),
+              like(sql`lower(${firearmModels.name})`, q),
+              like(sql`lower(${firearmCalibers.name})`, q),
+              like(sql`lower(${products.make})`, q),
+              like(sql`lower(${products.madeCountry})`, q),
+            ),
+          ),
+        )
+        .limit(50)
 
-      return { success: true, data: results }
+      return {
+        success: true,
+        data: rows.map((r) => ({
+          ...r.p,
+          _modelName: r.modelName,
+          _caliberName: r.caliberName,
+        })),
+      }
     } catch (error) {
       console.error('Search products error:', error)
       return { success: false, message: 'Failed to search products' }
