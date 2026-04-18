@@ -101,6 +101,7 @@ export default function ReportsScreen() {
   const [branches, setBranches] = useState<Branch[]>([])
   const [customers, setCustomers] = useState<Array<{ id: number; firstName: string; lastName: string }>>([])
   const [suppliersData, setSuppliersData] = useState<Array<{ id: number; name: string }>>([])
+  const [payeesData, setPayeesData] = useState<Array<{ id: number; name: string; payeeType: string }>>([])
   const [categoriesData, setCategoriesData] = useState<Array<{ id: number; name: string }>>([])
   const [usersData, setUsersData] = useState<Array<{ id: number; fullName: string }>>([])
 
@@ -119,6 +120,8 @@ export default function ReportsScreen() {
   const [paymentStatus, setPaymentStatus] = useState<string>('all')
   const [customerId, setCustomerId] = useState<string>('all')
   const [supplierId, setSupplierId] = useState<string>('all')
+  const [payeeId, setPayeeId] = useState<string>('all')
+  const [payeeTypeFilter, setPayeeTypeFilter] = useState<string>('all')
   const [categoryId, setCategoryId] = useState<string>('all')
   const [salespersonId, setSalespersonId] = useState<string>('all')
   const [actionType, setActionType] = useState<string>('all')
@@ -171,6 +174,8 @@ export default function ReportsScreen() {
     setPaymentStatus('all')
     setCustomerId('all')
     setSupplierId('all')
+    setPayeeId('all')
+    setPayeeTypeFilter('all')
     setCategoryId('all')
     setSalespersonId('all')
     setActionType('all')
@@ -218,14 +223,16 @@ export default function ReportsScreen() {
 
   const fetchReferenceData = async () => {
     try {
-      const [custRes, suppRes, catRes, userRes] = await Promise.all([
+      const [custRes, suppRes, payeeRes, catRes, userRes] = await Promise.all([
         window.api.customers?.getAll?.() || { data: [] },
         window.api.suppliers?.getAll?.() || { data: [] },
+        window.api.payees?.getAll?.({ isActive: true, limit: 1000 }) || { data: [] },
         window.api.categories?.getAll?.() || { data: [] },
         window.api.users?.getAll?.() || { data: [] },
       ])
       setCustomers(custRes?.data || [])
       setSuppliersData(suppRes?.data || [])
+      setPayeesData(payeeRes?.data || [])
       setCategoriesData(catRes?.data || [])
       setUsersData(userRes?.data || [])
     } catch {
@@ -246,6 +253,8 @@ export default function ReportsScreen() {
     if (paymentStatus !== 'all') params.paymentStatus = paymentStatus
     if (customerId !== 'all') params.customerId = parseInt(customerId)
     if (supplierId !== 'all') params.supplierId = parseInt(supplierId)
+    if (payeeId !== 'all') params.payeeId = parseInt(payeeId)
+    if (payeeTypeFilter !== 'all') params.payeeType = payeeTypeFilter
     if (categoryId !== 'all') params.categoryId = parseInt(categoryId)
     if (salespersonId !== 'all') params.salespersonId = parseInt(salespersonId)
     if (actionType !== 'all') params.actionType = actionType
@@ -253,7 +262,7 @@ export default function ReportsScreen() {
     if (reason !== 'all') params.reason = reason
     if (overrides) Object.assign(params, overrides)
     return params
-  }, [startDate, endDate, currentPage, pageSize, groupBy, config.hasGroupBy, selectedBranch, paymentMethod, paymentStatus, customerId, supplierId, categoryId, salespersonId, actionType, entityType, reason])
+  }, [startDate, endDate, currentPage, pageSize, groupBy, config.hasGroupBy, selectedBranch, paymentMethod, paymentStatus, customerId, supplierId, payeeId, payeeTypeFilter, categoryId, salespersonId, actionType, entityType, reason])
 
   const getComparisonParams = useCallback(() => {
     if (comparisonMode === 'branch') {
@@ -597,6 +606,50 @@ export default function ReportsScreen() {
           </div>
         )}
 
+        {/* Payee filter */}
+        {config.entityFilters.includes('payee') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Payee</Label>
+            <Select value={payeeId} onValueChange={setPayeeId}>
+              <SelectTrigger className="h-8 w-[180px] text-xs">
+                <SelectValue placeholder="All Payees" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Payees</SelectItem>
+                {payeesData.map((p) => (
+                  <SelectItem key={p.id} value={p.id.toString()}>
+                    <span className="capitalize text-muted-foreground text-[10px] mr-1">
+                      {p.payeeType}
+                    </span>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* Payee Type filter */}
+        {config.entityFilters.includes('payeeType') && (
+          <div className="space-y-1">
+            <Label className="text-[10px] text-muted-foreground">Payee Type</Label>
+            <Select value={payeeTypeFilter} onValueChange={setPayeeTypeFilter}>
+              <SelectTrigger className="h-8 w-[130px] text-xs">
+                <SelectValue placeholder="All Types" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Types</SelectItem>
+                <SelectItem value="vendor">Vendor</SelectItem>
+                <SelectItem value="landlord">Landlord</SelectItem>
+                <SelectItem value="utility">Utility</SelectItem>
+                <SelectItem value="employee">Employee</SelectItem>
+                <SelectItem value="government">Government</SelectItem>
+                <SelectItem value="other">Other</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
         {/* Category filter */}
         {config.entityFilters.includes('category') && (
           <div className="space-y-1">
@@ -868,6 +921,102 @@ export default function ReportsScreen() {
               )
             })}
           </div>
+
+          {/* Expense payee analysis */}
+          {reportType === 'expenses' && reportData.expensesByPayee && reportData.expensesByPayee.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {/* Expenses by Payee Type */}
+              <Card>
+                <CardHeader className="p-3 pb-2">
+                  <h3 className="text-xs font-semibold tracking-wide uppercase">Expenses by Payee Type</h3>
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  {(() => {
+                    const types = reportData.expensesByPayeeType || []
+                    const totalForTypes = types.reduce(
+                      (s: number, r: any) => s + (Number(r.amount) || 0),
+                      0
+                    )
+                    if (types.length === 0) {
+                      return <p className="text-xs text-muted-foreground">No data.</p>
+                    }
+                    return (
+                      <div className="space-y-1.5">
+                        {types.map((r: any) => {
+                          const amount = Number(r.amount) || 0
+                          const pct = totalForTypes > 0 ? (amount / totalForTypes) * 100 : 0
+                          return (
+                            <div key={r.payeeType} className="space-y-0.5">
+                              <div className="flex items-center justify-between text-xs">
+                                <span className="capitalize font-medium">{r.payeeType}</span>
+                                <span className="tabular-nums text-muted-foreground">
+                                  {formatCurrency(amount)} · {pct.toFixed(1)}% · {Number(r.count) || 0} txn
+                                </span>
+                              </div>
+                              <div className="h-1.5 bg-muted rounded overflow-hidden">
+                                <div
+                                  className="h-full bg-primary/70"
+                                  style={{ width: `${Math.min(pct, 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()}
+                </CardContent>
+              </Card>
+
+              {/* Top Payees + Concentration */}
+              <Card>
+                <CardHeader className="p-3 pb-2">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-semibold tracking-wide uppercase">Top Payees</h3>
+                    {(() => {
+                      const total = (reportData.expensesByPayee as any[]).reduce(
+                        (s, r) => s + (Number(r.amount) || 0),
+                        0
+                      )
+                      const top3 = (reportData.expensesByPayee as any[])
+                        .slice(0, 3)
+                        .reduce((s, r) => s + (Number(r.amount) || 0), 0)
+                      const pct = total > 0 ? (top3 / total) * 100 : 0
+                      return (
+                        <span className="text-[10px] text-muted-foreground">
+                          Top 3: {pct.toFixed(1)}% of total
+                        </span>
+                      )
+                    })()}
+                  </div>
+                </CardHeader>
+                <CardContent className="p-3 pt-0">
+                  <div className="space-y-1">
+                    {(reportData.expensesByPayee as any[]).slice(0, 5).map((r, idx) => (
+                      <div
+                        key={r.payeeId ?? idx}
+                        className="flex items-center justify-between text-xs py-1 border-b border-border/40 last:border-b-0"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-muted-foreground w-4 tabular-nums">{idx + 1}.</span>
+                          <span className="capitalize text-[10px] text-muted-foreground/70">
+                            {r.payeeType}
+                          </span>
+                          <span className="truncate font-medium">{r.payeeName}</span>
+                        </div>
+                        <span className="tabular-nums shrink-0">
+                          {formatCurrency(Number(r.amount) || 0)}
+                        </span>
+                      </div>
+                    ))}
+                    {reportData.expensesByPayee.length === 0 && (
+                      <p className="text-xs text-muted-foreground">No payee data.</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Detail Table */}
           {reportData.details && reportData.details.rows && reportData.details.rows.length > 0 && (

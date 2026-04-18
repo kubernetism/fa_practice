@@ -10,7 +10,6 @@ import {
   expenses,
   cashRegisterSessions,
   cashTransactions,
-  type NewAccountPayable,
   onlineTransactions,
   type NewAccountPayable,
   type NewPayablePayment,
@@ -283,44 +282,77 @@ export function registerAccountPayablesHandlers(): void {
         return { success: false, message: 'Unauthorized' }
       }
 
-      // Get the payable
-      const payable = await db.query.accountPayables.findFirst({
-        where: eq(accountPayables.id, data.payableId),
-        with: {
-          supplier: true,
-        },
-      })
-
-      if (!payable) {
-        return { success: false, message: 'Payable not found' }
-      }
-
-      if (payable.status === 'paid') {
-        return { success: false, message: 'This payable is already fully paid' }
-      }
-
-      if (payable.status === 'cancelled') {
-        return { success: false, message: 'Cannot record payment for cancelled payable' }
-      }
-
       if (data.amount <= 0) {
         return { success: false, message: 'Payment amount must be greater than 0' }
       }
 
-      if (data.amount > payable.remainingAmount) {
-        return {
-          success: false,
-          message: `Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`,
-        }
+      // Pre-flight read for branch lookup + cash-session enforcement.
+      // The authoritative read happens again inside the tx below to avoid
+      // double-payment races between concurrent calls.
+      const preflightPayable = await db.query.accountPayables.findFirst({
+        where: eq(accountPayables.id, data.payableId),
+      })
+
+      if (!preflightPayable) {
+        return { success: false, message: 'Payable not found' }
       }
 
-      // Calculate new values
-      const newPaidAmount = payable.paidAmount + data.amount
-      const newRemainingAmount = payable.totalAmount - newPaidAmount
-      const newStatus = newRemainingAmount <= 0 ? 'paid' : 'partial'
+      // Cash AP payments must hit the physical drawer. Reject up front if no
+      // session is open, matching purchases:pay-off behaviour. Without this
+      // guard the GL Cash account would credit while the register stays
+      // untouched, breaking GL ↔ register reconciliation.
+      let openCashSessionId: number | null = null
+      if (data.paymentMethod === 'cash') {
+        const today = new Date().toISOString().split('T')[0]
+        const openSession = await db.query.cashRegisterSessions.findFirst({
+          where: and(
+            eq(cashRegisterSessions.branchId, preflightPayable.branchId),
+            eq(cashRegisterSessions.sessionDate, today),
+            eq(cashRegisterSessions.status, 'open')
+          ),
+        })
+        if (!openSession) {
+          return {
+            success: false,
+            message:
+              'No open cash register session for this branch. Open a session before paying in cash.',
+          }
+        }
+        openCashSessionId = openSession.id
+      }
 
-      // Execute all operations in a transaction
-      const result = await withTransaction(async ({ db: txDb }) => {
+      // Execute all operations in a single transaction. The payable is
+      // re-read inside the tx so two concurrent partial payments serialize
+      // on BEGIN IMMEDIATE rather than racing on a stale paidAmount.
+      const txResult = await withTransaction(async ({ db: txDb }) => {
+        const payable = await txDb.query.accountPayables.findFirst({
+          where: eq(accountPayables.id, data.payableId),
+          with: { supplier: true },
+        })
+
+        if (!payable) {
+          throw new Error('Payable not found')
+        }
+        if (payable.status === 'paid') {
+          throw new Error('This payable is already fully paid')
+        }
+        if (payable.status === 'cancelled') {
+          throw new Error('Cannot record payment for cancelled payable')
+        }
+        if (payable.status === 'reversed') {
+          throw new Error('Cannot record payment for reversed payable')
+        }
+        if (data.amount > payable.remainingAmount) {
+          throw new Error(
+            `Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`
+          )
+        }
+
+        const newPaidAmount = payable.paidAmount + data.amount
+        const newRemainingAmount = payable.totalAmount - newPaidAmount
+        const newStatus: 'paid' | 'partial' = newRemainingAmount <= 0 ? 'paid' : 'partial'
+        const now = new Date().toISOString()
+
         // Record the payment
         const [payment] = await txDb
           .insert(payablePayments)
@@ -334,35 +366,66 @@ export function registerAccountPayablesHandlers(): void {
           })
           .returning()
 
-        // Update payable amounts
+        // Update payable aggregates
         await txDb
           .update(accountPayables)
           .set({
             paidAmount: newPaidAmount,
             remainingAmount: Math.max(0, newRemainingAmount),
             status: newStatus,
-            updatedAt: new Date().toISOString(),
+            updatedAt: now,
           })
           .where(eq(accountPayables.id, data.payableId))
 
-        // Bidirectional sync: Update expense status when payable is fully paid
+        // Sync source purchase document so the Purchases tab reflects the
+        // sub-ledger state. Without this, purchases.paymentStatus stays
+        // 'pending' forever and the Purchases register diverges from AP.
+        let purchaseSync: {
+          purchaseId: number
+          purchaseOrderNumber: string
+          oldStatus: string
+          newStatus: 'paid' | 'partial'
+        } | null = null
+        if (payable.purchaseId) {
+          const linkedPurchase = await txDb.query.purchases.findFirst({
+            where: eq(purchases.id, payable.purchaseId),
+          })
+          if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
+            await txDb
+              .update(purchases)
+              .set({ paymentStatus: newStatus, updatedAt: now })
+              .where(eq(purchases.id, linkedPurchase.id))
+            purchaseSync = {
+              purchaseId: linkedPurchase.id,
+              purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+              oldStatus: linkedPurchase.paymentStatus,
+              newStatus,
+            }
+          }
+        }
+
+        // Sync linked expense. Schema only supports 'paid' | 'unpaid', so
+        // partial AP payments cannot be reflected on the expense — they
+        // remain 'unpaid' until full settlement. Fix tracked separately.
+        let expenseSync: { expenseId: number; oldStatus: string } | null = null
         if (newStatus === 'paid') {
           const linkedExpense = await txDb.query.expenses.findFirst({
             where: eq(expenses.payableId, payable.id),
           })
-
           if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
             await txDb
               .update(expenses)
-              .set({
-                paymentStatus: 'paid',
-                updatedAt: new Date().toISOString(),
-              })
+              .set({ paymentStatus: 'paid', updatedAt: now })
               .where(eq(expenses.id, linkedExpense.id))
+            expenseSync = {
+              expenseId: linkedExpense.id,
+              oldStatus: linkedExpense.paymentStatus,
+            }
           }
         }
 
-        // Post to General Ledger
+        // GL: DR Accounts Payable, CR Cash. Same connection as the tx
+        // (createJournalEntry uses the singleton db) so this is atomic.
         await postAPPaymentToGL(
           {
             id: payment.id,
@@ -375,7 +438,7 @@ export function registerAccountPayablesHandlers(): void {
           session.userId
         )
 
-        // Auto-record non-cash payments as online transactions (outflow)
+        // Non-cash payments mirror to online_transactions for reconciliation
         if (data.paymentMethod !== 'cash') {
           await txDb.insert(onlineTransactions).values({
             branchId: payable.branchId,
@@ -394,54 +457,35 @@ export function registerAccountPayablesHandlers(): void {
           })
         }
 
-        // Record cash register outflow for cash AP payments
-        if (data.paymentMethod === 'cash') {
-          const today = new Date().toISOString().split('T')[0]
-          const openSession = await txDb.query.cashRegisterSessions.findFirst({
-            where: and(
-              eq(cashRegisterSessions.branchId, payable.branchId),
-              eq(cashRegisterSessions.sessionDate, today),
-              eq(cashRegisterSessions.status, 'open')
-            ),
+        // Cash drawer outflow. Pre-flight already proved a session exists.
+        if (data.paymentMethod === 'cash' && openCashSessionId !== null) {
+          await txDb.insert(cashTransactions).values({
+            sessionId: openCashSessionId,
+            branchId: payable.branchId,
+            transactionType: 'ap_payment',
+            amount: -data.amount,
+            referenceType: 'payable_payment',
+            referenceId: payment.id,
+            description: `AP payment: ${payable.invoiceNumber}`,
+            recordedBy: session.userId,
           })
-
-          if (openSession) {
-            await txDb.insert(cashTransactions).values({
-              sessionId: openSession.id,
-              branchId: payable.branchId,
-              transactionType: 'ap_payment',
-              amount: -data.amount,
-              referenceType: 'payable_payment',
-              referenceId: payment.id,
-              description: `AP payment: ${payable.invoiceNumber}`,
-              recordedBy: session.userId,
-            })
-          }
         }
 
-        return payment
+        return {
+          payment,
+          payable,
+          newPaidAmount,
+          newRemainingAmount,
+          newStatus,
+          purchaseSync,
+          expenseSync,
+        }
       })
 
-      // Audit log for expense sync (if applicable)
-      if (newStatus === 'paid') {
-        const linkedExpense = await db.query.expenses.findFirst({
-          where: eq(expenses.payableId, payable.id),
-        })
+      const { payment, payable, newPaidAmount, newRemainingAmount, newStatus, purchaseSync, expenseSync } =
+        txResult
 
-        if (linkedExpense && linkedExpense.paymentStatus === 'paid') {
-          await createAuditLog({
-            userId: session.userId,
-            branchId: linkedExpense.branchId,
-            action: 'update',
-            entityType: 'expense',
-            entityId: linkedExpense.id,
-            oldValues: { paymentStatus: 'unpaid' },
-            newValues: { paymentStatus: 'paid' },
-            description: `Auto-updated expense status to paid (payable #${payable.id} fully paid)`,
-          })
-        }
-      }
-
+      // Audit: payable payment
       await createAuditLog({
         userId: session.userId,
         branchId: payable.branchId,
@@ -463,9 +507,37 @@ export function registerAccountPayablesHandlers(): void {
         description: `Recorded payment of ${data.amount} for payable ${payable.invoiceNumber}`,
       })
 
+      // Audit: synced purchase status (if applicable)
+      if (purchaseSync) {
+        await createAuditLog({
+          userId: session.userId,
+          branchId: payable.branchId,
+          action: 'update',
+          entityType: 'purchase',
+          entityId: purchaseSync.purchaseId,
+          oldValues: { paymentStatus: purchaseSync.oldStatus },
+          newValues: { paymentStatus: purchaseSync.newStatus },
+          description: `Auto-synced purchase ${purchaseSync.purchaseOrderNumber} payment status to ${purchaseSync.newStatus} (payable #${payable.id} payment of ${data.amount})`,
+        })
+      }
+
+      // Audit: synced expense status (full settlement only — schema limitation)
+      if (expenseSync) {
+        await createAuditLog({
+          userId: session.userId,
+          branchId: payable.branchId,
+          action: 'update',
+          entityType: 'expense',
+          entityId: expenseSync.expenseId,
+          oldValues: { paymentStatus: expenseSync.oldStatus },
+          newValues: { paymentStatus: 'paid' },
+          description: `Auto-updated expense status to paid (payable #${payable.id} fully paid)`,
+        })
+      }
+
       return {
         success: true,
-        data: result,
+        data: payment,
         payable: {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),
@@ -474,11 +546,17 @@ export function registerAccountPayablesHandlers(): void {
       }
     } catch (error) {
       console.error('Record payment error:', error)
-      return { success: false, message: 'Failed to record payment' }
+      const message = error instanceof Error ? error.message : 'Failed to record payment'
+      return { success: false, message }
     }
   })
 
-  // Cancel payable
+  // Cancel payable. If the payable was auto-generated from a pay-later
+  // purchase, the purchase is cancelled in the same transaction so the
+  // Purchases tab does not retain a dangling pay-later liability with no
+  // corresponding live payable. Cancellation is blocked when goods have
+  // already been received against the purchase (an inventory-impacting
+  // cancellation requires the reversal flow, not a soft cancel).
   ipcMain.handle('payables:cancel', async (_, id: number, reason?: string) => {
     try {
       const session = getCurrentSession()
@@ -499,18 +577,69 @@ export function registerAccountPayablesHandlers(): void {
         return { success: false, message: 'Cannot cancel a fully paid payable' }
       }
 
+      if (payable.status === 'cancelled' || payable.status === 'reversed') {
+        return { success: false, message: `Payable is already ${payable.status}` }
+      }
+
       if (payable.paidAmount > 0) {
         return { success: false, message: 'Cannot cancel payable with existing payments' }
       }
 
-      await db
-        .update(accountPayables)
-        .set({
-          status: 'cancelled',
-          notes: reason ? `${payable.notes || ''}\nCancelled: ${reason}`.trim() : payable.notes,
-          updatedAt: new Date().toISOString(),
-        })
-        .where(eq(accountPayables.id, id))
+      // Pre-flight: if linked purchase has received any goods, block the
+      // soft cancel and direct the user to the reversal flow which also
+      // rolls inventory back.
+      let linkedPurchase: typeof purchases.$inferSelect | null = null
+      if (payable.purchaseId) {
+        linkedPurchase =
+          (await db.query.purchases.findFirst({
+            where: eq(purchases.id, payable.purchaseId),
+          })) ?? null
+        if (
+          linkedPurchase &&
+          (linkedPurchase.status === 'partial' || linkedPurchase.status === 'received')
+        ) {
+          return {
+            success: false,
+            message:
+              'Cannot cancel payable: goods have been received against the linked purchase. Use the purchase reversal flow instead.',
+          }
+        }
+        if (linkedPurchase && linkedPurchase.status === 'reversed') {
+          // Purchase already reversed; just mark the payable cancelled (no cascade).
+          linkedPurchase = null
+        }
+      }
+
+      const now = new Date().toISOString()
+      const mergedNotes = reason
+        ? `${payable.notes || ''}\nCancelled: ${reason}`.trim()
+        : payable.notes
+
+      const result = await withTransaction(async ({ db: txDb }) => {
+        await txDb
+          .update(accountPayables)
+          .set({ status: 'cancelled', notes: mergedNotes, updatedAt: now })
+          .where(eq(accountPayables.id, id))
+
+        let cascadedPurchase: {
+          purchaseId: number
+          purchaseOrderNumber: string
+          oldStatus: string
+        } | null = null
+        if (linkedPurchase && linkedPurchase.status !== 'cancelled') {
+          await txDb
+            .update(purchases)
+            .set({ status: 'cancelled', updatedAt: now })
+            .where(eq(purchases.id, linkedPurchase.id))
+          cascadedPurchase = {
+            purchaseId: linkedPurchase.id,
+            purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+            oldStatus: linkedPurchase.status,
+          }
+        }
+
+        return { cascadedPurchase }
+      })
 
       await createAuditLog({
         userId: session.userId,
@@ -522,6 +651,19 @@ export function registerAccountPayablesHandlers(): void {
         newValues: { status: 'cancelled', reason },
         description: `Cancelled payable ${payable.invoiceNumber}`,
       })
+
+      if (result.cascadedPurchase) {
+        await createAuditLog({
+          userId: session.userId,
+          branchId: payable.branchId,
+          action: 'cancel',
+          entityType: 'purchase',
+          entityId: result.cascadedPurchase.purchaseId,
+          oldValues: { status: result.cascadedPurchase.oldStatus },
+          newValues: { status: 'cancelled', reason: `Cascaded from payable #${id} cancel` },
+          description: `Cascaded cancel of purchase ${result.cascadedPurchase.purchaseOrderNumber} (payable #${id} cancelled)`,
+        })
+      }
 
       return { success: true, message: 'Payable cancelled successfully' }
     } catch (error) {
@@ -581,16 +723,10 @@ export function registerAccountPayablesHandlers(): void {
           )
         )
 
-      // Update overdue status for any payables past due date
-      await db
-        .update(accountPayables)
-        .set({ status: 'overdue', updatedAt: new Date().toISOString() })
-        .where(
-          and(
-            lte(accountPayables.dueDate, today),
-            or(eq(accountPayables.status, 'pending'), eq(accountPayables.status, 'partial'))
-          )
-        )
+      // NOTE: Overdue state is derived on read (dueDate < today + status in
+      // pending/partial). A read endpoint must not silently mutate rows —
+      // that bypasses the audit trail. Use `payables:mark-overdue` to
+      // persist the flip explicitly with attribution.
 
       return {
         success: true,
@@ -608,6 +744,58 @@ export function registerAccountPayablesHandlers(): void {
     } catch (error) {
       console.error('Get summary error:', error)
       return { success: false, message: 'Failed to fetch summary' }
+    }
+  })
+
+  // Explicit, audited overdue reclassification. Flips pending/partial
+  // payables whose dueDate has passed to 'overdue'. One audit row per
+  // flipped payable so the Activity Log shows who triggered it.
+  ipcMain.handle('payables:mark-overdue', async (_, branchId?: number) => {
+    try {
+      const session = getCurrentSession()
+      if (!session) {
+        return { success: false, message: 'Unauthorized' }
+      }
+
+      const today = new Date().toISOString().split('T')[0]
+      const conditions = [
+        lte(accountPayables.dueDate, today),
+        or(eq(accountPayables.status, 'pending'), eq(accountPayables.status, 'partial')),
+      ]
+      if (branchId) conditions.push(eq(accountPayables.branchId, branchId))
+
+      const flipped = await withTransaction(async ({ db: txDb }) => {
+        const candidates = await txDb.query.accountPayables.findMany({
+          where: and(...conditions),
+        })
+
+        if (candidates.length === 0) return []
+
+        await txDb
+          .update(accountPayables)
+          .set({ status: 'overdue', updatedAt: new Date().toISOString() })
+          .where(and(...conditions))
+
+        return candidates
+      })
+
+      for (const p of flipped) {
+        await createAuditLog({
+          userId: session.userId,
+          branchId: p.branchId,
+          action: 'update',
+          entityType: 'account_payable',
+          entityId: p.id,
+          oldValues: { status: p.status },
+          newValues: { status: 'overdue', reason: 'dueDate passed' },
+          description: `Reclassified payable ${p.invoiceNumber} as overdue (due ${p.dueDate})`,
+        })
+      }
+
+      return { success: true, data: { flippedCount: flipped.length } }
+    } catch (error) {
+      console.error('Mark overdue error:', error)
+      return { success: false, message: 'Failed to mark payables overdue' }
     }
   })
 

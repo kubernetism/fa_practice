@@ -60,6 +60,8 @@ export interface ReceiptData {
 export interface ReceiptOptions {
   format: 'pdf' | 'thermal'
   autoDownload: boolean
+  /** If provided, used as the saved filename (with or without .pdf). */
+  fileName?: string
 }
 
 // Payment History Receipt Interfaces
@@ -2119,7 +2121,11 @@ export async function generatePaymentHistoryReceipt(
 
 // Main receipt generation function
 export async function generateReceipt(data: ReceiptData, options: ReceiptOptions): Promise<string> {
-  const { format, autoDownload } = options
+  const { format, autoDownload, fileName: customFileName } = options
+  const sanitizedCustomName = customFileName
+    ? customFileName.replace(/[\\/:*?"<>|\r\n\t]+/g, ' ').replace(/\s+/g, ' ').trim()
+    : ''
+  const ensurePdfExt = (n: string) => (n.toLowerCase().endsWith('.pdf') ? n : `${n}.pdf`)
 
   // Generate HTML based on format
   const htmlContent =
@@ -2164,15 +2170,20 @@ export async function generateReceipt(data: ReceiptData, options: ReceiptOptions
 
     // Determine file path
     let filePath: string
-    if (autoDownload) {
-      const downloadsPath = app.getPath('downloads')
-      const fileName = `receipt_${data.sale.invoiceNumber}_${Date.now()}.pdf`
-      filePath = path.join(downloadsPath, fileName)
+    const baseDir = autoDownload ? app.getPath('downloads') : app.getPath('temp')
+    if (sanitizedCustomName) {
+      const wantedName = ensurePdfExt(sanitizedCustomName)
+      const ext = path.extname(wantedName)
+      const stem = wantedName.slice(0, wantedName.length - ext.length)
+      filePath = path.join(baseDir, wantedName)
+      let suffix = 1
+      while (fs.existsSync(filePath)) {
+        filePath = path.join(baseDir, `${stem} (${suffix})${ext}`)
+        suffix += 1
+      }
     } else {
-      // Use temp folder if not auto-downloading
-      const tempPath = app.getPath('temp')
       const fileName = `receipt_${data.sale.invoiceNumber}_${Date.now()}.pdf`
-      filePath = path.join(tempPath, fileName)
+      filePath = path.join(baseDir, fileName)
     }
 
     // Save PDF file

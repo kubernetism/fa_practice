@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react'
+import React, { createContext, useContext, useState, useCallback } from 'react'
 import type { SalesTab, SalesTabWithItems, SalesTabItem, Sale, TabFilters, TabCheckoutData } from '@shared/types'
 
 interface TabsContextType {
@@ -189,17 +189,6 @@ export function TabsProvider({ children }: { children: React.ReactNode }) {
       }
     }
   }, [activeTab])
-
-  // Auto-refresh tabs every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!activeTab) {
-        fetchTabs()
-      }
-    }, 30000)
-
-    return () => clearInterval(interval)
-  }, [fetchTabs, activeTab])
 
   return (
     <TabsContext.Provider

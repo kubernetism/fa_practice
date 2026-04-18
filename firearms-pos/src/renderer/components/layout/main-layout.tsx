@@ -5,6 +5,7 @@ import { Header } from './header'
 import { KeepAliveOutlet } from './keep-alive-outlet'
 import { useAuth } from '@/contexts/auth-context'
 import { SidebarProvider } from '@/contexts/sidebar-context'
+import { ScreenRefreshProvider } from '@/contexts/screen-refresh-context'
 
 export function MainLayout() {
   const { isAuthenticated, isLoading } = useAuth()
@@ -26,15 +27,17 @@ export function MainLayout() {
 
   return (
     <SidebarProvider>
-      <div className="flex h-screen overflow-hidden">
-        <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
-          <Header />
-          <main className="flex-1 overflow-auto bg-muted/30 p-6">
-            <KeepAliveOutlet />
-          </main>
+      <ScreenRefreshProvider>
+        <div className="flex h-screen overflow-hidden">
+          <Sidebar />
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Header />
+            <main className="flex-1 overflow-auto bg-muted/30 p-6">
+              <KeepAliveOutlet />
+            </main>
+          </div>
         </div>
-      </div>
+      </ScreenRefreshProvider>
     </SidebarProvider>
   )
 }

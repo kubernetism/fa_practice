@@ -565,9 +565,11 @@ export async function postExpenseToGL(
     paymentStatus: string
     paymentMethod?: string
     description?: string
+    payeeName?: string
   },
   userId: number
 ): Promise<number> {
+  const payeeSuffix = expense.payeeName ? ` - ${expense.payeeName}` : ''
   const lines: JournalLine[] = []
 
   // Map expense category name (case-insensitive) to account code
@@ -588,7 +590,7 @@ export async function postExpenseToGL(
     accountCode: expenseAccount,
     debitAmount: expense.amount,
     creditAmount: 0,
-    description: expense.description || `Expense: ${expense.categoryName}`,
+    description: expense.description || `Expense: ${expense.categoryName}${payeeSuffix}`,
   })
 
   // CR based on payment status
@@ -597,7 +599,7 @@ export async function postExpenseToGL(
       accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payable for expense ${expense.categoryName}`,
+      description: `Payable for expense ${expense.categoryName}${payeeSuffix}`,
     })
   } else {
     const cashAccount = expense.paymentMethod === 'bank_transfer' || expense.paymentMethod === 'cheque'
@@ -607,12 +609,12 @@ export async function postExpenseToGL(
       accountCode: cashAccount,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payment for expense ${expense.categoryName}`,
+      description: `Payment for expense ${expense.categoryName}${payeeSuffix}`,
     })
   }
 
   return createJournalEntry({
-    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ''}`,
+    description: `Expense: ${expense.categoryName}${payeeSuffix}${expense.description ? ` - ${expense.description}` : ''}`,
     referenceType: 'expense',
     referenceId: expense.id,
     branchId: expense.branchId,

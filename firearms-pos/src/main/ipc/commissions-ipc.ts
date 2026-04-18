@@ -6,6 +6,7 @@ import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
 import { postCommissionPaymentToGL } from '../utils/gl-posting'
+import { requireOpenCashSession } from '../utils/cash-register-guard'
 
 export function registerCommissionHandlers(): void {
   const db = getDatabase()
@@ -401,6 +402,21 @@ export function registerCommissionHandlers(): void {
             sql`${commissions.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`
           )
         )
+
+      // Guard: commissions are paid in cash, so every branch involved must
+      // have an open register session before we debit Cash in the GL.
+      const branchesInvolved = Array.from(
+        new Set(commissionRecords.map((c) => c.branchId))
+      )
+      for (const branchId of branchesInvolved) {
+        const guard = await requireOpenCashSession(branchId)
+        if (!guard.ok) {
+          return {
+            success: false,
+            message: `${guard.message} (branch ${branchId})`,
+          }
+        }
+      }
 
       await db
         .update(commissions)

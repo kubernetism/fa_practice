@@ -28,8 +28,9 @@ import {
 export function registerReceiptHandlers(): void {
   const db = getDatabase()
 
-  // Generate receipt for a sale
-  ipcMain.handle('receipt:generate', async (_, saleId: number) => {
+  // Generate receipt for a sale. Optional `customFileName` lets callers
+  // (e.g. the Sales History "Save PDF" button) override the saved filename.
+  ipcMain.handle('receipt:generate', async (_, saleId: number, customFileName?: string) => {
     try {
       // 1. Fetch the sale
       const sale = await db.query.sales.findFirst({
@@ -151,6 +152,7 @@ export function registerReceiptHandlers(): void {
       const options: ReceiptOptions = {
         format: (settings.receiptFormat as 'pdf' | 'thermal') || 'pdf',
         autoDownload: settings.receiptAutoDownload !== false,
+        fileName: customFileName,
       }
 
       const filePath = await generateReceipt(receiptData, options)
@@ -547,4 +549,5 @@ export function registerReceiptHandlers(): void {
       }
     }
   })
+
 }

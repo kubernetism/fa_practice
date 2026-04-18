@@ -20,6 +20,7 @@ import { getCurrentSession } from './auth-ipc'
 import { withTransaction } from '../utils/db-transaction'
 import { postARPaymentToGL } from '../utils/gl-posting'
 import { mapPaymentMethodToChannel } from './online-transactions-ipc'
+import { requireOpenCashSession } from '../utils/cash-register-guard'
 
 interface PaginationParams {
   page?: number
@@ -310,6 +311,15 @@ export function registerAccountReceivablesHandlers(): void {
         return {
           success: false,
           message: `Payment amount cannot exceed remaining balance of ${receivable.remainingAmount}`,
+        }
+      }
+
+      // Guard: cash collections must hit an open register session, otherwise
+      // the GL debits Cash while the drawer stays untouched.
+      if (data.paymentMethod === 'cash') {
+        const guard = await requireOpenCashSession(receivable.branchId)
+        if (!guard.ok) {
+          return { success: false, message: guard.message }
         }
       }
 

@@ -48,6 +48,7 @@ const api = {
     getLowStock: (branchId) => electron.ipcRenderer.invoke("inventory:get-low-stock", branchId),
     getProductStock: (productId, branchId) => electron.ipcRenderer.invoke("inventory:get-product-stock", productId, branchId),
     adjust: (data) => electron.ipcRenderer.invoke("inventory:adjust", data),
+    setMinQuantity: (data) => electron.ipcRenderer.invoke("inventory:set-min-quantity", data),
     transfer: (data) => electron.ipcRenderer.invoke("inventory:transfer", data),
     completeTransfer: (transferId) => electron.ipcRenderer.invoke("inventory:complete-transfer", transferId),
     getAdjustments: (productId, branchId) => electron.ipcRenderer.invoke("inventory:get-adjustments", productId, branchId),
@@ -84,6 +85,14 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("suppliers:create", data),
     update: (id, data) => electron.ipcRenderer.invoke("suppliers:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("suppliers:delete", id)
+  },
+  // Payees
+  payees: {
+    getAll: (params) => electron.ipcRenderer.invoke("payees:getAll", params),
+    getById: (id) => electron.ipcRenderer.invoke("payees:getById", id),
+    create: (data) => electron.ipcRenderer.invoke("payees:create", data),
+    update: (id, data) => electron.ipcRenderer.invoke("payees:update", id, data),
+    delete: (id) => electron.ipcRenderer.invoke("payees:delete", id)
   },
   // Sales
   sales: {
@@ -311,7 +320,7 @@ const api = {
   },
   // Receipt Generation
   receipt: {
-    generate: (saleId) => electron.ipcRenderer.invoke("receipt:generate", saleId),
+    generate: (saleId, customFileName) => electron.ipcRenderer.invoke("receipt:generate", saleId, customFileName),
     getData: (saleId) => electron.ipcRenderer.invoke("receipt:get-data", saleId),
     getSettings: (branchId) => electron.ipcRenderer.invoke("receipt:get-settings", branchId),
     generatePaymentHistory: (receivableId) => electron.ipcRenderer.invoke("receipt:generate-payment-history", receivableId)

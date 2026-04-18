@@ -19,6 +19,8 @@ import {
   suppliers,
   categories,
   businessSettings,
+  accountPayables,
+  payees,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
@@ -187,32 +189,69 @@ export function registerReportHandlers(): void {
       const conditions = []
       if (branchId) conditions.push(eq(inventory.branchId, branchId))
 
-      // Stock summary
+      // Stock summary per branch (units, low/out of stock, plus cost & retail value)
       const stockSummary = await db
         .select({
           branchId: inventory.branchId,
           branchName: branches.name,
           totalProducts: sql<number>`count(distinct ${inventory.productId})`,
-          totalUnits: sql<number>`sum(${inventory.quantity})`,
-          lowStockItems: sql<number>`sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end)`,
-          outOfStockItems: sql<number>`sum(case when ${inventory.quantity} = 0 then 1 else 0 end)`,
+          totalUnits: sql<number>`coalesce(sum(${inventory.quantity}), 0)`,
+          lowStockItems: sql<number>`coalesce(sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end), 0)`,
+          outOfStockItems: sql<number>`coalesce(sum(case when ${inventory.quantity} = 0 then 1 else 0 end), 0)`,
+          costValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+          retailValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`,
         })
         .from(inventory)
         .innerJoin(branches, eq(inventory.branchId, branches.id))
+        .innerJoin(products, eq(inventory.productId, products.id))
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .groupBy(inventory.branchId, branches.name)
 
-      // Stock value
+      // Stock value (kept for backwards compatibility with renderer)
       const stockValue = await db
         .select({
           branchId: inventory.branchId,
-          costValue: sql<number>`sum(${inventory.quantity} * ${products.costPrice})`,
-          retailValue: sql<number>`sum(${inventory.quantity} * ${products.sellingPrice})`,
+          costValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+          retailValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`,
         })
         .from(inventory)
         .innerJoin(products, eq(inventory.productId, products.id))
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .groupBy(inventory.branchId)
+
+      // Overall totals across selected scope (single object)
+      const overallResult = await db
+        .select({
+          totalProducts: sql<number>`count(distinct ${inventory.productId})`,
+          totalRows: sql<number>`count(*)`,
+          totalUnits: sql<number>`coalesce(sum(${inventory.quantity}), 0)`,
+          lowStockItems: sql<number>`coalesce(sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end), 0)`,
+          outOfStockItems: sql<number>`coalesce(sum(case when ${inventory.quantity} = 0 then 1 else 0 end), 0)`,
+          totalCostValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+          totalRetailValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`,
+          potentialMargin: sql<number>`coalesce(sum(${inventory.quantity} * (${products.sellingPrice} - ${products.costPrice})), 0)`,
+        })
+        .from(inventory)
+        .innerJoin(products, eq(inventory.productId, products.id))
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+      const overall = overallResult[0]
+
+      // By category
+      const stockByCategory = await db
+        .select({
+          categoryId: products.categoryId,
+          categoryName: categories.name,
+          totalProducts: sql<number>`count(distinct ${inventory.productId})`,
+          totalUnits: sql<number>`coalesce(sum(${inventory.quantity}), 0)`,
+          costValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+          retailValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`,
+        })
+        .from(inventory)
+        .innerJoin(products, eq(inventory.productId, products.id))
+        .leftJoin(categories, eq(products.categoryId, categories.id))
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .groupBy(products.categoryId, categories.name)
+        .orderBy(desc(sql`sum(${inventory.quantity} * ${products.costPrice})`))
 
       // Low stock items
       const lowStock = await db
@@ -251,17 +290,22 @@ export function registerReportHandlers(): void {
           productId: inventory.productId,
           productName: products.name,
           productCode: products.code,
+          categoryName: categories.name,
           branchId: inventory.branchId,
           branchName: branches.name,
           quantity: inventory.quantity,
           minQuantity: inventory.minQuantity,
           maxQuantity: inventory.maxQuantity,
+          costPrice: products.costPrice,
+          sellingPrice: products.sellingPrice,
           costValue: sql<number>`${inventory.quantity} * ${products.costPrice}`,
           retailValue: sql<number>`${inventory.quantity} * ${products.sellingPrice}`,
+          lastRestockDate: inventory.lastRestockDate,
         })
         .from(inventory)
         .innerJoin(products, eq(inventory.productId, products.id))
         .innerJoin(branches, eq(inventory.branchId, branches.id))
+        .leftJoin(categories, eq(products.categoryId, categories.id))
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .orderBy(products.name)
         .limit(pageSize)
@@ -278,8 +322,11 @@ export function registerReportHandlers(): void {
       return {
         success: true,
         data: {
+          summary: overall,
+          overall,
           stockSummary,
           stockValue,
+          stockByCategory,
           lowStock,
           details: {
             rows: detailRows,
@@ -560,7 +607,8 @@ export function registerReportHandlers(): void {
         startDate: string
         endDate: string
         categoryId?: number
-        supplierId?: number
+        payeeId?: number
+        payeeType?: string
         paymentStatus?: string
         page?: number
         limit?: number
@@ -568,7 +616,17 @@ export function registerReportHandlers(): void {
     ) => {
       try {
         const session = getCurrentSession()
-        const { branchId, startDate: rawStart, endDate: rawEnd, categoryId, supplierId, paymentStatus, page = 1, limit: pageSize = 50 } = params
+        const {
+          branchId,
+          startDate: rawStart,
+          endDate: rawEnd,
+          categoryId,
+          payeeId,
+          payeeType,
+          paymentStatus,
+          page = 1,
+          limit: pageSize = 50,
+        } = params
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd)
 
         const conditions = [
@@ -577,17 +635,40 @@ export function registerReportHandlers(): void {
         ]
         if (branchId) conditions.push(eq(expenses.branchId, branchId))
         if (categoryId) conditions.push(eq(expenses.categoryId, categoryId))
-        if (supplierId) conditions.push(eq(expenses.supplierId, supplierId))
+        if (payeeId) conditions.push(eq(expenses.payeeId, payeeId))
         if (paymentStatus) conditions.push(eq(expenses.paymentStatus, paymentStatus as any))
+        if (payeeType) {
+          conditions.push(
+            sql`${expenses.payeeId} IN (SELECT id FROM payees WHERE payee_type = ${payeeType})`
+          )
+        }
+
+        // Effective paid/remaining: prefer linked payable when present,
+        // otherwise fall back to the binary paymentStatus on the expense.
+        const expensePaidExpr = sql<number>`case
+          when ${accountPayables.id} is not null then ${accountPayables.paidAmount}
+          when ${expenses.paymentStatus} = 'paid' then ${expenses.amount}
+          else 0
+        end`
+        const expenseRemainingExpr = sql<number>`case
+          when ${accountPayables.id} is not null then ${accountPayables.remainingAmount}
+          when ${expenses.paymentStatus} = 'paid' then 0
+          else ${expenses.amount}
+        end`
 
         // Summary
         const summary = await db
           .select({
-            totalExpenses: sql<number>`sum(${expenses.amount})`,
+            totalExpenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
             expenseCount: sql<number>`count(*)`,
-            avgExpense: sql<number>`avg(${expenses.amount})`,
+            avgExpense: sql<number>`coalesce(avg(${expenses.amount}), 0)`,
+            totalPaid: sql<number>`coalesce(sum(${expensePaidExpr}), 0)`,
+            totalRemaining: sql<number>`coalesce(sum(${expenseRemainingExpr}), 0)`,
+            paidExpenses: sql<number>`coalesce(sum(case when ${expenses.paymentStatus} = 'paid' then ${expenses.amount} else 0 end), 0)`,
+            unpaidExpenses: sql<number>`coalesce(sum(case when ${expenses.paymentStatus} = 'unpaid' then ${expenses.amount} else 0 end), 0)`,
           })
           .from(expenses)
+          .leftJoin(accountPayables, eq(expenses.payableId, accountPayables.id))
           .where(and(...conditions))
 
         // By category
@@ -595,11 +676,14 @@ export function registerReportHandlers(): void {
           .select({
             categoryId: expenses.categoryId,
             category: categories.name,
-            amount: sql<number>`sum(${expenses.amount})`,
+            amount: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+            paidAmount: sql<number>`coalesce(sum(${expensePaidExpr}), 0)`,
+            remainingAmount: sql<number>`coalesce(sum(${expenseRemainingExpr}), 0)`,
             count: sql<number>`count(*)`,
           })
           .from(expenses)
           .innerJoin(categories, eq(expenses.categoryId, categories.id))
+          .leftJoin(accountPayables, eq(expenses.payableId, accountPayables.id))
           .where(and(...conditions))
           .groupBy(expenses.categoryId, categories.name)
           .orderBy(desc(sql`sum(${expenses.amount})`))
@@ -609,13 +693,61 @@ export function registerReportHandlers(): void {
           .select({
             branchId: expenses.branchId,
             branchName: branches.name,
-            amount: sql<number>`sum(${expenses.amount})`,
+            amount: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+            paidAmount: sql<number>`coalesce(sum(${expensePaidExpr}), 0)`,
+            remainingAmount: sql<number>`coalesce(sum(${expenseRemainingExpr}), 0)`,
             count: sql<number>`count(*)`,
           })
           .from(expenses)
           .innerJoin(branches, eq(expenses.branchId, branches.id))
+          .leftJoin(accountPayables, eq(expenses.payableId, accountPayables.id))
           .where(and(...conditions))
           .groupBy(expenses.branchId, branches.name)
+
+        // By payment status
+        const expensesByPaymentStatus = await db
+          .select({
+            paymentStatus: expenses.paymentStatus,
+            count: sql<number>`count(*)`,
+            amount: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+            paidAmount: sql<number>`coalesce(sum(${expensePaidExpr}), 0)`,
+            remainingAmount: sql<number>`coalesce(sum(${expenseRemainingExpr}), 0)`,
+          })
+          .from(expenses)
+          .leftJoin(accountPayables, eq(expenses.payableId, accountPayables.id))
+          .where(and(...conditions))
+          .groupBy(expenses.paymentStatus)
+
+        // By payee
+        const expensesByPayee = await db
+          .select({
+            payeeId: expenses.payeeId,
+            payeeName: payees.name,
+            payeeType: payees.payeeType,
+            amount: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+            paidAmount: sql<number>`coalesce(sum(${expensePaidExpr}), 0)`,
+            remainingAmount: sql<number>`coalesce(sum(${expenseRemainingExpr}), 0)`,
+            count: sql<number>`count(*)`,
+          })
+          .from(expenses)
+          .innerJoin(payees, eq(expenses.payeeId, payees.id))
+          .leftJoin(accountPayables, eq(expenses.payableId, accountPayables.id))
+          .where(and(...conditions))
+          .groupBy(expenses.payeeId, payees.name, payees.payeeType)
+          .orderBy(desc(sql`sum(${expenses.amount})`))
+
+        // By payee type
+        const expensesByPayeeType = await db
+          .select({
+            payeeType: payees.payeeType,
+            amount: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
+            count: sql<number>`count(*)`,
+          })
+          .from(expenses)
+          .innerJoin(payees, eq(expenses.payeeId, payees.id))
+          .where(and(...conditions))
+          .groupBy(payees.payeeType)
+          .orderBy(desc(sql`sum(${expenses.amount})`))
 
         // Top expenses
         const topExpenses = await db
@@ -647,15 +779,23 @@ export function registerReportHandlers(): void {
             id: expenses.id,
             expenseDate: expenses.expenseDate,
             category: categories.name,
+            branchName: branches.name,
             description: expenses.description,
+            reference: expenses.reference,
             paymentMethod: expenses.paymentMethod,
             paymentStatus: expenses.paymentStatus,
             amount: expenses.amount,
-            supplierName: sql<string>`${suppliers.name}`,
+            paidAmount: expensePaidExpr,
+            remainingAmount: expenseRemainingExpr,
+            dueDate: expenses.dueDate,
+            payeeName: sql<string>`${payees.name}`,
+            payeeType: sql<string>`${payees.payeeType}`,
           })
           .from(expenses)
           .innerJoin(categories, eq(expenses.categoryId, categories.id))
-          .leftJoin(suppliers, eq(expenses.supplierId, suppliers.id))
+          .innerJoin(branches, eq(expenses.branchId, branches.id))
+          .leftJoin(payees, eq(expenses.payeeId, payees.id))
+          .leftJoin(accountPayables, eq(expenses.payableId, accountPayables.id))
           .where(and(...conditions))
           .orderBy(desc(expenses.expenseDate))
           .limit(pageSize)
@@ -675,6 +815,9 @@ export function registerReportHandlers(): void {
             summary: summary[0],
             expensesByCategory,
             expensesByBranch,
+            expensesByPaymentStatus,
+            expensesByPayee,
+            expensesByPayeeType,
             topExpenses,
             details: {
               rows: detailRows,
@@ -716,15 +859,47 @@ export function registerReportHandlers(): void {
         if (supplierId) conditions.push(eq(purchases.supplierId, supplierId))
         if (status) conditions.push(eq(purchases.status, status as any))
 
+        // Per-purchase AP aggregate (a purchase may have one payable; use sums to be safe)
+        const apAgg = db
+          .select({
+            purchaseId: accountPayables.purchaseId,
+            paidAmount: sql<number>`coalesce(sum(${accountPayables.paidAmount}), 0)`.as('ap_paid'),
+            remainingAmount: sql<number>`coalesce(sum(${accountPayables.remainingAmount}), 0)`.as('ap_remaining'),
+            apTotal: sql<number>`coalesce(sum(${accountPayables.totalAmount}), 0)`.as('ap_total'),
+            hasAp: sql<number>`count(${accountPayables.id})`.as('ap_count'),
+          })
+          .from(accountPayables)
+          .groupBy(accountPayables.purchaseId)
+          .as('ap_agg')
+
+        // Effective paid/remaining: if AP row(s) exist use them; otherwise fall back to
+        // payment_status (paid -> fully paid, partial -> 0 paid, pending -> 0 paid).
+        const paidExpr = sql<number>`case
+          when ${apAgg.hasAp} > 0 then ${apAgg.paidAmount}
+          when ${purchases.paymentStatus} = 'paid' then ${purchases.totalAmount}
+          else 0
+        end`
+        const remainingExpr = sql<number>`case
+          when ${apAgg.hasAp} > 0 then ${apAgg.remainingAmount}
+          when ${purchases.paymentStatus} = 'paid' then 0
+          else ${purchases.totalAmount}
+        end`
+
         // Summary
         const summary = await db
           .select({
             totalPurchases: sql<number>`count(*)`,
-            totalCost: sql<number>`sum(${purchases.totalAmount})`,
-            avgPurchaseValue: sql<number>`avg(${purchases.totalAmount})`,
-            pendingPayments: sql<number>`sum(case when ${purchases.paymentStatus} = 'pending' then ${purchases.totalAmount} else 0 end)`,
+            totalCost: sql<number>`coalesce(sum(${purchases.totalAmount}), 0)`,
+            totalShipping: sql<number>`coalesce(sum(${purchases.shippingCost}), 0)`,
+            avgPurchaseValue: sql<number>`coalesce(avg(${purchases.totalAmount}), 0)`,
+            totalPaid: sql<number>`coalesce(sum(${paidExpr}), 0)`,
+            totalRemaining: sql<number>`coalesce(sum(${remainingExpr}), 0)`,
+            pendingPayments: sql<number>`coalesce(sum(case when ${purchases.paymentStatus} = 'pending' then ${purchases.totalAmount} else 0 end), 0)`,
+            partialPayments: sql<number>`coalesce(sum(case when ${purchases.paymentStatus} = 'partial' then ${purchases.totalAmount} else 0 end), 0)`,
+            paidPayments: sql<number>`coalesce(sum(case when ${purchases.paymentStatus} = 'paid' then ${purchases.totalAmount} else 0 end), 0)`,
           })
           .from(purchases)
+          .leftJoin(apAgg, eq(apAgg.purchaseId, purchases.id))
           .where(and(...conditions))
 
         // By supplier
@@ -733,10 +908,14 @@ export function registerReportHandlers(): void {
             supplierId: purchases.supplierId,
             supplierName: suppliers.name,
             totalPurchases: sql<number>`count(*)`,
-            totalAmount: sql<number>`sum(${purchases.totalAmount})`,
+            totalAmount: sql<number>`coalesce(sum(${purchases.totalAmount}), 0)`,
+            totalShipping: sql<number>`coalesce(sum(${purchases.shippingCost}), 0)`,
+            paidAmount: sql<number>`coalesce(sum(${paidExpr}), 0)`,
+            remainingAmount: sql<number>`coalesce(sum(${remainingExpr}), 0)`,
           })
           .from(purchases)
           .innerJoin(suppliers, eq(purchases.supplierId, suppliers.id))
+          .leftJoin(apAgg, eq(apAgg.purchaseId, purchases.id))
           .where(and(...conditions))
           .groupBy(purchases.supplierId, suppliers.name)
           .orderBy(desc(sql`sum(${purchases.totalAmount})`))
@@ -746,11 +925,25 @@ export function registerReportHandlers(): void {
           .select({
             status: purchases.status,
             count: sql<number>`count(*)`,
-            totalAmount: sql<number>`sum(${purchases.totalAmount})`,
+            totalAmount: sql<number>`coalesce(sum(${purchases.totalAmount}), 0)`,
           })
           .from(purchases)
           .where(and(...conditions))
           .groupBy(purchases.status)
+
+        // By payment status
+        const purchasesByPaymentStatus = await db
+          .select({
+            paymentStatus: purchases.paymentStatus,
+            count: sql<number>`count(*)`,
+            totalAmount: sql<number>`coalesce(sum(${purchases.totalAmount}), 0)`,
+            paidAmount: sql<number>`coalesce(sum(${paidExpr}), 0)`,
+            remainingAmount: sql<number>`coalesce(sum(${remainingExpr}), 0)`,
+          })
+          .from(purchases)
+          .leftJoin(apAgg, eq(apAgg.purchaseId, purchases.id))
+          .where(and(...conditions))
+          .groupBy(purchases.paymentStatus)
 
         // Detail rows with pagination
         const totalCountResult = await db
@@ -764,13 +957,22 @@ export function registerReportHandlers(): void {
             id: purchases.id,
             purchaseOrderNumber: purchases.purchaseOrderNumber,
             supplierName: suppliers.name,
+            subtotal: purchases.subtotal,
+            taxAmount: purchases.taxAmount,
+            shippingCost: purchases.shippingCost,
             totalAmount: purchases.totalAmount,
+            paidAmount: paidExpr,
+            remainingAmount: remainingExpr,
+            paymentMethod: purchases.paymentMethod,
             paymentStatus: purchases.paymentStatus,
             status: purchases.status,
+            expectedDeliveryDate: purchases.expectedDeliveryDate,
+            receivedDate: purchases.receivedDate,
             createdAt: purchases.createdAt,
           })
           .from(purchases)
           .innerJoin(suppliers, eq(purchases.supplierId, suppliers.id))
+          .leftJoin(apAgg, eq(apAgg.purchaseId, purchases.id))
           .where(and(...conditions))
           .orderBy(desc(purchases.createdAt))
           .limit(pageSize)
@@ -790,6 +992,7 @@ export function registerReportHandlers(): void {
             summary: summary[0],
             purchasesBySupplier,
             purchasesByStatus,
+            purchasesByPaymentStatus,
             recentPurchases: detailRows,
             details: {
               rows: detailRows,
@@ -1058,44 +1261,96 @@ export function registerReportHandlers(): void {
         ]
         if (branchId) conditions.push(eq(sales.branchId, branchId))
 
-        // Summary
-        const summary = await db
+        // Per-item taxable revenue / non-taxable revenue derived from products.isTaxable
+        const taxableRevenueExpr = sql<number>`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.totalPrice} else 0 end), 0)`
+        const nonTaxableRevenueExpr = sql<number>`coalesce(sum(case when ${products.isTaxable} = 1 then 0 else ${saleItems.totalPrice} end), 0)`
+        const taxCollectedExpr = sql<number>`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.taxAmount} else 0 end), 0)`
+
+        // Summary (aggregate at item level so non-taxable items don't inflate "taxable" counts)
+        const itemSummary = await db
           .select({
-            totalTaxCollected: sql<number>`sum(${sales.taxAmount})`,
-            taxableSales: sql<number>`count(*)`,
-            avgTaxPerSale: sql<number>`avg(${sales.taxAmount})`,
+            taxableRevenue: taxableRevenueExpr,
+            nonTaxableRevenue: nonTaxableRevenueExpr,
+            totalTaxCollected: taxCollectedExpr,
+            taxableItemCount: sql<number>`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.quantity} else 0 end), 0)`,
+            nonTaxableItemCount: sql<number>`coalesce(sum(case when ${products.isTaxable} = 1 then 0 else ${saleItems.quantity} end), 0)`,
           })
-          .from(sales)
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
           .where(and(...conditions))
 
-        // By branch
+        // Distinct invoice counts: how many invoices contained at least one taxable / non-taxable line
+        const invoiceMixCounts = await db
+          .select({
+            taxableInvoices: sql<number>`count(distinct case when ${products.isTaxable} = 1 then ${sales.id} end)`,
+            nonTaxableInvoices: sql<number>`count(distinct case when ${products.isTaxable} = 0 then ${sales.id} end)`,
+            totalInvoices: sql<number>`count(distinct ${sales.id})`,
+          })
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
+          .where(and(...conditions))
+
+        const it = itemSummary[0]
+        const inv = invoiceMixCounts[0]
+        const taxableRevenueVal = it?.taxableRevenue || 0
+        const totalTax = it?.totalTaxCollected || 0
+        const summary = {
+          totalTaxCollected: totalTax,
+          taxableRevenue: taxableRevenueVal,
+          nonTaxableRevenue: it?.nonTaxableRevenue || 0,
+          taxableItemCount: it?.taxableItemCount || 0,
+          nonTaxableItemCount: it?.nonTaxableItemCount || 0,
+          taxableInvoices: inv?.taxableInvoices || 0,
+          nonTaxableInvoices: inv?.nonTaxableInvoices || 0,
+          taxableSales: inv?.taxableInvoices || 0,
+          totalInvoices: inv?.totalInvoices || 0,
+          avgTaxPerSale: inv?.taxableInvoices ? totalTax / inv.taxableInvoices : 0,
+          effectiveTaxRate: taxableRevenueVal > 0 ? (totalTax / taxableRevenueVal) * 100 : 0,
+        }
+
+        // By branch (item-level so taxable filtering is honored)
         const taxByBranch = await db
           .select({
             branchId: sales.branchId,
             branchName: branches.name,
-            taxCollected: sql<number>`sum(${sales.taxAmount})`,
+            taxableRevenue: taxableRevenueExpr,
+            nonTaxableRevenue: nonTaxableRevenueExpr,
+            taxCollected: taxCollectedExpr,
           })
-          .from(sales)
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
           .innerJoin(branches, eq(sales.branchId, branches.id))
           .where(and(...conditions))
           .groupBy(sales.branchId, branches.name)
 
-        // By payment method
+        // By payment method (only invoices with at least one taxable line are counted)
         const taxByPaymentMethod = await db
           .select({
             paymentMethod: sales.paymentMethod,
-            taxCollected: sql<number>`sum(${sales.taxAmount})`,
-            salesCount: sql<number>`count(*)`,
+            taxableRevenue: taxableRevenueExpr,
+            taxCollected: taxCollectedExpr,
+            salesCount: sql<number>`count(distinct case when ${products.isTaxable} = 1 then ${sales.id} end)`,
           })
-          .from(sales)
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
           .where(and(...conditions))
           .groupBy(sales.paymentMethod)
 
-        // Detail rows with pagination
+        // Detail rows: one per invoice that contained at least one taxable item.
+        // We aggregate the taxable portion at the item level so non-taxable lines
+        // in a mixed invoice are excluded from taxable revenue.
+        const taxableInvoiceCondition = and(...conditions, eq(products.isTaxable, true))
+
         const totalCountResult = await db
-          .select({ count: sql<number>`count(*)` })
-          .from(sales)
-          .where(and(...conditions))
+          .select({ count: sql<number>`count(distinct ${sales.id})` })
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
+          .where(taxableInvoiceCondition)
         const totalRows = totalCountResult[0]?.count || 0
 
         const detailRows = await db
@@ -1104,13 +1359,24 @@ export function registerReportHandlers(): void {
             invoiceNumber: sales.invoiceNumber,
             saleDate: sales.saleDate,
             totalAmount: sales.totalAmount,
-            taxAmount: sales.taxAmount,
+            taxableRevenue: sql<number>`coalesce(sum(${saleItems.totalPrice}), 0)`,
+            taxAmount: sql<number>`coalesce(sum(${saleItems.taxAmount}), 0)`,
             paymentMethod: sales.paymentMethod,
             branchName: branches.name,
           })
-          .from(sales)
+          .from(saleItems)
+          .innerJoin(sales, eq(saleItems.saleId, sales.id))
+          .innerJoin(products, eq(saleItems.productId, products.id))
           .innerJoin(branches, eq(sales.branchId, branches.id))
-          .where(and(...conditions))
+          .where(taxableInvoiceCondition)
+          .groupBy(
+            sales.id,
+            sales.invoiceNumber,
+            sales.saleDate,
+            sales.totalAmount,
+            sales.paymentMethod,
+            branches.name
+          )
           .orderBy(desc(sales.saleDate))
           .limit(pageSize)
           .offset((page - 1) * pageSize)
@@ -1126,7 +1392,7 @@ export function registerReportHandlers(): void {
         return {
           success: true,
           data: {
-            summary: summary[0],
+            summary,
             taxByBranch,
             taxByPaymentMethod,
             details: {
@@ -1167,10 +1433,12 @@ export function registerReportHandlers(): void {
         // Calculate metrics for each branch
         const branchMetrics = await Promise.all(
           allBranches.map(async (branch) => {
-            // Revenue
+            // Revenue (net of tax) and tax collected
             const revenueResult = await db
               .select({
-                revenue: sql<number>`sum(${sales.totalAmount})`,
+                grossRevenue: sql<number>`coalesce(sum(${sales.totalAmount}), 0)`,
+                taxCollected: sql<number>`coalesce(sum(${sales.taxAmount}), 0)`,
+                discounts: sql<number>`coalesce(sum(${sales.discountAmount}), 0)`,
                 salesCount: sql<number>`count(*)`,
               })
               .from(sales)
@@ -1182,10 +1450,25 @@ export function registerReportHandlers(): void {
                 )
               )
 
+            // Cost of goods sold = sum(saleItems.quantity * saleItems.costPrice)
+            const cogsResult = await db
+              .select({
+                cogs: sql<number>`coalesce(sum(${saleItems.quantity} * ${saleItems.costPrice}), 0)`,
+              })
+              .from(saleItems)
+              .innerJoin(sales, eq(saleItems.saleId, sales.id))
+              .where(
+                and(
+                  eq(sales.branchId, branch.id),
+                  between(sales.saleDate, startDate, endDate),
+                  eq(sales.isVoided, false)
+                )
+              )
+
             // Expenses
             const expenseResult = await db
               .select({
-                expenses: sql<number>`sum(${expenses.amount})`,
+                expenses: sql<number>`coalesce(sum(${expenses.amount}), 0)`,
               })
               .from(expenses)
               .where(
@@ -1199,22 +1482,36 @@ export function registerReportHandlers(): void {
             // Inventory value
             const inventoryResult = await db
               .select({
-                inventoryValue: sql<number>`sum(${inventory.quantity} * ${products.costPrice})`,
+                inventoryValue: sql<number>`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
               })
               .from(inventory)
               .innerJoin(products, eq(inventory.productId, products.id))
               .where(eq(inventory.branchId, branch.id))
 
-            const revenue = revenueResult[0]?.revenue || 0
+            const grossRevenue = revenueResult[0]?.grossRevenue || 0
+            const taxCollected = revenueResult[0]?.taxCollected || 0
+            const netRevenue = grossRevenue - taxCollected
+            const cogs = cogsResult[0]?.cogs || 0
             const expenseAmount = expenseResult[0]?.expenses || 0
-            const profit = revenue - expenseAmount
+            const grossProfit = netRevenue - cogs
+            const netProfit = grossProfit - expenseAmount
+            const grossMargin = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0
+            const netMargin = netRevenue > 0 ? (netProfit / netRevenue) * 100 : 0
 
             return {
               branchId: branch.id,
               branchName: branch.name,
-              revenue,
+              revenue: grossRevenue,
+              netRevenue,
+              taxCollected,
+              discounts: revenueResult[0]?.discounts || 0,
+              cogs,
+              grossProfit,
               expenses: expenseAmount,
-              profit,
+              netProfit,
+              profit: netProfit,
+              grossMargin,
+              netMargin,
               salesCount: revenueResult[0]?.salesCount || 0,
               inventoryValue: inventoryResult[0]?.inventoryValue || 0,
             }
@@ -1223,7 +1520,11 @@ export function registerReportHandlers(): void {
 
         // Summary
         const totalRevenue = branchMetrics.reduce((sum, b) => sum + b.revenue, 0)
-        const totalProfit = branchMetrics.reduce((sum, b) => sum + b.profit, 0)
+        const totalNetRevenue = branchMetrics.reduce((sum, b) => sum + b.netRevenue, 0)
+        const totalCogs = branchMetrics.reduce((sum, b) => sum + b.cogs, 0)
+        const totalGrossProfit = branchMetrics.reduce((sum, b) => sum + b.grossProfit, 0)
+        const totalExpenses = branchMetrics.reduce((sum, b) => sum + b.expenses, 0)
+        const totalProfit = branchMetrics.reduce((sum, b) => sum + b.netProfit, 0)
 
         // Top performing branch
         const topBranch = branchMetrics.reduce((top, current) =>
@@ -1248,6 +1549,10 @@ export function registerReportHandlers(): void {
             summary: {
               totalBranches: allBranches.length,
               totalRevenue,
+              totalNetRevenue,
+              totalCogs,
+              totalGrossProfit,
+              totalExpenses,
               totalProfit,
             },
             branchMetrics,
@@ -1306,10 +1611,11 @@ export function registerReportHandlers(): void {
             )
           )
 
-        // Cash out - Purchases
+        // Cash out - Purchases (goods vs freight)
         const purchasesCash = await db
           .select({
-            total: sql<number>`sum(${purchases.totalAmount})`,
+            total: sql<number>`coalesce(sum(${purchases.totalAmount}), 0)`,
+            shipping: sql<number>`coalesce(sum(${purchases.shippingCost}), 0)`,
           })
           .from(purchases)
           .where(
@@ -1360,12 +1666,14 @@ export function registerReportHandlers(): void {
           )
 
         const cashIn = salesCash[0]?.total || 0
-        const cashOutPurchases = purchasesCash[0]?.total || 0
+        const cashOutPurchasesTotal = purchasesCash[0]?.total || 0
+        const cashOutFreight = purchasesCash[0]?.shipping || 0
+        const cashOutPurchasesGoods = cashOutPurchasesTotal - cashOutFreight
         const cashOutExpenses = expensesCash[0]?.total || 0
         const cashOutCommissions = commissionsCash[0]?.total || 0
         const cashOutRefunds = refundsCash[0]?.total || 0
         const totalCashOut =
-          cashOutPurchases + cashOutExpenses + cashOutCommissions + cashOutRefunds
+          cashOutPurchasesTotal + cashOutExpenses + cashOutCommissions + cashOutRefunds
 
         await createAuditLog({
           userId: session?.userId,
@@ -1431,7 +1739,8 @@ export function registerReportHandlers(): void {
               other: 0,
             },
             cashOutBreakdown: {
-              purchases: cashOutPurchases,
+              purchases: cashOutPurchasesGoods,
+              freight: cashOutFreight,
               expenses: cashOutExpenses,
               commissions: cashOutCommissions,
               refunds: cashOutRefunds,

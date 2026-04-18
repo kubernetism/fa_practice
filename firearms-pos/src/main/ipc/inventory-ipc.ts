@@ -223,6 +223,66 @@ export function registerInventoryHandlers(): void {
     }
   )
 
+  // Update the per-row "min stock alert" threshold without changing
+  // current quantity. Creates the inventory row at quantity=0 if it
+  // doesn't yet exist (so a min can be set before the first stock-in).
+  ipcMain.handle(
+    'inventory:set-min-quantity',
+    async (
+      _,
+      data: { productId: number; branchId: number; minQuantity: number }
+    ) => {
+      try {
+        const min = Number(data.minQuantity)
+        if (!Number.isFinite(min) || min < 0) {
+          return { success: false, message: 'Min quantity must be a non-negative number' }
+        }
+        if (!data.productId || !data.branchId) {
+          return { success: false, message: 'Product and branch are required' }
+        }
+
+        const session = getCurrentSession()
+        const existing = await db.query.inventory.findFirst({
+          where: and(
+            eq(inventory.productId, data.productId),
+            eq(inventory.branchId, data.branchId)
+          ),
+        })
+
+        const previousMin = existing?.minQuantity ?? null
+        if (existing) {
+          await db
+            .update(inventory)
+            .set({ minQuantity: min, updatedAt: new Date().toISOString() })
+            .where(eq(inventory.id, existing.id))
+        } else {
+          await db.insert(inventory).values({
+            productId: data.productId,
+            branchId: data.branchId,
+            quantity: 0,
+            minQuantity: min,
+          })
+        }
+
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: data.branchId,
+          action: 'update',
+          entityType: 'inventory',
+          entityId: data.productId,
+          oldValues: previousMin === null ? undefined : { minQuantity: previousMin },
+          newValues: { minQuantity: min },
+          description: `Min stock alert set to ${min}`,
+        })
+
+        return { success: true, message: 'Min stock alert updated' }
+      } catch (error) {
+        console.error('Set min quantity error:', error)
+        return { success: false, message: 'Failed to update min stock alert' }
+      }
+    }
+  )
+
   ipcMain.handle(
     'inventory:transfer',
     async (

@@ -1,13 +1,14 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, between, gte, lte } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { expenses, type NewExpense, accountPayables, cashRegisterSessions, cashTransactions } from '../db/schema'
+import { expenses, type NewExpense, accountPayables, cashRegisterSessions, cashTransactions, payees } from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
 import { postExpenseToGL } from '../utils/gl-posting'
 import { handleIpcError } from '../utils/error-handling'
+import { isCashMethod, requireOpenCashSession } from '../utils/cash-register-guard'
 
 export function registerExpenseHandlers(): void {
   const db = getDatabase()
@@ -51,7 +52,7 @@ export function registerExpenseHandlers(): void {
           orderBy: sortOrder === 'desc' ? desc(expenses.expenseDate) : expenses.expenseDate,
           with: {
             category: true,
-            supplier: true,
+            payee: true,
             payable: true,
             branch: true,
             user: {
@@ -85,7 +86,7 @@ export function registerExpenseHandlers(): void {
         where: eq(expenses.id, id),
         with: {
           category: true,
-          supplier: true,
+          payee: true,
           payable: true,
           branch: true,
           user: {
@@ -112,11 +113,11 @@ export function registerExpenseHandlers(): void {
     try {
       const session = getCurrentSession()
 
-      // Validation: Unpaid expenses must have a supplier
-      if (data.paymentStatus === 'unpaid' && !data.supplierId) {
+      // Validation: All expenses require a payee
+      if (!data.payeeId) {
         return {
           success: false,
-          message: 'Supplier is required for unpaid expenses',
+          message: 'Payee is required for all expenses',
         }
       }
 
@@ -125,6 +126,18 @@ export function registerExpenseHandlers(): void {
         return {
           success: false,
           message: 'Due date is required for unpaid expenses',
+        }
+      }
+
+      // Guard: paid-in-cash expenses require an open cash register session for
+      // the branch. Otherwise the GL would credit Cash while the drawer stays
+      // untouched, breaking GL ↔ register reconciliation.
+      const willHitCashDrawer =
+        data.paymentStatus !== 'unpaid' && isCashMethod(data.paymentMethod)
+      if (willHitCashDrawer) {
+        const guard = await requireOpenCashSession(data.branchId)
+        if (!guard.ok) {
+          return { success: false, message: guard.message }
         }
       }
 
@@ -152,14 +165,20 @@ export function registerExpenseHandlers(): void {
         const newExpense = expenseResult[0]
 
         // Auto-create payable for unpaid expenses
-        if (data.paymentStatus === 'unpaid' && data.supplierId) {
-          // Generate invoice number for the payable
+        if (data.paymentStatus === 'unpaid' && data.payeeId) {
           const invoiceNumber = `EXP-${newExpense.id}-${Date.now()}`
+
+          // Resolve supplierId from payee if vendor type
+          const payee = await txDb.query.payees.findFirst({
+            where: eq(payees.id, data.payeeId),
+          })
+          const supplierIdForPayable = payee?.linkedSupplierId ?? null
 
           const payableResult = await txDb
             .insert(accountPayables)
             .values({
-              supplierId: data.supplierId,
+              supplierId: supplierIdForPayable,
+              payeeId: data.payeeId,
               purchaseId: null,
               branchId: data.branchId,
               invoiceNumber: invoiceNumber,
@@ -177,12 +196,16 @@ export function registerExpenseHandlers(): void {
           const newPayable = payableResult[0]
           payableId = newPayable.id
 
-          // Update expense with payableId
           await txDb
             .update(expenses)
             .set({ payableId: newPayable.id })
             .where(eq(expenses.id, newExpense.id))
         }
+
+        // Look up payee name for GL narration
+        const payeeRecord = await txDb.query.payees.findFirst({
+          where: eq(payees.id, data.payeeId!),
+        })
 
         // Post to General Ledger
         await postExpenseToGL(
@@ -193,7 +216,8 @@ export function registerExpenseHandlers(): void {
             amount: data.amount,
             paymentStatus: data.paymentStatus || 'paid',
             paymentMethod: data.paymentMethod,
-            description: data.description,
+            description: data.description ?? undefined,
+            payeeName: payeeRecord?.name,
           },
           session?.userId ?? 0
         )
@@ -227,7 +251,7 @@ export function registerExpenseHandlers(): void {
       })
 
       // Audit log for payable creation (if created)
-      if (result.payableId && data.supplierId) {
+      if (result.payableId && data.payeeId) {
         const invoiceNumber = `EXP-${result.newExpense.id}-${Date.now()}`
         await createAuditLog({
           userId: session?.userId,
@@ -236,7 +260,7 @@ export function registerExpenseHandlers(): void {
           entityType: 'account_payable',
           entityId: result.payableId,
           newValues: {
-            supplierId: data.supplierId,
+            payeeId: data.payeeId,
             invoiceNumber: invoiceNumber,
             totalAmount: data.amount,
             source: 'expense',
@@ -284,11 +308,11 @@ export function registerExpenseHandlers(): void {
         return { success: false, message: 'Expense not found' }
       }
 
-      // Validation: Can't change to unpaid if no supplier provided
-      if (data.paymentStatus === 'unpaid' && !data.supplierId && !existing.supplierId) {
+      // Validation: Can't change to unpaid if no payee provided
+      if (data.paymentStatus === 'unpaid' && !data.payeeId && !existing.payeeId) {
         return {
           success: false,
-          message: 'Supplier is required for unpaid expenses',
+          message: 'Payee is required for unpaid expenses',
         }
       }
 
@@ -327,17 +351,26 @@ export function registerExpenseHandlers(): void {
             }
           }
         }
+
+        // Guard: marking an expense as paid-in-cash requires an open register
+        const methodForTransition = data.paymentMethod ?? existing.paymentMethod
+        if (isCashMethod(methodForTransition)) {
+          const guard = await requireOpenCashSession(existing.branchId)
+          if (!guard.ok) {
+            return { success: false, message: guard.message }
+          }
+        }
       }
 
       // Handle status change: from paid to unpaid - validate before transaction
       let shouldCreatePayable = false
-      let supplierIdToUse: number | undefined
+      let payeeIdToUse: number | undefined
       if (existing.paymentStatus === 'paid' && data.paymentStatus === 'unpaid') {
-        supplierIdToUse = data.supplierId || existing.supplierId
-        if (!supplierIdToUse) {
+        payeeIdToUse = data.payeeId || existing.payeeId || undefined
+        if (!payeeIdToUse) {
           return {
             success: false,
-            message: 'Supplier is required to change expense to unpaid',
+            message: 'Payee is required to change expense to unpaid',
           }
         }
 
@@ -370,13 +403,20 @@ export function registerExpenseHandlers(): void {
         }
 
         // Create payable if changing from paid to unpaid
-        if (shouldCreatePayable && supplierIdToUse) {
+        if (shouldCreatePayable && payeeIdToUse) {
           const invoiceNumber = `EXP-${existing.id}-${Date.now()}`
+
+          // Resolve supplierId from payee if vendor type
+          const payee = await txDb.query.payees.findFirst({
+            where: eq(payees.id, payeeIdToUse),
+          })
+          const supplierIdForPayable = payee?.linkedSupplierId ?? null
 
           const payableResult = await txDb
             .insert(accountPayables)
             .values({
-              supplierId: supplierIdToUse,
+              supplierId: supplierIdForPayable,
+              payeeId: payeeIdToUse,
               purchaseId: null,
               branchId: existing.branchId,
               invoiceNumber: invoiceNumber,
@@ -406,7 +446,7 @@ export function registerExpenseHandlers(): void {
       })
 
       // Audit log for payable creation (outside transaction)
-      if (txResult.createdPayableId && supplierIdToUse) {
+      if (txResult.createdPayableId && payeeIdToUse) {
         const invoiceNumber = `EXP-${existing.id}-${Date.now()}`
         await createAuditLog({
           userId: session?.userId,
@@ -415,7 +455,7 @@ export function registerExpenseHandlers(): void {
           entityType: 'account_payable',
           entityId: txResult.createdPayableId,
           newValues: {
-            supplierId: supplierIdToUse,
+            payeeId: payeeIdToUse,
             invoiceNumber: invoiceNumber,
             totalAmount: data.amount || existing.amount,
             source: 'expense_status_change',

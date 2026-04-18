@@ -115,6 +115,9 @@ export function InventoryScreen() {
   const [formData, setFormData] = useState<FormData>(initialFormData)
   const [isSaving, setIsSaving] = useState(false)
   const [selectedBranchFilter, setSelectedBranchFilter] = useState<string>('all')
+  // Global default for the "Min Stock Alert" field on the Add dialog,
+  // sourced from Business Settings → Inventory → Low Stock Threshold.
+  const [defaultMinStockAlert, setDefaultMinStockAlert] = useState<number>(5)
 
   // Fetch data
   const fetchInventory = useCallback(async () => {
@@ -156,6 +159,16 @@ export function InventoryScreen() {
     const loadData = async () => {
       setIsLoading(true)
       await Promise.all([fetchInventory(), fetchProducts()])
+      // Pull global default for the Min Stock Alert field from business settings.
+      try {
+        const settingsRes = await window.api.businessSettings.getGlobal()
+        const threshold = settingsRes?.data?.lowStockThreshold
+        if (typeof threshold === 'number' && threshold >= 0) {
+          setDefaultMinStockAlert(threshold)
+        }
+      } catch (err) {
+        console.warn('Could not load default low-stock threshold:', err)
+      }
       setIsLoading(false)
     }
     loadData()
@@ -281,6 +294,7 @@ export function InventoryScreen() {
     setFormData({
       ...initialFormData,
       branchId: currentBranch?.id?.toString() || '',
+      minStockAlert: defaultMinStockAlert.toString(),
     })
     setIsDialogOpen(true)
   }
@@ -319,33 +333,63 @@ export function InventoryScreen() {
 
     setIsSaving(true)
     try {
-      if (editingInventory) {
-        // Update existing
-        const result = await window.api.inventory.adjust({
-          productId: parseInt(formData.productId),
-          branchId: parseInt(formData.branchId),
-          adjustmentType: 'correction',
-          quantityChange: parseInt(formData.availability) - editingInventory.quantity,
-          reason: 'Manual inventory adjustment',
-        })
+      const productId = parseInt(formData.productId)
+      const branchId = parseInt(formData.branchId)
+      const minStockAlert = parseInt(formData.minStockAlert)
+      const minStockChanged =
+        Number.isFinite(minStockAlert) &&
+        minStockAlert >= 0 &&
+        (!editingInventory || editingInventory.minQuantity !== minStockAlert)
 
-        if (!result.success) {
-          alert(result.message || 'Failed to update inventory')
-          return
+      if (editingInventory) {
+        // Quantity correction (only when value actually changed, so the
+        // user can edit min-stock-alert alone without touching stock).
+        const qtyDelta = parseInt(formData.availability) - editingInventory.quantity
+        if (qtyDelta !== 0) {
+          const result = await window.api.inventory.adjust({
+            productId,
+            branchId,
+            adjustmentType: 'correction',
+            quantityChange: qtyDelta,
+            reason: 'Manual inventory adjustment',
+          })
+
+          if (!result.success) {
+            alert(result.message || 'Failed to update inventory')
+            return
+          }
         }
       } else {
         // Add new inventory or add to existing
-        const result = await window.api.inventory.adjust({
-          productId: parseInt(formData.productId),
-          branchId: parseInt(formData.branchId),
-          adjustmentType: 'add',
-          quantityChange: parseInt(formData.availability),
-          reason: 'Initial stock entry',
-          fundingSource: formData.fundingSource,
-        })
+        const qtyToAdd = parseInt(formData.availability) || 0
+        if (qtyToAdd > 0) {
+          const result = await window.api.inventory.adjust({
+            productId,
+            branchId,
+            adjustmentType: 'add',
+            quantityChange: qtyToAdd,
+            reason: 'Initial stock entry',
+            fundingSource: formData.fundingSource,
+          })
 
-        if (!result.success) {
-          alert(result.message || 'Failed to add inventory')
+          if (!result.success) {
+            alert(result.message || 'Failed to add inventory')
+            return
+          }
+        }
+      }
+
+      // Persist the Min Stock Alert separately — `inventory:adjust` only
+      // touches quantity, so without this call the user's typed value
+      // would be silently discarded (the visible bug).
+      if (minStockChanged) {
+        const minRes = await window.api.inventory.setMinQuantity({
+          productId,
+          branchId,
+          minQuantity: minStockAlert,
+        })
+        if (!minRes.success) {
+          alert(minRes.message || 'Failed to update min stock alert')
           return
         }
       }

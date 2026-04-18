@@ -69,7 +69,11 @@
       "Bash(script -q -c \"printf '\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n\\\\n' | pnpm db:generate\" /dev/null)",
       "Bash(pnpm typecheck:*)",
       "Bash(pnpm typecheck:node)",
-      "Bash(pnpm lint:*)"
+      "Bash(pnpm lint:*)",
+      "Bash(npm run:*)",
+      "Bash(npm --prefix firearms-pos run typecheck:node)",
+      "Bash(cp src/main/utils/gl-posting.ts /tmp/gl-posting-saved.ts)",
+      "Read(//tmp/**)"
     ]
   }
 }

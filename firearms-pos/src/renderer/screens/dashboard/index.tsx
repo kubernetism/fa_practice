@@ -332,11 +332,8 @@ export function DashboardScreen() {
     }
   }, [currentBranch, timePeriod, chartFilter, customDate])
 
-  // Initial fetch + auto-refresh every 30 seconds
   useEffect(() => {
     fetchDashboardData()
-    const interval = setInterval(() => fetchDashboardData(true), 30_000)
-    return () => clearInterval(interval)
   }, [fetchDashboardData])
 
   if (isLoading) {

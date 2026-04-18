@@ -351,11 +351,41 @@ const returnItems = sqliteCore.sqliteTable("return_items", {
   restockable: sqliteCore.integer("restockable", { mode: "boolean" }).notNull().default(true),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const payees = sqliteCore.sqliteTable(
+  "payees",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    name: sqliteCore.text("name").notNull(),
+    payeeType: sqliteCore.text("payee_type", {
+      enum: ["vendor", "landlord", "utility", "employee", "government", "other"]
+    }).notNull(),
+    linkedSupplierId: sqliteCore.integer("linked_supplier_id").references(() => suppliers.id),
+    contactPhone: sqliteCore.text("contact_phone"),
+    contactEmail: sqliteCore.text("contact_email"),
+    address: sqliteCore.text("address"),
+    notes: sqliteCore.text("notes"),
+    isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    payeeTypeIdx: sqliteCore.index("payees_payee_type_idx").on(table.payeeType),
+    linkedSupplierIdx: sqliteCore.index("payees_linked_supplier_idx").on(table.linkedSupplierId),
+    isActiveIdx: sqliteCore.index("payees_is_active_idx").on(table.isActive)
+  })
+);
+const payeesRelations = drizzleOrm.relations(payees, ({ one }) => ({
+  linkedSupplier: one(suppliers, {
+    fields: [payees.linkedSupplierId],
+    references: [suppliers.id]
+  })
+}));
 const accountPayables = sqliteCore.sqliteTable(
   "account_payables",
   {
     id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-    supplierId: sqliteCore.integer("supplier_id").notNull().references(() => suppliers.id),
+    supplierId: sqliteCore.integer("supplier_id").references(() => suppliers.id),
+    payeeId: sqliteCore.integer("payee_id").references(() => payees.id),
     purchaseId: sqliteCore.integer("purchase_id").references(() => purchases.id),
     branchId: sqliteCore.integer("branch_id").notNull().references(() => branches.id),
     invoiceNumber: sqliteCore.text("invoice_number").notNull(),
@@ -377,6 +407,7 @@ const accountPayables = sqliteCore.sqliteTable(
   },
   (table) => ({
     supplierIdx: sqliteCore.index("payables_supplier_idx").on(table.supplierId),
+    payeeIdx: sqliteCore.index("payables_payee_idx").on(table.payeeId),
     statusIdx: sqliteCore.index("payables_status_idx").on(table.status),
     branchIdx: sqliteCore.index("payables_branch_idx").on(table.branchId),
     dueDateIdx: sqliteCore.index("payables_due_date_idx").on(table.dueDate)
@@ -407,6 +438,10 @@ const accountPayablesRelations = drizzleOrm.relations(accountPayables, ({ one, m
   supplier: one(suppliers, {
     fields: [accountPayables.supplierId],
     references: [suppliers.id]
+  }),
+  payee: one(payees, {
+    fields: [accountPayables.payeeId],
+    references: [payees.id]
   }),
   purchase: one(purchases, {
     fields: [accountPayables.purchaseId],
@@ -446,7 +481,7 @@ const expenses = sqliteCore.sqliteTable(
     expenseDate: sqliteCore.text("expense_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
     // New fields for unpaid expense tracking
     paymentStatus: sqliteCore.text("payment_status", { enum: ["paid", "unpaid"] }).notNull().default("paid"),
-    supplierId: sqliteCore.integer("supplier_id").references(() => suppliers.id),
+    payeeId: sqliteCore.integer("payee_id").references(() => payees.id),
     payableId: sqliteCore.integer("payable_id").references(() => accountPayables.id),
     dueDate: sqliteCore.text("due_date"),
     paymentTerms: sqliteCore.text("payment_terms"),
@@ -459,7 +494,7 @@ const expenses = sqliteCore.sqliteTable(
   },
   (table) => ({
     paymentStatusIdx: sqliteCore.index("expenses_payment_status_idx").on(table.paymentStatus),
-    supplierIdx: sqliteCore.index("expenses_supplier_idx").on(table.supplierId),
+    payeeIdx: sqliteCore.index("expenses_payee_idx").on(table.payeeId),
     payableIdx: sqliteCore.index("expenses_payable_idx").on(table.payableId)
   })
 );
@@ -476,9 +511,9 @@ const expensesRelations = drizzleOrm.relations(expenses, ({ one }) => ({
     fields: [expenses.categoryId],
     references: [categories.id]
   }),
-  supplier: one(suppliers, {
-    fields: [expenses.supplierId],
-    references: [suppliers.id]
+  payee: one(payees, {
+    fields: [expenses.payeeId],
+    references: [payees.id]
   }),
   payable: one(accountPayables, {
     fields: [expenses.payableId],
@@ -1604,6 +1639,8 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   onlineTransactionsRelations,
   payablePayments,
   payablePaymentsRelations,
+  payees,
+  payeesRelations,
   products,
   purchaseItems,
   purchases,
@@ -2673,6 +2710,7 @@ async function postPurchaseReceiveToGL(purchase, receivedItems, userId) {
   });
 }
 async function postExpenseToGL(expense, userId) {
+  const payeeSuffix = expense.payeeName ? ` - ${expense.payeeName}` : "";
   const lines = [];
   const categoryToAccount = {
     salaries: ACCOUNT_CODES.SALARIES_WAGES,
@@ -2688,14 +2726,14 @@ async function postExpenseToGL(expense, userId) {
     accountCode: expenseAccount,
     debitAmount: expense.amount,
     creditAmount: 0,
-    description: expense.description || `Expense: ${expense.categoryName}`
+    description: expense.description || `Expense: ${expense.categoryName}${payeeSuffix}`
   });
   if (expense.paymentStatus === "unpaid") {
     lines.push({
       accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payable for expense ${expense.categoryName}`
+      description: `Payable for expense ${expense.categoryName}${payeeSuffix}`
     });
   } else {
     const cashAccount = expense.paymentMethod === "bank_transfer" || expense.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
@@ -2703,11 +2741,11 @@ async function postExpenseToGL(expense, userId) {
       accountCode: cashAccount,
       debitAmount: 0,
       creditAmount: expense.amount,
-      description: `Payment for expense ${expense.categoryName}`
+      description: `Payment for expense ${expense.categoryName}${payeeSuffix}`
     });
   }
   return createJournalEntry({
-    description: `Expense: ${expense.categoryName}${expense.description ? ` - ${expense.description}` : ""}`,
+    description: `Expense: ${expense.categoryName}${payeeSuffix}${expense.description ? ` - ${expense.description}` : ""}`,
     referenceType: "expense",
     referenceId: expense.id,
     branchId: expense.branchId,
@@ -3203,6 +3241,87 @@ async function fixFinancialIntegrityV2() {
   }
   console.log("Financial integrity fix v2 completed.");
 }
+async function migrateToPayees() {
+  const db2 = getDatabase();
+  const rawDb = db2.$client;
+  const tableExists = rawDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='payees'").get();
+  if (tableExists) {
+    console.log("Payees table already exists, skipping migration");
+    return;
+  }
+  console.log("Running payees migration...");
+  rawDb.exec("BEGIN TRANSACTION");
+  try {
+    rawDb.exec(`
+      CREATE TABLE payees (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        payee_type TEXT NOT NULL DEFAULT 'other',
+        linked_supplier_id INTEGER REFERENCES suppliers(id),
+        contact_phone TEXT,
+        contact_email TEXT,
+        address TEXT,
+        notes TEXT,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    rawDb.exec("CREATE INDEX payees_payee_type_idx ON payees(payee_type)");
+    rawDb.exec("CREATE INDEX payees_linked_supplier_idx ON payees(linked_supplier_id)");
+    rawDb.exec("CREATE INDEX payees_is_active_idx ON payees(is_active)");
+    rawDb.exec(`
+      INSERT INTO payees (name, payee_type, linked_supplier_id, contact_phone, contact_email, address, notes, is_active, created_at, updated_at)
+      SELECT name, 'vendor', id, phone, email, address, notes, is_active, created_at, updated_at
+      FROM suppliers
+    `);
+    const mirroredCount = rawDb.prepare("SELECT changes() as count").get();
+    console.log("Mirrored " + mirroredCount.count + " suppliers as vendor payees");
+    rawDb.exec("ALTER TABLE expenses ADD COLUMN payee_id INTEGER REFERENCES payees(id)");
+    rawDb.exec(`
+      UPDATE expenses
+      SET payee_id = (
+        SELECT p.id FROM payees p WHERE p.linked_supplier_id = expenses.supplier_id
+      )
+      WHERE supplier_id IS NOT NULL
+    `);
+    const backfilledCount = rawDb.prepare(
+      "SELECT COUNT(*) as count FROM expenses WHERE supplier_id IS NOT NULL AND payee_id IS NOT NULL"
+    ).get();
+    console.log("Backfilled " + backfilledCount.count + " expenses with payee_id from supplier link");
+    const orphanCount = rawDb.prepare(
+      "SELECT COUNT(*) as count FROM expenses WHERE payee_id IS NULL"
+    ).get();
+    if (orphanCount.count > 0) {
+      rawDb.exec(`
+        INSERT INTO payees (name, payee_type, is_active, created_at, updated_at)
+        VALUES ('Unattributed (Legacy)', 'other', 1, datetime('now'), datetime('now'))
+      `);
+      const legacyPayeeId = rawDb.prepare("SELECT last_insert_rowid() as id").get();
+      const stmt = rawDb.prepare("UPDATE expenses SET payee_id = ? WHERE payee_id IS NULL");
+      stmt.run(legacyPayeeId.id);
+      console.log("Assigned " + orphanCount.count + ' orphan expenses to "Unattributed (Legacy)" payee (id=' + legacyPayeeId.id + ")");
+    }
+    rawDb.exec("CREATE INDEX expenses_payee_idx ON expenses(payee_id)");
+    rawDb.exec("ALTER TABLE account_payables ADD COLUMN payee_id INTEGER REFERENCES payees(id)");
+    rawDb.exec("CREATE INDEX payables_payee_idx ON account_payables(payee_id)");
+    rawDb.exec(`
+      UPDATE account_payables
+      SET payee_id = (
+        SELECT e.payee_id FROM expenses e WHERE e.payable_id = account_payables.id
+      )
+      WHERE EXISTS (
+        SELECT 1 FROM expenses e WHERE e.payable_id = account_payables.id AND e.payee_id IS NOT NULL
+      )
+    `);
+    rawDb.exec("COMMIT");
+    console.log("Payees migration completed successfully");
+  } catch (error) {
+    rawDb.exec("ROLLBACK");
+    console.error("Payees migration failed, rolled back:", error);
+    throw error;
+  }
+}
 async function runMigrations() {
   const db2 = getDatabase();
   const possiblePaths = [
@@ -3353,6 +3472,11 @@ async function runMigrations() {
     await fixFinancialIntegrityV2();
   } catch (error) {
     console.error("Financial integrity fix v2 error:", error);
+  }
+  try {
+    await migrateToPayees();
+  } catch (error) {
+    console.error("Payees migration error:", error);
   }
 }
 async function ensureReferralPersonsTable() {
@@ -3529,6 +3653,7 @@ async function seedInitialData() {
     { name: "Supplies", description: "Office and business supplies" },
     { name: "Maintenance", description: "Equipment and facility maintenance" },
     { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Shipping", description: "Freight and shipping on inbound purchases" },
     { name: "Other", description: "Miscellaneous expenses" }
   ]);
   await db2.insert(categories2).values([
@@ -3794,6 +3919,7 @@ async function ensureFinancialSystemTables() {
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5200', 'Rent Expense', 'expense', 'rent_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5300', 'Utilities Expense', 'expense', 'utilities_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5400', 'Inventory Shrinkage', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5500', 'Freight and Shipping', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5900', 'Other Expenses', 'expense', 'other_expense', 'debit', 0, datetime('now'), datetime('now'));
     `;
     db2.exec(coaMigration);
@@ -3803,8 +3929,9 @@ async function ensureFinancialSystemTables() {
     db2.exec(`
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('4900', 'Inventory Adjustment Income', 'revenue', 'other_revenue', 'credit', 1, datetime('now'), datetime('now'));
       INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5400', 'Inventory Shrinkage', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
+      INSERT OR IGNORE INTO "chart_of_accounts" ("account_code", "account_name", "account_type", "account_sub_type", "normal_balance", "is_system_account", "created_at", "updated_at") VALUES ('5500', 'Freight and Shipping', 'expense', 'other_expense', 'debit', 1, datetime('now'), datetime('now'));
     `);
-    console.log("Ensured inventory adjustment accounts exist (4900, 5400)");
+    console.log("Ensured inventory adjustment and freight accounts exist (4900, 5400, 5500)");
   }
   const jeTableCheck = db2.prepare(
     `SELECT name FROM sqlite_master WHERE type='table' AND name='journal_entries'`
@@ -4252,6 +4379,7 @@ async function migrateExpensesToCategoryId() {
     { name: "Supplies", description: "Office and business supplies" },
     { name: "Maintenance", description: "Equipment and facility maintenance" },
     { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Shipping", description: "Freight and shipping on inbound purchases" },
     { name: "Other", description: "Miscellaneous expenses" }
   ];
   const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -4310,6 +4438,7 @@ async function ensureDefaultExpenseAndServiceCategories() {
     { name: "Supplies", description: "Office and business supplies" },
     { name: "Maintenance", description: "Equipment and facility maintenance" },
     { name: "Marketing", description: "Marketing and advertising expenses" },
+    { name: "Shipping", description: "Freight and shipping on inbound purchases" },
     { name: "Other", description: "Miscellaneous expenses" }
   ];
   const serviceCats = [
@@ -5329,6 +5458,52 @@ function registerInventoryHandlers() {
     }
   );
   electron.ipcMain.handle(
+    "inventory:set-min-quantity",
+    async (_, data) => {
+      try {
+        const min = Number(data.minQuantity);
+        if (!Number.isFinite(min) || min < 0) {
+          return { success: false, message: "Min quantity must be a non-negative number" };
+        }
+        if (!data.productId || !data.branchId) {
+          return { success: false, message: "Product and branch are required" };
+        }
+        const session = getCurrentSession();
+        const existing = await db2.query.inventory.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(inventory.productId, data.productId),
+            drizzleOrm.eq(inventory.branchId, data.branchId)
+          )
+        });
+        const previousMin = existing?.minQuantity ?? null;
+        if (existing) {
+          await db2.update(inventory).set({ minQuantity: min, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(inventory.id, existing.id));
+        } else {
+          await db2.insert(inventory).values({
+            productId: data.productId,
+            branchId: data.branchId,
+            quantity: 0,
+            minQuantity: min
+          });
+        }
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: data.branchId,
+          action: "update",
+          entityType: "inventory",
+          entityId: data.productId,
+          oldValues: previousMin === null ? void 0 : { minQuantity: previousMin },
+          newValues: { minQuantity: min },
+          description: `Min stock alert set to ${min}`
+        });
+        return { success: true, message: "Min stock alert updated" };
+      } catch (error) {
+        console.error("Set min quantity error:", error);
+        return { success: false, message: "Failed to update min stock alert" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
     "inventory:transfer",
     async (_, data) => {
       try {
@@ -5983,6 +6158,20 @@ function registerSupplierHandlers() {
         newValues: sanitizeForAudit(decryptedForAudit),
         description: `Created supplier: ${sanitizedData.name}`
       });
+      try {
+        await db2.insert(payees).values({
+          name: sanitizedData.name,
+          payeeType: "vendor",
+          linkedSupplierId: newSupplier.id,
+          contactPhone: sanitizedData.phone || void 0,
+          contactEmail: sanitizedData.email || void 0,
+          address: sanitizedData.address || void 0,
+          notes: sanitizedData.notes || void 0,
+          isActive: sanitizedData.isActive !== false
+        });
+      } catch (mirrorError) {
+        console.error("Failed to mirror supplier as payee:", mirrorError);
+      }
       return { success: true, data: decryptedForAudit };
     } catch (error) {
       console.error("Create supplier error:", error);
@@ -6017,6 +6206,22 @@ function registerSupplierHandlers() {
         newValues: sanitizeForAudit(decryptedNew),
         description: `Updated supplier: ${existing.name}`
       });
+      try {
+        const mirroredPayee = await db2.query.payees.findFirst({
+          where: drizzleOrm.eq(payees.linkedSupplierId, id)
+        });
+        if (mirroredPayee) {
+          const payeeUpdates = { updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+          if (sanitizedData.name) payeeUpdates.name = sanitizedData.name;
+          if (sanitizedData.phone !== void 0) payeeUpdates.contactPhone = sanitizedData.phone;
+          if (sanitizedData.email !== void 0) payeeUpdates.contactEmail = sanitizedData.email;
+          if (sanitizedData.address !== void 0) payeeUpdates.address = sanitizedData.address;
+          if (sanitizedData.isActive !== void 0) payeeUpdates.isActive = sanitizedData.isActive;
+          await db2.update(payees).set(payeeUpdates).where(drizzleOrm.eq(payees.id, mirroredPayee.id));
+        }
+      } catch (mirrorError) {
+        console.error("Failed to cascade supplier update to payee:", mirrorError);
+      }
       return { success: true, data: decryptedNew };
     } catch (error) {
       console.error("Update supplier error:", error);
@@ -7663,6 +7868,43 @@ async function executePurchaseReversal(entityId, userId) {
     purchase.branchId,
     userId
   );
+  let cashReversalAmount = 0;
+  if (purchase.paymentMethod === "cash" && inventoryDeducted) {
+    const outflows = await db2.select().from(cashTransactions).where(
+      drizzleOrm.and(
+        drizzleOrm.eq(cashTransactions.referenceType, "purchase"),
+        drizzleOrm.eq(cashTransactions.referenceId, entityId)
+      )
+    );
+    for (const tx of outflows) {
+      if (tx.amount >= 0) continue;
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const openSession = await db2.query.cashRegisterSessions.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
+          drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+          drizzleOrm.eq(cashRegisterSessions.status, "open")
+        )
+      });
+      if (!openSession) {
+        throw new Error(
+          "No open cash register session for this branch. Open a session before reversing a cash purchase."
+        );
+      }
+      const offsetAmount = -tx.amount;
+      await db2.insert(cashTransactions).values({
+        sessionId: openSession.id,
+        branchId: purchase.branchId,
+        transactionType: "adjustment",
+        amount: offsetAmount,
+        referenceType: "purchase_reversal",
+        referenceId: entityId,
+        description: `Reversal of cash purchase: ${purchase.purchaseOrderNumber}`,
+        recordedBy: userId
+      });
+      cashReversalAmount += offsetAmount;
+    }
+  }
   return {
     reversalDetails: {
       purchaseId: entityId,
@@ -7672,7 +7914,8 @@ async function executePurchaseReversal(entityId, userId) {
       cancelledPayableId,
       glReversed: glResult.reversed,
       originalJournalEntryId: glResult.originalEntryId ?? null,
-      reversalJournalEntryId: glResult.reversalEntryId ?? null
+      reversalJournalEntryId: glResult.reversalEntryId ?? null,
+      cashReversalAmount
     }
   };
 }
@@ -8075,6 +8318,32 @@ function registerPurchaseHandlers() {
       if (!data.items || data.items.length === 0) {
         return { success: false, message: "No items in purchase order" };
       }
+      if (!Number.isInteger(data.supplierId) || data.supplierId <= 0) {
+        return { success: false, message: "Invalid supplier" };
+      }
+      if (!Number.isInteger(data.branchId) || data.branchId <= 0) {
+        return { success: false, message: "Invalid branch" };
+      }
+      const paymentMethod = data.paymentMethod || "cash";
+      if (!["cash", "cheque", "pay_later"].includes(paymentMethod)) {
+        return { success: false, message: "Invalid payment method" };
+      }
+      const shippingCost = data.shippingCost ?? 0;
+      if (!Number.isFinite(shippingCost) || shippingCost < 0) {
+        return { success: false, message: "Shipping cost must be zero or positive" };
+      }
+      for (let idx = 0; idx < data.items.length; idx++) {
+        const item = data.items[idx];
+        if (!Number.isInteger(item.productId) || item.productId <= 0) {
+          return { success: false, message: `Item ${idx + 1}: invalid product` };
+        }
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          return { success: false, message: `Item ${idx + 1}: quantity must be a positive integer` };
+        }
+        if (!Number.isFinite(item.unitCost) || item.unitCost <= 0) {
+          return { success: false, message: `Item ${idx + 1}: unit cost must be greater than zero` };
+        }
+      }
       let subtotal = 0;
       const purchaseItemsData = [];
       for (const item of data.items) {
@@ -8088,46 +8357,47 @@ function registerPurchaseHandlers() {
           totalCost
         });
       }
-      const shippingCost = data.shippingCost || 0;
       const totalAmount = subtotal + shippingCost;
       const purchaseOrderNumber = generatePurchaseOrderNumber();
-      const paymentMethod = data.paymentMethod || "cash";
-      const paymentStatus = paymentMethod === "pay_later" ? "pending" : "paid";
-      const [purchase] = await db2.insert(purchases).values({
-        purchaseOrderNumber,
-        supplierId: data.supplierId,
-        branchId: data.branchId,
-        userId: session?.userId ?? 0,
-        subtotal,
-        taxAmount: 0,
-        shippingCost,
-        totalAmount,
-        paymentMethod,
-        paymentStatus,
-        status: "draft",
-        expectedDeliveryDate: data.expectedDeliveryDate,
-        notes: data.notes
-      }).returning();
-      for (const item of purchaseItemsData) {
-        await db2.insert(purchaseItems).values({
-          ...item,
-          purchaseId: purchase.id
-        });
-      }
-      if (paymentMethod === "pay_later") {
-        await db2.insert(accountPayables).values({
+      const paymentStatus = "pending";
+      const purchase = await withTransaction(async ({ db: txDb }) => {
+        const [created] = await txDb.insert(purchases).values({
+          purchaseOrderNumber,
           supplierId: data.supplierId,
-          purchaseId: purchase.id,
           branchId: data.branchId,
-          invoiceNumber: purchaseOrderNumber,
+          userId: session?.userId ?? 0,
+          subtotal,
+          taxAmount: 0,
+          shippingCost,
           totalAmount,
-          paidAmount: 0,
-          remainingAmount: totalAmount,
-          status: "pending",
-          notes: `Auto-generated from Purchase Order: ${purchaseOrderNumber}`,
-          createdBy: session?.userId
-        });
-      }
+          paymentMethod,
+          paymentStatus,
+          status: "draft",
+          expectedDeliveryDate: data.expectedDeliveryDate,
+          notes: data.notes
+        }).returning();
+        for (const item of purchaseItemsData) {
+          await txDb.insert(purchaseItems).values({
+            ...item,
+            purchaseId: created.id
+          });
+        }
+        if (paymentMethod === "pay_later") {
+          await txDb.insert(accountPayables).values({
+            supplierId: data.supplierId,
+            purchaseId: created.id,
+            branchId: data.branchId,
+            invoiceNumber: purchaseOrderNumber,
+            totalAmount,
+            paidAmount: 0,
+            remainingAmount: totalAmount,
+            status: "pending",
+            notes: `Auto-generated from Purchase Order: ${purchaseOrderNumber}`,
+            createdBy: session?.userId
+          });
+        }
+        return created;
+      });
       await createAuditLog$1({
         userId: session?.userId,
         branchId: data.branchId,
@@ -8136,17 +8406,28 @@ function registerPurchaseHandlers() {
         entityId: purchase.id,
         newValues: {
           purchaseOrderNumber,
+          supplierId: data.supplierId,
+          branchId: data.branchId,
+          subtotal,
+          shippingCost,
           totalAmount,
           itemCount: data.items.length,
+          items: purchaseItemsData.map((i) => ({
+            productId: i.productId,
+            quantity: i.quantity,
+            unitCost: i.unitCost,
+            totalCost: i.totalCost
+          })),
           paymentMethod,
           paymentStatus
         },
-        description: `Created purchase order: ${purchaseOrderNumber} (Payment: ${paymentMethod})`
+        description: `Created purchase order: ${purchaseOrderNumber} (Payment: ${paymentMethod}, total: ${totalAmount.toFixed(2)})`
       });
       return { success: true, data: purchase };
     } catch (error) {
       console.error("Create purchase error:", error);
-      return { success: false, message: "Failed to create purchase order" };
+      const message = error instanceof Error ? error.message : "Failed to create purchase order";
+      return { success: false, message };
     }
   });
   electron.ipcMain.handle(
@@ -8224,8 +8505,53 @@ function registerPurchaseHandlers() {
         if (purchase.status === "received" || purchase.status === "cancelled") {
           return { success: false, message: "Cannot receive items for this purchase order" };
         }
+        if (!Array.isArray(receivedItems) || receivedItems.length === 0) {
+          return { success: false, message: "No items to receive" };
+        }
+        let openCashSessionId = null;
+        if (purchase.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await db2.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (!openSession) {
+            return {
+              success: false,
+              message: "No open cash register session for this branch. Open a session before receiving a cash purchase."
+            };
+          }
+          openCashSessionId = openSession.id;
+        }
         const result = await withTransaction(async ({ db: txDb }) => {
           const receivedItemDetails = [];
+          for (let idx = 0; idx < receivedItems.length; idx++) {
+            const item = receivedItems[idx];
+            if (!Number.isInteger(item.itemId) || item.itemId <= 0) {
+              throw new Error(`Receive item ${idx + 1}: invalid itemId`);
+            }
+            if (!Number.isInteger(item.receivedQuantity) || item.receivedQuantity <= 0) {
+              throw new Error(`Receive item ${idx + 1}: receivedQuantity must be a positive integer`);
+            }
+            const purchaseItem = await txDb.query.purchaseItems.findFirst({
+              where: drizzleOrm.eq(purchaseItems.id, item.itemId)
+            });
+            if (!purchaseItem) {
+              throw new Error(`Receive item ${idx + 1}: purchase line not found`);
+            }
+            if (purchaseItem.purchaseId !== purchaseId) {
+              throw new Error(`Receive item ${idx + 1}: line does not belong to this purchase`);
+            }
+            const projected = purchaseItem.receivedQuantity + item.receivedQuantity;
+            if (projected > purchaseItem.quantity) {
+              throw new Error(
+                `Receive item ${idx + 1}: would exceed ordered quantity (ordered ${purchaseItem.quantity}, already received ${purchaseItem.receivedQuantity}, requested ${item.receivedQuantity})`
+              );
+            }
+          }
           for (const item of receivedItems) {
             const purchaseItem = await txDb.query.purchaseItems.findFirst({
               where: drizzleOrm.eq(purchaseItems.id, item.itemId)
@@ -8271,32 +8597,75 @@ function registerPurchaseHandlers() {
           const allReceived = allItems.every((item) => item.receivedQuantity >= item.quantity);
           const partiallyReceived = allItems.some((item) => item.receivedQuantity > 0);
           const newStatus = allReceived ? "received" : partiallyReceived ? "partial" : purchase.status;
+          const newPaymentStatus = allReceived && (purchase.paymentMethod === "cash" || purchase.paymentMethod === "cheque") ? "paid" : purchase.paymentStatus;
           await txDb.update(purchases).set({
             status: newStatus,
+            paymentStatus: newPaymentStatus,
             receivedDate: allReceived ? (/* @__PURE__ */ new Date()).toISOString() : null,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(purchases.id, purchaseId));
+          const shippingAllocation = allReceived ? purchase.shippingCost : 0;
+          let journalEntryId = null;
           if (receivedItemDetails.length > 0) {
-            await postPurchaseReceiveToGL(purchase, receivedItemDetails, session?.userId ?? 0);
+            journalEntryId = await postPurchaseReceiveToGL(
+              { ...purchase, paymentStatus: newPaymentStatus },
+              receivedItemDetails,
+              session?.userId ?? 0,
+              shippingAllocation
+            );
           }
-          return { newStatus, receivedItemDetails };
+          if (purchase.paymentMethod === "cash" && openCashSessionId !== null) {
+            const itemsValue2 = receivedItemDetails.reduce(
+              (sum, i) => sum + i.unitCost * i.receivedQuantity,
+              0
+            );
+            const cashOutflow = itemsValue2 + shippingAllocation;
+            if (cashOutflow > 0) {
+              await txDb.insert(cashTransactions).values({
+                sessionId: openCashSessionId,
+                branchId: purchase.branchId,
+                transactionType: "ap_payment",
+                amount: -cashOutflow,
+                referenceType: "purchase",
+                referenceId: purchase.id,
+                description: `Cash purchase receive: ${purchase.purchaseOrderNumber}`,
+                recordedBy: session?.userId ?? 0
+              });
+            }
+          }
+          return { newStatus, newPaymentStatus, receivedItemDetails, journalEntryId, shippingAllocation };
         });
+        const itemsValue = result.receivedItemDetails.reduce(
+          (sum, i) => sum + i.unitCost * i.receivedQuantity,
+          0
+        );
         await createAuditLog$1({
           userId: session?.userId,
           branchId: purchase.branchId,
           action: "update",
           entityType: "purchase",
           entityId: purchaseId,
+          oldValues: {
+            status: purchase.status,
+            paymentStatus: purchase.paymentStatus
+          },
           newValues: {
             status: result.newStatus,
-            receivedItems: receivedItems.length
+            paymentStatus: result.newPaymentStatus,
+            receivedLineCount: receivedItems.length,
+            itemsValue,
+            shippingAllocated: result.shippingAllocation,
+            totalPosted: itemsValue + result.shippingAllocation,
+            paymentMethod: purchase.paymentMethod,
+            journalEntryId: result.journalEntryId
           },
-          description: `Received items for purchase: ${purchase.purchaseOrderNumber}`
+          description: `Received items for purchase: ${purchase.purchaseOrderNumber} (posted ${(itemsValue + result.shippingAllocation).toFixed(2)})`
         });
         return { success: true, message: "Items received successfully" };
       } catch (error) {
         console.error("Receive purchase error:", error);
-        return { success: false, message: "Failed to receive items" };
+        const message = error instanceof Error ? error.message : "Failed to receive items";
+        return { success: false, message };
       }
     }
   );
@@ -8343,23 +8712,51 @@ function registerPurchaseHandlers() {
         if (purchase.paymentStatus === "paid") {
           return { success: false, message: "Purchase is already paid" };
         }
-        await db2.update(purchases).set({
-          paymentStatus: "paid",
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(purchases.id, purchaseId));
-        const payable = await db2.query.accountPayables.findFirst({
-          where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
-        });
-        if (payable) {
-          const [payablePayment] = await db2.insert(payablePayments).values({
+        if (!["cash", "cheque", "bank_transfer"].includes(paymentData.paymentMethod)) {
+          return { success: false, message: "Invalid payment method" };
+        }
+        let openCashSessionId = null;
+        if (paymentData.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await db2.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (!openSession) {
+            return {
+              success: false,
+              message: "No open cash register session for this branch. Open a session before paying in cash."
+            };
+          }
+          openCashSessionId = openSession.id;
+        }
+        const paidAmount = await withTransaction(async ({ db: txDb }) => {
+          const payable = await txDb.query.accountPayables.findFirst({
+            where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+          });
+          await txDb.update(purchases).set({
+            paymentStatus: "paid",
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(purchases.id, purchaseId));
+          if (!payable) {
+            return 0;
+          }
+          if (payable.remainingAmount <= 0) {
+            throw new Error("Payable has no outstanding amount");
+          }
+          const amount = payable.remainingAmount;
+          const [payablePayment] = await txDb.insert(payablePayments).values({
             payableId: payable.id,
-            amount: payable.remainingAmount,
+            amount,
             paymentMethod: paymentData.paymentMethod,
             referenceNumber: paymentData.referenceNumber,
             notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
             paidBy: session?.userId
           }).returning();
-          await db2.update(accountPayables).set({
+          await txDb.update(accountPayables).set({
             paidAmount: payable.totalAmount,
             remainingAmount: 0,
             status: "paid",
@@ -8370,35 +8767,26 @@ function registerPurchaseHandlers() {
               id: payablePayment.id,
               payableId: payable.id,
               branchId: purchase.branchId,
-              amount: payable.remainingAmount,
+              amount,
               paymentMethod: paymentData.paymentMethod,
               invoiceNumber: payable.invoiceNumber
             },
             session?.userId ?? 0
           );
-          if (paymentData.paymentMethod === "cash") {
-            const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-            const openSession = await db2.query.cashRegisterSessions.findFirst({
-              where: drizzleOrm.and(
-                drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
-                drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
-                drizzleOrm.eq(cashRegisterSessions.status, "open")
-              )
+          if (paymentData.paymentMethod === "cash" && openCashSessionId !== null) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openCashSessionId,
+              branchId: purchase.branchId,
+              transactionType: "ap_payment",
+              amount: -amount,
+              referenceType: "payable_payment",
+              referenceId: payablePayment.id,
+              description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
+              recordedBy: session?.userId ?? 0
             });
-            if (openSession) {
-              await db2.insert(cashTransactions).values({
-                sessionId: openSession.id,
-                branchId: purchase.branchId,
-                transactionType: "ap_payment",
-                amount: -payable.remainingAmount,
-                referenceType: "payable_payment",
-                referenceId: payablePayment.id,
-                description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
-                recordedBy: session?.userId ?? 0
-              });
-            }
           }
-        }
+          return amount;
+        });
         await createAuditLog$1({
           userId: session?.userId,
           branchId: purchase.branchId,
@@ -8406,13 +8794,19 @@ function registerPurchaseHandlers() {
           entityType: "purchase",
           entityId: purchaseId,
           oldValues: { paymentStatus: purchase.paymentStatus },
-          newValues: { paymentStatus: "paid", paymentMethod: paymentData.paymentMethod },
-          description: `Paid off purchase order: ${purchase.purchaseOrderNumber}`
+          newValues: {
+            paymentStatus: "paid",
+            paymentMethod: paymentData.paymentMethod,
+            paidAmount,
+            referenceNumber: paymentData.referenceNumber
+          },
+          description: `Paid off purchase order: ${purchase.purchaseOrderNumber} (${paidAmount.toFixed(2)} ${paymentData.paymentMethod})`
         });
         return { success: true, message: "Purchase paid off successfully" };
       } catch (error) {
         console.error("Pay off purchase error:", error);
-        return { success: false, message: "Failed to pay off purchase" };
+        const message = error instanceof Error ? error.message : "Failed to pay off purchase";
+        return { success: false, message };
       }
     }
   );
@@ -8442,6 +8836,32 @@ function registerPurchaseHandlers() {
     }
   );
 }
+async function requireOpenCashSession(branchId) {
+  if (!branchId) {
+    return { ok: false, message: "Branch is required to check cash register state" };
+  }
+  const db2 = getDatabase();
+  const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  const session = await db2.query.cashRegisterSessions.findFirst({
+    where: drizzleOrm.and(
+      drizzleOrm.eq(cashRegisterSessions.branchId, branchId),
+      drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+      drizzleOrm.eq(cashRegisterSessions.status, "open")
+    ),
+    columns: { id: true, branchId: true, sessionDate: true }
+  });
+  if (!session) {
+    return {
+      ok: false,
+      message: "No open cash register session for this branch. Open a cash register session before recording a cash transaction."
+    };
+  }
+  return { ok: true, session };
+}
+function isCashMethod(method) {
+  if (!method) return true;
+  return method === "cash";
+}
 function registerReturnHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("returns:create", async (_, data) => {
@@ -8458,6 +8878,12 @@ function registerReturnHandlers() {
       }
       if (originalSale.isVoided) {
         return { success: false, message: "Cannot return items from a voided sale" };
+      }
+      if (data.returnType === "refund" && data.refundMethod === "cash") {
+        const guard = await requireOpenCashSession(data.branchId);
+        if (!guard.ok) {
+          return { success: false, message: guard.message };
+        }
       }
       const result = await withTransaction(async ({ db: txDb }) => {
         let subtotal = 0;
@@ -9285,7 +9711,7 @@ function registerExpenseHandlers() {
           orderBy: sortOrder === "desc" ? drizzleOrm.desc(expenses.expenseDate) : expenses.expenseDate,
           with: {
             category: true,
-            supplier: true,
+            payee: true,
             payable: true,
             branch: true,
             user: {
@@ -9316,7 +9742,7 @@ function registerExpenseHandlers() {
         where: drizzleOrm.eq(expenses.id, id),
         with: {
           category: true,
-          supplier: true,
+          payee: true,
           payable: true,
           branch: true,
           user: {
@@ -9339,10 +9765,10 @@ function registerExpenseHandlers() {
   electron.ipcMain.handle("expenses:create", async (_, data) => {
     try {
       const session = getCurrentSession();
-      if (data.paymentStatus === "unpaid" && !data.supplierId) {
+      if (!data.payeeId) {
         return {
           success: false,
-          message: "Supplier is required for unpaid expenses"
+          message: "Payee is required for all expenses"
         };
       }
       if (data.paymentStatus === "unpaid" && !data.dueDate) {
@@ -9350,6 +9776,13 @@ function registerExpenseHandlers() {
           success: false,
           message: "Due date is required for unpaid expenses"
         };
+      }
+      const willHitCashDrawer = data.paymentStatus !== "unpaid" && isCashMethod(data.paymentMethod);
+      if (willHitCashDrawer) {
+        const guard = await requireOpenCashSession(data.branchId);
+        if (!guard.ok) {
+          return { success: false, message: guard.message };
+        }
       }
       const { categories: categoriesTable } = await Promise.resolve().then(() => schema);
       const expenseCategory = await db2.query.categories.findFirst({
@@ -9365,10 +9798,15 @@ function registerExpenseHandlers() {
           // Will be updated after payable creation
         }).returning();
         const newExpense = expenseResult[0];
-        if (data.paymentStatus === "unpaid" && data.supplierId) {
+        if (data.paymentStatus === "unpaid" && data.payeeId) {
           const invoiceNumber = `EXP-${newExpense.id}-${Date.now()}`;
+          const payee = await txDb.query.payees.findFirst({
+            where: drizzleOrm.eq(payees.id, data.payeeId)
+          });
+          const supplierIdForPayable = payee?.linkedSupplierId ?? null;
           const payableResult = await txDb.insert(accountPayables).values({
-            supplierId: data.supplierId,
+            supplierId: supplierIdForPayable,
+            payeeId: data.payeeId,
             purchaseId: null,
             branchId: data.branchId,
             invoiceNumber,
@@ -9385,6 +9823,9 @@ function registerExpenseHandlers() {
           payableId = newPayable.id;
           await txDb.update(expenses).set({ payableId: newPayable.id }).where(drizzleOrm.eq(expenses.id, newExpense.id));
         }
+        const payeeRecord = await txDb.query.payees.findFirst({
+          where: drizzleOrm.eq(payees.id, data.payeeId)
+        });
         await postExpenseToGL(
           {
             id: newExpense.id,
@@ -9393,7 +9834,8 @@ function registerExpenseHandlers() {
             amount: data.amount,
             paymentStatus: data.paymentStatus || "paid",
             paymentMethod: data.paymentMethod,
-            description: data.description
+            description: data.description ?? void 0,
+            payeeName: payeeRecord?.name
           },
           session?.userId ?? 0
         );
@@ -9421,7 +9863,7 @@ function registerExpenseHandlers() {
         }
         return { newExpense, payableId };
       });
-      if (result.payableId && data.supplierId) {
+      if (result.payableId && data.payeeId) {
         const invoiceNumber = `EXP-${result.newExpense.id}-${Date.now()}`;
         await createAuditLog$1({
           userId: session?.userId,
@@ -9430,7 +9872,7 @@ function registerExpenseHandlers() {
           entityType: "account_payable",
           entityId: result.payableId,
           newValues: {
-            supplierId: data.supplierId,
+            payeeId: data.payeeId,
             invoiceNumber,
             totalAmount: data.amount,
             source: "expense",
@@ -9472,10 +9914,10 @@ function registerExpenseHandlers() {
       if (!existing) {
         return { success: false, message: "Expense not found" };
       }
-      if (data.paymentStatus === "unpaid" && !data.supplierId && !existing.supplierId) {
+      if (data.paymentStatus === "unpaid" && !data.payeeId && !existing.payeeId) {
         return {
           success: false,
-          message: "Supplier is required for unpaid expenses"
+          message: "Payee is required for unpaid expenses"
         };
       }
       let shouldUpdatePayableAmount = false;
@@ -9505,15 +9947,22 @@ function registerExpenseHandlers() {
             };
           }
         }
+        const methodForTransition = data.paymentMethod ?? existing.paymentMethod;
+        if (isCashMethod(methodForTransition)) {
+          const guard = await requireOpenCashSession(existing.branchId);
+          if (!guard.ok) {
+            return { success: false, message: guard.message };
+          }
+        }
       }
       let shouldCreatePayable = false;
-      let supplierIdToUse;
+      let payeeIdToUse;
       if (existing.paymentStatus === "paid" && data.paymentStatus === "unpaid") {
-        supplierIdToUse = data.supplierId || existing.supplierId;
-        if (!supplierIdToUse) {
+        payeeIdToUse = data.payeeId || existing.payeeId || void 0;
+        if (!payeeIdToUse) {
           return {
             success: false,
-            message: "Supplier is required to change expense to unpaid"
+            message: "Payee is required to change expense to unpaid"
           };
         }
         if (!data.dueDate && !existing.dueDate) {
@@ -9535,10 +9984,15 @@ function registerExpenseHandlers() {
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }).where(drizzleOrm.eq(accountPayables.id, existing.payableId));
         }
-        if (shouldCreatePayable && supplierIdToUse) {
+        if (shouldCreatePayable && payeeIdToUse) {
           const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
+          const payee = await txDb.query.payees.findFirst({
+            where: drizzleOrm.eq(payees.id, payeeIdToUse)
+          });
+          const supplierIdForPayable = payee?.linkedSupplierId ?? null;
           const payableResult = await txDb.insert(accountPayables).values({
-            supplierId: supplierIdToUse,
+            supplierId: supplierIdForPayable,
+            payeeId: payeeIdToUse,
             purchaseId: null,
             branchId: existing.branchId,
             invoiceNumber,
@@ -9557,7 +10011,7 @@ function registerExpenseHandlers() {
         const result = await txDb.update(expenses).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(expenses.id, id)).returning();
         return { expenseResult: result, createdPayableId };
       });
-      if (txResult.createdPayableId && supplierIdToUse) {
+      if (txResult.createdPayableId && payeeIdToUse) {
         const invoiceNumber = `EXP-${existing.id}-${Date.now()}`;
         await createAuditLog$1({
           userId: session?.userId,
@@ -9566,7 +10020,7 @@ function registerExpenseHandlers() {
           entityType: "account_payable",
           entityId: txResult.createdPayableId,
           newValues: {
-            supplierId: supplierIdToUse,
+            payeeId: payeeIdToUse,
             invoiceNumber,
             totalAmount: data.amount || existing.amount,
             source: "expense_status_change",
@@ -9924,6 +10378,18 @@ function registerCommissionHandlers() {
           drizzleOrm.sql`${commissions.id} IN (${drizzleOrm.sql.join(ids.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
         )
       );
+      const branchesInvolved = Array.from(
+        new Set(commissionRecords.map((c) => c.branchId))
+      );
+      for (const branchId of branchesInvolved) {
+        const guard = await requireOpenCashSession(branchId);
+        if (!guard.ok) {
+          return {
+            success: false,
+            message: `${guard.message} (branch ${branchId})`
+          };
+        }
+      }
       await db2.update(commissions).set({
         status: "paid",
         paidDate: (/* @__PURE__ */ new Date()).toISOString(),
@@ -12347,15 +12813,36 @@ function registerReportHandlers() {
         branchId: inventory.branchId,
         branchName: branches.name,
         totalProducts: drizzleOrm.sql`count(distinct ${inventory.productId})`,
-        totalUnits: drizzleOrm.sql`sum(${inventory.quantity})`,
-        lowStockItems: drizzleOrm.sql`sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end)`,
-        outOfStockItems: drizzleOrm.sql`sum(case when ${inventory.quantity} = 0 then 1 else 0 end)`
-      }).from(inventory).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(inventory.branchId, branches.name);
+        totalUnits: drizzleOrm.sql`coalesce(sum(${inventory.quantity}), 0)`,
+        lowStockItems: drizzleOrm.sql`coalesce(sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end), 0)`,
+        outOfStockItems: drizzleOrm.sql`coalesce(sum(case when ${inventory.quantity} = 0 then 1 else 0 end), 0)`,
+        costValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+        retailValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`
+      }).from(inventory).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id)).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(inventory.branchId, branches.name);
       const stockValue = await db2.select({
         branchId: inventory.branchId,
-        costValue: drizzleOrm.sql`sum(${inventory.quantity} * ${products.costPrice})`,
-        retailValue: drizzleOrm.sql`sum(${inventory.quantity} * ${products.sellingPrice})`
+        costValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+        retailValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`
       }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(inventory.branchId);
+      const overallResult = await db2.select({
+        totalProducts: drizzleOrm.sql`count(distinct ${inventory.productId})`,
+        totalRows: drizzleOrm.sql`count(*)`,
+        totalUnits: drizzleOrm.sql`coalesce(sum(${inventory.quantity}), 0)`,
+        lowStockItems: drizzleOrm.sql`coalesce(sum(case when ${inventory.quantity} < ${inventory.minQuantity} then 1 else 0 end), 0)`,
+        outOfStockItems: drizzleOrm.sql`coalesce(sum(case when ${inventory.quantity} = 0 then 1 else 0 end), 0)`,
+        totalCostValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+        totalRetailValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`,
+        potentialMargin: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * (${products.sellingPrice} - ${products.costPrice})), 0)`
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0);
+      const overall = overallResult[0];
+      const stockByCategory = await db2.select({
+        categoryId: products.categoryId,
+        categoryName: categories.name,
+        totalProducts: drizzleOrm.sql`count(distinct ${inventory.productId})`,
+        totalUnits: drizzleOrm.sql`coalesce(sum(${inventory.quantity}), 0)`,
+        costValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`,
+        retailValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.sellingPrice}), 0)`
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).leftJoin(categories, drizzleOrm.eq(products.categoryId, categories.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).groupBy(products.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${inventory.quantity} * ${products.costPrice})`));
       const lowStock = await db2.select({
         productId: inventory.productId,
         productName: products.name,
@@ -12378,14 +12865,18 @@ function registerReportHandlers() {
         productId: inventory.productId,
         productName: products.name,
         productCode: products.code,
+        categoryName: categories.name,
         branchId: inventory.branchId,
         branchName: branches.name,
         quantity: inventory.quantity,
         minQuantity: inventory.minQuantity,
         maxQuantity: inventory.maxQuantity,
+        costPrice: products.costPrice,
+        sellingPrice: products.sellingPrice,
         costValue: drizzleOrm.sql`${inventory.quantity} * ${products.costPrice}`,
-        retailValue: drizzleOrm.sql`${inventory.quantity} * ${products.sellingPrice}`
-      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).orderBy(products.name).limit(pageSize).offset((page - 1) * pageSize);
+        retailValue: drizzleOrm.sql`${inventory.quantity} * ${products.sellingPrice}`,
+        lastRestockDate: inventory.lastRestockDate
+      }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).innerJoin(branches, drizzleOrm.eq(inventory.branchId, branches.id)).leftJoin(categories, drizzleOrm.eq(products.categoryId, categories.id)).where(conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0).orderBy(products.name).limit(pageSize).offset((page - 1) * pageSize);
       await createAuditLog$1({
         userId: session?.userId,
         branchId: branchId ?? session?.branchId,
@@ -12396,8 +12887,11 @@ function registerReportHandlers() {
       return {
         success: true,
         data: {
+          summary: overall,
+          overall,
           stockSummary,
           stockValue,
+          stockByCategory,
           lowStock,
           details: {
             rows: detailRows,
@@ -12572,7 +13066,17 @@ function registerReportHandlers() {
     async (_, params) => {
       try {
         const session = getCurrentSession();
-        const { branchId, startDate: rawStart, endDate: rawEnd, categoryId, supplierId, paymentStatus, page = 1, limit: pageSize = 50 } = params;
+        const {
+          branchId,
+          startDate: rawStart,
+          endDate: rawEnd,
+          categoryId,
+          payeeId,
+          payeeType,
+          paymentStatus,
+          page = 1,
+          limit: pageSize = 50
+        } = params;
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(expenses.expenseDate, startDate, endDate),
@@ -12580,25 +13084,69 @@ function registerReportHandlers() {
         ];
         if (branchId) conditions.push(drizzleOrm.eq(expenses.branchId, branchId));
         if (categoryId) conditions.push(drizzleOrm.eq(expenses.categoryId, categoryId));
-        if (supplierId) conditions.push(drizzleOrm.eq(expenses.supplierId, supplierId));
+        if (payeeId) conditions.push(drizzleOrm.eq(expenses.payeeId, payeeId));
         if (paymentStatus) conditions.push(drizzleOrm.eq(expenses.paymentStatus, paymentStatus));
+        if (payeeType) {
+          conditions.push(
+            drizzleOrm.sql`${expenses.payeeId} IN (SELECT id FROM payees WHERE payee_type = ${payeeType})`
+          );
+        }
+        const expensePaidExpr = drizzleOrm.sql`case
+          when ${accountPayables.id} is not null then ${accountPayables.paidAmount}
+          when ${expenses.paymentStatus} = 'paid' then ${expenses.amount}
+          else 0
+        end`;
+        const expenseRemainingExpr = drizzleOrm.sql`case
+          when ${accountPayables.id} is not null then ${accountPayables.remainingAmount}
+          when ${expenses.paymentStatus} = 'paid' then 0
+          else ${expenses.amount}
+        end`;
         const summary = await db2.select({
-          totalExpenses: drizzleOrm.sql`sum(${expenses.amount})`,
+          totalExpenses: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
           expenseCount: drizzleOrm.sql`count(*)`,
-          avgExpense: drizzleOrm.sql`avg(${expenses.amount})`
-        }).from(expenses).where(drizzleOrm.and(...conditions));
+          avgExpense: drizzleOrm.sql`coalesce(avg(${expenses.amount}), 0)`,
+          totalPaid: drizzleOrm.sql`coalesce(sum(${expensePaidExpr}), 0)`,
+          totalRemaining: drizzleOrm.sql`coalesce(sum(${expenseRemainingExpr}), 0)`,
+          paidExpenses: drizzleOrm.sql`coalesce(sum(case when ${expenses.paymentStatus} = 'paid' then ${expenses.amount} else 0 end), 0)`,
+          unpaidExpenses: drizzleOrm.sql`coalesce(sum(case when ${expenses.paymentStatus} = 'unpaid' then ${expenses.amount} else 0 end), 0)`
+        }).from(expenses).leftJoin(accountPayables, drizzleOrm.eq(expenses.payableId, accountPayables.id)).where(drizzleOrm.and(...conditions));
         const expensesByCategory = await db2.select({
           categoryId: expenses.categoryId,
           category: categories.name,
-          amount: drizzleOrm.sql`sum(${expenses.amount})`,
+          amount: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${expensePaidExpr}), 0)`,
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${expenseRemainingExpr}), 0)`,
           count: drizzleOrm.sql`count(*)`
-        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).leftJoin(accountPayables, drizzleOrm.eq(expenses.payableId, accountPayables.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.categoryId, categories.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
         const expensesByBranch = await db2.select({
           branchId: expenses.branchId,
           branchName: branches.name,
-          amount: drizzleOrm.sql`sum(${expenses.amount})`,
+          amount: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${expensePaidExpr}), 0)`,
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${expenseRemainingExpr}), 0)`,
           count: drizzleOrm.sql`count(*)`
-        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.branchId, branches.name);
+        }).from(expenses).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).leftJoin(accountPayables, drizzleOrm.eq(expenses.payableId, accountPayables.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.branchId, branches.name);
+        const expensesByPaymentStatus = await db2.select({
+          paymentStatus: expenses.paymentStatus,
+          count: drizzleOrm.sql`count(*)`,
+          amount: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${expensePaidExpr}), 0)`,
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${expenseRemainingExpr}), 0)`
+        }).from(expenses).leftJoin(accountPayables, drizzleOrm.eq(expenses.payableId, accountPayables.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.paymentStatus);
+        const expensesByPayee = await db2.select({
+          payeeId: expenses.payeeId,
+          payeeName: payees.name,
+          payeeType: payees.payeeType,
+          amount: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${expensePaidExpr}), 0)`,
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${expenseRemainingExpr}), 0)`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(expenses).innerJoin(payees, drizzleOrm.eq(expenses.payeeId, payees.id)).leftJoin(accountPayables, drizzleOrm.eq(expenses.payableId, accountPayables.id)).where(drizzleOrm.and(...conditions)).groupBy(expenses.payeeId, payees.name, payees.payeeType).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
+        const expensesByPayeeType = await db2.select({
+          payeeType: payees.payeeType,
+          amount: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`,
+          count: drizzleOrm.sql`count(*)`
+        }).from(expenses).innerJoin(payees, drizzleOrm.eq(expenses.payeeId, payees.id)).where(drizzleOrm.and(...conditions)).groupBy(payees.payeeType).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${expenses.amount})`));
         const topExpenses = await db2.select({
           id: expenses.id,
           categoryId: expenses.categoryId,
@@ -12614,12 +13162,18 @@ function registerReportHandlers() {
           id: expenses.id,
           expenseDate: expenses.expenseDate,
           category: categories.name,
+          branchName: branches.name,
           description: expenses.description,
+          reference: expenses.reference,
           paymentMethod: expenses.paymentMethod,
           paymentStatus: expenses.paymentStatus,
           amount: expenses.amount,
-          supplierName: drizzleOrm.sql`${suppliers.name}`
-        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).leftJoin(suppliers, drizzleOrm.eq(expenses.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.expenseDate)).limit(pageSize).offset((page - 1) * pageSize);
+          paidAmount: expensePaidExpr,
+          remainingAmount: expenseRemainingExpr,
+          dueDate: expenses.dueDate,
+          payeeName: drizzleOrm.sql`${payees.name}`,
+          payeeType: drizzleOrm.sql`${payees.payeeType}`
+        }).from(expenses).innerJoin(categories, drizzleOrm.eq(expenses.categoryId, categories.id)).innerJoin(branches, drizzleOrm.eq(expenses.branchId, branches.id)).leftJoin(payees, drizzleOrm.eq(expenses.payeeId, payees.id)).leftJoin(accountPayables, drizzleOrm.eq(expenses.payableId, accountPayables.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(expenses.expenseDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -12633,6 +13187,9 @@ function registerReportHandlers() {
             summary: summary[0],
             expensesByCategory,
             expensesByBranch,
+            expensesByPaymentStatus,
+            expensesByPayee,
+            expensesByPayeeType,
             topExpenses,
             details: {
               rows: detailRows,
@@ -12659,34 +13216,74 @@ function registerReportHandlers() {
         if (branchId) conditions.push(drizzleOrm.eq(purchases.branchId, branchId));
         if (supplierId) conditions.push(drizzleOrm.eq(purchases.supplierId, supplierId));
         if (status) conditions.push(drizzleOrm.eq(purchases.status, status));
+        const apAgg = db2.select({
+          purchaseId: accountPayables.purchaseId,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${accountPayables.paidAmount}), 0)`.as("ap_paid"),
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${accountPayables.remainingAmount}), 0)`.as("ap_remaining"),
+          apTotal: drizzleOrm.sql`coalesce(sum(${accountPayables.totalAmount}), 0)`.as("ap_total"),
+          hasAp: drizzleOrm.sql`count(${accountPayables.id})`.as("ap_count")
+        }).from(accountPayables).groupBy(accountPayables.purchaseId).as("ap_agg");
+        const paidExpr = drizzleOrm.sql`case
+          when ${apAgg.hasAp} > 0 then ${apAgg.paidAmount}
+          when ${purchases.paymentStatus} = 'paid' then ${purchases.totalAmount}
+          else 0
+        end`;
+        const remainingExpr = drizzleOrm.sql`case
+          when ${apAgg.hasAp} > 0 then ${apAgg.remainingAmount}
+          when ${purchases.paymentStatus} = 'paid' then 0
+          else ${purchases.totalAmount}
+        end`;
         const summary = await db2.select({
           totalPurchases: drizzleOrm.sql`count(*)`,
-          totalCost: drizzleOrm.sql`sum(${purchases.totalAmount})`,
-          avgPurchaseValue: drizzleOrm.sql`avg(${purchases.totalAmount})`,
-          pendingPayments: drizzleOrm.sql`sum(case when ${purchases.paymentStatus} = 'pending' then ${purchases.totalAmount} else 0 end)`
-        }).from(purchases).where(drizzleOrm.and(...conditions));
+          totalCost: drizzleOrm.sql`coalesce(sum(${purchases.totalAmount}), 0)`,
+          totalShipping: drizzleOrm.sql`coalesce(sum(${purchases.shippingCost}), 0)`,
+          avgPurchaseValue: drizzleOrm.sql`coalesce(avg(${purchases.totalAmount}), 0)`,
+          totalPaid: drizzleOrm.sql`coalesce(sum(${paidExpr}), 0)`,
+          totalRemaining: drizzleOrm.sql`coalesce(sum(${remainingExpr}), 0)`,
+          pendingPayments: drizzleOrm.sql`coalesce(sum(case when ${purchases.paymentStatus} = 'pending' then ${purchases.totalAmount} else 0 end), 0)`,
+          partialPayments: drizzleOrm.sql`coalesce(sum(case when ${purchases.paymentStatus} = 'partial' then ${purchases.totalAmount} else 0 end), 0)`,
+          paidPayments: drizzleOrm.sql`coalesce(sum(case when ${purchases.paymentStatus} = 'paid' then ${purchases.totalAmount} else 0 end), 0)`
+        }).from(purchases).leftJoin(apAgg, drizzleOrm.eq(apAgg.purchaseId, purchases.id)).where(drizzleOrm.and(...conditions));
         const purchasesBySupplier = await db2.select({
           supplierId: purchases.supplierId,
           supplierName: suppliers.name,
           totalPurchases: drizzleOrm.sql`count(*)`,
-          totalAmount: drizzleOrm.sql`sum(${purchases.totalAmount})`
-        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).groupBy(purchases.supplierId, suppliers.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${purchases.totalAmount})`));
+          totalAmount: drizzleOrm.sql`coalesce(sum(${purchases.totalAmount}), 0)`,
+          totalShipping: drizzleOrm.sql`coalesce(sum(${purchases.shippingCost}), 0)`,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${paidExpr}), 0)`,
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${remainingExpr}), 0)`
+        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).leftJoin(apAgg, drizzleOrm.eq(apAgg.purchaseId, purchases.id)).where(drizzleOrm.and(...conditions)).groupBy(purchases.supplierId, suppliers.name).orderBy(drizzleOrm.desc(drizzleOrm.sql`sum(${purchases.totalAmount})`));
         const purchasesByStatus = await db2.select({
           status: purchases.status,
           count: drizzleOrm.sql`count(*)`,
-          totalAmount: drizzleOrm.sql`sum(${purchases.totalAmount})`
+          totalAmount: drizzleOrm.sql`coalesce(sum(${purchases.totalAmount}), 0)`
         }).from(purchases).where(drizzleOrm.and(...conditions)).groupBy(purchases.status);
+        const purchasesByPaymentStatus = await db2.select({
+          paymentStatus: purchases.paymentStatus,
+          count: drizzleOrm.sql`count(*)`,
+          totalAmount: drizzleOrm.sql`coalesce(sum(${purchases.totalAmount}), 0)`,
+          paidAmount: drizzleOrm.sql`coalesce(sum(${paidExpr}), 0)`,
+          remainingAmount: drizzleOrm.sql`coalesce(sum(${remainingExpr}), 0)`
+        }).from(purchases).leftJoin(apAgg, drizzleOrm.eq(apAgg.purchaseId, purchases.id)).where(drizzleOrm.and(...conditions)).groupBy(purchases.paymentStatus);
         const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(purchases).where(drizzleOrm.and(...conditions));
         const totalRows = totalCountResult[0]?.count || 0;
         const detailRows = await db2.select({
           id: purchases.id,
           purchaseOrderNumber: purchases.purchaseOrderNumber,
           supplierName: suppliers.name,
+          subtotal: purchases.subtotal,
+          taxAmount: purchases.taxAmount,
+          shippingCost: purchases.shippingCost,
           totalAmount: purchases.totalAmount,
+          paidAmount: paidExpr,
+          remainingAmount: remainingExpr,
+          paymentMethod: purchases.paymentMethod,
           paymentStatus: purchases.paymentStatus,
           status: purchases.status,
+          expectedDeliveryDate: purchases.expectedDeliveryDate,
+          receivedDate: purchases.receivedDate,
           createdAt: purchases.createdAt
-        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
+        }).from(purchases).innerJoin(suppliers, drizzleOrm.eq(purchases.supplierId, suppliers.id)).leftJoin(apAgg, drizzleOrm.eq(apAgg.purchaseId, purchases.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(purchases.createdAt)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -12700,6 +13297,7 @@ function registerReportHandlers() {
             summary: summary[0],
             purchasesBySupplier,
             purchasesByStatus,
+            purchasesByPaymentStatus,
             recentPurchases: detailRows,
             details: {
               rows: detailRows,
@@ -12857,32 +13455,71 @@ function registerReportHandlers() {
           drizzleOrm.eq(sales.isVoided, false)
         ];
         if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
-        const summary = await db2.select({
-          totalTaxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
-          taxableSales: drizzleOrm.sql`count(*)`,
-          avgTaxPerSale: drizzleOrm.sql`avg(${sales.taxAmount})`
-        }).from(sales).where(drizzleOrm.and(...conditions));
+        const taxableRevenueExpr = drizzleOrm.sql`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.totalPrice} else 0 end), 0)`;
+        const nonTaxableRevenueExpr = drizzleOrm.sql`coalesce(sum(case when ${products.isTaxable} = 1 then 0 else ${saleItems.totalPrice} end), 0)`;
+        const taxCollectedExpr = drizzleOrm.sql`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.taxAmount} else 0 end), 0)`;
+        const itemSummary = await db2.select({
+          taxableRevenue: taxableRevenueExpr,
+          nonTaxableRevenue: nonTaxableRevenueExpr,
+          totalTaxCollected: taxCollectedExpr,
+          taxableItemCount: drizzleOrm.sql`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.quantity} else 0 end), 0)`,
+          nonTaxableItemCount: drizzleOrm.sql`coalesce(sum(case when ${products.isTaxable} = 1 then 0 else ${saleItems.quantity} end), 0)`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(...conditions));
+        const invoiceMixCounts = await db2.select({
+          taxableInvoices: drizzleOrm.sql`count(distinct case when ${products.isTaxable} = 1 then ${sales.id} end)`,
+          nonTaxableInvoices: drizzleOrm.sql`count(distinct case when ${products.isTaxable} = 0 then ${sales.id} end)`,
+          totalInvoices: drizzleOrm.sql`count(distinct ${sales.id})`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(...conditions));
+        const it = itemSummary[0];
+        const inv = invoiceMixCounts[0];
+        const taxableRevenueVal = it?.taxableRevenue || 0;
+        const totalTax = it?.totalTaxCollected || 0;
+        const summary = {
+          totalTaxCollected: totalTax,
+          taxableRevenue: taxableRevenueVal,
+          nonTaxableRevenue: it?.nonTaxableRevenue || 0,
+          taxableItemCount: it?.taxableItemCount || 0,
+          nonTaxableItemCount: it?.nonTaxableItemCount || 0,
+          taxableInvoices: inv?.taxableInvoices || 0,
+          nonTaxableInvoices: inv?.nonTaxableInvoices || 0,
+          taxableSales: inv?.taxableInvoices || 0,
+          totalInvoices: inv?.totalInvoices || 0,
+          avgTaxPerSale: inv?.taxableInvoices ? totalTax / inv.taxableInvoices : 0,
+          effectiveTaxRate: taxableRevenueVal > 0 ? totalTax / taxableRevenueVal * 100 : 0
+        };
         const taxByBranch = await db2.select({
           branchId: sales.branchId,
           branchName: branches.name,
-          taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`
-        }).from(sales).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.branchId, branches.name);
+          taxableRevenue: taxableRevenueExpr,
+          nonTaxableRevenue: nonTaxableRevenueExpr,
+          taxCollected: taxCollectedExpr
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.branchId, branches.name);
         const taxByPaymentMethod = await db2.select({
           paymentMethod: sales.paymentMethod,
-          taxCollected: drizzleOrm.sql`sum(${sales.taxAmount})`,
-          salesCount: drizzleOrm.sql`count(*)`
-        }).from(sales).where(drizzleOrm.and(...conditions)).groupBy(sales.paymentMethod);
-        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(sales).where(drizzleOrm.and(...conditions));
+          taxableRevenue: taxableRevenueExpr,
+          taxCollected: taxCollectedExpr,
+          salesCount: drizzleOrm.sql`count(distinct case when ${products.isTaxable} = 1 then ${sales.id} end)`
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(...conditions)).groupBy(sales.paymentMethod);
+        const taxableInvoiceCondition = drizzleOrm.and(...conditions, drizzleOrm.eq(products.isTaxable, true));
+        const totalCountResult = await db2.select({ count: drizzleOrm.sql`count(distinct ${sales.id})` }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(taxableInvoiceCondition);
         const totalRows = totalCountResult[0]?.count || 0;
         const detailRows = await db2.select({
           id: sales.id,
           invoiceNumber: sales.invoiceNumber,
           saleDate: sales.saleDate,
           totalAmount: sales.totalAmount,
-          taxAmount: sales.taxAmount,
+          taxableRevenue: drizzleOrm.sql`coalesce(sum(${saleItems.totalPrice}), 0)`,
+          taxAmount: drizzleOrm.sql`coalesce(sum(${saleItems.taxAmount}), 0)`,
           paymentMethod: sales.paymentMethod,
           branchName: branches.name
-        }).from(sales).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(drizzleOrm.and(...conditions)).orderBy(drizzleOrm.desc(sales.saleDate)).limit(pageSize).offset((page - 1) * pageSize);
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).innerJoin(branches, drizzleOrm.eq(sales.branchId, branches.id)).where(taxableInvoiceCondition).groupBy(
+          sales.id,
+          sales.invoiceNumber,
+          sales.saleDate,
+          sales.totalAmount,
+          sales.paymentMethod,
+          branches.name
+        ).orderBy(drizzleOrm.desc(sales.saleDate)).limit(pageSize).offset((page - 1) * pageSize);
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -12893,7 +13530,7 @@ function registerReportHandlers() {
         return {
           success: true,
           data: {
-            summary: summary[0],
+            summary,
             taxByBranch,
             taxByPaymentMethod,
             details: {
@@ -12921,7 +13558,9 @@ function registerReportHandlers() {
         const branchMetrics = await Promise.all(
           allBranches.map(async (branch) => {
             const revenueResult = await db2.select({
-              revenue: drizzleOrm.sql`sum(${sales.totalAmount})`,
+              grossRevenue: drizzleOrm.sql`coalesce(sum(${sales.totalAmount}), 0)`,
+              taxCollected: drizzleOrm.sql`coalesce(sum(${sales.taxAmount}), 0)`,
+              discounts: drizzleOrm.sql`coalesce(sum(${sales.discountAmount}), 0)`,
               salesCount: drizzleOrm.sql`count(*)`
             }).from(sales).where(
               drizzleOrm.and(
@@ -12930,8 +13569,17 @@ function registerReportHandlers() {
                 drizzleOrm.eq(sales.isVoided, false)
               )
             );
+            const cogsResult = await db2.select({
+              cogs: drizzleOrm.sql`coalesce(sum(${saleItems.quantity} * ${saleItems.costPrice}), 0)`
+            }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(
+              drizzleOrm.and(
+                drizzleOrm.eq(sales.branchId, branch.id),
+                drizzleOrm.between(sales.saleDate, startDate, endDate),
+                drizzleOrm.eq(sales.isVoided, false)
+              )
+            );
             const expenseResult = await db2.select({
-              expenses: drizzleOrm.sql`sum(${expenses.amount})`
+              expenses: drizzleOrm.sql`coalesce(sum(${expenses.amount}), 0)`
             }).from(expenses).where(
               drizzleOrm.and(
                 drizzleOrm.eq(expenses.branchId, branch.id),
@@ -12940,24 +13588,42 @@ function registerReportHandlers() {
               )
             );
             const inventoryResult = await db2.select({
-              inventoryValue: drizzleOrm.sql`sum(${inventory.quantity} * ${products.costPrice})`
+              inventoryValue: drizzleOrm.sql`coalesce(sum(${inventory.quantity} * ${products.costPrice}), 0)`
             }).from(inventory).innerJoin(products, drizzleOrm.eq(inventory.productId, products.id)).where(drizzleOrm.eq(inventory.branchId, branch.id));
-            const revenue = revenueResult[0]?.revenue || 0;
+            const grossRevenue = revenueResult[0]?.grossRevenue || 0;
+            const taxCollected = revenueResult[0]?.taxCollected || 0;
+            const netRevenue = grossRevenue - taxCollected;
+            const cogs = cogsResult[0]?.cogs || 0;
             const expenseAmount = expenseResult[0]?.expenses || 0;
-            const profit = revenue - expenseAmount;
+            const grossProfit = netRevenue - cogs;
+            const netProfit = grossProfit - expenseAmount;
+            const grossMargin = netRevenue > 0 ? grossProfit / netRevenue * 100 : 0;
+            const netMargin = netRevenue > 0 ? netProfit / netRevenue * 100 : 0;
             return {
               branchId: branch.id,
               branchName: branch.name,
-              revenue,
+              revenue: grossRevenue,
+              netRevenue,
+              taxCollected,
+              discounts: revenueResult[0]?.discounts || 0,
+              cogs,
+              grossProfit,
               expenses: expenseAmount,
-              profit,
+              netProfit,
+              profit: netProfit,
+              grossMargin,
+              netMargin,
               salesCount: revenueResult[0]?.salesCount || 0,
               inventoryValue: inventoryResult[0]?.inventoryValue || 0
             };
           })
         );
         const totalRevenue = branchMetrics.reduce((sum, b) => sum + b.revenue, 0);
-        const totalProfit = branchMetrics.reduce((sum, b) => sum + b.profit, 0);
+        const totalNetRevenue = branchMetrics.reduce((sum, b) => sum + b.netRevenue, 0);
+        const totalCogs = branchMetrics.reduce((sum, b) => sum + b.cogs, 0);
+        const totalGrossProfit = branchMetrics.reduce((sum, b) => sum + b.grossProfit, 0);
+        const totalExpenses = branchMetrics.reduce((sum, b) => sum + b.expenses, 0);
+        const totalProfit = branchMetrics.reduce((sum, b) => sum + b.netProfit, 0);
         const topBranch = branchMetrics.reduce(
           (top, current) => current.revenue > top.revenue ? current : top
         );
@@ -12976,6 +13642,10 @@ function registerReportHandlers() {
             summary: {
               totalBranches: allBranches.length,
               totalRevenue,
+              totalNetRevenue,
+              totalCogs,
+              totalGrossProfit,
+              totalExpenses,
               totalProfit
             },
             branchMetrics,
@@ -13017,7 +13687,8 @@ function registerReportHandlers() {
           )
         );
         const purchasesCash = await db2.select({
-          total: drizzleOrm.sql`sum(${purchases.totalAmount})`
+          total: drizzleOrm.sql`coalesce(sum(${purchases.totalAmount}), 0)`,
+          shipping: drizzleOrm.sql`coalesce(sum(${purchases.shippingCost}), 0)`
         }).from(purchases).where(
           drizzleOrm.and(
             drizzleOrm.between(purchases.createdAt, startDate, endDate),
@@ -13050,11 +13721,13 @@ function registerReportHandlers() {
           )
         );
         const cashIn = salesCash[0]?.total || 0;
-        const cashOutPurchases = purchasesCash[0]?.total || 0;
+        const cashOutPurchasesTotal = purchasesCash[0]?.total || 0;
+        const cashOutFreight = purchasesCash[0]?.shipping || 0;
+        const cashOutPurchasesGoods = cashOutPurchasesTotal - cashOutFreight;
         const cashOutExpenses = expensesCash[0]?.total || 0;
         const cashOutCommissions = commissionsCash[0]?.total || 0;
         const cashOutRefunds = refundsCash[0]?.total || 0;
-        const totalCashOut = cashOutPurchases + cashOutExpenses + cashOutCommissions + cashOutRefunds;
+        const totalCashOut = cashOutPurchasesTotal + cashOutExpenses + cashOutCommissions + cashOutRefunds;
         await createAuditLog$1({
           userId: session?.userId,
           branchId: branchId ?? session?.branchId,
@@ -13107,7 +13780,8 @@ function registerReportHandlers() {
               other: 0
             },
             cashOutBreakdown: {
-              purchases: cashOutPurchases,
+              purchases: cashOutPurchasesGoods,
+              freight: cashOutFreight,
               expenses: cashOutExpenses,
               commissions: cashOutCommissions,
               refunds: cashOutRefunds
@@ -14211,6 +14885,12 @@ function registerAccountReceivablesHandlers() {
           message: `Payment amount cannot exceed remaining balance of ${receivable.remainingAmount}`
         };
       }
+      if (data.paymentMethod === "cash") {
+        const guard = await requireOpenCashSession(receivable.branchId);
+        if (!guard.ok) {
+          return { success: false, message: guard.message };
+        }
+      }
       const newPaidAmount = receivable.paidAmount + data.amount;
       const newRemainingAmount = receivable.totalAmount - newPaidAmount;
       const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
@@ -14804,35 +15484,60 @@ function registerAccountPayablesHandlers() {
       if (!session) {
         return { success: false, message: "Unauthorized" };
       }
-      const payable = await db2.query.accountPayables.findFirst({
-        where: drizzleOrm.eq(accountPayables.id, data.payableId),
-        with: {
-          supplier: true
-        }
-      });
-      if (!payable) {
-        return { success: false, message: "Payable not found" };
-      }
-      if (payable.status === "paid") {
-        return { success: false, message: "This payable is already fully paid" };
-      }
-      if (payable.status === "cancelled") {
-        return { success: false, message: "Cannot record payment for cancelled payable" };
-      }
       if (data.amount <= 0) {
         return { success: false, message: "Payment amount must be greater than 0" };
       }
-      if (data.amount > payable.remainingAmount) {
-        return {
-          success: false,
-          message: `Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`
-        };
+      const preflightPayable = await db2.query.accountPayables.findFirst({
+        where: drizzleOrm.eq(accountPayables.id, data.payableId)
+      });
+      if (!preflightPayable) {
+        return { success: false, message: "Payable not found" };
       }
-      const newPaidAmount = payable.paidAmount + data.amount;
-      const newRemainingAmount = payable.totalAmount - newPaidAmount;
-      const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
-      const result = await withTransaction(async ({ db: txDb }) => {
-        const [payment] = await txDb.insert(payablePayments).values({
+      let openCashSessionId = null;
+      if (data.paymentMethod === "cash") {
+        const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+        const openSession = await db2.query.cashRegisterSessions.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(cashRegisterSessions.branchId, preflightPayable.branchId),
+            drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+            drizzleOrm.eq(cashRegisterSessions.status, "open")
+          )
+        });
+        if (!openSession) {
+          return {
+            success: false,
+            message: "No open cash register session for this branch. Open a session before paying in cash."
+          };
+        }
+        openCashSessionId = openSession.id;
+      }
+      const txResult = await withTransaction(async ({ db: txDb }) => {
+        const payable2 = await txDb.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.id, data.payableId),
+          with: { supplier: true }
+        });
+        if (!payable2) {
+          throw new Error("Payable not found");
+        }
+        if (payable2.status === "paid") {
+          throw new Error("This payable is already fully paid");
+        }
+        if (payable2.status === "cancelled") {
+          throw new Error("Cannot record payment for cancelled payable");
+        }
+        if (payable2.status === "reversed") {
+          throw new Error("Cannot record payment for reversed payable");
+        }
+        if (data.amount > payable2.remainingAmount) {
+          throw new Error(
+            `Payment amount cannot exceed remaining balance of ${payable2.remainingAmount}`
+          );
+        }
+        const newPaidAmount2 = payable2.paidAmount + data.amount;
+        const newRemainingAmount2 = payable2.totalAmount - newPaidAmount2;
+        const newStatus2 = newRemainingAmount2 <= 0 ? "paid" : "partial";
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const [payment2] = await txDb.insert(payablePayments).values({
           payableId: data.payableId,
           amount: data.amount,
           paymentMethod: data.paymentMethod,
@@ -14841,91 +15546,90 @@ function registerAccountPayablesHandlers() {
           paidBy: session.userId
         }).returning();
         await txDb.update(accountPayables).set({
-          paidAmount: newPaidAmount,
-          remainingAmount: Math.max(0, newRemainingAmount),
-          status: newStatus,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          paidAmount: newPaidAmount2,
+          remainingAmount: Math.max(0, newRemainingAmount2),
+          status: newStatus2,
+          updatedAt: now
         }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
-        if (newStatus === "paid") {
+        let purchaseSync2 = null;
+        if (payable2.purchaseId) {
+          const linkedPurchase = await txDb.query.purchases.findFirst({
+            where: drizzleOrm.eq(purchases.id, payable2.purchaseId)
+          });
+          if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus2) {
+            await txDb.update(purchases).set({ paymentStatus: newStatus2, updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
+            purchaseSync2 = {
+              purchaseId: linkedPurchase.id,
+              purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+              oldStatus: linkedPurchase.paymentStatus,
+              newStatus: newStatus2
+            };
+          }
+        }
+        let expenseSync2 = null;
+        if (newStatus2 === "paid") {
           const linkedExpense = await txDb.query.expenses.findFirst({
-            where: drizzleOrm.eq(expenses.payableId, payable.id)
+            where: drizzleOrm.eq(expenses.payableId, payable2.id)
           });
           if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
-            await txDb.update(expenses).set({
-              paymentStatus: "paid",
-              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-            }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+            await txDb.update(expenses).set({ paymentStatus: "paid", updatedAt: now }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+            expenseSync2 = {
+              expenseId: linkedExpense.id,
+              oldStatus: linkedExpense.paymentStatus
+            };
           }
         }
         await postAPPaymentToGL(
           {
-            id: payment.id,
+            id: payment2.id,
             payableId: data.payableId,
-            branchId: payable.branchId,
+            branchId: payable2.branchId,
             amount: data.amount,
             paymentMethod: data.paymentMethod,
-            invoiceNumber: payable.invoiceNumber
+            invoiceNumber: payable2.invoiceNumber
           },
           session.userId
         );
         if (data.paymentMethod !== "cash") {
           await txDb.insert(onlineTransactions).values({
-            branchId: payable.branchId,
+            branchId: payable2.branchId,
             transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
             amount: data.amount,
             paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
             direction: "outflow",
             referenceNumber: data.referenceNumber,
-            customerName: payable.supplier?.name,
-            invoiceNumber: payable.invoiceNumber,
+            customerName: payable2.supplier?.name,
+            invoiceNumber: payable2.invoiceNumber,
             status: "pending",
             sourceType: "payable_payment",
-            sourceId: payment.id,
+            sourceId: payment2.id,
             payableId: data.payableId,
             createdBy: session.userId
           });
         }
-        if (data.paymentMethod === "cash") {
-          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-          const openSession = await txDb.query.cashRegisterSessions.findFirst({
-            where: drizzleOrm.and(
-              drizzleOrm.eq(cashRegisterSessions.branchId, payable.branchId),
-              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
-              drizzleOrm.eq(cashRegisterSessions.status, "open")
-            )
+        if (data.paymentMethod === "cash" && openCashSessionId !== null) {
+          await txDb.insert(cashTransactions).values({
+            sessionId: openCashSessionId,
+            branchId: payable2.branchId,
+            transactionType: "ap_payment",
+            amount: -data.amount,
+            referenceType: "payable_payment",
+            referenceId: payment2.id,
+            description: `AP payment: ${payable2.invoiceNumber}`,
+            recordedBy: session.userId
           });
-          if (openSession) {
-            await txDb.insert(cashTransactions).values({
-              sessionId: openSession.id,
-              branchId: payable.branchId,
-              transactionType: "ap_payment",
-              amount: -data.amount,
-              referenceType: "payable_payment",
-              referenceId: payment.id,
-              description: `AP payment: ${payable.invoiceNumber}`,
-              recordedBy: session.userId
-            });
-          }
         }
-        return payment;
+        return {
+          payment: payment2,
+          payable: payable2,
+          newPaidAmount: newPaidAmount2,
+          newRemainingAmount: newRemainingAmount2,
+          newStatus: newStatus2,
+          purchaseSync: purchaseSync2,
+          expenseSync: expenseSync2
+        };
       });
-      if (newStatus === "paid") {
-        const linkedExpense = await db2.query.expenses.findFirst({
-          where: drizzleOrm.eq(expenses.payableId, payable.id)
-        });
-        if (linkedExpense && linkedExpense.paymentStatus === "paid") {
-          await createAuditLog$1({
-            userId: session.userId,
-            branchId: linkedExpense.branchId,
-            action: "update",
-            entityType: "expense",
-            entityId: linkedExpense.id,
-            oldValues: { paymentStatus: "unpaid" },
-            newValues: { paymentStatus: "paid" },
-            description: `Auto-updated expense status to paid (payable #${payable.id} fully paid)`
-          });
-        }
-      }
+      const { payment, payable, newPaidAmount, newRemainingAmount, newStatus, purchaseSync, expenseSync } = txResult;
       await createAuditLog$1({
         userId: session.userId,
         branchId: payable.branchId,
@@ -14946,9 +15650,33 @@ function registerAccountPayablesHandlers() {
         },
         description: `Recorded payment of ${data.amount} for payable ${payable.invoiceNumber}`
       });
+      if (purchaseSync) {
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: payable.branchId,
+          action: "update",
+          entityType: "purchase",
+          entityId: purchaseSync.purchaseId,
+          oldValues: { paymentStatus: purchaseSync.oldStatus },
+          newValues: { paymentStatus: purchaseSync.newStatus },
+          description: `Auto-synced purchase ${purchaseSync.purchaseOrderNumber} payment status to ${purchaseSync.newStatus} (payable #${payable.id} payment of ${data.amount})`
+        });
+      }
+      if (expenseSync) {
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: payable.branchId,
+          action: "update",
+          entityType: "expense",
+          entityId: expenseSync.expenseId,
+          oldValues: { paymentStatus: expenseSync.oldStatus },
+          newValues: { paymentStatus: "paid" },
+          description: `Auto-updated expense status to paid (payable #${payable.id} fully paid)`
+        });
+      }
       return {
         success: true,
-        data: result,
+        data: payment,
         payable: {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),
@@ -14957,7 +15685,8 @@ function registerAccountPayablesHandlers() {
       };
     } catch (error) {
       console.error("Record payment error:", error);
-      return { success: false, message: "Failed to record payment" };
+      const message = error instanceof Error ? error.message : "Failed to record payment";
+      return { success: false, message };
     }
   });
   electron.ipcMain.handle("payables:cancel", async (_, id, reason) => {
@@ -14975,15 +15704,43 @@ function registerAccountPayablesHandlers() {
       if (payable.status === "paid") {
         return { success: false, message: "Cannot cancel a fully paid payable" };
       }
+      if (payable.status === "cancelled" || payable.status === "reversed") {
+        return { success: false, message: `Payable is already ${payable.status}` };
+      }
       if (payable.paidAmount > 0) {
         return { success: false, message: "Cannot cancel payable with existing payments" };
       }
-      await db2.update(accountPayables).set({
-        status: "cancelled",
-        notes: reason ? `${payable.notes || ""}
-Cancelled: ${reason}`.trim() : payable.notes,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(accountPayables.id, id));
+      let linkedPurchase = null;
+      if (payable.purchaseId) {
+        linkedPurchase = await db2.query.purchases.findFirst({
+          where: drizzleOrm.eq(purchases.id, payable.purchaseId)
+        }) ?? null;
+        if (linkedPurchase && (linkedPurchase.status === "partial" || linkedPurchase.status === "received")) {
+          return {
+            success: false,
+            message: "Cannot cancel payable: goods have been received against the linked purchase. Use the purchase reversal flow instead."
+          };
+        }
+        if (linkedPurchase && linkedPurchase.status === "reversed") {
+          linkedPurchase = null;
+        }
+      }
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      const mergedNotes = reason ? `${payable.notes || ""}
+Cancelled: ${reason}`.trim() : payable.notes;
+      const result = await withTransaction(async ({ db: txDb }) => {
+        await txDb.update(accountPayables).set({ status: "cancelled", notes: mergedNotes, updatedAt: now }).where(drizzleOrm.eq(accountPayables.id, id));
+        let cascadedPurchase = null;
+        if (linkedPurchase && linkedPurchase.status !== "cancelled") {
+          await txDb.update(purchases).set({ status: "cancelled", updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
+          cascadedPurchase = {
+            purchaseId: linkedPurchase.id,
+            purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+            oldStatus: linkedPurchase.status
+          };
+        }
+        return { cascadedPurchase };
+      });
       await createAuditLog$1({
         userId: session.userId,
         branchId: payable.branchId,
@@ -14994,6 +15751,18 @@ Cancelled: ${reason}`.trim() : payable.notes,
         newValues: { status: "cancelled", reason },
         description: `Cancelled payable ${payable.invoiceNumber}`
       });
+      if (result.cascadedPurchase) {
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: payable.branchId,
+          action: "cancel",
+          entityType: "purchase",
+          entityId: result.cascadedPurchase.purchaseId,
+          oldValues: { status: result.cascadedPurchase.oldStatus },
+          newValues: { status: "cancelled", reason: `Cascaded from payable #${id} cancel` },
+          description: `Cascaded cancel of purchase ${result.cascadedPurchase.purchaseOrderNumber} (payable #${id} cancelled)`
+        });
+      }
       return { success: true, message: "Payable cancelled successfully" };
     } catch (error) {
       console.error("Cancel payable error:", error);
@@ -15033,12 +15802,6 @@ Cancelled: ${reason}`.trim() : payable.notes,
           drizzleOrm.or(drizzleOrm.eq(accountPayables.status, "pending"), drizzleOrm.eq(accountPayables.status, "partial"))
         )
       );
-      await db2.update(accountPayables).set({ status: "overdue", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(
-        drizzleOrm.and(
-          drizzleOrm.lte(accountPayables.dueDate, today),
-          drizzleOrm.or(drizzleOrm.eq(accountPayables.status, "pending"), drizzleOrm.eq(accountPayables.status, "partial"))
-        )
-      );
       return {
         success: true,
         data: {
@@ -15055,6 +15818,44 @@ Cancelled: ${reason}`.trim() : payable.notes,
     } catch (error) {
       console.error("Get summary error:", error);
       return { success: false, message: "Failed to fetch summary" };
+    }
+  });
+  electron.ipcMain.handle("payables:mark-overdue", async (_, branchId) => {
+    try {
+      const session = getCurrentSession();
+      if (!session) {
+        return { success: false, message: "Unauthorized" };
+      }
+      const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+      const conditions = [
+        drizzleOrm.lte(accountPayables.dueDate, today),
+        drizzleOrm.or(drizzleOrm.eq(accountPayables.status, "pending"), drizzleOrm.eq(accountPayables.status, "partial"))
+      ];
+      if (branchId) conditions.push(drizzleOrm.eq(accountPayables.branchId, branchId));
+      const flipped = await withTransaction(async ({ db: txDb }) => {
+        const candidates = await txDb.query.accountPayables.findMany({
+          where: drizzleOrm.and(...conditions)
+        });
+        if (candidates.length === 0) return [];
+        await txDb.update(accountPayables).set({ status: "overdue", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.and(...conditions));
+        return candidates;
+      });
+      for (const p of flipped) {
+        await createAuditLog$1({
+          userId: session.userId,
+          branchId: p.branchId,
+          action: "update",
+          entityType: "account_payable",
+          entityId: p.id,
+          oldValues: { status: p.status },
+          newValues: { status: "overdue", reason: "dueDate passed" },
+          description: `Reclassified payable ${p.invoiceNumber} as overdue (due ${p.dueDate})`
+        });
+      }
+      return { success: true, data: { flippedCount: flipped.length } };
+    } catch (error) {
+      console.error("Mark overdue error:", error);
+      return { success: false, message: "Failed to mark payables overdue" };
     }
   });
   electron.ipcMain.handle("payables:get-aging-report", async (_, branchId) => {
@@ -18411,7 +19212,9 @@ async function generatePaymentHistoryReceipt(data, options) {
   }
 }
 async function generateReceipt(data, options) {
-  const { format, autoDownload } = options;
+  const { format, autoDownload, fileName: customFileName } = options;
+  const sanitizedCustomName = customFileName ? customFileName.replace(/[\\/:*?"<>|\r\n\t]+/g, " ").replace(/\s+/g, " ").trim() : "";
+  const ensurePdfExt = (n) => n.toLowerCase().endsWith(".pdf") ? n : `${n}.pdf`;
   const htmlContent = format === "thermal" ? generateThermalReceiptHTML(data) : generatePDFReceiptHTML(data);
   const pageSettings = format === "thermal" ? {
     pageSize: { width: 80 * 1e3, height: 210 * 1e3 },
@@ -18439,14 +19242,20 @@ async function generateReceipt(data, options) {
       margins: pageSettings.margins
     });
     let filePath;
-    if (autoDownload) {
-      const downloadsPath = electron.app.getPath("downloads");
-      const fileName = `receipt_${data.sale.invoiceNumber}_${Date.now()}.pdf`;
-      filePath = path__namespace.join(downloadsPath, fileName);
+    const baseDir = autoDownload ? electron.app.getPath("downloads") : electron.app.getPath("temp");
+    if (sanitizedCustomName) {
+      const wantedName = ensurePdfExt(sanitizedCustomName);
+      const ext = path__namespace.extname(wantedName);
+      const stem = wantedName.slice(0, wantedName.length - ext.length);
+      filePath = path__namespace.join(baseDir, wantedName);
+      let suffix = 1;
+      while (fs__namespace.existsSync(filePath)) {
+        filePath = path__namespace.join(baseDir, `${stem} (${suffix})${ext}`);
+        suffix += 1;
+      }
     } else {
-      const tempPath = electron.app.getPath("temp");
       const fileName = `receipt_${data.sale.invoiceNumber}_${Date.now()}.pdf`;
-      filePath = path__namespace.join(tempPath, fileName);
+      filePath = path__namespace.join(baseDir, fileName);
     }
     fs__namespace.writeFileSync(filePath, pdfData);
     return filePath;
@@ -18456,7 +19265,7 @@ async function generateReceipt(data, options) {
 }
 function registerReceiptHandlers() {
   const db2 = getDatabase();
-  electron.ipcMain.handle("receipt:generate", async (_, saleId) => {
+  electron.ipcMain.handle("receipt:generate", async (_, saleId, customFileName) => {
     try {
       const sale = await db2.query.sales.findFirst({
         where: drizzleOrm.eq(sales.id, saleId)
@@ -18543,7 +19352,8 @@ function registerReceiptHandlers() {
       };
       const options = {
         format: settings2.receiptFormat || "pdf",
-        autoDownload: settings2.receiptAutoDownload !== false
+        autoDownload: settings2.receiptAutoDownload !== false,
+        fileName: customFileName
       };
       const filePath = await generateReceipt(receiptData, options);
       return {
@@ -23200,6 +24010,136 @@ function registerRecoveryHandlers() {
     }
   );
 }
+function registerPayeeHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle(
+    "payees:getAll",
+    async (_, params) => {
+      try {
+        const { payeeType, isActive, search, limit = 1e3, page = 1 } = params || {};
+        const conditions = [];
+        if (payeeType) conditions.push(drizzleOrm.eq(payees.payeeType, payeeType));
+        if (isActive !== void 0) conditions.push(drizzleOrm.eq(payees.isActive, isActive));
+        if (search) conditions.push(drizzleOrm.like(payees.name, "%" + search + "%"));
+        const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
+        const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(payees).where(whereClause);
+        const total = countResult[0].count;
+        const data = await db2.query.payees.findMany({
+          where: whereClause,
+          limit,
+          offset: (page - 1) * limit,
+          orderBy: drizzleOrm.desc(payees.name),
+          with: {
+            linkedSupplier: true
+          }
+        });
+        return { success: true, data, total, page, limit, totalPages: Math.ceil(total / limit) };
+      } catch (error) {
+        return handleIpcError("Get payees", error);
+      }
+    }
+  );
+  electron.ipcMain.handle("payees:getById", async (_, id) => {
+    try {
+      const payee = await db2.query.payees.findFirst({
+        where: drizzleOrm.eq(payees.id, id),
+        with: { linkedSupplier: true }
+      });
+      if (!payee) return { success: false, message: "Payee not found" };
+      return { success: true, data: payee };
+    } catch (error) {
+      return handleIpcError("Get payee", error);
+    }
+  });
+  electron.ipcMain.handle("payees:create", async (_, data) => {
+    try {
+      const session = getCurrentSession();
+      if (!data.name?.trim()) {
+        return { success: false, message: "Payee name is required" };
+      }
+      if (!data.payeeType) {
+        return { success: false, message: "Payee type is required" };
+      }
+      if (data.payeeType === "vendor" && !data.linkedSupplierId) {
+        return {
+          success: false,
+          message: "Vendor payees are auto-created from the Suppliers screen"
+        };
+      }
+      const result = await db2.insert(payees).values(data).returning();
+      const newPayee = result[0];
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "create",
+        entityType: "payee",
+        entityId: newPayee.id,
+        newValues: sanitizeForAudit(data),
+        description: "Created payee: " + data.name + " (" + data.payeeType + ")"
+      });
+      return { success: true, data: newPayee };
+    } catch (error) {
+      return handleIpcError("Create payee", error);
+    }
+  });
+  electron.ipcMain.handle("payees:update", async (_, id, data) => {
+    try {
+      const session = getCurrentSession();
+      const existing = await db2.query.payees.findFirst({ where: drizzleOrm.eq(payees.id, id) });
+      if (!existing) return { success: false, message: "Payee not found" };
+      if (data.payeeType && data.payeeType !== existing.payeeType) {
+        if (existing.payeeType === "vendor" || data.payeeType === "vendor") {
+          return {
+            success: false,
+            message: "Cannot change payee type from/to vendor. Manage vendors via the Suppliers screen."
+          };
+        }
+      }
+      const result = await db2.update(payees).set({ ...data, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(payees.id, id)).returning();
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "update",
+        entityType: "payee",
+        entityId: id,
+        oldValues: sanitizeForAudit(existing),
+        newValues: sanitizeForAudit(data),
+        description: "Updated payee: " + existing.name
+      });
+      return { success: true, data: result[0] };
+    } catch (error) {
+      return handleIpcError("Update payee", error);
+    }
+  });
+  electron.ipcMain.handle("payees:delete", async (_, id) => {
+    try {
+      const session = getCurrentSession();
+      const existing = await db2.query.payees.findFirst({ where: drizzleOrm.eq(payees.id, id) });
+      if (!existing) return { success: false, message: "Payee not found" };
+      const { expenses: expensesTable } = await Promise.resolve().then(() => schema);
+      const usageCount = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(expensesTable).where(drizzleOrm.eq(expensesTable.payeeId, id));
+      if (usageCount[0].count > 0) {
+        return {
+          success: false,
+          message: "Cannot delete payee -- referenced by " + usageCount[0].count + " expense(s). Deactivate instead."
+        };
+      }
+      await db2.update(payees).set({ isActive: false, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(payees.id, id));
+      await createAuditLog$1({
+        userId: session?.userId,
+        branchId: session?.branchId,
+        action: "delete",
+        entityType: "payee",
+        entityId: id,
+        oldValues: sanitizeForAudit(existing),
+        description: "Deactivated payee: " + existing.name
+      });
+      return { success: true, message: "Payee deactivated successfully" };
+    } catch (error) {
+      return handleIpcError("Delete payee", error);
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -23243,6 +24183,7 @@ function registerAllHandlers() {
   registerShellHandlers();
   registerRecoveryHandlers();
   registerOnlineTransactionHandlers();
+  registerPayeeHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

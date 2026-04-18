@@ -45,8 +45,35 @@ export function registerPurchaseHandlers(): void {
     try {
       const session = getCurrentSession()
 
+      // --- Input validation ---
       if (!data.items || data.items.length === 0) {
         return { success: false, message: 'No items in purchase order' }
+      }
+      if (!Number.isInteger(data.supplierId) || data.supplierId <= 0) {
+        return { success: false, message: 'Invalid supplier' }
+      }
+      if (!Number.isInteger(data.branchId) || data.branchId <= 0) {
+        return { success: false, message: 'Invalid branch' }
+      }
+      const paymentMethod = data.paymentMethod || 'cash'
+      if (!['cash', 'cheque', 'pay_later'].includes(paymentMethod)) {
+        return { success: false, message: 'Invalid payment method' }
+      }
+      const shippingCost = data.shippingCost ?? 0
+      if (!Number.isFinite(shippingCost) || shippingCost < 0) {
+        return { success: false, message: 'Shipping cost must be zero or positive' }
+      }
+      for (let idx = 0; idx < data.items.length; idx++) {
+        const item = data.items[idx]
+        if (!Number.isInteger(item.productId) || item.productId <= 0) {
+          return { success: false, message: `Item ${idx + 1}: invalid product` }
+        }
+        if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+          return { success: false, message: `Item ${idx + 1}: quantity must be a positive integer` }
+        }
+        if (!Number.isFinite(item.unitCost) || item.unitCost <= 0) {
+          return { success: false, message: `Item ${idx + 1}: unit cost must be greater than zero` }
+        }
       }
 
       // Calculate totals
@@ -66,56 +93,61 @@ export function registerPurchaseHandlers(): void {
         })
       }
 
-      const shippingCost = data.shippingCost || 0
       const totalAmount = subtotal + shippingCost
 
       const purchaseOrderNumber = generatePurchaseOrderNumber()
 
-      // Determine payment status based on payment method
-      const paymentMethod = data.paymentMethod || 'cash'
-      const paymentStatus = paymentMethod === 'pay_later' ? 'pending' : 'paid'
+      // Payment is deferred to receive for cash/cheque (no cash drawer or GL
+      // impact until goods are in hand). Pay-later stays pending until the
+      // user settles the payable.
+      const paymentStatus = 'pending' as const
 
-      const [purchase] = await db
-        .insert(purchases)
-        .values({
-          purchaseOrderNumber,
-          supplierId: data.supplierId,
-          branchId: data.branchId,
-          userId: session?.userId ?? 0,
-          subtotal,
-          taxAmount: 0,
-          shippingCost,
-          totalAmount,
-          paymentMethod,
-          paymentStatus,
-          status: 'draft',
-          expectedDeliveryDate: data.expectedDeliveryDate,
-          notes: data.notes,
-        })
-        .returning()
+      const purchase = await withTransaction(async ({ db: txDb }) => {
+        const [created] = await txDb
+          .insert(purchases)
+          .values({
+            purchaseOrderNumber,
+            supplierId: data.supplierId,
+            branchId: data.branchId,
+            userId: session?.userId ?? 0,
+            subtotal,
+            taxAmount: 0,
+            shippingCost,
+            totalAmount,
+            paymentMethod,
+            paymentStatus,
+            status: 'draft',
+            expectedDeliveryDate: data.expectedDeliveryDate,
+            notes: data.notes,
+          })
+          .returning()
 
-      for (const item of purchaseItemsData) {
-        await db.insert(purchaseItems).values({
-          ...item,
-          purchaseId: purchase.id,
-        })
-      }
+        for (const item of purchaseItemsData) {
+          await txDb.insert(purchaseItems).values({
+            ...item,
+            purchaseId: created.id,
+          })
+        }
 
-      // If pay_later, create account payable record
-      if (paymentMethod === 'pay_later') {
-        await db.insert(accountPayables).values({
-          supplierId: data.supplierId,
-          purchaseId: purchase.id,
-          branchId: data.branchId,
-          invoiceNumber: purchaseOrderNumber,
-          totalAmount,
-          paidAmount: 0,
-          remainingAmount: totalAmount,
-          status: 'pending',
-          notes: `Auto-generated from Purchase Order: ${purchaseOrderNumber}`,
-          createdBy: session?.userId,
-        })
-      }
+        // Pay-later creates the payable up front so it shows in AP ageing.
+        // Cash/cheque POs don't touch the ledger or drawer until receive.
+        if (paymentMethod === 'pay_later') {
+          await txDb.insert(accountPayables).values({
+            supplierId: data.supplierId,
+            purchaseId: created.id,
+            branchId: data.branchId,
+            invoiceNumber: purchaseOrderNumber,
+            totalAmount,
+            paidAmount: 0,
+            remainingAmount: totalAmount,
+            status: 'pending',
+            notes: `Auto-generated from Purchase Order: ${purchaseOrderNumber}`,
+            createdBy: session?.userId,
+          })
+        }
+
+        return created
+      })
 
       await createAuditLog({
         userId: session?.userId,
@@ -125,18 +157,29 @@ export function registerPurchaseHandlers(): void {
         entityId: purchase.id,
         newValues: {
           purchaseOrderNumber,
+          supplierId: data.supplierId,
+          branchId: data.branchId,
+          subtotal,
+          shippingCost,
           totalAmount,
           itemCount: data.items.length,
+          items: purchaseItemsData.map((i) => ({
+            productId: i.productId,
+            quantity: i.quantity,
+            unitCost: i.unitCost,
+            totalCost: i.totalCost,
+          })),
           paymentMethod,
           paymentStatus,
         },
-        description: `Created purchase order: ${purchaseOrderNumber} (Payment: ${paymentMethod})`,
+        description: `Created purchase order: ${purchaseOrderNumber} (Payment: ${paymentMethod}, total: ${totalAmount.toFixed(2)})`,
       })
 
       return { success: true, data: purchase }
     } catch (error) {
       console.error('Create purchase error:', error)
-      return { success: false, message: 'Failed to create purchase order' }
+      const message = error instanceof Error ? error.message : 'Failed to create purchase order'
+      return { success: false, message }
     }
   })
 
@@ -237,9 +280,59 @@ export function registerPurchaseHandlers(): void {
           return { success: false, message: 'Cannot receive items for this purchase order' }
         }
 
+        if (!Array.isArray(receivedItems) || receivedItems.length === 0) {
+          return { success: false, message: 'No items to receive' }
+        }
+
+        // For cash POs we need an open cash session before mutating anything.
+        let openCashSessionId: number | null = null
+        if (purchase.paymentMethod === 'cash') {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await db.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, purchase.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+          if (!openSession) {
+            return {
+              success: false,
+              message: 'No open cash register session for this branch. Open a session before receiving a cash purchase.',
+            }
+          }
+          openCashSessionId = openSession.id
+        }
+
         // Execute all receive operations in a transaction
         const result = await withTransaction(async ({ db: txDb }) => {
           const receivedItemDetails: Array<{ unitCost: number; receivedQuantity: number; purchaseItemId: number }> = []
+
+          // Validate every requested receipt up front so we fail before mutating state.
+          for (let idx = 0; idx < receivedItems.length; idx++) {
+            const item = receivedItems[idx]
+            if (!Number.isInteger(item.itemId) || item.itemId <= 0) {
+              throw new Error(`Receive item ${idx + 1}: invalid itemId`)
+            }
+            if (!Number.isInteger(item.receivedQuantity) || item.receivedQuantity <= 0) {
+              throw new Error(`Receive item ${idx + 1}: receivedQuantity must be a positive integer`)
+            }
+            const purchaseItem = await txDb.query.purchaseItems.findFirst({
+              where: eq(purchaseItems.id, item.itemId),
+            })
+            if (!purchaseItem) {
+              throw new Error(`Receive item ${idx + 1}: purchase line not found`)
+            }
+            if (purchaseItem.purchaseId !== purchaseId) {
+              throw new Error(`Receive item ${idx + 1}: line does not belong to this purchase`)
+            }
+            const projected = purchaseItem.receivedQuantity + item.receivedQuantity
+            if (projected > purchaseItem.quantity) {
+              throw new Error(
+                `Receive item ${idx + 1}: would exceed ordered quantity (ordered ${purchaseItem.quantity}, already received ${purchaseItem.receivedQuantity}, requested ${item.receivedQuantity})`
+              )
+            }
+          }
 
           // Update received quantities and add to inventory
           for (const item of receivedItems) {
@@ -310,22 +403,66 @@ export function registerPurchaseHandlers(): void {
 
           const newStatus = allReceived ? 'received' : partiallyReceived ? 'partial' : purchase.status
 
+          // Cash/cheque POs settle on final receive; pay_later settles via pay-off.
+          const newPaymentStatus =
+            allReceived && (purchase.paymentMethod === 'cash' || purchase.paymentMethod === 'cheque')
+              ? 'paid'
+              : purchase.paymentStatus
+
           await txDb
             .update(purchases)
             .set({
               status: newStatus,
+              paymentStatus: newPaymentStatus,
               receivedDate: allReceived ? new Date().toISOString() : null,
               updatedAt: new Date().toISOString(),
             })
             .where(eq(purchases.id, purchaseId))
 
+          // Shipping is allocated in full on the final receive so the cumulative
+          // GL/Cash outflow equals purchase.totalAmount exactly, no rounding drift.
+          const shippingAllocation = allReceived ? purchase.shippingCost : 0
+
           // Post to General Ledger
+          let journalEntryId: number | null = null
           if (receivedItemDetails.length > 0) {
-            await postPurchaseReceiveToGL(purchase, receivedItemDetails, session?.userId ?? 0)
+            journalEntryId = await postPurchaseReceiveToGL(
+              { ...purchase, paymentStatus: newPaymentStatus },
+              receivedItemDetails,
+              session?.userId ?? 0,
+              shippingAllocation
+            )
           }
 
-          return { newStatus, receivedItemDetails }
+          // Debit the physical cash drawer for cash POs so the register balance
+          // tracks the GL cash account in real time.
+          if (purchase.paymentMethod === 'cash' && openCashSessionId !== null) {
+            const itemsValue = receivedItemDetails.reduce(
+              (sum, i) => sum + i.unitCost * i.receivedQuantity,
+              0
+            )
+            const cashOutflow = itemsValue + shippingAllocation
+            if (cashOutflow > 0) {
+              await txDb.insert(cashTransactions).values({
+                sessionId: openCashSessionId,
+                branchId: purchase.branchId,
+                transactionType: 'ap_payment',
+                amount: -cashOutflow,
+                referenceType: 'purchase',
+                referenceId: purchase.id,
+                description: `Cash purchase receive: ${purchase.purchaseOrderNumber}`,
+                recordedBy: session?.userId ?? 0,
+              })
+            }
+          }
+
+          return { newStatus, newPaymentStatus, receivedItemDetails, journalEntryId, shippingAllocation }
         })
+
+        const itemsValue = result.receivedItemDetails.reduce(
+          (sum, i) => sum + i.unitCost * i.receivedQuantity,
+          0
+        )
 
         await createAuditLog({
           userId: session?.userId,
@@ -333,17 +470,28 @@ export function registerPurchaseHandlers(): void {
           action: 'update',
           entityType: 'purchase',
           entityId: purchaseId,
+          oldValues: {
+            status: purchase.status,
+            paymentStatus: purchase.paymentStatus,
+          },
           newValues: {
             status: result.newStatus,
-            receivedItems: receivedItems.length,
+            paymentStatus: result.newPaymentStatus,
+            receivedLineCount: receivedItems.length,
+            itemsValue,
+            shippingAllocated: result.shippingAllocation,
+            totalPosted: itemsValue + result.shippingAllocation,
+            paymentMethod: purchase.paymentMethod,
+            journalEntryId: result.journalEntryId,
           },
-          description: `Received items for purchase: ${purchase.purchaseOrderNumber}`,
+          description: `Received items for purchase: ${purchase.purchaseOrderNumber} (posted ${(itemsValue + result.shippingAllocation).toFixed(2)})`,
         })
 
         return { success: true, message: 'Items received successfully' }
       } catch (error) {
         console.error('Receive purchase error:', error)
-        return { success: false, message: 'Failed to receive items' }
+        const message = error instanceof Error ? error.message : 'Failed to receive items'
+        return { success: false, message }
       }
     }
   )
@@ -413,33 +561,69 @@ export function registerPurchaseHandlers(): void {
           return { success: false, message: 'Purchase is already paid' }
         }
 
-        // Update purchase payment status
-        await db
-          .update(purchases)
-          .set({
-            paymentStatus: 'paid',
-            updatedAt: new Date().toISOString(),
+        if (!['cash', 'cheque', 'bank_transfer'].includes(paymentData.paymentMethod)) {
+          return { success: false, message: 'Invalid payment method' }
+        }
+
+        // For cash pay-offs we require an open cash session up front so the
+        // pay-off never silently skips the cash-drawer debit.
+        let openCashSessionId: number | null = null
+        if (paymentData.paymentMethod === 'cash') {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await db.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, purchase.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
           })
-          .where(eq(purchases.id, purchaseId))
+          if (!openSession) {
+            return {
+              success: false,
+              message: 'No open cash register session for this branch. Open a session before paying in cash.',
+            }
+          }
+          openCashSessionId = openSession.id
+        }
 
-        // Find and update the related payable
-        const payable = await db.query.accountPayables.findFirst({
-          where: eq(accountPayables.purchaseId, purchaseId),
-        })
+        const paidAmount = await withTransaction(async ({ db: txDb }) => {
+          // Re-read the payable inside the transaction to avoid double-payment
+          // races between two concurrent pay-off calls.
+          const payable = await txDb.query.accountPayables.findFirst({
+            where: eq(accountPayables.purchaseId, purchaseId),
+          })
 
-        if (payable) {
-          // Record payment on the payable
-          const [payablePayment] = await db.insert(payablePayments).values({
-            payableId: payable.id,
-            amount: payable.remainingAmount,
-            paymentMethod: paymentData.paymentMethod,
-            referenceNumber: paymentData.referenceNumber,
-            notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
-            paidBy: session?.userId,
-          }).returning()
+          await txDb
+            .update(purchases)
+            .set({
+              paymentStatus: 'paid',
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(purchases.id, purchaseId))
 
-          // Update payable status
-          await db
+          if (!payable) {
+            return 0
+          }
+
+          if (payable.remainingAmount <= 0) {
+            throw new Error('Payable has no outstanding amount')
+          }
+
+          const amount = payable.remainingAmount
+
+          const [payablePayment] = await txDb
+            .insert(payablePayments)
+            .values({
+              payableId: payable.id,
+              amount,
+              paymentMethod: paymentData.paymentMethod,
+              referenceNumber: paymentData.referenceNumber,
+              notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
+              paidBy: session?.userId,
+            })
+            .returning()
+
+          await txDb
             .update(accountPayables)
             .set({
               paidAmount: payable.totalAmount,
@@ -449,44 +633,33 @@ export function registerPurchaseHandlers(): void {
             })
             .where(eq(accountPayables.id, payable.id))
 
-          // Post to General Ledger
           await postAPPaymentToGL(
             {
               id: payablePayment.id,
               payableId: payable.id,
               branchId: purchase.branchId,
-              amount: payable.remainingAmount,
+              amount,
               paymentMethod: paymentData.paymentMethod,
               invoiceNumber: payable.invoiceNumber,
             },
             session?.userId ?? 0
           )
 
-          // Record cash register outflow for cash payments
-          if (paymentData.paymentMethod === 'cash') {
-            const today = new Date().toISOString().split('T')[0]
-            const openSession = await db.query.cashRegisterSessions.findFirst({
-              where: and(
-                eq(cashRegisterSessions.branchId, purchase.branchId),
-                eq(cashRegisterSessions.sessionDate, today),
-                eq(cashRegisterSessions.status, 'open')
-              ),
+          if (paymentData.paymentMethod === 'cash' && openCashSessionId !== null) {
+            await txDb.insert(cashTransactions).values({
+              sessionId: openCashSessionId,
+              branchId: purchase.branchId,
+              transactionType: 'ap_payment',
+              amount: -amount,
+              referenceType: 'payable_payment',
+              referenceId: payablePayment.id,
+              description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
+              recordedBy: session?.userId ?? 0,
             })
-
-            if (openSession) {
-              await db.insert(cashTransactions).values({
-                sessionId: openSession.id,
-                branchId: purchase.branchId,
-                transactionType: 'ap_payment',
-                amount: -payable.remainingAmount,
-                referenceType: 'payable_payment',
-                referenceId: payablePayment.id,
-                description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
-                recordedBy: session?.userId ?? 0,
-              })
-            }
           }
-        }
+
+          return amount
+        })
 
         await createAuditLog({
           userId: session?.userId,
@@ -495,14 +668,20 @@ export function registerPurchaseHandlers(): void {
           entityType: 'purchase',
           entityId: purchaseId,
           oldValues: { paymentStatus: purchase.paymentStatus },
-          newValues: { paymentStatus: 'paid', paymentMethod: paymentData.paymentMethod },
-          description: `Paid off purchase order: ${purchase.purchaseOrderNumber}`,
+          newValues: {
+            paymentStatus: 'paid',
+            paymentMethod: paymentData.paymentMethod,
+            paidAmount,
+            referenceNumber: paymentData.referenceNumber,
+          },
+          description: `Paid off purchase order: ${purchase.purchaseOrderNumber} (${paidAmount.toFixed(2)} ${paymentData.paymentMethod})`,
         })
 
         return { success: true, message: 'Purchase paid off successfully' }
       } catch (error) {
         console.error('Pay off purchase error:', error)
-        return { success: false, message: 'Failed to pay off purchase' }
+        const message = error instanceof Error ? error.message : 'Failed to pay off purchase'
+        return { success: false, message }
       }
     }
   )

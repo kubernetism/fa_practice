@@ -234,15 +234,6 @@ export function OnlineTransactionsScreen() {
     fetchTransactions()
   }, [fetchDashboard, fetchTransactions])
 
-  // Auto-refresh every 30s
-  useEffect(() => {
-    const interval = setInterval(() => {
-      fetchDashboard()
-      fetchTransactions()
-    }, 30000)
-    return () => clearInterval(interval)
-  }, [fetchDashboard, fetchTransactions])
-
   // ── Computed dashboard aggregations ──
   const dashboardAggregates = useMemo(() => {
     if (!dashboard) return { totalInflow: 0, totalOutflow: 0, pendingCount: 0, pendingAmount: 0, confirmedAmount: 0 }

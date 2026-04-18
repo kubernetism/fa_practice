@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Plus,
   Search,
@@ -11,6 +12,7 @@ import {
   DollarSign,
   Calendar,
   RefreshCw,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -91,22 +93,29 @@ interface Expense {
   expenseDate: string
   paymentStatus: 'paid' | 'unpaid'
   isVoided: boolean
-  supplierId: number | null
+  payeeId: number | null
   payableId: number | null
   dueDate: string | null
   paymentTerms: string | null
   createdAt: string
   updatedAt: string
   category?: Category
-  supplier?: {
+  payee?: {
     id: number
     name: string
+    payeeType: string
   }
   payable?: {
     id: number
     status: string
     remainingAmount: number
   }
+}
+
+interface Payee {
+  id: number
+  name: string
+  payeeType: string
 }
 
 interface ExpenseFormData {
@@ -117,7 +126,7 @@ interface ExpenseFormData {
   reference: string
   expenseDate: string
   paymentStatus: 'paid' | 'unpaid'
-  supplierId: string
+  payeeId: string
   dueDate: string
   paymentTerms: string
 }
@@ -132,7 +141,7 @@ const initialFormData: ExpenseFormData = {
   reference: '',
   expenseDate: new Date().toISOString().split('T')[0],
   paymentStatus: 'paid',
-  supplierId: '',
+  payeeId: '',
   dueDate: '',
   paymentTerms: '',
 }
@@ -149,11 +158,13 @@ function capitalize(str: string): string {
 
 export default function ExpensesScreen() {
   const { currentBranch } = useBranch()
+  const navigate = useNavigate()
 
   // Data
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [categories, setCategories] = useState<Category[]>([])
-  const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([])
+  const [payeesList, setPayeesList] = useState<Payee[]>([])
+  const [registerOpen, setRegisterOpen] = useState<boolean | null>(null)
 
   // UI state
   const [isLoading, setIsLoading] = useState(true)
@@ -188,12 +199,12 @@ export default function ExpensesScreen() {
     }
   }, [currentBranch])
 
-  const fetchSuppliers = useCallback(async () => {
+  const fetchPayees = useCallback(async () => {
     try {
-      const response = await window.api.suppliers.getAll({ isActive: true, limit: 1000 })
-      if (response?.success && response?.data) setSuppliers(response.data)
+      const response = await window.api.payees.getAll({ isActive: true, limit: 1000 })
+      if (response?.success && response?.data) setPayeesList(response.data)
     } catch (error) {
-      console.error('Failed to fetch suppliers:', error)
+      console.error('Failed to fetch payees:', error)
     }
   }, [])
 
@@ -206,14 +217,32 @@ export default function ExpensesScreen() {
     }
   }, [])
 
+  const fetchRegisterState = useCallback(async () => {
+    if (!currentBranch) {
+      setRegisterOpen(null)
+      return
+    }
+    try {
+      const response = await window.api.cashRegister.getCurrentSession(currentBranch.id)
+      setRegisterOpen(!!(response?.success && response?.data))
+    } catch (error) {
+      console.error('Failed to fetch cash register state:', error)
+      setRegisterOpen(null)
+    }
+  }, [currentBranch])
+
   useEffect(() => {
     if (currentBranch) fetchExpenses()
   }, [currentBranch, fetchExpenses])
 
   useEffect(() => {
-    fetchSuppliers()
+    fetchPayees()
     fetchCategories()
-  }, [fetchSuppliers, fetchCategories])
+  }, [fetchPayees, fetchCategories])
+
+  useEffect(() => {
+    fetchRegisterState()
+  }, [fetchRegisterState])
 
   // ─── Derived / computed data ──────────────────────────────────────────────
 
@@ -228,7 +257,7 @@ export default function ExpensesScreen() {
       return (
         exp.category?.name.toLowerCase().includes(term) ||
         exp.description?.toLowerCase().includes(term) ||
-        exp.supplier?.name.toLowerCase().includes(term) ||
+        exp.payee?.name.toLowerCase().includes(term) ||
         exp.reference?.toLowerCase().includes(term) ||
         exp.paymentMethod?.toLowerCase().includes(term)
       )
@@ -274,15 +303,29 @@ export default function ExpensesScreen() {
       return
     }
 
+    if (!formData.payeeId) {
+      alert('Please select a payee')
+      return
+    }
+
     if (formData.paymentStatus === 'unpaid') {
-      if (!formData.supplierId) {
-        alert('Please select a supplier for unpaid expenses')
-        return
-      }
       if (!formData.dueDate) {
         alert('Please enter a due date for unpaid expenses')
         return
       }
+    }
+
+    // Guard: paid-in-cash expenses need an open cash register session.
+    // We still let the backend enforce this, but catching it here avoids
+    // an unnecessary round-trip and a broken UX.
+    const isCashPayment =
+      formData.paymentStatus === 'paid' &&
+      (!formData.paymentMethod || formData.paymentMethod === 'cash')
+    if (isCashPayment && registerOpen === false) {
+      alert(
+        'No open cash register session for this branch. Open a cash register session before recording a cash expense.'
+      )
+      return
     }
 
     if (!currentBranch) {
@@ -305,18 +348,20 @@ export default function ExpensesScreen() {
         paymentStatus: formData.paymentStatus,
       }
 
+      // Payee is always required
+      expenseData.payeeId = parseInt(formData.payeeId)
+
       if (formData.paymentStatus === 'paid') {
         expenseData.paymentMethod = formData.paymentMethod
         expenseData.reference = formData.reference || undefined
       } else {
-        expenseData.supplierId = parseInt(formData.supplierId)
         expenseData.dueDate = formData.dueDate
         expenseData.paymentTerms = formData.paymentTerms || undefined
       }
 
       const response = await window.api.expenses.create(expenseData)
       if (response.success) {
-        await fetchExpenses()
+        await Promise.all([fetchExpenses(), fetchRegisterState()])
         handleCloseDialog()
         alert(
           response.payableCreated
@@ -404,12 +449,35 @@ export default function ExpensesScreen() {
           </div>
         </div>
 
+        {/* ── Cash register closed warning ── */}
+        {registerOpen === false && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-800 dark:text-yellow-200"
+          >
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <strong className="font-semibold">Cash register is closed.</strong>{' '}
+              You can create unpaid expenses, but paid-in-cash expenses will be
+              rejected until a register session is opened for this branch.
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-[11px]"
+              onClick={() => navigate('/cash-register')}
+            >
+              Open register
+            </Button>
+          </div>
+        )}
+
         {/* ── Search bar ── */}
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
             <Input
-              placeholder="Search by category, description, supplier, reference, payment method…"
+              placeholder="Search by category, description, payee, reference, payment method…"
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value)
@@ -468,7 +536,7 @@ export default function ExpensesScreen() {
                   Method
                 </TableHead>
                 <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0">
-                  Supplier
+                  Payee
                 </TableHead>
                 <TableHead className="text-[10px] font-semibold tracking-wider uppercase h-8 py-0">
                   Payable
@@ -562,12 +630,15 @@ export default function ExpensesScreen() {
                       )}
                     </TableCell>
 
-                    {/* Supplier (unpaid only) */}
+                    {/* Payee — shown for ALL statuses */}
                     <TableCell className="py-1.5 text-xs text-muted-foreground">
-                      {expense.paymentStatus === 'unpaid' && expense.supplier ? (
+                      {expense.payee ? (
                         <span>
-                          {expense.supplier.name}
-                          {expense.dueDate && (
+                          <span className="capitalize text-muted-foreground/60 text-[10px] mr-1">
+                            {expense.payee.payeeType}
+                          </span>
+                          {expense.payee.name}
+                          {expense.paymentStatus === 'unpaid' && expense.dueDate && (
                             <span className="block text-[10px] text-muted-foreground/60">
                               Due: {formatDate(expense.dueDate)}
                             </span>
@@ -800,27 +871,33 @@ export default function ExpensesScreen() {
                   />
                 </div>
 
-                {/* Supplier (unpaid only) */}
-                {formData.paymentStatus === 'unpaid' && (
-                  <div className="space-y-2">
-                    <Label htmlFor="supplier">Supplier *</Label>
-                    <Select
-                      value={formData.supplierId}
-                      onValueChange={(value) => setFormData({ ...formData, supplierId: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select supplier" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {suppliers.map((supplier) => (
-                          <SelectItem key={supplier.id} value={supplier.id.toString()}>
-                            {supplier.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
+                {/* Payee — required for ALL statuses */}
+                <div className="space-y-2">
+                  <Label htmlFor="payee">Payee *</Label>
+                  <Select
+                    value={formData.payeeId}
+                    onValueChange={(value) => setFormData({ ...formData, payeeId: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select who this expense was paid to" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {payeesList.map((payee) => (
+                        <SelectItem key={payee.id} value={payee.id.toString()}>
+                          <span className="capitalize text-muted-foreground text-[10px] mr-1">
+                            {payee.payeeType}
+                          </span>
+                          {payee.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {payeesList.length === 0 && (
+                    <p className="text-[10px] text-muted-foreground">
+                      No payees available. Add payees via the Payees screen first.
+                    </p>
+                  )}
+                </div>
 
                 {/* Due Date (unpaid only) */}
                 {formData.paymentStatus === 'unpaid' && (

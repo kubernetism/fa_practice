@@ -499,6 +499,51 @@ export async function executePurchaseReversal(
     userId
   )
 
+  // 5. Offset cash drawer for cash POs so drawer stays in sync with GL cash.
+  // Receive-time code inserts a negative cash_transactions row per partial/final
+  // receive; here we insert a compensating positive row for each such outflow.
+  let cashReversalAmount = 0
+  if (purchase.paymentMethod === 'cash' && inventoryDeducted) {
+    const outflows = await db
+      .select()
+      .from(cashTransactions)
+      .where(
+        and(
+          eq(cashTransactions.referenceType, 'purchase'),
+          eq(cashTransactions.referenceId, entityId)
+        )
+      )
+
+    for (const tx of outflows) {
+      if (tx.amount >= 0) continue // only offset prior outflows
+      const today = new Date().toISOString().split('T')[0]
+      const openSession = await db.query.cashRegisterSessions.findFirst({
+        where: and(
+          eq(cashRegisterSessions.branchId, purchase.branchId),
+          eq(cashRegisterSessions.sessionDate, today),
+          eq(cashRegisterSessions.status, 'open')
+        ),
+      })
+      if (!openSession) {
+        throw new Error(
+          'No open cash register session for this branch. Open a session before reversing a cash purchase.'
+        )
+      }
+      const offsetAmount = -tx.amount
+      await db.insert(cashTransactions).values({
+        sessionId: openSession.id,
+        branchId: purchase.branchId,
+        transactionType: 'adjustment',
+        amount: offsetAmount,
+        referenceType: 'purchase_reversal',
+        referenceId: entityId,
+        description: `Reversal of cash purchase: ${purchase.purchaseOrderNumber}`,
+        recordedBy: userId,
+      })
+      cashReversalAmount += offsetAmount
+    }
+  }
+
   return {
     reversalDetails: {
       purchaseId: entityId,
@@ -509,6 +554,7 @@ export async function executePurchaseReversal(
       glReversed: glResult.reversed,
       originalJournalEntryId: glResult.originalEntryId ?? null,
       reversalJournalEntryId: glResult.reversalEntryId ?? null,
+      cashReversalAmount,
     },
   }
 }

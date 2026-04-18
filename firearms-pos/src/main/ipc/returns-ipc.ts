@@ -23,6 +23,7 @@ import { generateReturnNumber, type PaginationParams, type PaginatedResult } fro
 import { withTransaction } from '../utils/db-transaction'
 import { postReturnToGL, createJournalEntry } from '../utils/gl-posting'
 import { restoreCostLayers, consumeCostLayers } from '../utils/inventory-valuation'
+import { requireOpenCashSession } from '../utils/cash-register-guard'
 import { handleIpcError } from '../utils/error-handling'
 
 interface ReturnItemData {
@@ -68,6 +69,14 @@ export function registerReturnHandlers(): void {
 
       if (originalSale.isVoided) {
         return { success: false, message: 'Cannot return items from a voided sale' }
+      }
+
+      // Guard: cash refunds require an open register session for the branch.
+      if (data.returnType === 'refund' && data.refundMethod === 'cash') {
+        const guard = await requireOpenCashSession(data.branchId)
+        if (!guard.ok) {
+          return { success: false, message: guard.message }
+        }
       }
 
       // Execute all operations in a transaction

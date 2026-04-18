@@ -37,6 +37,7 @@ import {
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
+  Contact,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
@@ -94,6 +95,7 @@ const sections: NavSection[] = [
     items: [
       { title: 'Customers', href: '/customers', icon: Users, allowedRoles: ['admin', 'manager'] },
       { title: 'Suppliers', href: '/suppliers', icon: Store, allowedRoles: ['admin', 'manager'] },
+      { title: 'Payees', href: '/payees', icon: Contact, allowedRoles: ['admin', 'manager'] },
       { title: 'Expenses', href: '/expenses', icon: DollarSign, allowedRoles: ['admin', 'manager'] },
       { title: 'Commissions', href: '/commissions', icon: BadgePercent, allowedRoles: ['admin', 'manager'] },
       { title: 'Referrals', href: '/referral-persons', icon: UserPlus, allowedRoles: ['admin', 'manager'] },

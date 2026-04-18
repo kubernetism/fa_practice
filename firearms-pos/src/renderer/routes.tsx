@@ -31,6 +31,7 @@ const KEEP_ALIVE_PATHS = [
   "returns",
   "customers",
   "suppliers",
+  "payees",
   "expenses",
   "commissions",
   "users",

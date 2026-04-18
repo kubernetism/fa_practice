@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Clock, ChevronRight, MapPin, Dot } from 'lucide-react'
+import { Clock, ChevronRight, MapPin, Dot, RefreshCw } from 'lucide-react'
 import { TodosPanel } from '@/components/todos/todos-panel'
 import { MessagesPanel } from '@/components/messages/messages-panel'
 import { useAuth } from '@/contexts/auth-context'
 import { useBranch } from '@/contexts/branch-context'
+import { useScreenRefresh } from '@/contexts/screen-refresh-context'
 import { UserDropdownMenu } from '@/components/user/user-dropdown-menu'
 
 // Map route paths to readable page names
@@ -62,6 +63,7 @@ export function Header() {
   const location = useLocation()
   const { user } = useAuth()
   const { currentBranch } = useBranch()
+  const { refreshCurrent, isRefreshing } = useScreenRefresh()
   const [currentTime, setCurrentTime] = useState(new Date())
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
@@ -138,6 +140,18 @@ export function Header() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={refreshCurrent}
+          disabled={isRefreshing}
+          aria-label="Refresh current page"
+          title="Refresh current page"
+          className="inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background/40 px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">Refresh</span>
+        </button>
+
         <MessagesPanel />
         <TodosPanel />
 

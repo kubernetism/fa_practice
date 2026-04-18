@@ -20,6 +20,7 @@ import {
   FileText,
   Ban,
   RotateCcw,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -169,6 +170,10 @@ export function SalesHistoryScreen() {
   const [voidingSale, setVoidingSale] = useState<Sale | null>(null)
   const [voidReason, setVoidReason] = useState('')
   const [isVoiding, setIsVoiding] = useState(false)
+
+  // Tracks which sale's receipt PDF is currently being generated so the
+  // matching button can show a spinner / be disabled.
+  const [printingSaleIds, setPrintingSaleIds] = useState<Set<number>>(new Set())
 
   // Reversal request modal state
   const [isReversalModalOpen, setIsReversalModalOpen] = useState(false)
@@ -411,6 +416,13 @@ export function SalesHistoryScreen() {
     const branchName = getBranchName(sale.branchId)
     const cashierName = getUserName(sale.userId)
     const paymentLabel = getPaymentMethodLabel(sale.paymentMethod)
+    // Chromium uses document.title as the default Save-as-PDF filename.
+    // Strip filesystem-unsafe chars from customer name.
+    const safeCustomerName = (customerName || 'Walk-in')
+      .replace(/[\\/:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const docTitle = `${sale.invoiceNumber} - ${safeCustomerName}`
 
     const itemRows = saleItems.map((item) => {
       const name = item.product?.name || getProductName(item.productId)
@@ -432,43 +444,44 @@ export function SalesHistoryScreen() {
       : ''
 
     return `<!DOCTYPE html>
-<html><head><title>Receipt - ${sale.invoiceNumber}</title>
+<html><head><title>${docTitle}</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'DM Sans',-apple-system,sans-serif;width:320px;margin:0 auto;padding:16px 12px;color:#1a1a1a;background:#fff;-webkit-font-smoothing:antialiased}
-.receipt-header{text-align:center;padding:8px 0 12px;border-bottom:2px solid #1a1a1a}
-.biz-name{font-size:20px;font-weight:700;letter-spacing:2px;text-transform:uppercase;margin-bottom:2px}
-.branch-name{font-size:11px;font-weight:500;color:#555;letter-spacing:1px;text-transform:uppercase}
-.invoice-block{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px dashed #ccc}
-.invoice-num{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;color:#1a1a1a}
-.invoice-date{font-size:10px;color:#777;text-align:right;line-height:1.4}
-.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;padding:8px 0;font-size:10px;border-bottom:1px dashed #ccc}
-.info-label{color:#999;text-transform:uppercase;letter-spacing:.5px;font-size:8px;font-weight:600}
-.info-value{font-weight:500;color:#333;margin-bottom:4px}
-.items-header{display:flex;justify-content:space-between;align-items:center;padding:8px 0 4px;border-bottom:1px solid #e5e5e5}
-.items-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#555}
+@page{margin:0;size:80mm auto}
+body{font-family:'DM Sans',-apple-system,sans-serif;width:72mm;margin:0 auto;padding:4mm;color:#1a1a1a;background:#fff;-webkit-font-smoothing:antialiased;line-height:1.25}
+.receipt-header{text-align:center;padding:2px 0 6px;border-bottom:2px solid #1a1a1a}
+.biz-name{font-size:15px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:1px}
+.branch-name{font-size:10px;font-weight:500;color:#555;letter-spacing:.8px;text-transform:uppercase}
+.invoice-block{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px dashed #ccc}
+.invoice-num{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:#1a1a1a}
+.invoice-date{font-size:9px;color:#777;text-align:right;line-height:1.3}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:1px 8px;padding:4px 0;font-size:9px;border-bottom:1px dashed #ccc}
+.info-label{color:#999;text-transform:uppercase;letter-spacing:.4px;font-size:7px;font-weight:600}
+.info-value{font-weight:500;color:#333;margin-bottom:2px}
+.items-header{display:flex;justify-content:space-between;align-items:center;padding:5px 0 2px;border-bottom:1px solid #e5e5e5}
+.items-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#555}
 .items-count{font-size:9px;color:#999}
-table{width:100%;border-collapse:collapse;margin:4px 0}
-.col-headers td{font-size:8px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#aaa;padding:4px 0 2px;border-bottom:1px dotted #ddd}
-.item-name{font-size:11px;font-weight:500;padding:6px 0 0;color:#1a1a1a}
+table{width:100%;border-collapse:collapse;margin:2px 0}
+.col-headers td{font-size:7px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:#aaa;padding:2px 0 1px;border-bottom:1px dotted #ddd}
+.item-name{font-size:10px;font-weight:500;padding:3px 0 0;color:#1a1a1a}
 .serial{font-size:8px;color:#999;font-family:'JetBrains Mono',monospace}
-.item-detail td{font-family:'JetBrains Mono',monospace;font-size:10px;padding:0 0 6px;color:#555;border-bottom:1px dotted #f0f0f0}
+.item-detail td{font-family:'JetBrains Mono',monospace;font-size:9px;padding:0 0 3px;color:#555;border-bottom:1px dotted #f0f0f0}
 .qty{width:15%}.rate{width:30%}.disc{width:20%;color:#c0392b!important}.amt{width:35%;text-align:right;font-weight:600;color:#1a1a1a!important}
-.totals-section{padding:8px 0;border-top:1px dashed #ccc}
-.total-row{display:flex;justify-content:space-between;align-items:center;padding:2px 0;font-size:11px}
+.totals-section{padding:4px 0;border-top:1px dashed #ccc}
+.total-row{display:flex;justify-content:space-between;align-items:center;padding:1px 0;font-size:10px}
 .total-row .label{color:#777}.total-row .value{font-family:'JetBrains Mono',monospace;font-weight:500;color:#333}
 .total-row.discount .value{color:#c0392b}
-.grand-total{display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin:6px 0 2px;border-top:2px solid #1a1a1a;border-bottom:2px solid #1a1a1a}
-.grand-total .label{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px}
-.grand-total .value{font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700}
-.payment-info{display:flex;justify-content:space-between;padding:3px 0;font-size:10px}
+.grand-total{display:flex;justify-content:space-between;align-items:center;padding:4px 0;margin:3px 0 1px;border-top:2px solid #1a1a1a;border-bottom:2px solid #1a1a1a}
+.grand-total .label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px}
+.grand-total .value{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700}
+.payment-info{display:flex;justify-content:space-between;padding:2px 0;font-size:9px}
 .payment-info .label{color:#999}.payment-info .value{font-family:'JetBrains Mono',monospace;font-weight:500}
-.receipt-footer{text-align:center;padding:12px 0 4px;border-top:1px dashed #ccc;margin-top:8px}
-.thank-you{font-size:11px;font-weight:600;letter-spacing:.5px;margin-bottom:4px}
-.footer-sub{font-size:8px;color:#aaa;line-height:1.5}
-.voided-stamp{text-align:center;padding:6px;margin:8px 0;border:2px solid #c0392b;color:#c0392b;font-size:14px;font-weight:700;letter-spacing:3px;text-transform:uppercase;transform:rotate(-3deg)}
-@media print{body{width:100%;padding:8px}@page{margin:0;size:80mm auto}}
+.receipt-footer{text-align:center;padding:6px 0 2px;border-top:1px dashed #ccc;margin-top:4px}
+.thank-you{font-size:10px;font-weight:600;letter-spacing:.4px;margin-bottom:2px}
+.footer-sub{font-size:7px;color:#aaa;line-height:1.4}
+.voided-stamp{text-align:center;padding:4px;margin:4px 0;border:2px solid #c0392b;color:#c0392b;font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;transform:rotate(-3deg)}
+@media print{body{width:100%;padding:4mm}}
 </style></head>
 <body>
 <div class="receipt-header"><div class="biz-name">${branchSettings?.businessName || 'POS System'}</div><div class="branch-name">${branchName}</div></div>
@@ -496,15 +509,51 @@ ${changeRow}${voidedStamp}${notesBlock}
 </body></html>`
   }
 
-  // Print receipt
-  const handlePrintReceipt = (sale: Sale, items?: SaleItem[]) => {
-    const html = buildReceiptHtml(sale, items)
-    const printWindow = window.open('', '_blank')
-    if (printWindow) {
-      printWindow.document.open()
-      printWindow.document.write(html)
-      printWindow.document.close()
-      printWindow.print()
+  // Save the sale receipt as a PDF using the SAME generator the POS uses
+  // for live sales (`window.api.receipt.generate`) — that path is proven
+  // and respects business-settings receipt format/theme. We just override
+  // the saved filename with "<invoice> - <customer>.pdf" and reveal it.
+  const handlePrintReceipt = async (sale: Sale, _items?: SaleItem[]) => {
+    if (printingSaleIds.has(sale.id)) return // guard against double-clicks
+
+    const customerName = getCustomerName(sale.customerId)
+    const safeCustomerName = (customerName || 'Walk-in')
+      .replace(/[\\/:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    const filename = `${sale.invoiceNumber} - ${safeCustomerName}.pdf`
+
+    setPrintingSaleIds((prev) => {
+      const next = new Set(prev)
+      next.add(sale.id)
+      return next
+    })
+
+    try {
+      const result = await window.api.receipt.generate(sale.id, filename)
+      if (!result.success) {
+        alert(result.message || 'Failed to save receipt PDF')
+        return
+      }
+      const filePath = result.data?.filePath as string | undefined
+      if (filePath) {
+        // Open the file in the OS default PDF viewer so the user immediately
+        // sees the receipt was created.
+        try {
+          await window.api.shell.openPath(filePath)
+        } catch (err) {
+          console.warn('Could not open generated PDF:', err)
+        }
+      }
+    } catch (err) {
+      console.error('Save receipt PDF failed:', err)
+      alert('Failed to save receipt PDF')
+    } finally {
+      setPrintingSaleIds((prev) => {
+        const next = new Set(prev)
+        next.delete(sale.id)
+        return next
+      })
     }
   }
 
@@ -743,8 +792,17 @@ ${changeRow}${voidedStamp}${notesBlock}
                       <button onClick={() => handleViewSale(sale)} title="View" className="p-1 rounded hover:bg-muted transition-colors">
                         <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                       </button>
-                      <button onClick={() => handlePrintReceipt(sale)} title="Print" className="p-1 rounded hover:bg-muted transition-colors">
-                        <Printer className="h-3.5 w-3.5 text-muted-foreground" />
+                      <button
+                        onClick={() => handlePrintReceipt(sale)}
+                        disabled={printingSaleIds.has(sale.id)}
+                        title={printingSaleIds.has(sale.id) ? 'Saving PDF…' : 'Print'}
+                        className="p-1 rounded hover:bg-muted transition-colors disabled:opacity-60 disabled:cursor-wait"
+                      >
+                        {printingSaleIds.has(sale.id) ? (
+                          <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />
+                        ) : (
+                          <Printer className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
                       </button>
                       {!sale.isVoided && (
                         <button onClick={() => handleOpenVoidDialog(sale)} title="Void" className="p-1 rounded hover:bg-destructive/10 transition-colors">
@@ -991,9 +1049,23 @@ ${changeRow}${voidedStamp}${notesBlock}
                 <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => setIsViewDialogOpen(false)}>
                   Close
                 </Button>
-                <Button size="sm" className="h-8 text-xs gap-1.5" onClick={() => handlePrintReceipt(viewingSale, viewingSaleItems)}>
-                  <Printer className="h-3 w-3" />
-                  Print Receipt
+                <Button
+                  size="sm"
+                  className="h-8 text-xs gap-1.5"
+                  disabled={!!viewingSale && printingSaleIds.has(viewingSale.id)}
+                  onClick={() => handlePrintReceipt(viewingSale, viewingSaleItems)}
+                >
+                  {viewingSale && printingSaleIds.has(viewingSale.id) ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Saving PDF…
+                    </>
+                  ) : (
+                    <>
+                      <Printer className="h-3 w-3" />
+                      Print Receipt
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
