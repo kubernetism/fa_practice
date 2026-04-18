@@ -6,12 +6,9 @@ export const categories = sqliteTable('categories', {
   description: text('description'),
   parentId: integer('parent_id').references((): ReturnType<typeof integer> => categories.id),
   isActive: integer('is_active', { mode: 'boolean' }).notNull().default(true),
-  createdAt: text('created_at')
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
-  updatedAt: text('updated_at')
-    .notNull()
-    .$defaultFn(() => new Date().toISOString()),
+  isFirearm: integer('is_firearm', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull().$defaultFn(() => new Date().toISOString()),
+  updatedAt: text('updated_at').notNull().$defaultFn(() => new Date().toISOString()),
 })
 
 export type Category = typeof categories.$inferSelect
