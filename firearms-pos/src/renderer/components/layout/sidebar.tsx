@@ -38,6 +38,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Contact,
+  Crosshair,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
@@ -83,6 +84,7 @@ const sections: NavSection[] = [
       { title: 'Products', href: '/products', icon: Package, allowedRoles: ['admin', 'manager'] },
       { title: 'Services', href: '/services', icon: Wrench, allowedRoles: ['admin', 'manager'] },
       { title: 'Categories', href: '/categories-management', icon: FolderTree, allowedRoles: ['admin', 'manager'] },
+      { title: 'Firearm Attributes', href: '/firearm-attributes', icon: Crosshair, allowedRoles: ['admin', 'manager'] },
       { title: 'Stock', href: '/inventory', icon: Warehouse, allowedRoles: ['admin', 'manager'] },
       { title: 'Purchases', href: '/purchases', icon: Truck, allowedRoles: ['admin', 'manager'] },
       { title: 'Returns', href: '/returns', icon: ArrowLeftRight, allowedRoles: ['admin', 'manager'] },

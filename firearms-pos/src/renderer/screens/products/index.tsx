@@ -36,6 +36,11 @@ import {
 import { formatCurrency, debounce } from '@/lib/utils'
 import type { Product, Category } from '@shared/types'
 import { useBranch } from '@/contexts/branch-context'
+import {
+  FirearmDetailsSection,
+  emptyFirearmFields,
+  type FirearmFieldsValue,
+} from '@/components/firearm/firearm-details-section'
 
 interface ProductWithInventory extends Product {
   stock?: number
@@ -68,6 +73,51 @@ export function ProductsScreen() {
   const [isSaving, setIsSaving] = useState(false)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [firearmFields, setFirearmFields] = useState<FirearmFieldsValue>(emptyFirearmFields)
+  const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([])
+  const [isFirearmCategory, setIsFirearmCategory] = useState(false)
+  const [modelsMap, setModelsMap] = useState<Map<number, string>>(new Map())
+  const [calibersMap, setCalibersMap] = useState<Map<number, string>>(new Map())
+  const [makeFilter, setMakeFilter] = useState<string>('')
+  const [caliberFilter, setCaliberFilter] = useState<string>('')
+
+  useEffect(() => {
+    window.api.firearmAttrs
+      .list('models', { activeOnly: false })
+      .then((r) => {
+        if (r.success) setModelsMap(new Map(r.data.map((x: { id: number; name: string }) => [x.id, x.name])))
+      })
+      .catch(() => {})
+    window.api.firearmAttrs
+      .list('calibers', { activeOnly: false })
+      .then((r) => {
+        if (r.success) setCalibersMap(new Map(r.data.map((x: { id: number; name: string }) => [x.id, x.name])))
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    window.api.suppliers
+      .getAll({})
+      .then(
+        (r: {
+          success: boolean
+          data?: Array<{ id: number; name: string; isActive: boolean }>
+        }) => {
+          if (r.success && r.data) setSuppliers(r.data.filter((s) => s.isActive))
+        },
+      )
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!formData.categoryId) {
+      setIsFirearmCategory(false)
+      return
+    }
+    const cat = categories.find((c) => c.id === parseInt(formData.categoryId))
+    setIsFirearmCategory(!!(cat as Category & { isFirearm?: boolean })?.isFirearm)
+  }, [formData.categoryId, categories])
 
   // Fetch products with inventory for current branch
   const fetchProducts = useCallback(async () => {
@@ -156,6 +206,7 @@ export function ProductsScreen() {
       taxRate: '8.5',
       barcode: '',
     })
+    setFirearmFields(emptyFirearmFields)
     fetchCategories()
     setShowDialog(true)
   }
@@ -179,6 +230,17 @@ export function ProductsScreen() {
       taxRate: product.taxRate.toString(),
       barcode: product.barcode || '',
     })
+    const p = product as Product & Partial<FirearmFieldsValue>
+    setFirearmFields({
+      make: (p.make as 'local' | 'imported' | null) ?? null,
+      madeYear: p.madeYear ?? null,
+      madeCountry: p.madeCountry ?? null,
+      firearmModelId: p.firearmModelId ?? null,
+      caliberId: p.caliberId ?? null,
+      shapeId: p.shapeId ?? null,
+      designId: p.designId ?? null,
+      defaultSupplierId: p.defaultSupplierId ?? null,
+    })
     setShowDialog(true)
   }
 
@@ -200,6 +262,7 @@ export function ProductsScreen() {
         isTaxable: formData.isTaxable,
         taxRate: parseFloat(formData.taxRate),
         barcode: formData.barcode || null,
+        ...firearmFields,
       }
 
       let result
@@ -316,6 +379,27 @@ export function ProductsScreen() {
             ))}
           </SelectContent>
         </Select>
+        <select
+          value={makeFilter}
+          onChange={(e) => setMakeFilter(e.target.value)}
+          className="h-8 w-32 rounded-md border border-border/50 bg-card px-2 text-xs"
+        >
+          <option value="">All makes</option>
+          <option value="local">Local</option>
+          <option value="imported">Imported</option>
+        </select>
+        <select
+          value={caliberFilter}
+          onChange={(e) => setCaliberFilter(e.target.value)}
+          className="h-8 w-36 rounded-md border border-border/50 bg-card px-2 text-xs"
+        >
+          <option value="">All calibers</option>
+          {[...calibersMap.entries()].map(([id, name]) => (
+            <option key={id} value={id}>
+              {name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* ── Table ── */}
@@ -344,6 +428,9 @@ export function ProductsScreen() {
                     <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[100px]">Code</TableHead>
                     <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">Product</TableHead>
                     <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[120px]">Category</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[110px]">Model</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[90px]">Caliber</TableHead>
+                    <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 w-[70px]">Make</TableHead>
                     <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[70px]">Stock</TableHead>
                     <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[90px]">Cost</TableHead>
                     <TableHead className="h-8 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60 text-right w-[90px]">Price</TableHead>
@@ -352,7 +439,17 @@ export function ProductsScreen() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {products.map((product) => {
+                  {products
+                    .filter((p) => {
+                      const pp = p as ProductWithInventory & {
+                        make?: string | null
+                        caliberId?: number | null
+                      }
+                      if (makeFilter && pp.make !== makeFilter) return false
+                      if (caliberFilter && String(pp.caliberId ?? '') !== caliberFilter) return false
+                      return true
+                    })
+                    .map((product) => {
                     const isOutOfStock = product.stock === 0
                     const isLowStock = !isOutOfStock && product.stock !== undefined && product.stock < product.reorderLevel
 
@@ -377,6 +474,36 @@ export function ProductsScreen() {
                           <span className="text-[11px] text-muted-foreground/60 truncate">
                             {categories.find((c) => c.id === product.categoryId)?.name || '—'}
                           </span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3">
+                          <span className="text-[11px] text-muted-foreground/70 truncate">
+                            {(() => {
+                              const id = (product as ProductWithInventory & { firearmModelId?: number | null })
+                                .firearmModelId
+                              return id ? modelsMap.get(id) ?? '—' : '—'
+                            })()}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3">
+                          <span className="text-[11px] font-mono text-muted-foreground/70">
+                            {(() => {
+                              const id = (product as ProductWithInventory & { caliberId?: number | null })
+                                .caliberId
+                              return id ? calibersMap.get(id) ?? '—' : '—'
+                            })()}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-1.5 px-3">
+                          {(() => {
+                            const mk = (product as ProductWithInventory & { make?: string | null }).make
+                            return mk ? (
+                              <Badge variant={mk === 'imported' ? 'default' : 'secondary'} className="text-[10px]">
+                                {mk}
+                              </Badge>
+                            ) : (
+                              <span className="text-[11px] text-muted-foreground/50">—</span>
+                            )
+                          })()}
                         </TableCell>
                         <TableCell className="py-1.5 px-3 text-right">
                           <span className={`text-xs font-medium tabular-nums ${
@@ -625,6 +752,13 @@ export function ProductsScreen() {
                 <span className="text-sm">Taxable</span>
               </label>
             </div>
+
+            <FirearmDetailsSection
+              value={firearmFields}
+              onChange={setFirearmFields}
+              isFirearmCategory={isFirearmCategory}
+              suppliers={suppliers}
+            />
           </div>
 
           <DialogFooter>

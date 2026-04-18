@@ -1,5 +1,5 @@
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
-import { getDatabase, getDbPath } from './index'
+import { getDatabase, getDbPath, getRawDatabase } from './index'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -8,6 +8,7 @@ import { addPhoneToUsers } from './migrations/add_phone_to_users'
 import { fixFinancialIntegrity } from './migrations/fix_financial_integrity'
 import { fixFinancialIntegrityV2 } from './migrations/fix_financial_integrity_v2'
 import { migrateToPayees } from './migrations/migrate_to_payees'
+import { migrateFirearmAttributes } from './migrations/migrate_firearm_attributes'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -239,6 +240,14 @@ export async function runMigrations(): Promise<void> {
   } catch (error) {
     console.error('Payees migration error:', error)
     // Don't throw - log error but continue
+  }
+
+  // Firearm attributes migration (adds firearm-specific columns + lookup tables)
+  try {
+    migrateFirearmAttributes(getRawDatabase())
+  } catch (error) {
+    console.error('Firearm attributes migration error:', error)
+    throw error
   }
 }
 

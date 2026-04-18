@@ -1,7 +1,14 @@
 import { ipcMain } from 'electron'
 import { eq, like, and, or, desc, asc, sql } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { products, categories, inventory, type NewProduct } from '../db/schema'
+import {
+  products,
+  categories,
+  inventory,
+  firearmModels,
+  firearmCalibers,
+  type NewProduct,
+} from '../db/schema'
 import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -12,8 +19,8 @@ import {
   validateCostPrice,
   validateQuantity,
   validateTaxRate,
-  validatePercentage,
 } from '../utils/validation'
+import { validateFirearmFields } from '../utils/firearm-validation'
 
 /**
  * Sanitize and validate product input data
@@ -22,15 +29,14 @@ import {
 function sanitizeProductInput(data: Partial<NewProduct>): Partial<NewProduct> {
   const sanitized = { ...data }
 
-  // Sanitize text fields
   if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name)
   if (sanitized.code) sanitized.code = sanitizeAlphanumeric(sanitized.code)
   if (sanitized.barcode) sanitized.barcode = sanitizeAlphanumeric(sanitized.barcode)
   if (sanitized.description) sanitized.description = sanitizeForStorage(sanitized.description)
-  if (sanitized.manufacturer) sanitized.manufacturer = sanitizeForStorage(sanitized.manufacturer)
-  if (sanitized.model) sanitized.model = sanitizeForStorage(sanitized.model)
-  if (sanitized.caliber) sanitized.caliber = sanitizeForStorage(sanitized.caliber)
-  if (sanitized.sku) sanitized.sku = sanitizeAlphanumeric(sanitized.sku)
+  if (sanitized.brand) sanitized.brand = sanitizeForStorage(sanitized.brand)
+  if (sanitized.madeCountry) sanitized.madeCountry = sanitizeForStorage(sanitized.madeCountry)
+  if (sanitized.make)
+    sanitized.make = String(sanitized.make).toLowerCase().trim() as NewProduct['make']
 
   return sanitized
 }
@@ -56,21 +62,6 @@ function validateProductInput(data: Partial<NewProduct>): { valid: boolean; erro
     }
   }
 
-  // Validate quantities
-  if (data.minStockLevel !== undefined) {
-    const validatedMin = validateQuantity(data.minStockLevel)
-    if (validatedMin === null) {
-      errors.push('Minimum stock level must be a non-negative integer')
-    }
-  }
-
-  if (data.maxStockLevel !== undefined) {
-    const validatedMax = validateQuantity(data.maxStockLevel)
-    if (validatedMax === null) {
-      errors.push('Maximum stock level must be a non-negative integer')
-    }
-  }
-
   if (data.reorderLevel !== undefined) {
     const validatedReorder = validateQuantity(data.reorderLevel)
     if (validatedReorder === null) {
@@ -83,14 +74,6 @@ function validateProductInput(data: Partial<NewProduct>): { valid: boolean; erro
     const validatedTax = validateTaxRate(data.taxRate)
     if (validatedTax === null) {
       errors.push('Tax rate must be between 0 and 100')
-    }
-  }
-
-  // Validate discount percentage
-  if (data.maxDiscountPercent !== undefined) {
-    const validatedDiscount = validatePercentage(data.maxDiscountPercent)
-    if (validatedDiscount === null) {
-      errors.push('Max discount percent must be between 0 and 100')
     }
   }
 
@@ -214,6 +197,16 @@ export function registerProductHandlers(): void {
         return { success: false, message: validation.errors.join(', ') }
       }
 
+      const cat = sanitizedData.categoryId
+        ? await db.query.categories.findFirst({ where: eq(categories.id, sanitizedData.categoryId) })
+        : null
+      const firearmValidation = validateFirearmFields(sanitizedData, {
+        isFirearm: !!cat?.isFirearm,
+      })
+      if (!firearmValidation.valid) {
+        return { success: false, message: firearmValidation.errors.join('; ') }
+      }
+
       // Check for duplicate code
       const existing = await db.query.products.findFirst({
         where: eq(products.code, sanitizedData.code),
@@ -264,6 +257,15 @@ export function registerProductHandlers(): void {
         return { success: false, message: validation.errors.join(', ') }
       }
 
+      const merged = { ...existing, ...sanitizedData }
+      const cat = merged.categoryId
+        ? await db.query.categories.findFirst({ where: eq(categories.id, merged.categoryId) })
+        : null
+      const firearmValidation = validateFirearmFields(merged, { isFirearm: !!cat?.isFirearm })
+      if (!firearmValidation.valid) {
+        return { success: false, message: firearmValidation.errors.join('; ') }
+      }
+
       // Check for duplicate code if code is being changed
       if (sanitizedData.code && sanitizedData.code !== existing.code) {
         const duplicate = await db.query.products.findFirst({
@@ -290,6 +292,36 @@ export function registerProductHandlers(): void {
         newValues: sanitizeForAudit(sanitizedData as Record<string, unknown>),
         description: `Updated product: ${existing.name}`,
       })
+
+      const firearmKeys = [
+        'make',
+        'madeYear',
+        'madeCountry',
+        'firearmModelId',
+        'caliberId',
+        'shapeId',
+        'designId',
+        'defaultSupplierId',
+      ] as const
+      const firearmDiff: Record<string, { from: unknown; to: unknown }> = {}
+      const dataAny = sanitizedData as Record<string, unknown>
+      const existingAny = existing as unknown as Record<string, unknown>
+      for (const k of firearmKeys) {
+        if (k in dataAny && dataAny[k] !== existingAny[k]) {
+          firearmDiff[k] = { from: existingAny[k], to: dataAny[k] }
+        }
+      }
+      if (Object.keys(firearmDiff).length > 0) {
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: 'update',
+          entityType: 'product_firearm',
+          entityId: id,
+          newValues: firearmDiff,
+          description: `Firearm fields changed for product ${existing.name}`,
+        })
+      }
 
       return { success: true, data: result[0] }
     } catch (error) {
@@ -335,19 +367,40 @@ export function registerProductHandlers(): void {
 
   ipcMain.handle('products:search', async (_, query: string) => {
     try {
-      const results = await db.query.products.findMany({
-        where: and(
-          eq(products.isActive, true),
-          or(
-            like(products.name, `%${query}%`),
-            like(products.code, `%${query}%`),
-            like(products.barcode, `%${query}%`)
-          )
-        ),
-        limit: 20,
-      })
+      const q = `%${query.toLowerCase()}%`
+      const rows = await db
+        .select({
+          p: products,
+          modelName: firearmModels.name,
+          caliberName: firearmCalibers.name,
+        })
+        .from(products)
+        .leftJoin(firearmModels, eq(products.firearmModelId, firearmModels.id))
+        .leftJoin(firearmCalibers, eq(products.caliberId, firearmCalibers.id))
+        .where(
+          and(
+            eq(products.isActive, true),
+            or(
+              like(sql`lower(${products.name})`, q),
+              like(sql`lower(${products.code})`, q),
+              like(sql`lower(${products.barcode})`, q),
+              like(sql`lower(${firearmModels.name})`, q),
+              like(sql`lower(${firearmCalibers.name})`, q),
+              like(sql`lower(${products.make})`, q),
+              like(sql`lower(${products.madeCountry})`, q),
+            ),
+          ),
+        )
+        .limit(50)
 
-      return { success: true, data: results }
+      return {
+        success: true,
+        data: rows.map((r) => ({
+          ...r.p,
+          _modelName: r.modelName,
+          _caliberName: r.caliberName,
+        })),
+      }
     } catch (error) {
       console.error('Search products error:', error)
       return { success: false, message: 'Failed to search products' }

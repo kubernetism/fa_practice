@@ -621,6 +621,35 @@ const api = {
     getAlerts: (params: { branchId: number; thresholdPercent: number; limit?: number }) =>
       ipcRenderer.invoke('discount-management:get-alerts', params),
   },
+
+  // Firearm attribute lookups (models, calibers, shapes, designs)
+  firearmAttrs: {
+    list: (
+      kind: 'models' | 'calibers' | 'shapes' | 'designs',
+      opts?: { activeOnly?: boolean },
+    ) => ipcRenderer.invoke(`firearm-attrs:${kind}:list`, opts),
+    create: (
+      kind: 'models' | 'calibers' | 'shapes' | 'designs',
+      data: { name: string; sortOrder?: number },
+    ) => ipcRenderer.invoke(`firearm-attrs:${kind}:create`, data),
+    update: (
+      kind: 'models' | 'calibers' | 'shapes' | 'designs',
+      id: number,
+      data: { name?: string; sortOrder?: number; isActive?: boolean },
+    ) => ipcRenderer.invoke(`firearm-attrs:${kind}:update`, id, data),
+    deactivate: (kind: 'models' | 'calibers' | 'shapes' | 'designs', id: number) =>
+      ipcRenderer.invoke(`firearm-attrs:${kind}:deactivate`, id),
+  },
+
+  // Firearm reports
+  firearmReports: {
+    inventoryByCaliber: () => ipcRenderer.invoke('reports:inventory-by-caliber'),
+    salesByMake: (range: { start: string; end: string }) =>
+      ipcRenderer.invoke('reports:sales-by-make', range),
+    salesByModel: (range: { start: string; end: string; limit?: number }) =>
+      ipcRenderer.invoke('reports:sales-by-model', range),
+    stockBySupplier: () => ipcRenderer.invoke('reports:stock-by-supplier'),
+  },
 }
 
 // Expose the API to the renderer process
