@@ -36,6 +36,11 @@ import {
 import { formatCurrency, debounce } from '@/lib/utils'
 import type { Product, Category } from '@shared/types'
 import { useBranch } from '@/contexts/branch-context'
+import {
+  FirearmDetailsSection,
+  emptyFirearmFields,
+  type FirearmFieldsValue,
+} from '@/components/firearm/firearm-details-section'
 
 interface ProductWithInventory extends Product {
   stock?: number
@@ -68,6 +73,32 @@ export function ProductsScreen() {
   const [isSaving, setIsSaving] = useState(false)
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
+  const [firearmFields, setFirearmFields] = useState<FirearmFieldsValue>(emptyFirearmFields)
+  const [suppliers, setSuppliers] = useState<Array<{ id: number; name: string }>>([])
+  const [isFirearmCategory, setIsFirearmCategory] = useState(false)
+
+  useEffect(() => {
+    window.api.suppliers
+      .getAll({})
+      .then(
+        (r: {
+          success: boolean
+          data?: Array<{ id: number; name: string; isActive: boolean }>
+        }) => {
+          if (r.success && r.data) setSuppliers(r.data.filter((s) => s.isActive))
+        },
+      )
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!formData.categoryId) {
+      setIsFirearmCategory(false)
+      return
+    }
+    const cat = categories.find((c) => c.id === parseInt(formData.categoryId))
+    setIsFirearmCategory(!!(cat as Category & { isFirearm?: boolean })?.isFirearm)
+  }, [formData.categoryId, categories])
 
   // Fetch products with inventory for current branch
   const fetchProducts = useCallback(async () => {
@@ -156,6 +187,7 @@ export function ProductsScreen() {
       taxRate: '8.5',
       barcode: '',
     })
+    setFirearmFields(emptyFirearmFields)
     fetchCategories()
     setShowDialog(true)
   }
@@ -179,6 +211,17 @@ export function ProductsScreen() {
       taxRate: product.taxRate.toString(),
       barcode: product.barcode || '',
     })
+    const p = product as Product & Partial<FirearmFieldsValue>
+    setFirearmFields({
+      make: (p.make as 'local' | 'imported' | null) ?? null,
+      madeYear: p.madeYear ?? null,
+      madeCountry: p.madeCountry ?? null,
+      firearmModelId: p.firearmModelId ?? null,
+      caliberId: p.caliberId ?? null,
+      shapeId: p.shapeId ?? null,
+      designId: p.designId ?? null,
+      defaultSupplierId: p.defaultSupplierId ?? null,
+    })
     setShowDialog(true)
   }
 
@@ -200,6 +243,7 @@ export function ProductsScreen() {
         isTaxable: formData.isTaxable,
         taxRate: parseFloat(formData.taxRate),
         barcode: formData.barcode || null,
+        ...firearmFields,
       }
 
       let result
@@ -625,6 +669,13 @@ export function ProductsScreen() {
                 <span className="text-sm">Taxable</span>
               </label>
             </div>
+
+            <FirearmDetailsSection
+              value={firearmFields}
+              onChange={setFirearmFields}
+              isFirearmCategory={isFirearmCategory}
+              suppliers={suppliers}
+            />
           </div>
 
           <DialogFooter>

@@ -58,6 +58,7 @@ interface Category {
   description: string | null
   parentId: number | null
   isActive: boolean
+  isFirearm?: boolean
   createdAt: string
   updatedAt: string
   children?: Category[]
@@ -68,6 +69,7 @@ interface CategoryFormData {
   description: string
   parentId: string
   isActive: boolean
+  isFirearm: boolean
 }
 
 const initialFormData: CategoryFormData = {
@@ -75,6 +77,7 @@ const initialFormData: CategoryFormData = {
   description: '',
   parentId: '',
   isActive: true,
+  isFirearm: false,
 }
 
 
@@ -279,6 +282,7 @@ export function CategoriesManagementScreen() {
       description: category.description || '',
       parentId: category.parentId?.toString() || '',
       isActive: category.isActive,
+      isFirearm: category.isFirearm ?? false,
     })
     setIsDialogOpen(true)
   }
@@ -306,6 +310,7 @@ export function CategoriesManagementScreen() {
         description: formData.description.trim() || null,
         parentId: formData.parentId ? parseInt(formData.parentId) : null,
         isActive: formData.isActive,
+        isFirearm: formData.isFirearm,
       }
 
       let response
@@ -669,6 +674,21 @@ export function CategoriesManagementScreen() {
                   id="isActive"
                   checked={formData.isActive}
                   onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, isActive: checked }))}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label htmlFor="isFirearm">Firearm Category</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Products in this category must have firearm details (make, model, caliber).
+                  </p>
+                </div>
+                <Switch
+                  id="isFirearm"
+                  checked={formData.isFirearm}
+                  onCheckedChange={(checked) =>
+                    setFormData((prev) => ({ ...prev, isFirearm: checked }))
+                  }
                 />
               </div>
             </div>
