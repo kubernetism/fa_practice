@@ -17,6 +17,7 @@ const getPageName = (pathname: string): string => {
     products: 'Products',
     services: 'Services',
     'categories-management': 'Categories',
+    'firearm-attributes': 'Firearm Attributes',
     inventory: 'Inventory',
     sales: 'Sales History',
     purchases: 'Purchases',

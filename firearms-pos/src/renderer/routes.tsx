@@ -49,6 +49,7 @@ const KEEP_ALIVE_PATHS = [
   "settings/theme",
   "tax-collections",
   "categories-management",
+  "firearm-attributes",
   "discount-management",
   "journals",
   "vouchers",

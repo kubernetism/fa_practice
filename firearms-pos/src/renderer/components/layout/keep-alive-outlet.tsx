@@ -34,6 +34,7 @@ const routeComponents: Record<string, React.LazyExoticComponent<React.ComponentT
   '/settings/theme': lazy(() => import('@/screens/theme-settings').then((m) => ({ default: m.ThemeSettingsScreen }))),
   '/tax-collections': lazy(() => import('@/screens/tax-collections').then((m) => ({ default: m.TaxCollectionsScreen }))),
   '/categories-management': lazy(() => import('@/screens/categories-management').then((m) => ({ default: m.CategoriesManagementScreen }))),
+  '/firearm-attributes': lazy(() => import('@/screens/firearm-attributes')),
   '/discount-management': lazy(() => import('@/screens/discount-management').then((m) => ({ default: m.DiscountManagementScreen }))),
   '/journals': lazy(() => import('@/screens/journals').then((m) => ({ default: m.JournalsScreen }))),
   '/vouchers': lazy(() => import('@/screens/vouchers').then((m) => ({ default: m.VouchersScreen }))),
