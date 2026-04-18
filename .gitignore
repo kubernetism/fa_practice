@@ -17,3 +17,6 @@ coverage
 /firearms-pos/release
 /md
 .claude
+
+# Git worktrees
+.worktrees/
