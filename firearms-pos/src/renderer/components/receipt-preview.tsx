@@ -47,6 +47,9 @@ interface ReceiptItem {
   discountAmount: number
   taxAmount: number
   totalPrice: number
+  modelName?: string | null
+  caliberName?: string | null
+  make?: string | null
 }
 
 interface ReceiptService {
@@ -320,6 +323,13 @@ export function ReceiptPreview({ open, onClose, saleId, receiptPath }: ReceiptPr
                     >
                       <div className="min-w-0">
                         <p className="font-medium text-foreground truncate">{item.productName}</p>
+                        {(item.modelName || item.caliberName || item.make) && (
+                          <p className="text-[10px] leading-tight text-muted-foreground truncate">
+                            {[item.modelName, item.caliberName, item.make]
+                              .filter(Boolean)
+                              .join(' · ')}
+                          </p>
+                        )}
                         {item.serialNumber && (
                           <p className="text-[10px] text-muted-foreground font-mono">
                             S/N: {item.serialNumber}
