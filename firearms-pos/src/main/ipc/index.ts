@@ -42,6 +42,7 @@ import { registerShellHandlers } from './shell-ipc'
 import { registerRecoveryHandlers } from './recovery-ipc'
 import { registerOnlineTransactionHandlers } from './online-transactions-ipc'
 import { registerPayeeHandlers } from './payees-ipc'
+import { registerFirearmAttrsHandlers } from './firearm-attrs-ipc'
 
 // Re-export lock state from the centralized module
 export { isApplicationLocked, setApplicationLocked, checkLockGuard } from '../utils/app-lock-state'
@@ -90,6 +91,7 @@ export function registerAllHandlers(): void {
   registerRecoveryHandlers()
   registerOnlineTransactionHandlers()
   registerPayeeHandlers()
+  registerFirearmAttrsHandlers()
 
   console.log('All IPC handlers registered')
 }
