@@ -48,6 +48,7 @@ function createTables(sqlite: Database.Database) {
       description TEXT,
       parent_id INTEGER REFERENCES categories(id),
       is_active INTEGER NOT NULL DEFAULT 1,
+      is_firearm INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
@@ -68,6 +69,14 @@ function createTables(sqlite: Database.Database) {
       barcode TEXT,
       image_url TEXT,
       is_active INTEGER NOT NULL DEFAULT 1,
+      make TEXT,
+      made_year INTEGER,
+      made_country TEXT,
+      firearm_model_id INTEGER,
+      caliber_id INTEGER,
+      shape_id INTEGER,
+      design_id INTEGER,
+      default_supplier_id INTEGER,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,

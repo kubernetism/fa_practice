@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setupTestDatabase, teardownTestDatabase, getTestDb, getTestSqlite } from './test-db'
 
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: () => {},
+    removeHandler: () => {},
+  },
+}))
+
 vi.mock('../db/index', () => ({
   getDatabase: () => getTestDb(),
   getRawDatabase: () => getTestSqlite(),

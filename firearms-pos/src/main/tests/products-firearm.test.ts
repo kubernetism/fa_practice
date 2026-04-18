@@ -1,11 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { setupTestDatabase, teardownTestDatabase, getTestDb, getTestSqlite } from './test-db'
-import { invoke, resetIpcHandlers } from './ipc-harness'
 
-vi.mock('electron', async () => {
-  const harness = await import('./ipc-harness')
-  return { ipcMain: harness.mockIpcMain() }
-})
+type Handler = (event: unknown, ...args: unknown[]) => unknown
+const handlers = new Map<string, Handler>()
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, handler: Handler) => {
+      handlers.set(channel, handler)
+    },
+    removeHandler: (channel: string) => {
+      handlers.delete(channel)
+    },
+  },
+}))
 
 vi.mock('../db/index', () => ({
   getDatabase: () => getTestDb(),
@@ -32,15 +40,20 @@ vi.mock('../utils/audit', () => ({
   sanitizeForAudit: (obj: Record<string, unknown>) => obj,
 }))
 
-vi.mock('./auth-ipc', () => ({
+vi.mock('../ipc/auth-ipc', () => ({
   getCurrentSession: () => ({ userId: 1, branchId: 1 }),
   registerAuthHandlers: () => {},
 }))
 
 import { registerProductHandlers } from '../ipc/products-ipc'
-import { registerFirearmAttrsHandlers } from '../ipc/firearm-attrs-ipc'
 
-async function createFirearmCategory(name: string, isFirearm: boolean): Promise<number> {
+async function invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T> {
+  const handler = handlers.get(channel)
+  if (!handler) throw new Error(`No handler for ${channel}`)
+  return (await handler({}, ...args)) as T
+}
+
+function createFirearmCategory(name: string, isFirearm: boolean): number {
   const sqlite = getTestSqlite()
   const res = sqlite
     .prepare('INSERT INTO categories (name, is_firearm) VALUES (?, ?) RETURNING id')
@@ -48,16 +61,25 @@ async function createFirearmCategory(name: string, isFirearm: boolean): Promise<
   return res.id
 }
 
+function createLookup(table: string, name: string): number {
+  const sqlite = getTestSqlite()
+  const res = sqlite
+    .prepare(`INSERT INTO ${table} (name) VALUES (?) RETURNING id`)
+    .get(name) as { id: number }
+  return res.id
+}
+
 describe('products IPC — firearm integration', () => {
   beforeEach(() => {
+    handlers.clear()
     setupTestDatabase()
     const sqlite = getTestSqlite()
     try {
       sqlite.prepare('ALTER TABLE categories ADD COLUMN is_firearm INTEGER NOT NULL DEFAULT 0').run()
     } catch {
-      // already added
+      /* already present */
     }
-    const firearmCols = [
+    for (const col of [
       'make TEXT',
       'made_year INTEGER',
       'made_country TEXT',
@@ -66,16 +88,13 @@ describe('products IPC — firearm integration', () => {
       'shape_id INTEGER',
       'design_id INTEGER',
       'default_supplier_id INTEGER',
-    ]
-    for (const col of firearmCols) {
+    ]) {
       try {
         sqlite.prepare(`ALTER TABLE products ADD COLUMN ${col}`).run()
       } catch {
-        // already added
+        /* already added */
       }
     }
-    resetIpcHandlers()
-    registerFirearmAttrsHandlers()
     registerProductHandlers()
   })
 
@@ -84,7 +103,7 @@ describe('products IPC — firearm integration', () => {
   })
 
   it('rejects firearm-category product without required firearm fields', async () => {
-    const catId = await createFirearmCategory('Handguns', true)
+    const catId = createFirearmCategory('Handguns', true)
     const res = await invoke<{ success: boolean; message?: string }>('products:create', {
       code: 'FIR001',
       name: 'Test Pistol',
@@ -97,13 +116,12 @@ describe('products IPC — firearm integration', () => {
   })
 
   it('accepts firearm-category product when all required fields present', async () => {
-    const catId = await createFirearmCategory('Handguns', true)
-    const model = await invoke<{ data: { id: number } }>('firearm-attrs:models:create', {
-      name: 'Test Glock',
-    })
-    const cal = await invoke<{ data: { id: number } }>('firearm-attrs:calibers:create', {
-      name: 'Test 9mm',
-    })
+    const catId = createFirearmCategory('Handguns', true)
+    const sqlite = getTestSqlite()
+    sqlite.prepare('CREATE TABLE IF NOT EXISTS firearm_models (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)').run()
+    sqlite.prepare('CREATE TABLE IF NOT EXISTS firearm_calibers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL)').run()
+    const modelId = createLookup('firearm_models', 'Glock 19')
+    const calId = createLookup('firearm_calibers', '9mm')
 
     const res = await invoke<{ success: boolean; data: { id: number; make: string } }>(
       'products:create',
@@ -114,8 +132,8 @@ describe('products IPC — firearm integration', () => {
         sellingPrice: 1000,
         costPrice: 800,
         make: 'imported',
-        firearmModelId: model.data.id,
-        caliberId: cal.data.id,
+        firearmModelId: modelId,
+        caliberId: calId,
         madeYear: 2022,
         madeCountry: 'Austria',
       },
@@ -125,7 +143,7 @@ describe('products IPC — firearm integration', () => {
   })
 
   it('rejects invalid made_year', async () => {
-    const catId = await createFirearmCategory('Misc', false)
+    const catId = createFirearmCategory('Misc', false)
     const res = await invoke<{ success: boolean }>('products:create', {
       code: 'M1',
       name: 'Thing',
@@ -138,7 +156,7 @@ describe('products IPC — firearm integration', () => {
   })
 
   it('writes a product_firearm audit entry when firearm fields change', async () => {
-    const catId = await createFirearmCategory('Misc', false)
+    const catId = createFirearmCategory('Misc', false)
     const created = await invoke<{ data: { id: number } }>('products:create', {
       code: 'A1',
       name: 'Item',
