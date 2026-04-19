@@ -180,6 +180,9 @@ function createTables(sqlite: Database.Database) {
       expected_delivery_date TEXT,
       received_date TEXT,
       notes TEXT,
+      reversed_by_purchase_id INTEGER,
+      reverses_purchase_id INTEGER,
+      reversal_reason TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,

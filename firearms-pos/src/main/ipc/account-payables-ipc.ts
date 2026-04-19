@@ -7,18 +7,14 @@ import {
   suppliers,
   purchases,
   branches,
-  expenses,
   cashRegisterSessions,
-  cashTransactions,
-  onlineTransactions,
   type NewAccountPayable,
   type NewPayablePayment,
 } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { withTransaction } from '../utils/db-transaction'
-import { postAPPaymentToGL } from '../utils/gl-posting'
-import { mapPaymentMethodToChannel } from './online-transactions-ipc'
+import { recordPayableSubmission } from '../utils/payable-payment'
 
 interface PaginationParams {
   page?: number
@@ -329,157 +325,15 @@ export function registerAccountPayablesHandlers(): void {
           where: eq(accountPayables.id, data.payableId),
           with: { supplier: true },
         })
+        if (!payable) throw new Error('Payable not found')
 
-        if (!payable) {
-          throw new Error('Payable not found')
-        }
-        if (payable.status === 'paid') {
-          throw new Error('This payable is already fully paid')
-        }
-        if (payable.status === 'cancelled') {
-          throw new Error('Cannot record payment for cancelled payable')
-        }
-        if (payable.status === 'reversed') {
-          throw new Error('Cannot record payment for reversed payable')
-        }
-        if (data.amount > payable.remainingAmount) {
-          throw new Error(
-            `Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`
-          )
-        }
-
-        const newPaidAmount = payable.paidAmount + data.amount
-        const newRemainingAmount = payable.totalAmount - newPaidAmount
-        const newStatus: 'paid' | 'partial' = newRemainingAmount <= 0 ? 'paid' : 'partial'
-        const now = new Date().toISOString()
-
-        // Record the payment
-        const [payment] = await txDb
-          .insert(payablePayments)
-          .values({
-            payableId: data.payableId,
-            amount: data.amount,
-            paymentMethod: data.paymentMethod,
-            referenceNumber: data.referenceNumber,
-            notes: data.notes,
-            paidBy: session.userId,
-          })
-          .returning()
-
-        // Update payable aggregates
-        await txDb
-          .update(accountPayables)
-          .set({
-            paidAmount: newPaidAmount,
-            remainingAmount: Math.max(0, newRemainingAmount),
-            status: newStatus,
-            updatedAt: now,
-          })
-          .where(eq(accountPayables.id, data.payableId))
-
-        // Sync source purchase document so the Purchases tab reflects the
-        // sub-ledger state. Without this, purchases.paymentStatus stays
-        // 'pending' forever and the Purchases register diverges from AP.
-        let purchaseSync: {
-          purchaseId: number
-          purchaseOrderNumber: string
-          oldStatus: string
-          newStatus: 'paid' | 'partial'
-        } | null = null
-        if (payable.purchaseId) {
-          const linkedPurchase = await txDb.query.purchases.findFirst({
-            where: eq(purchases.id, payable.purchaseId),
-          })
-          if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
-            await txDb
-              .update(purchases)
-              .set({ paymentStatus: newStatus, updatedAt: now })
-              .where(eq(purchases.id, linkedPurchase.id))
-            purchaseSync = {
-              purchaseId: linkedPurchase.id,
-              purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
-              oldStatus: linkedPurchase.paymentStatus,
-              newStatus,
-            }
-          }
-        }
-
-        // Sync linked expense. Schema only supports 'paid' | 'unpaid', so
-        // partial AP payments cannot be reflected on the expense — they
-        // remain 'unpaid' until full settlement. Fix tracked separately.
-        let expenseSync: { expenseId: number; oldStatus: string } | null = null
-        if (newStatus === 'paid') {
-          const linkedExpense = await txDb.query.expenses.findFirst({
-            where: eq(expenses.payableId, payable.id),
-          })
-          if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
-            await txDb
-              .update(expenses)
-              .set({ paymentStatus: 'paid', updatedAt: now })
-              .where(eq(expenses.id, linkedExpense.id))
-            expenseSync = {
-              expenseId: linkedExpense.id,
-              oldStatus: linkedExpense.paymentStatus,
-            }
-          }
-        }
-
-        // GL: DR Accounts Payable, CR Cash. Same connection as the tx
-        // (createJournalEntry uses the singleton db) so this is atomic.
-        await postAPPaymentToGL(
-          {
-            id: payment.id,
-            payableId: data.payableId,
-            branchId: payable.branchId,
-            amount: data.amount,
-            paymentMethod: data.paymentMethod,
-            invoiceNumber: payable.invoiceNumber,
-          },
-          session.userId
-        )
-
-        // Non-cash payments mirror to online_transactions for reconciliation
-        if (data.paymentMethod !== 'cash') {
-          await txDb.insert(onlineTransactions).values({
-            branchId: payable.branchId,
-            transactionDate: new Date().toISOString().split('T')[0],
-            amount: data.amount,
-            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
-            direction: 'outflow',
-            referenceNumber: data.referenceNumber,
-            customerName: payable.supplier?.name,
-            invoiceNumber: payable.invoiceNumber,
-            status: 'pending',
-            sourceType: 'payable_payment',
-            sourceId: payment.id,
-            payableId: data.payableId,
-            createdBy: session.userId,
-          })
-        }
-
-        // Cash drawer outflow. Pre-flight already proved a session exists.
-        if (data.paymentMethod === 'cash' && openCashSessionId !== null) {
-          await txDb.insert(cashTransactions).values({
-            sessionId: openCashSessionId,
-            branchId: payable.branchId,
-            transactionType: 'ap_payment',
-            amount: -data.amount,
-            referenceType: 'payable_payment',
-            referenceId: payment.id,
-            description: `AP payment: ${payable.invoiceNumber}`,
-            recordedBy: session.userId,
-          })
-        }
-
-        return {
-          payment,
+        return recordPayableSubmission(
+          txDb,
           payable,
-          newPaidAmount,
-          newRemainingAmount,
-          newStatus,
-          purchaseSync,
-          expenseSync,
-        }
+          data,
+          { userId: session.userId, branchId: payable.branchId },
+          openCashSessionId
+        )
       })
 
       const { payment, payable, newPaidAmount, newRemainingAmount, newStatus, purchaseSync, expenseSync } =

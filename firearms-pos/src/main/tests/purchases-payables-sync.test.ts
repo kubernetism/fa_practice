@@ -128,3 +128,42 @@ describe('recordPayableSubmission helper', () => {
     expect(result.expenseSync?.oldStatus).toBe('unpaid')
   })
 })
+
+describe('payables:record-payment via shared helper (AP tab)', () => {
+  beforeEach(async () => {
+    const sqlite = getTestSqlite()
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+      sqlite.prepare(`DELETE FROM ${t}`).run()
+    }
+    await seedBasicFixtures()
+  })
+
+  it('full payment marks AP paid and syncs linked purchase.paymentStatus', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-T3-FULL', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 100, taxAmount: 0, shippingCost: 0, totalAmount: 100,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'ordered',
+    }).returning()
+
+    const [payable] = await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-T3-FULL',
+      totalAmount: 100, paidAmount: 0, remainingAmount: 100, status: 'pending', createdBy: 1,
+    }).returning()
+
+    const result = await withTransaction(async ({ db: txDb }) => {
+      const fresh = await txDb.query.accountPayables.findFirst({ where: eq(accountPayables.id, payable.id) })
+      return recordPayableSubmission(
+        txDb, fresh!,
+        { payableId: payable.id, amount: 100, paymentMethod: 'bank_transfer' },
+        { userId: 1, branchId: 1 }, null
+      )
+    })
+
+    expect(result.newStatus).toBe('paid')
+    expect(result.purchaseSync?.newStatus).toBe('paid')
+
+    const syncedPurchase = await db.query.purchases.findFirst({ where: eq(purchases.id, purchase.id) })
+    expect(syncedPurchase?.paymentStatus).toBe('paid')
+  })
+})
