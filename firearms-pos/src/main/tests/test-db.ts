@@ -429,6 +429,78 @@ function createTables(sqlite: Database.Database) {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
+    `CREATE TABLE IF NOT EXISTS account_payables (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      supplier_id INTEGER REFERENCES suppliers(id),
+      payee_id INTEGER,
+      purchase_id INTEGER REFERENCES purchases(id),
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      invoice_number TEXT NOT NULL,
+      total_amount REAL NOT NULL,
+      paid_amount REAL NOT NULL DEFAULT 0,
+      remaining_amount REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      due_date TEXT,
+      payment_terms TEXT,
+      notes TEXT,
+      created_by INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE INDEX IF NOT EXISTS payables_purchase_idx ON account_payables(purchase_id)`,
+    `CREATE INDEX IF NOT EXISTS payables_status_idx ON account_payables(status)`,
+    `CREATE TABLE IF NOT EXISTS payable_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      payable_id INTEGER NOT NULL REFERENCES account_payables(id) ON DELETE CASCADE,
+      amount REAL NOT NULL,
+      payment_method TEXT NOT NULL DEFAULT 'bank_transfer',
+      reference_number TEXT,
+      notes TEXT,
+      paid_by INTEGER REFERENCES users(id),
+      payment_date TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS cash_register_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      session_date TEXT NOT NULL,
+      opened_by INTEGER REFERENCES users(id),
+      closed_by INTEGER REFERENCES users(id),
+      opening_balance REAL NOT NULL DEFAULT 0,
+      closing_balance REAL,
+      status TEXT NOT NULL DEFAULT 'open',
+      opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+      closed_at TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS cash_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL REFERENCES cash_register_sessions(id),
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      transaction_type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      reference_type TEXT,
+      reference_id INTEGER,
+      description TEXT,
+      recorded_by INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS online_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      transaction_date TEXT NOT NULL,
+      amount REAL NOT NULL,
+      payment_channel TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      reference_number TEXT,
+      customer_name TEXT,
+      invoice_number TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      source_type TEXT,
+      source_id INTEGER,
+      payable_id INTEGER REFERENCES account_payables(id),
+      created_by INTEGER REFERENCES users(id),
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`,
   ]
 
   for (const sql of statements) {
