@@ -24,7 +24,7 @@ vi.mock('./auth-ipc', () => ({
   getCurrentSession: () => ({ userId: 1, role: 'admin', branchId: 1 }),
 }))
 
-import { accountPayables, payablePayments, purchases, branches, suppliers, users } from '../db/schema'
+import { accountPayables, payablePayments, purchases, branches, suppliers, users, expenses } from '../db/schema'
 import { recordPayableSubmission } from '../utils/payable-payment'
 import { withTransaction } from '../utils/db-transaction'
 
@@ -41,7 +41,7 @@ async function seedBasicFixtures() {
 describe('recordPayableSubmission helper', () => {
   beforeEach(async () => {
     const sqlite = getTestSqlite()
-    for (const t of ['payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
       sqlite.prepare(`DELETE FROM ${t}`).run()
     }
     await seedBasicFixtures()
@@ -77,5 +77,54 @@ describe('recordPayableSubmission helper', () => {
     const payments = await db.query.payablePayments.findMany({ where: eq(payablePayments.payableId, payable.id) })
     expect(payments).toHaveLength(1)
     expect(payments[0].amount).toBe(40)
+  })
+
+  it('rejects when amount exceeds remaining', async () => {
+    const db = getTestDb()
+    const [payable] = await db.insert(accountPayables).values({
+      supplierId: 1, branchId: 1, invoiceNumber: 'INV-REJ',
+      totalAmount: 100, paidAmount: 0, remainingAmount: 100, status: 'pending', createdBy: 1,
+    }).returning()
+
+    await expect(
+      withTransaction(async ({ db: txDb }) => {
+        const fresh = await txDb.query.accountPayables.findFirst({ where: eq(accountPayables.id, payable.id) })
+        return recordPayableSubmission(
+          txDb, fresh!,
+          { payableId: payable.id, amount: 150, paymentMethod: 'bank_transfer' },
+          { userId: 1, branchId: 1 }, null
+        )
+      })
+    ).rejects.toThrow(/cannot exceed remaining/i)
+
+    const reread = await db.query.accountPayables.findFirst({ where: eq(accountPayables.id, payable.id) })
+    expect(reread?.paidAmount).toBe(0)
+    expect(reread?.status).toBe('pending')
+  })
+
+  it('full payment flips linked expense from unpaid to paid', async () => {
+    const db = getTestDb()
+    const [payable] = await db.insert(accountPayables).values({
+      supplierId: 1, branchId: 1, invoiceNumber: 'INV-EXP',
+      totalAmount: 200, paidAmount: 0, remainingAmount: 200, status: 'pending', createdBy: 1,
+    }).returning()
+    await db.insert(expenses).values({
+      title: 'Test expense', amount: 200, branchId: 1, categoryId: null,
+      paymentMethod: 'bank_transfer', paymentStatus: 'unpaid',
+      payableId: payable.id, expenseDate: '2026-04-19', createdBy: 1,
+    })
+
+    const result = await withTransaction(async ({ db: txDb }) => {
+      const fresh = await txDb.query.accountPayables.findFirst({ where: eq(accountPayables.id, payable.id) })
+      return recordPayableSubmission(
+        txDb, fresh!,
+        { payableId: payable.id, amount: 200, paymentMethod: 'bank_transfer' },
+        { userId: 1, branchId: 1 }, null
+      )
+    })
+
+    expect(result.newStatus).toBe('paid')
+    expect(result.expenseSync).not.toBeNull()
+    expect(result.expenseSync?.oldStatus).toBe('unpaid')
   })
 })

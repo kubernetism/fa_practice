@@ -6,6 +6,7 @@ import {
   expenses,
   cashTransactions,
   onlineTransactions,
+  suppliers,
   type AccountPayable,
 } from '../db/schema'
 import { postAPPaymentToGL } from './gl-posting'
@@ -135,6 +136,14 @@ export async function recordPayableSubmission(
     session.userId
   )
 
+  let supplierName: string | null = null
+  if (payable.supplierId) {
+    const supplier = await txDb.query.suppliers.findFirst({
+      where: eq(suppliers.id, payable.supplierId),
+    })
+    supplierName = supplier?.name ?? null
+  }
+
   if (data.paymentMethod !== 'cash') {
     await txDb.insert(onlineTransactions).values({
       branchId: payable.branchId,
@@ -143,6 +152,7 @@ export async function recordPayableSubmission(
       paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
       direction: 'outflow',
       referenceNumber: data.referenceNumber,
+      customerName: supplierName,
       invoiceNumber: payable.invoiceNumber,
       status: 'pending',
       sourceType: 'payable_payment',
