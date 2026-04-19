@@ -493,13 +493,21 @@ function createTables(sqlite: Database.Database) {
       direction TEXT NOT NULL,
       reference_number TEXT,
       customer_name TEXT,
+      customer_id INTEGER,
       invoice_number TEXT,
+      bank_account_name TEXT,
       status TEXT NOT NULL DEFAULT 'pending',
+      notes TEXT,
       source_type TEXT,
       source_id INTEGER,
+      sale_id INTEGER,
+      receivable_id INTEGER,
       payable_id INTEGER REFERENCES account_payables(id),
+      confirmed_by INTEGER REFERENCES users(id),
+      confirmed_at TEXT,
       created_by INTEGER REFERENCES users(id),
-      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     )`,
   ]
 
