@@ -79,6 +79,14 @@ interface Purchase {
   notes: string | null
   createdAt: string
   updatedAt: string
+  paymentHistory?: Array<{
+    id: number
+    amount: number
+    paymentMethod: string
+    referenceNumber: string | null
+    notes: string | null
+    paymentDate: string
+  }>
 }
 
 interface PurchaseItem {
@@ -483,6 +491,29 @@ export function PurchasesScreen() {
         setViewingItems(result.data.items || [])
         setViewingSupplier(result.data.supplier || null)
       }
+
+      let paymentHistory: Array<{
+        id: number
+        amount: number
+        paymentMethod: string
+        referenceNumber: string | null
+        notes: string | null
+        paymentDate: string
+      }> = []
+      try {
+        const payablesRes = await window.api.payables.getAll({ limit: 1000 } as Record<string, unknown>)
+        const linkedPayable = (payablesRes?.data ?? []).find(
+          (p: { purchaseId: number | null }) => p.purchaseId === purchase.id
+        )
+        if (linkedPayable) {
+          const paymentsRes = await window.api.payables.getPayments(linkedPayable.id)
+          if (paymentsRes?.success) paymentHistory = paymentsRes.data ?? []
+        }
+      } catch {
+        paymentHistory = []
+      }
+
+      setViewingPurchase({ ...purchase, paymentHistory })
     } catch (error) {
       console.error('Error fetching purchase details:', error)
     } finally {
@@ -1452,6 +1483,40 @@ export function PurchasesScreen() {
                       <p className="mt-1">{viewingPurchase.notes}</p>
                     </div>
                   </>
+                )}
+
+                {viewingPurchase?.paymentHistory && viewingPurchase.paymentHistory.length > 0 && (
+                  <div className="mt-4 rounded-md border bg-card">
+                    <div className="border-b px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      Payment History
+                    </div>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                          <TableHead>Method</TableHead>
+                          <TableHead>Reference</TableHead>
+                          <TableHead>Notes</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {viewingPurchase.paymentHistory.map((p) => (
+                          <TableRow key={p.id}>
+                            <TableCell className="text-xs">{formatDateTime(p.paymentDate)}</TableCell>
+                            <TableCell className="text-right text-xs tabular-nums">
+                              {formatCurrency(p.amount)}
+                            </TableCell>
+                            <TableCell className="text-xs capitalize">
+                              {p.paymentMethod.replace('_', ' ')}
+                            </TableCell>
+                            <TableCell className="text-xs">{p.referenceNumber ?? '—'}</TableCell>
+                            <TableCell className="text-xs">{p.notes ?? '—'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 )}
               </div>
             )}
