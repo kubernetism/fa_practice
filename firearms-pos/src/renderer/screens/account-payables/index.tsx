@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Search,
   DollarSign,
@@ -73,6 +74,7 @@ interface Payable {
   id: number
   supplierId: number
   purchaseId?: number
+  purchaseOrderNumber?: string | null
   branchId: number
   invoiceNumber: string
   totalAmount: number
@@ -130,6 +132,7 @@ const statusConfig: Record<PayableStatus, { label: string; color: string; icon: 
 
 export function AccountPayablesScreen() {
   const { currentBranch } = useBranch()
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('list')
   const [payables, setPayables] = useState<Payable[]>([])
   const [agingData, setAgingData] = useState<AgingData | null>(null)
@@ -173,7 +176,25 @@ export function AccountPayablesScreen() {
       const result = await window.api.payables.getAll(params)
 
       if (result.success) {
-        setPayables(result.data ?? [])
+        const rows = (result.data ?? []) as Payable[]
+        const withPoNumbers = await Promise.all(
+          rows.map(async (row) => {
+            if (!row.purchaseId) return { ...row, purchaseOrderNumber: null }
+            try {
+              const poRes = await window.api.purchases.getById(row.purchaseId)
+              return {
+                ...row,
+                purchaseOrderNumber:
+                  poRes?.success && poRes.data?.purchaseOrderNumber
+                    ? poRes.data.purchaseOrderNumber
+                    : null,
+              }
+            } catch {
+              return { ...row, purchaseOrderNumber: null }
+            }
+          })
+        )
+        setPayables(withPoNumbers)
         setTotalPages(result.totalPages ?? 1)
       }
     } catch (error) {
@@ -379,6 +400,7 @@ export function AccountPayablesScreen() {
                       <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-right">Remaining</TableHead>
                       <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Due Date</TableHead>
                       <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Status</TableHead>
+                      <TableHead className="text-[10px] font-semibold uppercase tracking-wider">Source</TableHead>
                       <TableHead className="text-[10px] font-semibold uppercase tracking-wider w-[120px]">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -402,6 +424,19 @@ export function AccountPayablesScreen() {
                         <TableCell className="py-1.5 text-right text-sm tabular-nums font-medium text-red-600">{formatCurrency(payable.remainingAmount)}</TableCell>
                         <TableCell className="py-1.5 text-sm">{payable.dueDate ? formatDate(payable.dueDate) : '—'}</TableCell>
                         <TableCell className="py-1.5"><StatusBadge status={payable.status} /></TableCell>
+                        <TableCell className="py-1.5 text-xs">
+                          {payable.purchaseOrderNumber ? (
+                            <Button
+                              variant="link"
+                              className="h-auto p-0 font-mono text-xs"
+                              onClick={() => navigate(`/purchases?focus=${payable.purchaseId}`)}
+                            >
+                              {payable.purchaseOrderNumber}
+                            </Button>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="py-1.5">
                           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Tooltip>

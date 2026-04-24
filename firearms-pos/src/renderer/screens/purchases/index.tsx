@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Plus,
   Search,
@@ -158,6 +159,9 @@ export function PurchasesScreen() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
 
+  const [searchParams] = useSearchParams()
+  const focusId = searchParams.get('focus') ? Number(searchParams.get('focus')) : null
+
   // Data
   const [purchases, setPurchases] = useState<Purchase[]>([])
   const [products, setProducts] = useState<Product[]>([])
@@ -261,6 +265,13 @@ export function PurchasesScreen() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  useEffect(() => {
+    if (!focusId) return
+    const match = purchases.find((p) => p.id === focusId)
+    if (match) handleViewPurchase(match)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId, purchases])
 
   // Calculate summary
   const calculateSummary = (purchasesData: Purchase[]) => {
