@@ -160,29 +160,96 @@ const categories = sqliteCore.sqliteTable("categories", {
   description: sqliteCore.text("description"),
   parentId: sqliteCore.integer("parent_id").references(() => categories.id),
   isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  isFirearm: sqliteCore.integer("is_firearm", { mode: "boolean" }).notNull().default(false),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
-const products = sqliteCore.sqliteTable("products", {
+const firearmModels = sqliteCore.sqliteTable("firearm_models", {
   id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-  code: sqliteCore.text("code").notNull().unique(),
+  name: sqliteCore.text("name").notNull().unique(),
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: sqliteCore.integer("sort_order").notNull().default(0),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const firearmCalibers = sqliteCore.sqliteTable("firearm_calibers", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  name: sqliteCore.text("name").notNull().unique(),
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: sqliteCore.integer("sort_order").notNull().default(0),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const firearmShapes = sqliteCore.sqliteTable("firearm_shapes", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  name: sqliteCore.text("name").notNull().unique(),
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: sqliteCore.integer("sort_order").notNull().default(0),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const firearmDesigns = sqliteCore.sqliteTable("firearm_designs", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+  name: sqliteCore.text("name").notNull().unique(),
+  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: sqliteCore.integer("sort_order").notNull().default(0),
+  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+});
+const suppliers = sqliteCore.sqliteTable("suppliers", {
+  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
   name: sqliteCore.text("name").notNull(),
-  description: sqliteCore.text("description"),
-  categoryId: sqliteCore.integer("category_id").references(() => categories.id),
-  brand: sqliteCore.text("brand"),
-  costPrice: sqliteCore.real("cost_price").notNull().default(0),
-  sellingPrice: sqliteCore.real("selling_price").notNull().default(0),
-  reorderLevel: sqliteCore.integer("reorder_level").notNull().default(10),
-  unit: sqliteCore.text("unit").notNull().default("pcs"),
-  isSerialTracked: sqliteCore.integer("is_serial_tracked", { mode: "boolean" }).notNull().default(false),
-  isTaxable: sqliteCore.integer("is_taxable", { mode: "boolean" }).notNull().default(true),
-  taxRate: sqliteCore.real("tax_rate").notNull().default(0),
-  barcode: sqliteCore.text("barcode"),
-  imageUrl: sqliteCore.text("image_url"),
+  contactPerson: sqliteCore.text("contact_person"),
+  email: sqliteCore.text("email"),
+  phone: sqliteCore.text("phone"),
+  address: sqliteCore.text("address"),
+  city: sqliteCore.text("city"),
+  state: sqliteCore.text("state"),
+  zipCode: sqliteCore.text("zip_code"),
+  taxId: sqliteCore.text("tax_id"),
+  paymentTerms: sqliteCore.text("payment_terms"),
+  notes: sqliteCore.text("notes"),
   isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
   updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
 });
+const products = sqliteCore.sqliteTable(
+  "products",
+  {
+    id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
+    code: sqliteCore.text("code").notNull().unique(),
+    name: sqliteCore.text("name").notNull(),
+    description: sqliteCore.text("description"),
+    categoryId: sqliteCore.integer("category_id").references(() => categories.id),
+    brand: sqliteCore.text("brand"),
+    costPrice: sqliteCore.real("cost_price").notNull().default(0),
+    sellingPrice: sqliteCore.real("selling_price").notNull().default(0),
+    reorderLevel: sqliteCore.integer("reorder_level").notNull().default(10),
+    unit: sqliteCore.text("unit").notNull().default("pcs"),
+    isSerialTracked: sqliteCore.integer("is_serial_tracked", { mode: "boolean" }).notNull().default(false),
+    isTaxable: sqliteCore.integer("is_taxable", { mode: "boolean" }).notNull().default(true),
+    taxRate: sqliteCore.real("tax_rate").notNull().default(0),
+    barcode: sqliteCore.text("barcode"),
+    imageUrl: sqliteCore.text("image_url"),
+    isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
+    // Firearm-specific fields (all nullable)
+    make: sqliteCore.text("make").$type(),
+    madeYear: sqliteCore.integer("made_year"),
+    madeCountry: sqliteCore.text("made_country"),
+    firearmModelId: sqliteCore.integer("firearm_model_id").references(() => firearmModels.id, { onDelete: "set null" }),
+    caliberId: sqliteCore.integer("caliber_id").references(() => firearmCalibers.id, { onDelete: "set null" }),
+    shapeId: sqliteCore.integer("shape_id").references(() => firearmShapes.id, { onDelete: "set null" }),
+    designId: sqliteCore.integer("design_id").references(() => firearmDesigns.id, { onDelete: "set null" }),
+    defaultSupplierId: sqliteCore.integer("default_supplier_id").references(() => suppliers.id, { onDelete: "set null" }),
+    createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
+    updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
+  },
+  (table) => ({
+    idxFirearmModel: sqliteCore.index("idx_products_firearm_model").on(table.firearmModelId),
+    idxCaliber: sqliteCore.index("idx_products_caliber").on(table.caliberId),
+    idxDefaultSupplier: sqliteCore.index("idx_products_default_supplier").on(table.defaultSupplierId)
+  })
+);
 const inventory = sqliteCore.sqliteTable(
   "inventory",
   {
@@ -215,23 +282,6 @@ const customers = sqliteCore.sqliteTable("customers", {
   firearmLicenseNumber: sqliteCore.text("firearm_license_number"),
   licenseExpiryDate: sqliteCore.text("license_expiry_date"),
   dateOfBirth: sqliteCore.text("date_of_birth"),
-  notes: sqliteCore.text("notes"),
-  isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
-  createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
-  updatedAt: sqliteCore.text("updated_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
-});
-const suppliers = sqliteCore.sqliteTable("suppliers", {
-  id: sqliteCore.integer("id").primaryKey({ autoIncrement: true }),
-  name: sqliteCore.text("name").notNull(),
-  contactPerson: sqliteCore.text("contact_person"),
-  email: sqliteCore.text("email"),
-  phone: sqliteCore.text("phone"),
-  address: sqliteCore.text("address"),
-  city: sqliteCore.text("city"),
-  state: sqliteCore.text("state"),
-  zipCode: sqliteCore.text("zip_code"),
-  taxId: sqliteCore.text("tax_id"),
-  paymentTerms: sqliteCore.text("payment_terms"),
   notes: sqliteCore.text("notes"),
   isActive: sqliteCore.integer("is_active", { mode: "boolean" }).notNull().default(true),
   createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
@@ -1622,6 +1672,10 @@ const schema = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.defineProper
   customers,
   expenses,
   expensesRelations,
+  firearmCalibers,
+  firearmDesigns,
+  firearmModels,
+  firearmShapes,
   inventory,
   inventoryCostLayers,
   inventoryCostLayersRelations,
@@ -2132,12 +2186,12 @@ async function migrateToBusinessSettings() {
   console.log("Starting migration to business_settings table...");
   const db2 = getDatabase();
   try {
-    let tableExists = false;
+    let tableExists2 = false;
     try {
       await db2.select({ count: drizzleOrm.sql`count(*)` }).from(businessSettings).limit(1);
-      tableExists = true;
+      tableExists2 = true;
     } catch {
-      tableExists = false;
+      tableExists2 = false;
     }
     let oldSettingsExist = false;
     try {
@@ -2146,10 +2200,10 @@ async function migrateToBusinessSettings() {
     } catch {
       oldSettingsExist = false;
     }
-    console.log(`business_settings table exists: ${tableExists}`);
+    console.log(`business_settings table exists: ${tableExists2}`);
     console.log(`Old settings table has data: ${oldSettingsExist}`);
     let globalSettingsExists = false;
-    if (tableExists) {
+    if (tableExists2) {
       try {
         const globalSettings = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(businessSettings).where(drizzleOrm.isNull(businessSettings.branchId)).limit(1);
         globalSettingsExists = globalSettings && (globalSettings[0]?.count ?? 0) > 0;
@@ -2270,14 +2324,14 @@ async function addPhoneToUsers() {
   console.log("Starting migration to add phone field to users table...");
   const db2 = getDatabase();
   try {
-    let columnExists = false;
+    let columnExists2 = false;
     try {
       const result = await db2.all(drizzleOrm.sql`PRAGMA table_info(users)`);
-      columnExists = result.some((col) => col.name === "phone");
+      columnExists2 = result.some((col) => col.name === "phone");
     } catch (error) {
       console.error("Error checking for phone column:", error);
     }
-    if (columnExists) {
+    if (columnExists2) {
       console.log("Phone column already exists, skipping migration");
       return { success: true, message: "Phone column already exists" };
     }
@@ -3244,8 +3298,8 @@ async function fixFinancialIntegrityV2() {
 async function migrateToPayees() {
   const db2 = getDatabase();
   const rawDb = db2.$client;
-  const tableExists = rawDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='payees'").get();
-  if (tableExists) {
+  const tableExists2 = rawDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='payees'").get();
+  if (tableExists2) {
     console.log("Payees table already exists, skipping migration");
     return;
   }
@@ -3319,6 +3373,256 @@ async function migrateToPayees() {
   } catch (error) {
     rawDb.exec("ROLLBACK");
     console.error("Payees migration failed, rolled back:", error);
+    throw error;
+  }
+}
+const MODELS = [
+  // Pistols (~30)
+  "Glock 17",
+  "Glock 19",
+  "Glock 26",
+  "Glock 43",
+  "Beretta 92FS",
+  "Beretta M9",
+  "SIG P226",
+  "SIG P320",
+  "SIG P365",
+  "CZ-75",
+  "CZ P-09",
+  "CZ Shadow 2",
+  "Walther PPQ",
+  "Walther P99",
+  "H&K USP",
+  "H&K VP9",
+  "S&W M&P 9",
+  "S&W Shield",
+  "Ruger SR9",
+  "Ruger LCP",
+  "Browning Hi-Power",
+  "1911 Government",
+  "1911 Commander",
+  "Desert Eagle .50",
+  "Makarov PM",
+  "Tokarev TT-33",
+  "FN Five-seveN",
+  "Springfield XD",
+  "Kahr CM9",
+  "Kimber Custom II",
+  // Revolvers (~8)
+  "S&W Model 29",
+  "S&W Model 686",
+  "Colt Python",
+  "Ruger GP100",
+  "Ruger SP101",
+  "Taurus Judge",
+  "S&W Model 642",
+  "Ruger Redhawk",
+  // Bolt/Lever rifles (~10)
+  "Remington 700",
+  "Winchester Model 70",
+  "Ruger American",
+  "Mauser K98",
+  "Lee-Enfield No.4",
+  "Mosin-Nagant M91/30",
+  "Marlin 336",
+  "Savage Axis",
+  "Tikka T3x",
+  "Weatherby Vanguard",
+  // Semi-auto rifles (~15)
+  "Colt AR-15",
+  "S&W M&P15",
+  "Ruger AR-556",
+  "AK-47",
+  "AKM",
+  "AK-74",
+  "SKS",
+  "FN FAL",
+  "H&K G3",
+  "M14",
+  "M1A",
+  "Mini-14",
+  "SCAR-L",
+  "SCAR-H",
+  "Tavor X95",
+  // SMGs/PCCs (~5)
+  "H&K MP5",
+  "UZI",
+  "CZ Scorpion Evo 3",
+  "Kel-Tec Sub-2000",
+  "B&T APC9",
+  // Shotguns (~12)
+  "Remington 870",
+  "Mossberg 500",
+  "Mossberg 590",
+  "Benelli M2",
+  "Benelli M4",
+  "Beretta 1301",
+  "Winchester SXP",
+  "Browning A5",
+  "Stoeger Coach Gun",
+  "Stoeger M3000",
+  "Franchi Affinity",
+  "Weatherby SA-08",
+  // Sniper/DMR (~5)
+  "Barrett M82",
+  "Accuracy International AWM",
+  "Remington M24",
+  "Remington M40",
+  "Dragunov SVD",
+  // Local/regional (~15)
+  "Repeater 12-Bore",
+  "Pump Action .177",
+  "KK Rifle .22",
+  "Darra Pistol .30",
+  "Darra Rifle 7.62",
+  "Landi Kotal Revolver .38",
+  "Peshawar 12-Bore DBBL",
+  "Peshawar 12-Bore SBBL",
+  "Khyber 7.62 Carbine",
+  "Local AK Clone",
+  "Local Glock Clone",
+  "Local 1911 Clone",
+  "Local Mauser",
+  "Local .22 Bolt",
+  "Local .30 Bore Revolver"
+];
+const CALIBERS = [
+  "9mm",
+  ".22 LR",
+  ".22 WMR",
+  ".25 ACP",
+  ".32 ACP",
+  ".380 ACP",
+  ".38 Special",
+  ".357 Magnum",
+  ".40 S&W",
+  ".44 Magnum",
+  ".45 ACP",
+  ".50 AE",
+  ".50 BMG",
+  "5.56x45 NATO",
+  "7.62x39",
+  "7.62x51 NATO / .308 Win",
+  "7.62x54R",
+  ".223 Rem",
+  ".270 Win",
+  ".300 Win Mag",
+  ".303 British",
+  "6.5 Creedmoor",
+  "12 Gauge",
+  "16 Gauge",
+  "20 Gauge",
+  "28 Gauge",
+  ".410 Bore",
+  "7mm Rem Mag",
+  "8x57 Mauser",
+  "9.3x62"
+];
+const SHAPES = [
+  "Pistol",
+  "Revolver",
+  "SMG",
+  "Carbine",
+  "Bolt-Action Rifle",
+  "Semi-Auto Rifle",
+  "Lever-Action Rifle",
+  "Pump Shotgun",
+  "Double-Barrel Shotgun",
+  "Break-Action"
+];
+const DESIGNS = [
+  "Glock-style",
+  "1911-style",
+  "AR-15 pattern",
+  "AK pattern",
+  "Mauser pattern",
+  "Beretta-style",
+  "Browning Hi-Power pattern",
+  "SIG P-series",
+  "CZ-75 pattern",
+  "Remington 870 pattern",
+  "Mossberg 500 pattern",
+  "Mosin-Nagant pattern",
+  "Lee-Enfield pattern",
+  "Tokarev pattern",
+  "H&K roller-delayed"
+];
+function tableExists(rawDb, name) {
+  const row = rawDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name);
+  return !!row;
+}
+function columnExists(rawDb, table, column) {
+  const cols = rawDb.prepare(`PRAGMA table_info(${table})`).all();
+  return cols.some((c) => c.name === column);
+}
+function createLookupTable(rawDb, table) {
+  rawDb.exec(`
+    CREATE TABLE IF NOT EXISTS ${table} (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+}
+function seedLookup(rawDb, table, values) {
+  const stmt = rawDb.prepare(`INSERT OR IGNORE INTO ${table} (name, is_active, sort_order) VALUES (?, 1, ?)`);
+  const txn = rawDb.transaction((rows) => {
+    rows.forEach((name, i) => stmt.run(name, i));
+  });
+  txn(values);
+}
+function migrateFirearmAttributes(rawDb) {
+  console.log("Running firearm attributes migration...");
+  rawDb.exec("BEGIN TRANSACTION");
+  try {
+    createLookupTable(rawDb, "firearm_models");
+    createLookupTable(rawDb, "firearm_calibers");
+    createLookupTable(rawDb, "firearm_shapes");
+    createLookupTable(rawDb, "firearm_designs");
+    seedLookup(rawDb, "firearm_models", MODELS);
+    seedLookup(rawDb, "firearm_calibers", CALIBERS);
+    seedLookup(rawDb, "firearm_shapes", SHAPES);
+    seedLookup(rawDb, "firearm_designs", DESIGNS);
+    if (tableExists(rawDb, "products")) {
+      if (!columnExists(rawDb, "products", "make")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN make TEXT");
+      }
+      if (!columnExists(rawDb, "products", "made_year")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN made_year INTEGER");
+      }
+      if (!columnExists(rawDb, "products", "made_country")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN made_country TEXT");
+      }
+      if (!columnExists(rawDb, "products", "firearm_model_id")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN firearm_model_id INTEGER REFERENCES firearm_models(id) ON DELETE SET NULL");
+      }
+      if (!columnExists(rawDb, "products", "caliber_id")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN caliber_id INTEGER REFERENCES firearm_calibers(id) ON DELETE SET NULL");
+      }
+      if (!columnExists(rawDb, "products", "shape_id")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN shape_id INTEGER REFERENCES firearm_shapes(id) ON DELETE SET NULL");
+      }
+      if (!columnExists(rawDb, "products", "design_id")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN design_id INTEGER REFERENCES firearm_designs(id) ON DELETE SET NULL");
+      }
+      if (!columnExists(rawDb, "products", "default_supplier_id")) {
+        rawDb.exec("ALTER TABLE products ADD COLUMN default_supplier_id INTEGER REFERENCES suppliers(id) ON DELETE SET NULL");
+      }
+      rawDb.exec("CREATE INDEX IF NOT EXISTS idx_products_firearm_model ON products(firearm_model_id)");
+      rawDb.exec("CREATE INDEX IF NOT EXISTS idx_products_caliber ON products(caliber_id)");
+      rawDb.exec("CREATE INDEX IF NOT EXISTS idx_products_default_supplier ON products(default_supplier_id)");
+    }
+    if (tableExists(rawDb, "categories") && !columnExists(rawDb, "categories", "is_firearm")) {
+      rawDb.exec("ALTER TABLE categories ADD COLUMN is_firearm INTEGER NOT NULL DEFAULT 0");
+    }
+    rawDb.exec("COMMIT");
+    console.log("Firearm attributes migration completed successfully");
+  } catch (error) {
+    rawDb.exec("ROLLBACK");
+    console.error("Firearm attributes migration failed, rolled back:", error);
     throw error;
   }
 }
@@ -3477,6 +3781,12 @@ async function runMigrations() {
     await migrateToPayees();
   } catch (error) {
     console.error("Payees migration error:", error);
+  }
+  try {
+    migrateFirearmAttributes(getRawDatabase());
+  } catch (error) {
+    console.error("Firearm attributes migration error:", error);
+    throw error;
   }
 }
 async function ensureReferralPersonsTable() {
@@ -4840,16 +5150,35 @@ function isValidPhone(phone) {
   const digitsOnly = phone.replace(/\D/g, "");
   return digitsOnly.length >= 7 && digitsOnly.length <= 15;
 }
+const MAKE_VALUES = ["local", "imported"];
+function validateFirearmFields(input, category) {
+  const errors = [];
+  const thisYear = (/* @__PURE__ */ new Date()).getFullYear();
+  if (input.make !== void 0 && input.make !== null && !MAKE_VALUES.includes(input.make)) {
+    errors.push(`Make must be one of: ${MAKE_VALUES.join(", ")}`);
+  }
+  if (input.madeYear !== void 0 && input.madeYear !== null) {
+    if (!Number.isInteger(input.madeYear) || input.madeYear < 1800 || input.madeYear > thisYear + 1) {
+      errors.push(`Made year must be an integer between 1800 and ${thisYear + 1}`);
+    }
+  }
+  if (category.isFirearm) {
+    if (!input.make) errors.push("Make is required for firearm products");
+    if (!input.firearmModelId) errors.push("Model is required for firearm products");
+    if (!input.caliberId) errors.push("Caliber is required for firearm products");
+  }
+  return { valid: errors.length === 0, errors };
+}
 function sanitizeProductInput(data) {
   const sanitized = { ...data };
   if (sanitized.name) sanitized.name = sanitizeForStorage(sanitized.name);
   if (sanitized.code) sanitized.code = sanitizeAlphanumeric(sanitized.code);
   if (sanitized.barcode) sanitized.barcode = sanitizeAlphanumeric(sanitized.barcode);
   if (sanitized.description) sanitized.description = sanitizeForStorage(sanitized.description);
-  if (sanitized.manufacturer) sanitized.manufacturer = sanitizeForStorage(sanitized.manufacturer);
-  if (sanitized.model) sanitized.model = sanitizeForStorage(sanitized.model);
-  if (sanitized.caliber) sanitized.caliber = sanitizeForStorage(sanitized.caliber);
-  if (sanitized.sku) sanitized.sku = sanitizeAlphanumeric(sanitized.sku);
+  if (sanitized.brand) sanitized.brand = sanitizeForStorage(sanitized.brand);
+  if (sanitized.madeCountry) sanitized.madeCountry = sanitizeForStorage(sanitized.madeCountry);
+  if (sanitized.make)
+    sanitized.make = String(sanitized.make).toLowerCase().trim();
   return sanitized;
 }
 function validateProductInput(data) {
@@ -4866,18 +5195,6 @@ function validateProductInput(data) {
       errors.push("Cost price must be a non-negative number");
     }
   }
-  if (data.minStockLevel !== void 0) {
-    const validatedMin = validateQuantity(data.minStockLevel);
-    if (validatedMin === null) {
-      errors.push("Minimum stock level must be a non-negative integer");
-    }
-  }
-  if (data.maxStockLevel !== void 0) {
-    const validatedMax = validateQuantity(data.maxStockLevel);
-    if (validatedMax === null) {
-      errors.push("Maximum stock level must be a non-negative integer");
-    }
-  }
   if (data.reorderLevel !== void 0) {
     const validatedReorder = validateQuantity(data.reorderLevel);
     if (validatedReorder === null) {
@@ -4888,12 +5205,6 @@ function validateProductInput(data) {
     const validatedTax = validateTaxRate(data.taxRate);
     if (validatedTax === null) {
       errors.push("Tax rate must be between 0 and 100");
-    }
-  }
-  if (data.maxDiscountPercent !== void 0) {
-    const validatedDiscount = validatePercentage(data.maxDiscountPercent);
-    if (validatedDiscount === null) {
-      errors.push("Max discount percent must be between 0 and 100");
     }
   }
   return { valid: errors.length === 0, errors };
@@ -4984,6 +5295,13 @@ function registerProductHandlers() {
       if (!validation.valid) {
         return { success: false, message: validation.errors.join(", ") };
       }
+      const cat = sanitizedData.categoryId ? await db2.query.categories.findFirst({ where: drizzleOrm.eq(categories.id, sanitizedData.categoryId) }) : null;
+      const firearmValidation = validateFirearmFields(sanitizedData, {
+        isFirearm: !!cat?.isFirearm
+      });
+      if (!firearmValidation.valid) {
+        return { success: false, message: firearmValidation.errors.join("; ") };
+      }
       const existing = await db2.query.products.findFirst({
         where: drizzleOrm.eq(products.code, sanitizedData.code)
       });
@@ -5021,6 +5339,12 @@ function registerProductHandlers() {
       if (!validation.valid) {
         return { success: false, message: validation.errors.join(", ") };
       }
+      const merged = { ...existing, ...sanitizedData };
+      const cat = merged.categoryId ? await db2.query.categories.findFirst({ where: drizzleOrm.eq(categories.id, merged.categoryId) }) : null;
+      const firearmValidation = validateFirearmFields(merged, { isFirearm: !!cat?.isFirearm });
+      if (!firearmValidation.valid) {
+        return { success: false, message: firearmValidation.errors.join("; ") };
+      }
       if (sanitizedData.code && sanitizedData.code !== existing.code) {
         const duplicate = await db2.query.products.findFirst({
           where: drizzleOrm.eq(products.code, sanitizedData.code)
@@ -5040,6 +5364,35 @@ function registerProductHandlers() {
         newValues: sanitizeForAudit(sanitizedData),
         description: `Updated product: ${existing.name}`
       });
+      const firearmKeys = [
+        "make",
+        "madeYear",
+        "madeCountry",
+        "firearmModelId",
+        "caliberId",
+        "shapeId",
+        "designId",
+        "defaultSupplierId"
+      ];
+      const firearmDiff = {};
+      const dataAny = sanitizedData;
+      const existingAny = existing;
+      for (const k of firearmKeys) {
+        if (k in dataAny && dataAny[k] !== existingAny[k]) {
+          firearmDiff[k] = { from: existingAny[k], to: dataAny[k] };
+        }
+      }
+      if (Object.keys(firearmDiff).length > 0) {
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: session?.branchId,
+          action: "update",
+          entityType: "product_firearm",
+          entityId: id,
+          newValues: firearmDiff,
+          description: `Firearm fields changed for product ${existing.name}`
+        });
+      }
       return { success: true, data: result[0] };
     } catch (error) {
       console.error("Update product error:", error);
@@ -5073,18 +5426,33 @@ function registerProductHandlers() {
   });
   electron.ipcMain.handle("products:search", async (_, query) => {
     try {
-      const results = await db2.query.products.findMany({
-        where: drizzleOrm.and(
+      const q = `%${query.toLowerCase()}%`;
+      const rows = await db2.select({
+        p: products,
+        modelName: firearmModels.name,
+        caliberName: firearmCalibers.name
+      }).from(products).leftJoin(firearmModels, drizzleOrm.eq(products.firearmModelId, firearmModels.id)).leftJoin(firearmCalibers, drizzleOrm.eq(products.caliberId, firearmCalibers.id)).where(
+        drizzleOrm.and(
           drizzleOrm.eq(products.isActive, true),
           drizzleOrm.or(
-            drizzleOrm.like(products.name, `%${query}%`),
-            drizzleOrm.like(products.code, `%${query}%`),
-            drizzleOrm.like(products.barcode, `%${query}%`)
+            drizzleOrm.like(drizzleOrm.sql`lower(${products.name})`, q),
+            drizzleOrm.like(drizzleOrm.sql`lower(${products.code})`, q),
+            drizzleOrm.like(drizzleOrm.sql`lower(${products.barcode})`, q),
+            drizzleOrm.like(drizzleOrm.sql`lower(${firearmModels.name})`, q),
+            drizzleOrm.like(drizzleOrm.sql`lower(${firearmCalibers.name})`, q),
+            drizzleOrm.like(drizzleOrm.sql`lower(${products.make})`, q),
+            drizzleOrm.like(drizzleOrm.sql`lower(${products.madeCountry})`, q)
           )
-        ),
-        limit: 20
-      });
-      return { success: true, data: results };
+        )
+      ).limit(50);
+      return {
+        success: true,
+        data: rows.map((r) => ({
+          ...r.p,
+          _modelName: r.modelName,
+          _caliberName: r.caliberName
+        }))
+      };
     } catch (error) {
       console.error("Search products error:", error);
       return { success: false, message: "Failed to search products" };
@@ -8310,6 +8678,114 @@ async function reversePurchaseAndReenter(purchaseId, reason, session) {
     };
   }
 }
+async function recordPayableSubmission(txDb, payable, data, session, openCashSessionId) {
+  if (data.amount <= 0) throw new Error("Payment amount must be greater than 0");
+  if (payable.status === "paid") throw new Error("This payable is already fully paid");
+  if (payable.status === "cancelled") throw new Error("Cannot record payment for cancelled payable");
+  if (payable.status === "reversed") throw new Error("Cannot record payment for reversed payable");
+  if (data.amount > payable.remainingAmount) {
+    throw new Error(`Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`);
+  }
+  const newPaidAmount = payable.paidAmount + data.amount;
+  const newRemainingAmount = payable.totalAmount - newPaidAmount;
+  const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const [payment] = await txDb.insert(payablePayments).values({
+    payableId: data.payableId,
+    amount: data.amount,
+    paymentMethod: data.paymentMethod,
+    referenceNumber: data.referenceNumber,
+    notes: data.notes,
+    paidBy: session.userId
+  }).returning();
+  await txDb.update(accountPayables).set({
+    paidAmount: newPaidAmount,
+    remainingAmount: Math.max(0, newRemainingAmount),
+    status: newStatus,
+    updatedAt: now
+  }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
+  let purchaseSync = null;
+  if (payable.purchaseId) {
+    const linkedPurchase = await txDb.query.purchases.findFirst({
+      where: drizzleOrm.eq(purchases.id, payable.purchaseId)
+    });
+    if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
+      await txDb.update(purchases).set({ paymentStatus: newStatus, updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
+      purchaseSync = {
+        purchaseId: linkedPurchase.id,
+        purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+        oldStatus: linkedPurchase.paymentStatus,
+        newStatus
+      };
+    }
+  }
+  let expenseSync = null;
+  if (newStatus === "paid") {
+    const linkedExpense = await txDb.query.expenses.findFirst({
+      where: drizzleOrm.eq(expenses.payableId, payable.id)
+    });
+    if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
+      await txDb.update(expenses).set({ paymentStatus: "paid", updatedAt: now }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+      expenseSync = { expenseId: linkedExpense.id, oldStatus: linkedExpense.paymentStatus };
+    }
+  }
+  await postAPPaymentToGL(
+    {
+      id: payment.id,
+      payableId: data.payableId,
+      branchId: payable.branchId,
+      amount: data.amount,
+      paymentMethod: data.paymentMethod,
+      invoiceNumber: payable.invoiceNumber
+    },
+    session.userId
+  );
+  let supplierName = null;
+  if (payable.supplierId) {
+    const supplier = await txDb.query.suppliers.findFirst({
+      where: drizzleOrm.eq(suppliers.id, payable.supplierId)
+    });
+    supplierName = supplier?.name ?? null;
+  }
+  if (data.paymentMethod !== "cash") {
+    await txDb.insert(onlineTransactions).values({
+      branchId: payable.branchId,
+      transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+      amount: data.amount,
+      paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+      direction: "outflow",
+      referenceNumber: data.referenceNumber,
+      customerName: supplierName,
+      invoiceNumber: payable.invoiceNumber,
+      status: "pending",
+      sourceType: "payable_payment",
+      sourceId: payment.id,
+      payableId: data.payableId,
+      createdBy: session.userId
+    });
+  }
+  if (data.paymentMethod === "cash" && openCashSessionId !== null) {
+    await txDb.insert(cashTransactions).values({
+      sessionId: openCashSessionId,
+      branchId: payable.branchId,
+      transactionType: "ap_payment",
+      amount: -data.amount,
+      referenceType: "payable_payment",
+      referenceId: payment.id,
+      description: `AP payment: ${payable.invoiceNumber}`,
+      recordedBy: session.userId
+    });
+  }
+  return {
+    payment: { id: payment.id, amount: payment.amount },
+    payable,
+    newPaidAmount,
+    newRemainingAmount,
+    newStatus,
+    purchaseSync,
+    expenseSync
+  };
+}
 function registerPurchaseHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("purchases:create", async (_, data) => {
@@ -8443,11 +8919,23 @@ function registerPurchaseHandlers() {
         const whereClause = conditions.length > 0 ? drizzleOrm.and(...conditions) : void 0;
         const countResult = await db2.select({ count: drizzleOrm.sql`count(*)` }).from(purchases).where(whereClause);
         const total = countResult[0].count;
-        const data = await db2.query.purchases.findMany({
+        const rawRows = await db2.query.purchases.findMany({
           where: whereClause,
           limit,
           offset: (page - 1) * limit,
           orderBy: sortOrder === "desc" ? drizzleOrm.desc(purchases.createdAt) : purchases.createdAt
+        });
+        const purchaseIds = rawRows.map((r) => r.id);
+        const apRows = purchaseIds.length ? await db2.query.accountPayables.findMany({
+          where: drizzleOrm.sql`${accountPayables.purchaseId} IN (${drizzleOrm.sql.join(purchaseIds.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
+        }) : [];
+        const apByPurchase = /* @__PURE__ */ new Map();
+        for (const ap of apRows) if (ap.purchaseId) apByPurchase.set(ap.purchaseId, ap);
+        const data = rawRows.map((r) => {
+          const ap = apByPurchase.get(r.id);
+          const paidAmount = ap ? ap.paidAmount : r.paymentStatus === "paid" ? r.totalAmount : 0;
+          const remainingAmount = ap ? ap.remainingAmount : r.totalAmount - paidAmount;
+          return { ...r, paidAmount, remainingAmount };
         });
         const result = {
           data,
@@ -8733,59 +9221,57 @@ function registerPurchaseHandlers() {
           }
           openCashSessionId = openSession.id;
         }
-        const paidAmount = await withTransaction(async ({ db: txDb }) => {
-          const payable = await txDb.query.accountPayables.findFirst({
+        const existingPayable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+        });
+        if (existingPayable && existingPayable.remainingAmount <= 0 && existingPayable.status === "paid" && purchase.paymentStatus !== "paid") {
+          return {
+            success: false,
+            needsSync: true,
+            payableId: existingPayable.id,
+            message: "Payable is already fully settled in AP. Sync purchase status to match?"
+          };
+        }
+        const { paidAmount, healed } = await withTransaction(async ({ db: txDb }) => {
+          let payable = await txDb.query.accountPayables.findFirst({
             where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
           });
-          await txDb.update(purchases).set({
-            paymentStatus: "paid",
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(purchases.id, purchaseId));
+          let healed2 = false;
           if (!payable) {
-            return 0;
+            const [created] = await txDb.insert(accountPayables).values({
+              supplierId: purchase.supplierId,
+              purchaseId: purchase.id,
+              branchId: purchase.branchId,
+              invoiceNumber: purchase.purchaseOrderNumber,
+              totalAmount: purchase.totalAmount,
+              paidAmount: 0,
+              remainingAmount: purchase.totalAmount,
+              status: "pending",
+              notes: `Auto-healed during pay-off (orphan payable) for ${purchase.purchaseOrderNumber}`,
+              createdBy: session?.userId
+            }).returning();
+            payable = created;
+            healed2 = true;
           }
           if (payable.remainingAmount <= 0) {
             throw new Error("Payable has no outstanding amount");
           }
           const amount = payable.remainingAmount;
-          const [payablePayment] = await txDb.insert(payablePayments).values({
-            payableId: payable.id,
-            amount,
-            paymentMethod: paymentData.paymentMethod,
-            referenceNumber: paymentData.referenceNumber,
-            notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
-            paidBy: session?.userId
-          }).returning();
-          await txDb.update(accountPayables).set({
-            paidAmount: payable.totalAmount,
-            remainingAmount: 0,
-            status: "paid",
-            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-          }).where(drizzleOrm.eq(accountPayables.id, payable.id));
-          await postAPPaymentToGL(
+          const submission = await recordPayableSubmission(
+            txDb,
+            payable,
             {
-              id: payablePayment.id,
               payableId: payable.id,
-              branchId: purchase.branchId,
               amount,
               paymentMethod: paymentData.paymentMethod,
-              invoiceNumber: payable.invoiceNumber
+              referenceNumber: paymentData.referenceNumber,
+              notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`
             },
-            session?.userId ?? 0
+            { userId: session?.userId ?? 0, branchId: purchase.branchId },
+            openCashSessionId
           );
-          if (paymentData.paymentMethod === "cash" && openCashSessionId !== null) {
-            await txDb.insert(cashTransactions).values({
-              sessionId: openCashSessionId,
-              branchId: purchase.branchId,
-              transactionType: "ap_payment",
-              amount: -amount,
-              referenceType: "payable_payment",
-              referenceId: payablePayment.id,
-              description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
-              recordedBy: session?.userId ?? 0
-            });
-          }
-          return amount;
+          await txDb.update(purchases).set({ paymentStatus: "paid", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(purchases.id, purchaseId));
+          return { paidAmount: submission.payment.amount, healed: healed2 };
         });
         await createAuditLog$1({
           userId: session?.userId,
@@ -8802,6 +9288,16 @@ function registerPurchaseHandlers() {
           },
           description: `Paid off purchase order: ${purchase.purchaseOrderNumber} (${paidAmount.toFixed(2)} ${paymentData.paymentMethod})`
         });
+        if (healed) {
+          await createAuditLog$1({
+            userId: session?.userId,
+            branchId: purchase.branchId,
+            action: "update",
+            entityType: "account_payable",
+            entityId: 0,
+            description: `Healed orphan payable for purchase ${purchase.purchaseOrderNumber} during pay-off (${paidAmount.toFixed(2)})`
+          });
+        }
         return { success: true, message: "Purchase paid off successfully" };
       } catch (error) {
         console.error("Pay off purchase error:", error);
@@ -8810,6 +9306,244 @@ function registerPurchaseHandlers() {
       }
     }
   );
+  electron.ipcMain.handle(
+    "purchases:record-partial-payment",
+    async (_, purchaseId, paymentData) => {
+      try {
+        const session = getCurrentSession();
+        if (!Number.isFinite(paymentData.amount) || paymentData.amount <= 0) {
+          return { success: false, message: "Payment amount must be greater than 0" };
+        }
+        if (!["cash", "cheque", "bank_transfer"].includes(paymentData.paymentMethod)) {
+          return { success: false, message: "Invalid payment method" };
+        }
+        const purchase = await db2.query.purchases.findFirst({ where: drizzleOrm.eq(purchases.id, purchaseId) });
+        if (!purchase) return { success: false, message: "Purchase order not found" };
+        if (purchase.paymentStatus === "paid") {
+          return { success: false, message: "Purchase is already paid" };
+        }
+        const existingPayable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+        });
+        if (existingPayable && existingPayable.remainingAmount <= 0 && existingPayable.status === "paid") {
+          return {
+            success: false,
+            needsSync: true,
+            payableId: existingPayable.id,
+            message: "Payable is already fully settled in AP. Sync purchase status to match?"
+          };
+        }
+        let openCashSessionId = null;
+        if (paymentData.paymentMethod === "cash") {
+          const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+          const openSession = await db2.query.cashRegisterSessions.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(cashRegisterSessions.branchId, purchase.branchId),
+              drizzleOrm.eq(cashRegisterSessions.sessionDate, today),
+              drizzleOrm.eq(cashRegisterSessions.status, "open")
+            )
+          });
+          if (!openSession) {
+            return {
+              success: false,
+              message: "No open cash register session for this branch. Open a session before paying in cash."
+            };
+          }
+          openCashSessionId = openSession.id;
+        }
+        const result = await withTransaction(async ({ db: txDb }) => {
+          let payable = await txDb.query.accountPayables.findFirst({
+            where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+          });
+          let healed = false;
+          if (!payable) {
+            const [created] = await txDb.insert(accountPayables).values({
+              supplierId: purchase.supplierId,
+              purchaseId: purchase.id,
+              branchId: purchase.branchId,
+              invoiceNumber: purchase.purchaseOrderNumber,
+              totalAmount: purchase.totalAmount,
+              paidAmount: 0,
+              remainingAmount: purchase.totalAmount,
+              status: "pending",
+              notes: `Auto-healed during partial payment (orphan payable) for ${purchase.purchaseOrderNumber}`,
+              createdBy: session?.userId
+            }).returning();
+            payable = created;
+            healed = true;
+          }
+          const submission = await recordPayableSubmission(
+            txDb,
+            payable,
+            {
+              payableId: payable.id,
+              amount: paymentData.amount,
+              paymentMethod: paymentData.paymentMethod,
+              referenceNumber: paymentData.referenceNumber,
+              notes: paymentData.notes || `Partial payment for Purchase: ${purchase.purchaseOrderNumber}`
+            },
+            { userId: session?.userId ?? 0, branchId: purchase.branchId },
+            openCashSessionId
+          );
+          return { submission, healed };
+        });
+        if (result.healed) {
+          await createAuditLog$1({
+            userId: session?.userId,
+            branchId: purchase.branchId,
+            action: "update",
+            entityType: "account_payable",
+            entityId: 0,
+            description: `Healed orphan payable for purchase ${purchase.purchaseOrderNumber} during partial payment`
+          });
+        }
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: purchase.branchId,
+          action: "payment",
+          entityType: "purchase",
+          entityId: purchaseId,
+          newValues: {
+            amount: paymentData.amount,
+            paymentMethod: paymentData.paymentMethod,
+            newStatus: result.submission.newStatus
+          },
+          description: `Recorded partial payment of ${paymentData.amount} on ${purchase.purchaseOrderNumber}`
+        });
+        return { success: true, message: "Partial payment recorded" };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to record partial payment";
+        return { success: false, message };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "purchases:sync-status-from-payable",
+    async (_, purchaseId) => {
+      try {
+        const session = getCurrentSession();
+        const purchase = await db2.query.purchases.findFirst({
+          where: drizzleOrm.eq(purchases.id, purchaseId)
+        });
+        if (!purchase) return { success: false, message: "Purchase order not found" };
+        const payable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.purchaseId, purchaseId)
+        });
+        if (!payable) {
+          return { success: false, message: "No linked payable for this purchase" };
+        }
+        const targetStatus = payable.status === "paid" ? "paid" : payable.status === "partial" ? "partial" : "pending";
+        if (purchase.paymentStatus === targetStatus) {
+          return { success: true, alreadyInSync: true, message: "Purchase already in sync with payable" };
+        }
+        await withTransaction(async ({ db: txDb }) => {
+          await txDb.update(purchases).set({ paymentStatus: targetStatus, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(purchases.id, purchaseId));
+        });
+        await createAuditLog$1({
+          userId: session?.userId,
+          branchId: purchase.branchId,
+          action: "update",
+          entityType: "purchase",
+          entityId: purchaseId,
+          oldValues: { paymentStatus: purchase.paymentStatus },
+          newValues: { paymentStatus: targetStatus },
+          description: `Synced purchase ${purchase.purchaseOrderNumber} paymentStatus: ${purchase.paymentStatus} → ${targetStatus} (payable authoritative)`
+        });
+        return {
+          success: true,
+          oldStatus: purchase.paymentStatus,
+          newStatus: targetStatus,
+          message: `Purchase status synced: ${purchase.paymentStatus} → ${targetStatus}`
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to sync purchase status";
+        return { success: false, message };
+      }
+    }
+  );
+  electron.ipcMain.handle("purchases:reconcile-with-payables", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      if (session.role !== "admin") return { success: false, message: "Admin access required" };
+      const created = [];
+      const synced = [];
+      const flagged = [];
+      const allPurchases = await db2.query.purchases.findMany();
+      for (const purchase of allPurchases) {
+        if (purchase.status === "cancelled" || purchase.status === "reversed") continue;
+        const payable = await db2.query.accountPayables.findFirst({
+          where: drizzleOrm.eq(accountPayables.purchaseId, purchase.id)
+        });
+        if (!payable) {
+          if (purchase.paymentMethod === "pay_later" && purchase.paymentStatus !== "paid") {
+            await db2.insert(accountPayables).values({
+              supplierId: purchase.supplierId,
+              purchaseId: purchase.id,
+              branchId: purchase.branchId,
+              invoiceNumber: purchase.purchaseOrderNumber,
+              totalAmount: purchase.totalAmount,
+              paidAmount: 0,
+              remainingAmount: purchase.totalAmount,
+              status: "pending",
+              notes: `Auto-created by reconcile for ${purchase.purchaseOrderNumber}`,
+              createdBy: session.userId
+            });
+            created.push({ purchaseId: purchase.id, purchaseOrderNumber: purchase.purchaseOrderNumber });
+            await createAuditLog$1({
+              userId: session.userId,
+              branchId: purchase.branchId,
+              action: "update",
+              entityType: "account_payable",
+              entityId: 0,
+              description: `Reconciled payable for purchase ${purchase.purchaseOrderNumber}: created missing AP row`
+            });
+          }
+          continue;
+        }
+        const apStatus = payable.status === "paid" || payable.status === "partial" || payable.status === "pending" ? payable.status : "pending";
+        if (purchase.paymentStatus === "paid" && payable.remainingAmount > 0) {
+          flagged.push({
+            purchaseId: purchase.id,
+            purchaseOrderNumber: purchase.purchaseOrderNumber,
+            remaining: payable.remainingAmount
+          });
+          await createAuditLog$1({
+            userId: session.userId,
+            branchId: purchase.branchId,
+            action: "flag",
+            entityType: "purchase",
+            entityId: purchase.id,
+            description: `Flagged purchase ${purchase.purchaseOrderNumber} for manual review: paid in Purchases but AP has remaining ${payable.remainingAmount.toFixed(2)}`
+          });
+          continue;
+        }
+        if (purchase.paymentStatus !== apStatus) {
+          await db2.update(purchases).set({ paymentStatus: apStatus, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(purchases.id, purchase.id));
+          synced.push({
+            purchaseId: purchase.id,
+            purchaseOrderNumber: purchase.purchaseOrderNumber,
+            oldStatus: purchase.paymentStatus,
+            newStatus: apStatus
+          });
+          await createAuditLog$1({
+            userId: session.userId,
+            branchId: purchase.branchId,
+            action: "update",
+            entityType: "purchase",
+            entityId: purchase.id,
+            oldValues: { paymentStatus: purchase.paymentStatus },
+            newValues: { paymentStatus: apStatus },
+            description: `Reconciled purchase ${purchase.purchaseOrderNumber}: synced paymentStatus ${purchase.paymentStatus} → ${apStatus}`
+          });
+        }
+      }
+      return { success: true, created, synced, flagged };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reconcile";
+      return { success: false, message };
+    }
+  });
   electron.ipcMain.handle("purchases:check-reversible", async (_, purchaseId) => {
     const session = getCurrentSession();
     if (!session) {
@@ -15516,118 +16250,14 @@ function registerAccountPayablesHandlers() {
           where: drizzleOrm.eq(accountPayables.id, data.payableId),
           with: { supplier: true }
         });
-        if (!payable2) {
-          throw new Error("Payable not found");
-        }
-        if (payable2.status === "paid") {
-          throw new Error("This payable is already fully paid");
-        }
-        if (payable2.status === "cancelled") {
-          throw new Error("Cannot record payment for cancelled payable");
-        }
-        if (payable2.status === "reversed") {
-          throw new Error("Cannot record payment for reversed payable");
-        }
-        if (data.amount > payable2.remainingAmount) {
-          throw new Error(
-            `Payment amount cannot exceed remaining balance of ${payable2.remainingAmount}`
-          );
-        }
-        const newPaidAmount2 = payable2.paidAmount + data.amount;
-        const newRemainingAmount2 = payable2.totalAmount - newPaidAmount2;
-        const newStatus2 = newRemainingAmount2 <= 0 ? "paid" : "partial";
-        const now = (/* @__PURE__ */ new Date()).toISOString();
-        const [payment2] = await txDb.insert(payablePayments).values({
-          payableId: data.payableId,
-          amount: data.amount,
-          paymentMethod: data.paymentMethod,
-          referenceNumber: data.referenceNumber,
-          notes: data.notes,
-          paidBy: session.userId
-        }).returning();
-        await txDb.update(accountPayables).set({
-          paidAmount: newPaidAmount2,
-          remainingAmount: Math.max(0, newRemainingAmount2),
-          status: newStatus2,
-          updatedAt: now
-        }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
-        let purchaseSync2 = null;
-        if (payable2.purchaseId) {
-          const linkedPurchase = await txDb.query.purchases.findFirst({
-            where: drizzleOrm.eq(purchases.id, payable2.purchaseId)
-          });
-          if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus2) {
-            await txDb.update(purchases).set({ paymentStatus: newStatus2, updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
-            purchaseSync2 = {
-              purchaseId: linkedPurchase.id,
-              purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
-              oldStatus: linkedPurchase.paymentStatus,
-              newStatus: newStatus2
-            };
-          }
-        }
-        let expenseSync2 = null;
-        if (newStatus2 === "paid") {
-          const linkedExpense = await txDb.query.expenses.findFirst({
-            where: drizzleOrm.eq(expenses.payableId, payable2.id)
-          });
-          if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
-            await txDb.update(expenses).set({ paymentStatus: "paid", updatedAt: now }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
-            expenseSync2 = {
-              expenseId: linkedExpense.id,
-              oldStatus: linkedExpense.paymentStatus
-            };
-          }
-        }
-        await postAPPaymentToGL(
-          {
-            id: payment2.id,
-            payableId: data.payableId,
-            branchId: payable2.branchId,
-            amount: data.amount,
-            paymentMethod: data.paymentMethod,
-            invoiceNumber: payable2.invoiceNumber
-          },
-          session.userId
+        if (!payable2) throw new Error("Payable not found");
+        return recordPayableSubmission(
+          txDb,
+          payable2,
+          data,
+          { userId: session.userId, branchId: payable2.branchId },
+          openCashSessionId
         );
-        if (data.paymentMethod !== "cash") {
-          await txDb.insert(onlineTransactions).values({
-            branchId: payable2.branchId,
-            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
-            amount: data.amount,
-            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
-            direction: "outflow",
-            referenceNumber: data.referenceNumber,
-            customerName: payable2.supplier?.name,
-            invoiceNumber: payable2.invoiceNumber,
-            status: "pending",
-            sourceType: "payable_payment",
-            sourceId: payment2.id,
-            payableId: data.payableId,
-            createdBy: session.userId
-          });
-        }
-        if (data.paymentMethod === "cash" && openCashSessionId !== null) {
-          await txDb.insert(cashTransactions).values({
-            sessionId: openCashSessionId,
-            branchId: payable2.branchId,
-            transactionType: "ap_payment",
-            amount: -data.amount,
-            referenceType: "payable_payment",
-            referenceId: payment2.id,
-            description: `AP payment: ${payable2.invoiceNumber}`,
-            recordedBy: session.userId
-          });
-        }
-        return {
-          payment: payment2,
-          payable: payable2,
-          newPaidAmount: newPaidAmount2,
-          newRemainingAmount: newRemainingAmount2,
-          newStatus: newStatus2,
-          purchaseSync: purchaseSync2,
-          expenseSync: expenseSync2
-        };
       });
       const { payment, payable, newPaidAmount, newRemainingAmount, newStatus, purchaseSync, expenseSync } = txResult;
       await createAuditLog$1({
@@ -24140,6 +24770,218 @@ function registerPayeeHandlers() {
     }
   });
 }
+function tableFor(kind) {
+  switch (kind) {
+    case "models":
+      return firearmModels;
+    case "calibers":
+      return firearmCalibers;
+    case "shapes":
+      return firearmShapes;
+    case "designs":
+      return firearmDesigns;
+  }
+}
+function entityTypeFor(kind) {
+  return `firearm_${kind.slice(0, -1)}`;
+}
+async function createHandler(kind, data) {
+  const db2 = getDatabase();
+  const table = tableFor(kind);
+  const session = getCurrentSession();
+  const name = (data.name ?? "").trim();
+  if (!name) return { success: false, message: "Name is required" };
+  const existing = await db2.select().from(table).where(drizzleOrm.sql`lower(${table.name}) = lower(${name})`).limit(1);
+  if (existing.length > 0) {
+    return { success: false, message: `${kind.slice(0, -1)} "${name}" already exists` };
+  }
+  const inserted = await db2.insert(table).values({ name, sortOrder: data.sortOrder ?? 0, isActive: true }).returning();
+  const row = inserted[0];
+  await createAuditLog$1({
+    userId: session?.userId,
+    branchId: session?.branchId,
+    action: "create",
+    entityType: entityTypeFor(kind),
+    entityId: row.id,
+    newValues: sanitizeForAudit(row),
+    description: `Created ${kind.slice(0, -1)}: ${name}`
+  });
+  return { success: true, data: row };
+}
+async function listHandler(kind, opts = {}) {
+  const db2 = getDatabase();
+  const table = tableFor(kind);
+  const rows = await db2.select().from(table).where(opts.activeOnly ? drizzleOrm.eq(table.isActive, true) : void 0).orderBy(drizzleOrm.asc(table.sortOrder), drizzleOrm.asc(table.name));
+  return { success: true, data: rows };
+}
+async function updateHandler(kind, id, data) {
+  const db2 = getDatabase();
+  const table = tableFor(kind);
+  const session = getCurrentSession();
+  const existing = await db2.select().from(table).where(drizzleOrm.eq(table.id, id)).limit(1);
+  if (existing.length === 0) return { success: false, message: `${kind.slice(0, -1)} not found` };
+  const next = { updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+  if (data.name !== void 0) {
+    const name = data.name.trim();
+    const dup = await db2.select().from(table).where(drizzleOrm.and(drizzleOrm.sql`lower(${table.name}) = lower(${name})`, drizzleOrm.sql`${table.id} != ${id}`)).limit(1);
+    if (dup.length > 0) return { success: false, message: `Name "${name}" already in use` };
+    next.name = name;
+  }
+  if (data.sortOrder !== void 0) next.sortOrder = data.sortOrder;
+  if ("isActive" in data) next.isActive = data.isActive;
+  const updated = await db2.update(table).set(next).where(drizzleOrm.eq(table.id, id)).returning();
+  await createAuditLog$1({
+    userId: session?.userId,
+    branchId: session?.branchId,
+    action: "update",
+    entityType: entityTypeFor(kind),
+    entityId: id,
+    oldValues: sanitizeForAudit(existing[0]),
+    newValues: sanitizeForAudit(next),
+    description: `Updated ${kind.slice(0, -1)} id=${id}`
+  });
+  return { success: true, data: updated[0] };
+}
+async function deactivateHandler(kind, id) {
+  return updateHandler(kind, id, { isActive: false });
+}
+function registerFirearmAttrsHandlers() {
+  const kinds = ["models", "calibers", "shapes", "designs"];
+  for (const kind of kinds) {
+    electron.ipcMain.handle(
+      `firearm-attrs:${kind}:list`,
+      async (_e, opts) => {
+        try {
+          return await listHandler(kind, opts ?? {});
+        } catch (err) {
+          console.error(`firearm-attrs:${kind}:list error`, err);
+          return { success: false, message: "Failed to list records" };
+        }
+      }
+    );
+    electron.ipcMain.handle(
+      `firearm-attrs:${kind}:create`,
+      async (_e, data) => {
+        try {
+          return await createHandler(kind, data);
+        } catch (err) {
+          console.error(`firearm-attrs:${kind}:create error`, err);
+          return { success: false, message: "Failed to create record" };
+        }
+      }
+    );
+    electron.ipcMain.handle(
+      `firearm-attrs:${kind}:update`,
+      async (_e, id, data) => {
+        try {
+          return await updateHandler(kind, id, data);
+        } catch (err) {
+          console.error(`firearm-attrs:${kind}:update error`, err);
+          return { success: false, message: "Failed to update record" };
+        }
+      }
+    );
+    electron.ipcMain.handle(`firearm-attrs:${kind}:deactivate`, async (_e, id) => {
+      try {
+        return await deactivateHandler(kind, id);
+      } catch (err) {
+        console.error(`firearm-attrs:${kind}:deactivate error`, err);
+        return { success: false, message: "Failed to deactivate record" };
+      }
+    });
+  }
+}
+function registerFirearmReportsHandlers() {
+  const db2 = getDatabase();
+  electron.ipcMain.handle("reports:inventory-by-caliber", async () => {
+    try {
+      const rows = await db2.all(drizzleOrm.sql`
+        SELECT fc.name as caliber,
+               COUNT(p.id) as product_count,
+               COALESCE(SUM(i.quantity), 0) as qty_on_hand,
+               COALESCE(SUM(i.quantity * p.cost_price), 0) as total_cost_value
+        FROM firearm_calibers fc
+        LEFT JOIN products p ON p.caliber_id = fc.id AND p.is_active = 1
+        LEFT JOIN inventory i ON i.product_id = p.id
+        GROUP BY fc.id
+        HAVING product_count > 0
+        ORDER BY total_cost_value DESC
+      `);
+      return { success: true, data: rows };
+    } catch (err) {
+      console.error("reports:inventory-by-caliber", err);
+      return { success: false, message: "Report failed" };
+    }
+  });
+  electron.ipcMain.handle(
+    "reports:sales-by-make",
+    async (_e, range) => {
+      try {
+        const rows = await db2.all(drizzleOrm.sql`
+        SELECT COALESCE(p.make, 'unspecified') as make,
+               COUNT(DISTINCT s.id) as sale_count,
+               SUM(si.quantity) as units_sold,
+               SUM(si.quantity * si.unit_price) as revenue,
+               SUM(si.quantity * (si.unit_price - p.cost_price)) as margin
+        FROM sales s
+        JOIN sale_items si ON si.sale_id = s.id
+        JOIN products p ON p.id = si.product_id
+        WHERE s.created_at BETWEEN ${range.start} AND ${range.end}
+        GROUP BY p.make
+      `);
+        return { success: true, data: rows };
+      } catch (err) {
+        console.error("reports:sales-by-make", err);
+        return { success: false, message: "Report failed" };
+      }
+    }
+  );
+  electron.ipcMain.handle(
+    "reports:sales-by-model",
+    async (_e, range) => {
+      try {
+        const limit = range.limit ?? 25;
+        const rows = await db2.all(drizzleOrm.sql`
+        SELECT fm.name as model,
+               SUM(si.quantity) as units_sold,
+               SUM(si.quantity * si.unit_price) as revenue
+        FROM firearm_models fm
+        JOIN products p ON p.firearm_model_id = fm.id
+        JOIN sale_items si ON si.product_id = p.id
+        JOIN sales s ON s.id = si.sale_id
+        WHERE s.created_at BETWEEN ${range.start} AND ${range.end}
+        GROUP BY fm.id
+        ORDER BY revenue DESC
+        LIMIT ${limit}
+      `);
+        return { success: true, data: rows };
+      } catch (err) {
+        console.error("reports:sales-by-model", err);
+        return { success: false, message: "Report failed" };
+      }
+    }
+  );
+  electron.ipcMain.handle("reports:stock-by-supplier", async () => {
+    try {
+      const rows = await db2.all(drizzleOrm.sql`
+        SELECT sup.name as supplier,
+               COUNT(DISTINCT p.id) as products,
+               COALESCE(SUM(i.quantity), 0) as qty_on_hand,
+               COALESCE(SUM(i.quantity * p.cost_price), 0) as total_cost_value
+        FROM suppliers sup
+        LEFT JOIN products p ON p.default_supplier_id = sup.id AND p.is_active = 1
+        LEFT JOIN inventory i ON i.product_id = p.id
+        GROUP BY sup.id
+        HAVING products > 0
+        ORDER BY total_cost_value DESC
+      `);
+      return { success: true, data: rows };
+    } catch (err) {
+      console.error("reports:stock-by-supplier", err);
+      return { success: false, message: "Report failed" };
+    }
+  });
+}
 function registerAllHandlers() {
   registerAuthHandlers();
   registerProductHandlers();
@@ -24184,6 +25026,8 @@ function registerAllHandlers() {
   registerRecoveryHandlers();
   registerOnlineTransactionHandlers();
   registerPayeeHandlers();
+  registerFirearmAttrsHandlers();
+  registerFirearmReportsHandlers();
   console.log("All IPC handlers registered");
 }
 function registerLicenseOnlyHandlers() {

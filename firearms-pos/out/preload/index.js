@@ -112,6 +112,9 @@ const api = {
     receive: (purchaseId, receivedItems) => electron.ipcRenderer.invoke("purchases:receive", purchaseId, receivedItems),
     updateStatus: (id, status) => electron.ipcRenderer.invoke("purchases:update-status", id, status),
     payOff: (purchaseId, paymentData) => electron.ipcRenderer.invoke("purchases:pay-off", purchaseId, paymentData),
+    recordPartialPayment: (purchaseId, paymentData) => electron.ipcRenderer.invoke("purchases:record-partial-payment", purchaseId, paymentData),
+    reconcileWithPayables: () => electron.ipcRenderer.invoke("purchases:reconcile-with-payables"),
+    syncStatusFromPayable: (purchaseId) => electron.ipcRenderer.invoke("purchases:sync-status-from-payable", purchaseId),
     checkReversible: (purchaseId) => electron.ipcRenderer.invoke("purchases:check-reversible", purchaseId),
     reverseAndReenter: (purchaseId, reason) => electron.ipcRenderer.invoke("purchases:reverse-and-reenter", purchaseId, reason)
   },
@@ -436,6 +439,20 @@ const api = {
     getDetails: (saleId) => electron.ipcRenderer.invoke("discount-management:get-details", saleId),
     getByUser: (params) => electron.ipcRenderer.invoke("discount-management:get-by-user", params),
     getAlerts: (params) => electron.ipcRenderer.invoke("discount-management:get-alerts", params)
+  },
+  // Firearm attribute lookups (models, calibers, shapes, designs)
+  firearmAttrs: {
+    list: (kind, opts) => electron.ipcRenderer.invoke(`firearm-attrs:${kind}:list`, opts),
+    create: (kind, data) => electron.ipcRenderer.invoke(`firearm-attrs:${kind}:create`, data),
+    update: (kind, id, data) => electron.ipcRenderer.invoke(`firearm-attrs:${kind}:update`, id, data),
+    deactivate: (kind, id) => electron.ipcRenderer.invoke(`firearm-attrs:${kind}:deactivate`, id)
+  },
+  // Firearm reports
+  firearmReports: {
+    inventoryByCaliber: () => electron.ipcRenderer.invoke("reports:inventory-by-caliber"),
+    salesByMake: (range) => electron.ipcRenderer.invoke("reports:sales-by-make", range),
+    salesByModel: (range) => electron.ipcRenderer.invoke("reports:sales-by-model", range),
+    stockBySupplier: () => electron.ipcRenderer.invoke("reports:stock-by-supplier")
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);
