@@ -194,6 +194,8 @@ export function PurchasesScreen() {
   const [payOffReference, setPayOffReference] = useState<string>('')
   const [payOffNotes, setPayOffNotes] = useState<string>('')
   const [isPayingOff, setIsPayingOff] = useState(false)
+  const [payMode, setPayMode] = useState<'full' | 'partial'>('full')
+  const [partialAmount, setPartialAmount] = useState<string>('')
 
   // Add item state
   const [selectedProductId, setSelectedProductId] = useState<string>('')
@@ -601,6 +603,8 @@ export function PurchasesScreen() {
     setPayOffMethod('cash')
     setPayOffReference('')
     setPayOffNotes('')
+    setPayMode('full')
+    setPartialAmount('')
     setIsPayOffDialogOpen(true)
   }
 
@@ -610,18 +614,44 @@ export function PurchasesScreen() {
 
     setIsPayingOff(true)
     try {
-      const result = await window.api.purchases.payOff(payingOffPurchase.id, {
-        paymentMethod: payOffMethod,
-        referenceNumber: payOffReference || undefined,
-        notes: payOffNotes || undefined,
-      })
-
-      if (result.success) {
-        setIsPayOffDialogOpen(false)
-        setPayingOffPurchase(null)
-        fetchData()
+      if (payMode === 'partial') {
+        const amt = Number.parseFloat(partialAmount)
+        const max = payingOffPurchase?.remainingAmount ?? payingOffPurchase?.totalAmount ?? 0
+        if (!Number.isFinite(amt) || amt <= 0) {
+          alert('Enter a valid amount greater than 0')
+          return
+        }
+        if (amt > max) {
+          alert(`Amount cannot exceed ${formatCurrency(max)}`)
+          return
+        }
+        const result = await window.api.purchases.recordPartialPayment(payingOffPurchase.id, {
+          amount: amt,
+          paymentMethod: payOffMethod,
+          referenceNumber: payOffReference || undefined,
+          notes: payOffNotes || undefined,
+        })
+        if (result.success) {
+          setIsPayOffDialogOpen(false)
+          setPayingOffPurchase(null)
+          fetchData()
+        } else {
+          alert(result.message || 'Failed to record partial payment')
+        }
       } else {
-        alert(result.message || 'Failed to pay off purchase')
+        const result = await window.api.purchases.payOff(payingOffPurchase.id, {
+          paymentMethod: payOffMethod,
+          referenceNumber: payOffReference || undefined,
+          notes: payOffNotes || undefined,
+        })
+
+        if (result.success) {
+          setIsPayOffDialogOpen(false)
+          setPayingOffPurchase(null)
+          fetchData()
+        } else {
+          alert(result.message || 'Failed to pay off purchase')
+        }
       }
     } catch (error) {
       console.error('Pay off error:', error)
@@ -1679,10 +1709,46 @@ export function PurchasesScreen() {
                   />
                 </div>
 
-                <div className="rounded-lg bg-green-50 dark:bg-green-950 p-3 text-sm">
-                  <p className="text-green-700 dark:text-green-300">
-                    This will mark the purchase as paid and update the associated payable record.
-                  </p>
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={payMode === 'full' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setPayMode('full')}
+                    >
+                      Pay in Full
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={payMode === 'partial' ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setPayMode('partial')}
+                    >
+                      Partial Payment
+                    </Button>
+                  </div>
+
+                  {payMode === 'partial' ? (
+                    <div>
+                      <Label htmlFor="partial-amount" className="text-xs">
+                        Amount (max {formatCurrency(payingOffPurchase?.remainingAmount ?? payingOffPurchase?.totalAmount ?? 0)})
+                      </Label>
+                      <Input
+                        id="partial-amount"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        max={payingOffPurchase?.remainingAmount ?? payingOffPurchase?.totalAmount}
+                        value={partialAmount}
+                        onChange={(e) => setPartialAmount(e.target.value)}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      This will mark the purchase as paid and update the associated payable record.
+                    </p>
+                  )}
                 </div>
               </div>
             )}
