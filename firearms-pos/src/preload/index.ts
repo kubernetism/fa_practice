@@ -165,6 +165,10 @@ const api = {
       purchaseId: number,
       paymentData: { paymentMethod: string; referenceNumber?: string; notes?: string }
     ) => ipcRenderer.invoke('purchases:pay-off', purchaseId, paymentData),
+    recordPartialPayment: (
+      purchaseId: number,
+      paymentData: { amount: number; paymentMethod: string; referenceNumber?: string; notes?: string }
+    ) => ipcRenderer.invoke('purchases:record-partial-payment', purchaseId, paymentData),
     checkReversible: (purchaseId: number) =>
       ipcRenderer.invoke('purchases:check-reversible', purchaseId),
     reverseAndReenter: (purchaseId: number, reason: string) =>

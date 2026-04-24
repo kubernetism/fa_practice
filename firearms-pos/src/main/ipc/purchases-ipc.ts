@@ -676,6 +676,128 @@ export function registerPurchaseHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    'purchases:record-partial-payment',
+    async (
+      _,
+      purchaseId: number,
+      paymentData: {
+        amount: number
+        paymentMethod: 'cash' | 'cheque' | 'bank_transfer'
+        referenceNumber?: string
+        notes?: string
+      }
+    ) => {
+      try {
+        const session = getCurrentSession()
+
+        if (!Number.isFinite(paymentData.amount) || paymentData.amount <= 0) {
+          return { success: false, message: 'Payment amount must be greater than 0' }
+        }
+        if (!['cash', 'cheque', 'bank_transfer'].includes(paymentData.paymentMethod)) {
+          return { success: false, message: 'Invalid payment method' }
+        }
+
+        const purchase = await db.query.purchases.findFirst({ where: eq(purchases.id, purchaseId) })
+        if (!purchase) return { success: false, message: 'Purchase order not found' }
+        if (purchase.paymentStatus === 'paid') {
+          return { success: false, message: 'Purchase is already paid' }
+        }
+
+        let openCashSessionId: number | null = null
+        if (paymentData.paymentMethod === 'cash') {
+          const today = new Date().toISOString().split('T')[0]
+          const openSession = await db.query.cashRegisterSessions.findFirst({
+            where: and(
+              eq(cashRegisterSessions.branchId, purchase.branchId),
+              eq(cashRegisterSessions.sessionDate, today),
+              eq(cashRegisterSessions.status, 'open')
+            ),
+          })
+          if (!openSession) {
+            return {
+              success: false,
+              message: 'No open cash register session for this branch. Open a session before paying in cash.',
+            }
+          }
+          openCashSessionId = openSession.id
+        }
+
+        const result = await withTransaction(async ({ db: txDb }) => {
+          let payable = await txDb.query.accountPayables.findFirst({
+            where: eq(accountPayables.purchaseId, purchaseId),
+          })
+          let healed = false
+          if (!payable) {
+            const [created] = await txDb
+              .insert(accountPayables)
+              .values({
+                supplierId: purchase.supplierId,
+                purchaseId: purchase.id,
+                branchId: purchase.branchId,
+                invoiceNumber: purchase.purchaseOrderNumber,
+                totalAmount: purchase.totalAmount,
+                paidAmount: 0,
+                remainingAmount: purchase.totalAmount,
+                status: 'pending',
+                notes: `Auto-healed during partial payment (orphan payable) for ${purchase.purchaseOrderNumber}`,
+                createdBy: session?.userId,
+              })
+              .returning()
+            payable = created
+            healed = true
+          }
+
+          const submission = await recordPayableSubmission(
+            txDb,
+            payable,
+            {
+              payableId: payable.id,
+              amount: paymentData.amount,
+              paymentMethod: paymentData.paymentMethod,
+              referenceNumber: paymentData.referenceNumber,
+              notes: paymentData.notes || `Partial payment for Purchase: ${purchase.purchaseOrderNumber}`,
+            },
+            { userId: session?.userId ?? 0, branchId: purchase.branchId },
+            openCashSessionId
+          )
+
+          return { submission, healed }
+        })
+
+        if (result.healed) {
+          await createAuditLog({
+            userId: session?.userId,
+            branchId: purchase.branchId,
+            action: 'update',
+            entityType: 'account_payable',
+            entityId: 0,
+            description: `Healed orphan payable for purchase ${purchase.purchaseOrderNumber} during partial payment`,
+          })
+        }
+
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: purchase.branchId,
+          action: 'payment',
+          entityType: 'purchase',
+          entityId: purchaseId,
+          newValues: {
+            amount: paymentData.amount,
+            paymentMethod: paymentData.paymentMethod,
+            newStatus: result.submission.newStatus,
+          },
+          description: `Recorded partial payment of ${paymentData.amount} on ${purchase.purchaseOrderNumber}`,
+        })
+
+        return { success: true, message: 'Partial payment recorded' }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to record partial payment'
+        return { success: false, message }
+      }
+    }
+  )
+
   ipcMain.handle('purchases:check-reversible', async (_, purchaseId: number) => {
     const session = getCurrentSession()
     if (!session) {

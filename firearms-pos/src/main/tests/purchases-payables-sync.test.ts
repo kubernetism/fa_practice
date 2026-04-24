@@ -248,3 +248,68 @@ describe('purchases:pay-off orphan heal', () => {
     expect(apRows[0].paidAmount).toBe(150)
   })
 })
+
+describe('purchases:record-partial-payment', () => {
+  beforeEach(async () => {
+    const sqlite = getTestSqlite()
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+      sqlite.prepare(`DELETE FROM ${t}`).run()
+    }
+    await seedBasicFixtures()
+  })
+
+  it('records a partial, sets AP and purchase to partial, leaves remainder', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-PARTIAL-1', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 200, taxAmount: 0, shippingCost: 0, totalAmount: 200,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-PARTIAL-1',
+      totalAmount: 200, paidAmount: 0, remainingAmount: 200, status: 'pending', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const handler = handlers.get('purchases:record-partial-payment')
+    expect(handler).toBeDefined()
+
+    const result = await handler!({}, purchase.id, { amount: 75, paymentMethod: 'bank_transfer' })
+    expect(result.success).toBe(true)
+
+    const ap = await db.query.accountPayables.findFirst({ where: eq(accountPayables.purchaseId, purchase.id) })
+    expect(ap?.status).toBe('partial')
+    expect(ap?.paidAmount).toBe(75)
+    expect(ap?.remainingAmount).toBe(125)
+
+    const po = await db.query.purchases.findFirst({ where: eq(purchases.id, purchase.id) })
+    expect(po?.paymentStatus).toBe('partial')
+  })
+
+  it('rejects when amount exceeds remaining', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-PARTIAL-REJ', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 100, taxAmount: 0, shippingCost: 0, totalAmount: 100,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-PARTIAL-REJ',
+      totalAmount: 100, paidAmount: 0, remainingAmount: 100, status: 'pending', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const handler = handlers.get('purchases:record-partial-payment')
+    const result = await handler!({}, purchase.id, { amount: 9_999_999, paymentMethod: 'bank_transfer' })
+    expect(result.success).toBe(false)
+    expect(result.message).toMatch(/cannot exceed remaining/i)
+  })
+})
