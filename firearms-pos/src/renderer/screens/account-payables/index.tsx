@@ -51,6 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { useBranch } from '@/contexts/branch-context'
+import { useAuth } from '@/contexts/auth-context'
 import { ReversalRequestModal } from '@/components/reversal-request-modal'
 import { ReversalStatusBadge } from '@/components/reversal-status-badge'
 
@@ -132,6 +133,8 @@ const statusConfig: Record<PayableStatus, { label: string; color: string; icon: 
 
 export function AccountPayablesScreen() {
   const { currentBranch } = useBranch()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('list')
   const [payables, setPayables] = useState<Payable[]>([])
@@ -350,10 +353,33 @@ export function AccountPayablesScreen() {
               </span>
             </div>
           </div>
-          <Button variant="outline" size="sm" className="h-8" onClick={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}>
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Admin: reconcile purchases ↔ payables */}
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8"
+                onClick={async () => {
+                  const result = await window.api.purchases.reconcileWithPayables()
+                  if (!result.success) {
+                    alert(result.message ?? 'Reconcile failed')
+                    return
+                  }
+                  alert(
+                    `Reconcile complete.\nCreated: ${result.created.length}\nSynced: ${result.synced.length}\nFlagged for review: ${result.flagged.length}`
+                  )
+                  await fetchPayables()
+                }}
+              >
+                Reconcile with Purchases
+              </Button>
+            )}
+            <Button variant="outline" size="sm" className="h-8" onClick={() => { fetchPayables(); fetchSummary(); fetchAgingReport(); }}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* Tabs */}
