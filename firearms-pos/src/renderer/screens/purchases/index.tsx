@@ -213,6 +213,10 @@ export function PurchasesScreen() {
   const [viewingSupplier, setViewingSupplier] = useState<Supplier | null>(null)
   const [isLoadingDetails, setIsLoadingDetails] = useState(false)
 
+  // Sync-drift confirmation dialog (AP already paid, purchase status drifted)
+  const [syncDriftPurchase, setSyncDriftPurchase] = useState<Purchase | null>(null)
+  const [isSyncing, setIsSyncing] = useState(false)
+
   // Reverse dialog state
   const [reversingPurchase, setReversingPurchase] = useState<Purchase | null>(null)
   const [isReentry, setIsReentry] = useState(false)
@@ -513,12 +517,16 @@ export function PurchasesScreen() {
         notes: string | null
         paymentDate: string
       }> = []
+      let linkedPayableStatus: string | null = null
+      let linkedPayableRemaining: number | null = null
       try {
         const payablesRes = await window.api.payables.getAll({ limit: 1000 } as Record<string, unknown>)
         const linkedPayable = (payablesRes?.data ?? []).find(
           (p: { purchaseId: number | null }) => p.purchaseId === purchase.id
         )
         if (linkedPayable) {
+          linkedPayableStatus = linkedPayable.status ?? null
+          linkedPayableRemaining = linkedPayable.remainingAmount ?? null
           const paymentsRes = await window.api.payables.getPayments(linkedPayable.id)
           if (paymentsRes?.success) paymentHistory = paymentsRes.data ?? []
         }
@@ -527,6 +535,16 @@ export function PurchasesScreen() {
       }
 
       setViewingPurchase({ ...purchase, paymentHistory })
+
+      // Auto-detect drift: AP is fully settled but purchase hasn't caught up.
+      // Prompt the admin to sync instead of waiting for them to hit Pay-Off.
+      if (
+        linkedPayableStatus === 'paid' &&
+        (linkedPayableRemaining ?? 0) <= 0 &&
+        purchase.paymentStatus !== 'paid'
+      ) {
+        setSyncDriftPurchase(purchase)
+      }
     } catch (error) {
       console.error('Error fetching purchase details:', error)
     } finally {
@@ -646,6 +664,9 @@ export function PurchasesScreen() {
           setIsPayOffDialogOpen(false)
           setPayingOffPurchase(null)
           fetchData()
+        } else if ((result as { needsSync?: boolean }).needsSync) {
+          setIsPayOffDialogOpen(false)
+          setSyncDriftPurchase(payingOffPurchase)
         } else {
           alert(result.message || 'Failed to record partial payment')
         }
@@ -660,6 +681,9 @@ export function PurchasesScreen() {
           setIsPayOffDialogOpen(false)
           setPayingOffPurchase(null)
           fetchData()
+        } else if ((result as { needsSync?: boolean }).needsSync) {
+          setIsPayOffDialogOpen(false)
+          setSyncDriftPurchase(payingOffPurchase)
         } else {
           alert(result.message || 'Failed to pay off purchase')
         }
@@ -669,6 +693,29 @@ export function PurchasesScreen() {
       alert('An error occurred while paying off purchase')
     } finally {
       setIsPayingOff(false)
+    }
+  }
+
+  // Sync purchase paymentStatus when AP has already drifted out of sync
+  const handleConfirmSyncDrift = async () => {
+    if (!syncDriftPurchase) return
+    setIsSyncing(true)
+    try {
+      const result = await window.api.purchases.syncStatusFromPayable(syncDriftPurchase.id)
+      if (result.success) {
+        setSyncDriftPurchase(null)
+        setPayingOffPurchase(null)
+        setViewingPurchase(null)
+        setIsViewDialogOpen(false)
+        fetchData()
+      } else {
+        alert(result.message || 'Failed to sync purchase status')
+      }
+    } catch (error) {
+      console.error('Sync drift error:', error)
+      alert('An error occurred while syncing purchase status')
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -1770,6 +1817,51 @@ export function PurchasesScreen() {
               </Button>
               <Button onClick={handlePayOffPurchase} disabled={isPayingOff}>
                 {isPayingOff ? 'Processing...' : 'Confirm Payment'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Sync Drift Confirmation Dialog */}
+        <Dialog
+          open={!!syncDriftPurchase}
+          onOpenChange={(open) => {
+            if (!open && !isSyncing) setSyncDriftPurchase(null)
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Sync purchase status?</DialogTitle>
+              <DialogDescription>
+                The linked payable is already fully settled, but this purchase still shows{' '}
+                <span className="font-medium">{syncDriftPurchase?.paymentStatus}</span>.
+              </DialogDescription>
+            </DialogHeader>
+            {syncDriftPurchase && (
+              <div className="space-y-3 py-2">
+                <div className="rounded border p-3 bg-muted/30 text-sm">
+                  <div className="font-mono font-medium">{syncDriftPurchase.purchaseOrderNumber}</div>
+                  <div className="text-muted-foreground text-xs mt-1">
+                    Total {formatCurrency(syncDriftPurchase.totalAmount)} · Current status:{' '}
+                    {syncDriftPurchase.paymentStatus}
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  This only updates the purchase's payment status to match the payable. No new payment
+                  is recorded and no money movement is posted. Audit-logged.
+                </p>
+              </div>
+            )}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setSyncDriftPurchase(null)}
+                disabled={isSyncing}
+              >
+                Not now
+              </Button>
+              <Button onClick={handleConfirmSyncDrift} disabled={isSyncing}>
+                {isSyncing ? 'Syncing...' : 'Sync status'}
               </Button>
             </DialogFooter>
           </DialogContent>

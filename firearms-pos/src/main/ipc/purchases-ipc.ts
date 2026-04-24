@@ -602,6 +602,26 @@ export function registerPurchaseHandlers(): void {
           openCashSessionId = openSession.id
         }
 
+        // Pre-check: AP is already fully settled but purchase.paymentStatus drifted.
+        // Don't just flip silently — return needsSync so the UI can show a
+        // confirmation dialog and the admin explicitly approves the correction.
+        const existingPayable = await db.query.accountPayables.findFirst({
+          where: eq(accountPayables.purchaseId, purchaseId),
+        })
+        if (
+          existingPayable &&
+          existingPayable.remainingAmount <= 0 &&
+          existingPayable.status === 'paid' &&
+          purchase.paymentStatus !== 'paid'
+        ) {
+          return {
+            success: false,
+            needsSync: true,
+            payableId: existingPayable.id,
+            message: 'Payable is already fully settled in AP. Sync purchase status to match?',
+          }
+        }
+
         const { paidAmount, healed } = await withTransaction(async ({ db: txDb }) => {
           let payable = await txDb.query.accountPayables.findFirst({
             where: eq(accountPayables.purchaseId, purchaseId),
@@ -720,6 +740,23 @@ export function registerPurchaseHandlers(): void {
           return { success: false, message: 'Purchase is already paid' }
         }
 
+        // Same drift-detection as pay-off: AP already fully paid but purchase hasn't caught up.
+        const existingPayable = await db.query.accountPayables.findFirst({
+          where: eq(accountPayables.purchaseId, purchaseId),
+        })
+        if (
+          existingPayable &&
+          existingPayable.remainingAmount <= 0 &&
+          existingPayable.status === 'paid'
+        ) {
+          return {
+            success: false,
+            needsSync: true,
+            payableId: existingPayable.id,
+            message: 'Payable is already fully settled in AP. Sync purchase status to match?',
+          }
+        }
+
         let openCashSessionId: number | null = null
         if (paymentData.paymentMethod === 'cash') {
           const today = new Date().toISOString().split('T')[0]
@@ -809,6 +846,61 @@ export function registerPurchaseHandlers(): void {
         return { success: true, message: 'Partial payment recorded' }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to record partial payment'
+        return { success: false, message }
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'purchases:sync-status-from-payable',
+    async (_, purchaseId: number) => {
+      try {
+        const session = getCurrentSession()
+        const purchase = await db.query.purchases.findFirst({
+          where: eq(purchases.id, purchaseId),
+        })
+        if (!purchase) return { success: false, message: 'Purchase order not found' }
+
+        const payable = await db.query.accountPayables.findFirst({
+          where: eq(accountPayables.purchaseId, purchaseId),
+        })
+        if (!payable) {
+          return { success: false, message: 'No linked payable for this purchase' }
+        }
+
+        const targetStatus: 'paid' | 'partial' | 'pending' =
+          payable.status === 'paid' ? 'paid' : payable.status === 'partial' ? 'partial' : 'pending'
+
+        if (purchase.paymentStatus === targetStatus) {
+          return { success: true, alreadyInSync: true, message: 'Purchase already in sync with payable' }
+        }
+
+        await withTransaction(async ({ db: txDb }) => {
+          await txDb
+            .update(purchases)
+            .set({ paymentStatus: targetStatus, updatedAt: new Date().toISOString() })
+            .where(eq(purchases.id, purchaseId))
+        })
+
+        await createAuditLog({
+          userId: session?.userId,
+          branchId: purchase.branchId,
+          action: 'update',
+          entityType: 'purchase',
+          entityId: purchaseId,
+          oldValues: { paymentStatus: purchase.paymentStatus },
+          newValues: { paymentStatus: targetStatus },
+          description: `Synced purchase ${purchase.purchaseOrderNumber} paymentStatus: ${purchase.paymentStatus} → ${targetStatus} (payable authoritative)`,
+        })
+
+        return {
+          success: true,
+          oldStatus: purchase.paymentStatus,
+          newStatus: targetStatus,
+          message: `Purchase status synced: ${purchase.paymentStatus} → ${targetStatus}`,
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to sync purchase status'
         return { success: false, message }
       }
     }

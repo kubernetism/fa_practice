@@ -449,3 +449,91 @@ describe('purchases:get-all aggregates', () => {
     expect(row.remainingAmount).toBe(0)
   })
 })
+
+describe('purchases drift detection + sync-status-from-payable', () => {
+  beforeEach(async () => {
+    const sqlite = getTestSqlite()
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+      sqlite.prepare(`DELETE FROM ${t}`).run()
+    }
+    await seedBasicFixtures()
+  })
+
+  it('pay-off returns needsSync (no flip) when AP is already fully paid but purchase status drifted', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-DRIFT-1', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 300, taxAmount: 0, shippingCost: 0, totalAmount: 300,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-DRIFT-1',
+      totalAmount: 300, paidAmount: 300, remainingAmount: 0, status: 'paid', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+
+    const result = await handlers.get('purchases:pay-off')!({}, purchase.id, { paymentMethod: 'bank_transfer' })
+    expect(result.success).toBe(false)
+    expect(result.needsSync).toBe(true)
+
+    // Purchase status MUST remain untouched — confirmation dialog will drive the flip.
+    const after = await db.query.purchases.findFirst({ where: eq(purchases.id, purchase.id) })
+    expect(after?.paymentStatus).toBe('pending')
+  })
+
+  it('sync-status-from-payable flips purchase.paymentStatus to match AP', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-DRIFT-2', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 500, taxAmount: 0, shippingCost: 0, totalAmount: 500,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-DRIFT-2',
+      totalAmount: 500, paidAmount: 500, remainingAmount: 0, status: 'paid', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+
+    const result = await handlers.get('purchases:sync-status-from-payable')!({}, purchase.id)
+    expect(result.success).toBe(true)
+    expect(result.oldStatus).toBe('pending')
+    expect(result.newStatus).toBe('paid')
+
+    const after = await db.query.purchases.findFirst({ where: eq(purchases.id, purchase.id) })
+    expect(after?.paymentStatus).toBe('paid')
+
+    // No new payment row should have been inserted — this is a pointer/status fix only.
+    const payments = await db.query.payablePayments.findMany()
+    expect(payments).toHaveLength(0)
+  })
+
+  it('sync-status-from-payable reports alreadyInSync when statuses already match', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-DRIFT-3', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 100, taxAmount: 0, shippingCost: 0, totalAmount: 100,
+      paymentMethod: 'pay_later', paymentStatus: 'paid', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-DRIFT-3',
+      totalAmount: 100, paidAmount: 100, remainingAmount: 0, status: 'paid', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+
+    const result = await handlers.get('purchases:sync-status-from-payable')!({}, purchase.id)
+    expect(result.success).toBe(true)
+    expect(result.alreadyInSync).toBe(true)
+  })
+})
