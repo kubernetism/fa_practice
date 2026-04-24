@@ -71,6 +71,8 @@ interface Purchase {
   totalAmount: number
   paymentMethod: 'cash' | 'cheque' | 'pay_later'
   paymentStatus: 'paid' | 'partial' | 'pending'
+  paidAmount: number
+  remainingAmount: number
   status: 'draft' | 'ordered' | 'partial' | 'received' | 'cancelled' | 'reversed'
   expectedDeliveryDate: string | null
   receivedDate: string | null
@@ -893,6 +895,12 @@ export function PurchasesScreen() {
                   <TableHead className="text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Amount
                   </TableHead>
+                  <TableHead className="w-[90px] text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Paid
+                  </TableHead>
+                  <TableHead className="w-[90px] text-right text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Remaining
+                  </TableHead>
                   <TableHead className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Method
                   </TableHead>
@@ -938,6 +946,16 @@ export function PurchasesScreen() {
                           </span>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right text-sm tabular-nums text-green-600">
+                      {formatCurrency(purchase.paidAmount ?? 0)}
+                    </TableCell>
+                    <TableCell
+                      className={`py-1.5 text-right text-sm tabular-nums font-medium ${
+                        (purchase.remainingAmount ?? 0) > 0 ? 'text-red-600' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatCurrency(purchase.remainingAmount ?? 0)}
                     </TableCell>
                     <TableCell className="py-1.5">
                       <div className="flex items-center gap-1">
