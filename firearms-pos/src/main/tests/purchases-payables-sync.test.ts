@@ -313,3 +313,65 @@ describe('purchases:record-partial-payment', () => {
     expect(result.message).toMatch(/cannot exceed remaining/i)
   })
 })
+
+describe('purchases:reconcile-with-payables', () => {
+  beforeEach(async () => {
+    const sqlite = getTestSqlite()
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+      sqlite.prepare(`DELETE FROM ${t}`).run()
+    }
+    await seedBasicFixtures()
+  })
+
+  it('creates missing AP rows, flips paymentStatus to match AP, flags paid-purchase-unpaid-AP', async () => {
+    const db = getTestDb()
+
+    // Case A: pay_later PO missing AP
+    const [poMissing] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-RECON-A', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 100, taxAmount: 0, shippingCost: 0, totalAmount: 100,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'ordered',
+    }).returning()
+
+    // Case B: AP.status=partial but purchase.paymentStatus=pending
+    const [poDrift] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-RECON-B', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 200, taxAmount: 0, shippingCost: 0, totalAmount: 200,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: poDrift.id, branchId: 1, invoiceNumber: 'PO-RECON-B',
+      totalAmount: 200, paidAmount: 50, remainingAmount: 150, status: 'partial', createdBy: 1,
+    })
+
+    // Case C: purchase.paymentStatus=paid but AP still has remaining (flagged)
+    const [poFlagged] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-RECON-C', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 300, taxAmount: 0, shippingCost: 0, totalAmount: 300,
+      paymentMethod: 'pay_later', paymentStatus: 'paid', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: poFlagged.id, branchId: 1, invoiceNumber: 'PO-RECON-C',
+      totalAmount: 300, paidAmount: 0, remainingAmount: 300, status: 'pending', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const result = await handlers.get('purchases:reconcile-with-payables')!({})
+
+    expect(result.success).toBe(true)
+    expect(result.created.map((r: { purchaseOrderNumber: string }) => r.purchaseOrderNumber)).toContain('PO-RECON-A')
+    expect(result.synced.map((r: { purchaseOrderNumber: string }) => r.purchaseOrderNumber)).toContain('PO-RECON-B')
+    expect(result.flagged.map((r: { purchaseOrderNumber: string }) => r.purchaseOrderNumber)).toContain('PO-RECON-C')
+
+    const createdAP = await db.query.accountPayables.findFirst({ where: eq(accountPayables.purchaseId, poMissing.id) })
+    expect(createdAP).toBeDefined()
+    expect(createdAP?.status).toBe('pending')
+
+    const syncedPO = await db.query.purchases.findFirst({ where: eq(purchases.id, poDrift.id) })
+    expect(syncedPO?.paymentStatus).toBe('partial')
+  })
+})

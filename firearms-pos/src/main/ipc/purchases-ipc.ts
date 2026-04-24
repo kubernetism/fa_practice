@@ -798,6 +798,104 @@ export function registerPurchaseHandlers(): void {
     }
   )
 
+  ipcMain.handle('purchases:reconcile-with-payables', async () => {
+    try {
+      const session = getCurrentSession()
+      if (!session) return { success: false, message: 'Unauthorized' }
+      if (session.role !== 'admin') return { success: false, message: 'Admin access required' }
+
+      const created: Array<{ purchaseId: number; purchaseOrderNumber: string }> = []
+      const synced: Array<{ purchaseId: number; purchaseOrderNumber: string; oldStatus: string; newStatus: string }> = []
+      const flagged: Array<{ purchaseId: number; purchaseOrderNumber: string; remaining: number }> = []
+
+      const allPurchases = await db.query.purchases.findMany()
+      for (const purchase of allPurchases) {
+        if (purchase.status === 'cancelled' || purchase.status === 'reversed') continue
+
+        const payable = await db.query.accountPayables.findFirst({
+          where: eq(accountPayables.purchaseId, purchase.id),
+        })
+
+        if (!payable) {
+          if (purchase.paymentMethod === 'pay_later' && purchase.paymentStatus !== 'paid') {
+            await db.insert(accountPayables).values({
+              supplierId: purchase.supplierId,
+              purchaseId: purchase.id,
+              branchId: purchase.branchId,
+              invoiceNumber: purchase.purchaseOrderNumber,
+              totalAmount: purchase.totalAmount,
+              paidAmount: 0,
+              remainingAmount: purchase.totalAmount,
+              status: 'pending',
+              notes: `Auto-created by reconcile for ${purchase.purchaseOrderNumber}`,
+              createdBy: session.userId,
+            })
+            created.push({ purchaseId: purchase.id, purchaseOrderNumber: purchase.purchaseOrderNumber })
+            await createAuditLog({
+              userId: session.userId,
+              branchId: purchase.branchId,
+              action: 'update',
+              entityType: 'account_payable',
+              entityId: 0,
+              description: `Reconciled payable for purchase ${purchase.purchaseOrderNumber}: created missing AP row`,
+            })
+          }
+          continue
+        }
+
+        const apStatus: 'pending' | 'partial' | 'paid' =
+          payable.status === 'paid' || payable.status === 'partial' || payable.status === 'pending'
+            ? payable.status
+            : 'pending'
+
+        if (purchase.paymentStatus === 'paid' && payable.remainingAmount > 0) {
+          flagged.push({
+            purchaseId: purchase.id,
+            purchaseOrderNumber: purchase.purchaseOrderNumber,
+            remaining: payable.remainingAmount,
+          })
+          await createAuditLog({
+            userId: session.userId,
+            branchId: purchase.branchId,
+            action: 'flag',
+            entityType: 'purchase',
+            entityId: purchase.id,
+            description: `Flagged purchase ${purchase.purchaseOrderNumber} for manual review: paid in Purchases but AP has remaining ${payable.remainingAmount.toFixed(2)}`,
+          })
+          continue
+        }
+
+        if (purchase.paymentStatus !== apStatus) {
+          await db
+            .update(purchases)
+            .set({ paymentStatus: apStatus, updatedAt: new Date().toISOString() })
+            .where(eq(purchases.id, purchase.id))
+          synced.push({
+            purchaseId: purchase.id,
+            purchaseOrderNumber: purchase.purchaseOrderNumber,
+            oldStatus: purchase.paymentStatus,
+            newStatus: apStatus,
+          })
+          await createAuditLog({
+            userId: session.userId,
+            branchId: purchase.branchId,
+            action: 'update',
+            entityType: 'purchase',
+            entityId: purchase.id,
+            oldValues: { paymentStatus: purchase.paymentStatus },
+            newValues: { paymentStatus: apStatus },
+            description: `Reconciled purchase ${purchase.purchaseOrderNumber}: synced paymentStatus ${purchase.paymentStatus} → ${apStatus}`,
+          })
+        }
+      }
+
+      return { success: true, created, synced, flagged }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to reconcile'
+      return { success: false, message }
+    }
+  })
+
   ipcMain.handle('purchases:check-reversible', async (_, purchaseId: number) => {
     const session = getCurrentSession()
     if (!session) {
