@@ -20,9 +20,18 @@ vi.mock('../utils/gl-posting', () => ({
   postPurchaseReceiveToGL: vi.fn().mockResolvedValue(undefined),
   ACCOUNT_CODES: {},
 }))
-vi.mock('./auth-ipc', () => ({
+vi.mock('../ipc/auth-ipc', () => ({
   getCurrentSession: () => ({ userId: 1, role: 'admin', branchId: 1 }),
 }))
+vi.mock('electron', () => {
+  const handlers = new Map<string, Function>()
+  return {
+    ipcMain: {
+      handle: (ch: string, fn: Function) => handlers.set(ch, fn),
+      _invokeHandlers: handlers,
+    },
+  }
+})
 
 import { accountPayables, payablePayments, purchases, branches, suppliers, users, expenses } from '../db/schema'
 import { recordPayableSubmission } from '../utils/payable-payment'
@@ -165,5 +174,77 @@ describe('payables:record-payment via shared helper (AP tab)', () => {
 
     const syncedPurchase = await db.query.purchases.findFirst({ where: eq(purchases.id, purchase.id) })
     expect(syncedPurchase?.paymentStatus).toBe('paid')
+  })
+})
+
+describe('purchases:pay-off orphan heal', () => {
+  beforeEach(async () => {
+    const sqlite = getTestSqlite()
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+      sqlite.prepare(`DELETE FROM ${t}`).run()
+    }
+    await seedBasicFixtures()
+  })
+
+  it('creates an AP row when none exists, records payment, flips purchase to paid', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-ORPHAN-1', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 250, taxAmount: 0, shippingCost: 0, totalAmount: 250,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+
+    // Sanity: no AP row yet
+    const preAP = await db.query.accountPayables.findMany({ where: eq(accountPayables.purchaseId, purchase.id) })
+    expect(preAP).toHaveLength(0)
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const payOffHandler = handlers.get('purchases:pay-off')
+    expect(payOffHandler).toBeDefined()
+    const result = await payOffHandler!({}, purchase.id, { paymentMethod: 'bank_transfer' })
+
+    expect(result.success).toBe(true)
+    const postAP = await db.query.accountPayables.findMany({ where: eq(accountPayables.purchaseId, purchase.id) })
+    expect(postAP).toHaveLength(1)
+    expect(postAP[0].status).toBe('paid')
+    expect(postAP[0].totalAmount).toBe(250)
+    expect(postAP[0].paidAmount).toBe(250)
+
+    const postPurchase = await db.query.purchases.findFirst({ where: eq(purchases.id, purchase.id) })
+    expect(postPurchase?.paymentStatus).toBe('paid')
+
+    const payments = await db.query.payablePayments.findMany({ where: eq(payablePayments.payableId, postAP[0].id) })
+    expect(payments).toHaveLength(1)
+    expect(payments[0].amount).toBe(250)
+  })
+
+  it('with existing AP, updates AP to paid and does not create duplicates', async () => {
+    const db = getTestDb()
+    const [purchase] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-EXIST-1', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 150, taxAmount: 0, shippingCost: 0, totalAmount: 150,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: purchase.id, branchId: 1, invoiceNumber: 'PO-EXIST-1',
+      totalAmount: 150, paidAmount: 0, remainingAmount: 150, status: 'pending', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+    const handler = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers.get('purchases:pay-off')
+
+    const result = await handler!({}, purchase.id, { paymentMethod: 'bank_transfer' })
+    expect(result.success).toBe(true)
+
+    const apRows = await db.query.accountPayables.findMany({ where: eq(accountPayables.purchaseId, purchase.id) })
+    expect(apRows).toHaveLength(1)
+    expect(apRows[0].status).toBe('paid')
+    expect(apRows[0].paidAmount).toBe(150)
   })
 })

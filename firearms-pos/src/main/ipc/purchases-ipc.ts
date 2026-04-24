@@ -8,7 +8,6 @@ import {
   products,
   suppliers,
   accountPayables,
-  payablePayments,
   cashRegisterSessions,
   cashTransactions,
   type NewPurchase,
@@ -18,9 +17,10 @@ import { createAuditLog, sanitizeForAudit } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import { generatePurchaseOrderNumber, type PaginationParams, type PaginatedResult } from '../utils/helpers'
 import { withTransaction } from '../utils/db-transaction'
-import { postPurchaseReceiveToGL, postAPPaymentToGL } from '../utils/gl-posting'
+import { postPurchaseReceiveToGL } from '../utils/gl-posting'
 import { addCostLayer } from '../utils/inventory-valuation'
 import { checkReversible, reversePurchaseAndReenter } from '../utils/purchase-reversal'
+import { recordPayableSubmission } from '../utils/payable-payment'
 
 interface PurchaseItemData {
   productId: number
@@ -586,23 +586,30 @@ export function registerPurchaseHandlers(): void {
           openCashSessionId = openSession.id
         }
 
-        const paidAmount = await withTransaction(async ({ db: txDb }) => {
-          // Re-read the payable inside the transaction to avoid double-payment
-          // races between two concurrent pay-off calls.
-          const payable = await txDb.query.accountPayables.findFirst({
+        const { paidAmount, healed } = await withTransaction(async ({ db: txDb }) => {
+          let payable = await txDb.query.accountPayables.findFirst({
             where: eq(accountPayables.purchaseId, purchaseId),
           })
 
-          await txDb
-            .update(purchases)
-            .set({
-              paymentStatus: 'paid',
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(purchases.id, purchaseId))
-
+          let healed = false
           if (!payable) {
-            return 0
+            const [created] = await txDb
+              .insert(accountPayables)
+              .values({
+                supplierId: purchase.supplierId,
+                purchaseId: purchase.id,
+                branchId: purchase.branchId,
+                invoiceNumber: purchase.purchaseOrderNumber,
+                totalAmount: purchase.totalAmount,
+                paidAmount: 0,
+                remainingAmount: purchase.totalAmount,
+                status: 'pending',
+                notes: `Auto-healed during pay-off (orphan payable) for ${purchase.purchaseOrderNumber}`,
+                createdBy: session?.userId,
+              })
+              .returning()
+            payable = created
+            healed = true
           }
 
           if (payable.remainingAmount <= 0) {
@@ -610,55 +617,27 @@ export function registerPurchaseHandlers(): void {
           }
 
           const amount = payable.remainingAmount
-
-          const [payablePayment] = await txDb
-            .insert(payablePayments)
-            .values({
+          const submission = await recordPayableSubmission(
+            txDb,
+            payable,
+            {
               payableId: payable.id,
               amount,
               paymentMethod: paymentData.paymentMethod,
               referenceNumber: paymentData.referenceNumber,
               notes: paymentData.notes || `Payment for Purchase: ${purchase.purchaseOrderNumber}`,
-              paidBy: session?.userId,
-            })
-            .returning()
-
-          await txDb
-            .update(accountPayables)
-            .set({
-              paidAmount: payable.totalAmount,
-              remainingAmount: 0,
-              status: 'paid',
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(accountPayables.id, payable.id))
-
-          await postAPPaymentToGL(
-            {
-              id: payablePayment.id,
-              payableId: payable.id,
-              branchId: purchase.branchId,
-              amount,
-              paymentMethod: paymentData.paymentMethod,
-              invoiceNumber: payable.invoiceNumber,
             },
-            session?.userId ?? 0
+            { userId: session?.userId ?? 0, branchId: purchase.branchId },
+            openCashSessionId
           )
 
-          if (paymentData.paymentMethod === 'cash' && openCashSessionId !== null) {
-            await txDb.insert(cashTransactions).values({
-              sessionId: openCashSessionId,
-              branchId: purchase.branchId,
-              transactionType: 'ap_payment',
-              amount: -amount,
-              referenceType: 'payable_payment',
-              referenceId: payablePayment.id,
-              description: `Purchase payment: ${purchase.purchaseOrderNumber}`,
-              recordedBy: session?.userId ?? 0,
-            })
-          }
+          // Flip the purchase LAST so any earlier failure rolls everything back.
+          await txDb
+            .update(purchases)
+            .set({ paymentStatus: 'paid', updatedAt: new Date().toISOString() })
+            .where(eq(purchases.id, purchaseId))
 
-          return amount
+          return { paidAmount: submission.payment.amount, healed }
         })
 
         await createAuditLog({
@@ -676,6 +655,17 @@ export function registerPurchaseHandlers(): void {
           },
           description: `Paid off purchase order: ${purchase.purchaseOrderNumber} (${paidAmount.toFixed(2)} ${paymentData.paymentMethod})`,
         })
+
+        if (healed) {
+          await createAuditLog({
+            userId: session?.userId,
+            branchId: purchase.branchId,
+            action: 'update',
+            entityType: 'account_payable',
+            entityId: 0,
+            description: `Healed orphan payable for purchase ${purchase.purchaseOrderNumber} during pay-off (${paidAmount.toFixed(2)})`,
+          })
+        }
 
         return { success: true, message: 'Purchase paid off successfully' }
       } catch (error) {
