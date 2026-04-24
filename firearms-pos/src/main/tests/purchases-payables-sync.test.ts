@@ -375,3 +375,77 @@ describe('purchases:reconcile-with-payables', () => {
     expect(syncedPO?.paymentStatus).toBe('partial')
   })
 })
+
+describe('purchases:get-all aggregates', () => {
+  beforeEach(async () => {
+    const sqlite = getTestSqlite()
+    for (const t of ['online_transactions', 'cash_transactions', 'expenses', 'payable_payments', 'account_payables', 'purchases', 'suppliers', 'branches', 'users']) {
+      sqlite.prepare(`DELETE FROM ${t}`).run()
+    }
+    await seedBasicFixtures()
+  })
+
+  it('returns paidAmount and remainingAmount columns from linked AP', async () => {
+    const db = getTestDb()
+    const [p1] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-AGG-1', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 400, taxAmount: 0, shippingCost: 0, totalAmount: 400,
+      paymentMethod: 'pay_later', paymentStatus: 'partial', status: 'received',
+    }).returning()
+    await db.insert(accountPayables).values({
+      supplierId: 1, purchaseId: p1.id, branchId: 1, invoiceNumber: 'PO-AGG-1',
+      totalAmount: 400, paidAmount: 150, remainingAmount: 250, status: 'partial', createdBy: 1,
+    })
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const result = await handlers.get('purchases:get-all')!({}, { limit: 10 })
+
+    expect(result.success).toBe(true)
+    const row = result.data.find((r: { purchaseOrderNumber: string }) => r.purchaseOrderNumber === 'PO-AGG-1')
+    expect(row).toBeDefined()
+    expect(row.paidAmount).toBe(150)
+    expect(row.remainingAmount).toBe(250)
+  })
+
+  it('returns zero paid / full remaining for pay_later PO without AP yet', async () => {
+    const db = getTestDb()
+    const [p] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-AGG-2', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 100, taxAmount: 0, shippingCost: 0, totalAmount: 100,
+      paymentMethod: 'pay_later', paymentStatus: 'pending', status: 'ordered',
+    }).returning()
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const result = await handlers.get('purchases:get-all')!({}, { limit: 10 })
+    const row = result.data.find((r: { purchaseOrderNumber: string }) => r.purchaseOrderNumber === 'PO-AGG-2')
+    expect(row.paidAmount).toBe(0)
+    expect(row.remainingAmount).toBe(100)
+  })
+
+  it('returns paid=total / remaining=0 for cash PO marked paid (no AP row)', async () => {
+    const db = getTestDb()
+    const [p] = await db.insert(purchases).values({
+      purchaseOrderNumber: 'PO-AGG-3', supplierId: 1, branchId: 1, userId: 1,
+      subtotal: 50, taxAmount: 0, shippingCost: 0, totalAmount: 50,
+      paymentMethod: 'cash', paymentStatus: 'paid', status: 'received',
+    }).returning()
+
+    const { ipcMain } = await import('electron')
+    const { registerPurchaseHandlers } = await import('../ipc/purchases-ipc')
+    registerPurchaseHandlers()
+
+    const handlers = (ipcMain as unknown as { _invokeHandlers: Map<string, Function> })._invokeHandlers
+    const result = await handlers.get('purchases:get-all')!({}, { limit: 10 })
+    const row = result.data.find((r: { purchaseOrderNumber: string }) => r.purchaseOrderNumber === 'PO-AGG-3')
+    expect(row.paidAmount).toBe(50)
+    expect(row.remainingAmount).toBe(0)
+  })
+})

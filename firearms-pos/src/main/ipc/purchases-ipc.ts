@@ -202,11 +202,27 @@ export function registerPurchaseHandlers(): void {
 
         const total = countResult[0].count
 
-        const data = await db.query.purchases.findMany({
+        const rawRows = await db.query.purchases.findMany({
           where: whereClause,
           limit,
           offset: (page - 1) * limit,
           orderBy: sortOrder === 'desc' ? desc(purchases.createdAt) : purchases.createdAt,
+        })
+
+        const purchaseIds = rawRows.map((r) => r.id)
+        const apRows = purchaseIds.length
+          ? await db.query.accountPayables.findMany({
+              where: sql`${accountPayables.purchaseId} IN (${sql.join(purchaseIds.map((id) => sql`${id}`), sql`, `)})`,
+            })
+          : []
+        const apByPurchase = new Map<number, typeof apRows[number]>()
+        for (const ap of apRows) if (ap.purchaseId) apByPurchase.set(ap.purchaseId, ap)
+
+        const data = rawRows.map((r) => {
+          const ap = apByPurchase.get(r.id)
+          const paidAmount = ap ? ap.paidAmount : r.paymentStatus === 'paid' ? r.totalAmount : 0
+          const remainingAmount = ap ? ap.remainingAmount : r.totalAmount - paidAmount
+          return { ...r, paidAmount, remainingAmount }
         })
 
         const result: PaginatedResult<typeof data[0]> = {
