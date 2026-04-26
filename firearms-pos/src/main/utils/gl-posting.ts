@@ -18,6 +18,7 @@ import { createAuditLog } from './audit'
 export const ACCOUNT_CODES = {
   CASH_IN_HAND: '1010',
   CASH_IN_BANK: '1020',
+  PENDING_ONLINE_PAYMENTS: '1030', // Clearing account for non-cash flows awaiting approval
   ACCOUNTS_RECEIVABLE: '1100',
   INVENTORY: '1200',
   ACCOUNTS_PAYABLE: '2000',
@@ -26,6 +27,7 @@ export const ACCOUNT_CODES = {
   OWNERS_CAPITAL: '3000',
   RETAINED_EARNINGS: '3100',
   SALES_REVENUE: '4000',
+  SALES_REFUNDS: '4100', // Contra-revenue for sales refunds & returns
   INVENTORY_ADJUSTMENT: '4900', // Income from inventory surplus
   COGS: '5000',
   SALARIES_WAGES: '5100',
@@ -106,6 +108,12 @@ const DEFAULT_ACCOUNTS: Record<string, {
     normalBalance: 'debit',
     description: 'Bank account balances',
   },
+  '1030': {
+    accountName: 'Pending Online Payments',
+    accountType: 'asset',
+    normalBalance: 'debit',
+    description: 'Non-cash payments awaiting approval in Online Transactions tab',
+  },
   '1100': {
     accountName: 'Accounts Receivable',
     accountType: 'asset',
@@ -153,6 +161,12 @@ const DEFAULT_ACCOUNTS: Record<string, {
     accountType: 'revenue',
     normalBalance: 'credit',
     description: 'Revenue from product sales',
+  },
+  '4100': {
+    accountName: 'Sales Refunds & Returns',
+    accountType: 'revenue',
+    normalBalance: 'debit', // contra-revenue
+    description: 'Refunds and returns deducted from gross sales',
   },
   '4900': {
     accountName: 'Inventory Adjustment Income',
@@ -366,16 +380,21 @@ export async function postSaleToGL(
 
   const receivableAmount = sale.totalAmount - sale.amountPaid
 
-  // DR Cash for amount paid - use payment breakdown if available
+  // DR Cash for amount paid - use payment breakdown if available.
+  // Routing:
+  //   cash, cod          → 1010 Cash in Hand (immediate)
+  //   card, debit_card,
+  //   mobile, cheque,
+  //   bank_transfer      → 1030 Pending Online Payments (gated on confirm)
   if (payments && payments.length > 0) {
     // Mixed/split payment - create separate entries for each payment method
     for (const payment of payments) {
       if (payment.amount <= 0) continue
 
-      // Determine account based on payment method
-      const accountCode = ['card', 'debit_card', 'mobile', 'cheque', 'bank_transfer'].includes(payment.method)
-        ? ACCOUNT_CODES.CASH_IN_BANK
-        : ACCOUNT_CODES.CASH_IN_HAND
+      const isCashSide = payment.method === 'cash' || payment.method === 'cod'
+      const accountCode = isCashSide
+        ? ACCOUNT_CODES.CASH_IN_HAND
+        : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS
 
       const methodLabel = payment.method === 'card' ? 'Card'
         : payment.method === 'debit_card' ? 'Debit Card'
@@ -389,23 +408,28 @@ export async function postSaleToGL(
         accountCode,
         debitAmount: payment.amount,
         creditAmount: 0,
-        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ''}`,
+        description: isCashSide
+          ? `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ''}`
+          : `Pending ${methodLabel} for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ''}`,
       })
     }
   } else if (sale.amountPaid > 0) {
     // Single payment - use old logic
     // Debit only the net cash retained (amountPaid minus change given back)
     const netCashReceived = sale.amountPaid - (sale.changeGiven || 0)
-    const cashAccountCode = sale.paymentMethod === 'card' || sale.paymentMethod === 'mobile'
-      ? ACCOUNT_CODES.CASH_IN_BANK
-      : ACCOUNT_CODES.CASH_IN_HAND
+    const isCashSide = sale.paymentMethod === 'cash' || sale.paymentMethod === 'cod'
+    const cashAccountCode = isCashSide
+      ? ACCOUNT_CODES.CASH_IN_HAND
+      : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS
 
     if (netCashReceived > 0) {
       lines.push({
         accountCode: cashAccountCode,
         debitAmount: netCashReceived,
         creditAmount: 0,
-        description: `Cash received for sale ${sale.invoiceNumber}`,
+        description: isCashSide
+          ? `Cash received for sale ${sale.invoiceNumber}`
+          : `Pending ${sale.paymentMethod} for sale ${sale.invoiceNumber}`,
       })
     }
   }
@@ -625,14 +649,21 @@ export async function postExpenseToGL(
 
 /**
  * Post a return/refund to the General Ledger.
- * Reverses the original sale entries.
+ *
+ * Refunds use a contra-revenue account (4100 Sales Refunds & Returns) instead of
+ * directly debiting 4000 Sales Revenue, preserving gross sales reporting.
+ *
+ * Cash side routes through clearing for non-cash refunds (gated on online-tx approval):
+ *   cash         → 1010 Cash in Hand        (immediate)
+ *   store_credit → 1100 Accounts Receivable (customer credit balance)
+ *   anything else → 1030 Pending Online Payments (clearing)
  *
  * Journal Entry:
- * DR Sales Revenue (4000)    $subtotal
- * DR Sales Tax Payable (2100) $taxAmount
- *     CR Cash/AR (1010/1100)     $totalAmount
- * DR Inventory (1200)        $totalCOGS  (if restockable)
- *     CR COGS (5000)             $totalCOGS
+ *   DR Sales Refunds (4100)    $subtotal
+ *   DR Sales Tax Payable (2100) $taxAmount
+ *       CR Cash/Clearing/AR    $totalAmount
+ *   DR Inventory (1200)        $totalCOGS  (if restockable)
+ *       CR COGS (5000)         $totalCOGS
  */
 export async function postReturnToGL(
   returnData: {
@@ -649,14 +680,14 @@ export async function postReturnToGL(
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  // DR Sales Revenue (reverse the credit)
+  // DR Sales Refunds (contra-revenue) — preserves gross sales reporting
   const netRevenue = returnData.subtotal
   if (netRevenue > 0) {
     lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      accountCode: ACCOUNT_CODES.SALES_REFUNDS,
       debitAmount: netRevenue,
       creditAmount: 0,
-      description: `Revenue reversal for return ${returnData.returnNumber}`,
+      description: `Refund for return ${returnData.returnNumber}`,
     })
   }
 
@@ -670,12 +701,15 @@ export async function postReturnToGL(
     })
   }
 
-  // CR Cash (refund given)
-  const cashAccount = returnData.refundMethod === 'card'
-    ? ACCOUNT_CODES.CASH_IN_BANK
-    : ACCOUNT_CODES.CASH_IN_HAND
+  // CR refund side: cash immediate, store_credit → AR, everything else → clearing
+  const refundAccount =
+    returnData.refundMethod === 'cash'
+      ? ACCOUNT_CODES.CASH_IN_HAND
+      : returnData.refundMethod === 'store_credit'
+        ? ACCOUNT_CODES.ACCOUNTS_RECEIVABLE
+        : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS
   lines.push({
-    accountCode: cashAccount,
+    accountCode: refundAccount,
     debitAmount: 0,
     creditAmount: returnData.totalAmount,
     description: `Refund for return ${returnData.returnNumber}`,
@@ -732,19 +766,21 @@ export async function postARPaymentToGL(
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  const cashAccount = payment.paymentMethod === 'card' || payment.paymentMethod === 'bank_transfer' || payment.paymentMethod === 'mobile'
-    ? ACCOUNT_CODES.CASH_IN_BANK
-    : ACCOUNT_CODES.CASH_IN_HAND
+  // cash → 1010 immediate; everything else → 1030 clearing (gated on confirm)
+  const isCash = payment.paymentMethod === 'cash'
+  const cashAccount = isCash
+    ? ACCOUNT_CODES.CASH_IN_HAND
+    : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS
 
-  // DR Cash
   lines.push({
     accountCode: cashAccount,
     debitAmount: payment.amount,
     creditAmount: 0,
-    description: `Payment received for ${payment.invoiceNumber}`,
+    description: isCash
+      ? `Payment received for ${payment.invoiceNumber}`
+      : `Pending ${payment.paymentMethod} for ${payment.invoiceNumber}`,
   })
 
-  // CR Accounts Receivable
   lines.push({
     accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
     debitAmount: 0,
@@ -766,8 +802,10 @@ export async function postARPaymentToGL(
  * Post an AP payment to the General Ledger.
  *
  * Journal Entry:
- * DR Accounts Payable (2000) $amount
- *     CR Cash (1010/1020)        $amount
+ *   Cash methods       → DR Accounts Payable / CR Cash in Hand (1010)
+ *   Non-cash methods   → DR Accounts Payable / CR Pending Online Payments (1030)
+ *                        (Cash in Bank is only credited when the online tx is
+ *                         confirmed in the Online Transactions tab.)
  */
 export async function postAPPaymentToGL(
   payment: {
@@ -782,9 +820,10 @@ export async function postAPPaymentToGL(
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  const cashAccount = payment.paymentMethod === 'bank_transfer' || payment.paymentMethod === 'cheque'
-    ? ACCOUNT_CODES.CASH_IN_BANK
-    : ACCOUNT_CODES.CASH_IN_HAND
+  const isCash = payment.paymentMethod === 'cash'
+  const cashAccount = isCash
+    ? ACCOUNT_CODES.CASH_IN_HAND
+    : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS
 
   // DR Accounts Payable
   lines.push({
@@ -794,12 +833,14 @@ export async function postAPPaymentToGL(
     description: `AP payment for ${payment.invoiceNumber}`,
   })
 
-  // CR Cash
+  // CR Cash (or clearing for non-cash, awaiting confirmation)
   lines.push({
     accountCode: cashAccount,
     debitAmount: 0,
     creditAmount: payment.amount,
-    description: `Payment for ${payment.invoiceNumber}`,
+    description: isCash
+      ? `Payment for ${payment.invoiceNumber}`
+      : `Pending ${payment.paymentMethod} for ${payment.invoiceNumber}`,
   })
 
   return createJournalEntry({
@@ -822,10 +863,14 @@ export async function postVoidSaleToGL(
 ): Promise<number> {
   const lines: JournalLine[] = []
 
-  // Reverse the original entry - swap debits and credits
-  const cashAccountCode = sale.paymentMethod === 'card' || sale.paymentMethod === 'mobile'
-    ? ACCOUNT_CODES.CASH_IN_BANK
-    : ACCOUNT_CODES.CASH_IN_HAND
+  // Reverse the original entry - swap debits and credits.
+  // Mirror the routing in postSaleToGL: cash/cod use Cash in Hand, every
+  // other method uses the clearing account (since that's where the original
+  // posting put it).
+  const isCashSide = sale.paymentMethod === 'cash' || sale.paymentMethod === 'cod'
+  const cashAccountCode = isCashSide
+    ? ACCOUNT_CODES.CASH_IN_HAND
+    : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS
 
   // CR Cash for amount paid (reverse the debit)
   if (sale.amountPaid > 0) {

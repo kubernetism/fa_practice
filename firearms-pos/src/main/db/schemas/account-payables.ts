@@ -61,6 +61,12 @@ export const payablePayments = sqliteTable(
     referenceNumber: text('reference_number'), // Cheque number, transaction ID, etc.
     notes: text('notes'),
     paidBy: integer('paid_by').references(() => users.id),
+    // Approval gate for non-cash payments. 'pending_approval' means the payment
+    // intent is recorded but the AP balance and GL have NOT been updated yet —
+    // those land only when the matching online_transactions row is confirmed.
+    status: text('status', { enum: ['pending_approval', 'posted', 'cancelled'] })
+      .notNull()
+      .default('posted'),
     paymentDate: text('payment_date')
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

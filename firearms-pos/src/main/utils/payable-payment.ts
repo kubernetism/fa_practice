@@ -64,6 +64,11 @@ export async function recordPayableSubmission(
     throw new Error(`Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`)
   }
 
+  // Held-payment gate: non-cash AP payments do NOT touch GL, AP balance, or
+  // synced records until the matching online_transactions row is approved.
+  // Cash payments still post immediately (drawer is the source of truth).
+  const isHeld = data.paymentMethod !== 'cash'
+
   const newPaidAmount = payable.paidAmount + data.amount
   const newRemainingAmount = payable.totalAmount - newPaidAmount
   const newStatus: 'paid' | 'partial' = newRemainingAmount <= 0 ? 'paid' : 'partial'
@@ -78,64 +83,85 @@ export async function recordPayableSubmission(
       referenceNumber: data.referenceNumber,
       notes: data.notes,
       paidBy: session.userId,
+      status: isHeld ? 'pending_approval' : 'posted',
     })
     .returning()
 
-  await txDb
-    .update(accountPayables)
-    .set({
-      paidAmount: newPaidAmount,
-      remainingAmount: Math.max(0, newRemainingAmount),
-      status: newStatus,
-      updatedAt: now,
-    })
-    .where(eq(accountPayables.id, data.payableId))
-
   let purchaseSync: SubmissionResult['purchaseSync'] = null
-  if (payable.purchaseId) {
-    const linkedPurchase = await txDb.query.purchases.findFirst({
-      where: eq(purchases.id, payable.purchaseId),
-    })
-    if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
-      await txDb
-        .update(purchases)
-        .set({ paymentStatus: newStatus, updatedAt: now })
-        .where(eq(purchases.id, linkedPurchase.id))
-      purchaseSync = {
-        purchaseId: linkedPurchase.id,
-        purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
-        oldStatus: linkedPurchase.paymentStatus,
-        newStatus,
+  let expenseSync: SubmissionResult['expenseSync'] = null
+
+  if (!isHeld) {
+    // Cash path: update AP balance + sync purchases/expenses + post GL now.
+    await txDb
+      .update(accountPayables)
+      .set({
+        paidAmount: newPaidAmount,
+        remainingAmount: Math.max(0, newRemainingAmount),
+        status: newStatus,
+        updatedAt: now,
+      })
+      .where(eq(accountPayables.id, data.payableId))
+
+    if (payable.purchaseId) {
+      const linkedPurchase = await txDb.query.purchases.findFirst({
+        where: eq(purchases.id, payable.purchaseId),
+      })
+      if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
+        await txDb
+          .update(purchases)
+          .set({ paymentStatus: newStatus, updatedAt: now })
+          .where(eq(purchases.id, linkedPurchase.id))
+        purchaseSync = {
+          purchaseId: linkedPurchase.id,
+          purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+          oldStatus: linkedPurchase.paymentStatus,
+          newStatus,
+        }
       }
     }
-  }
 
-  let expenseSync: SubmissionResult['expenseSync'] = null
-  if (newStatus === 'paid') {
-    const linkedExpense = await txDb.query.expenses.findFirst({
-      where: eq(expenses.payableId, payable.id),
-    })
-    if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
-      await txDb
-        .update(expenses)
-        .set({ paymentStatus: 'paid', updatedAt: now })
-        .where(eq(expenses.id, linkedExpense.id))
-      expenseSync = { expenseId: linkedExpense.id, oldStatus: linkedExpense.paymentStatus }
+    if (newStatus === 'paid') {
+      const linkedExpense = await txDb.query.expenses.findFirst({
+        where: eq(expenses.payableId, payable.id),
+      })
+      if (linkedExpense && linkedExpense.paymentStatus === 'unpaid') {
+        await txDb
+          .update(expenses)
+          .set({ paymentStatus: 'paid', updatedAt: now })
+          .where(eq(expenses.id, linkedExpense.id))
+        expenseSync = { expenseId: linkedExpense.id, oldStatus: linkedExpense.paymentStatus }
+      }
+    }
+
+    await postAPPaymentToGL(
+      {
+        id: payment.id,
+        payableId: data.payableId,
+        branchId: payable.branchId,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        invoiceNumber: payable.invoiceNumber,
+      },
+      session.userId
+    )
+
+    if (openCashSessionId !== null) {
+      await txDb.insert(cashTransactions).values({
+        sessionId: openCashSessionId,
+        branchId: payable.branchId,
+        transactionType: 'ap_payment',
+        amount: -data.amount,
+        referenceType: 'payable_payment',
+        referenceId: payment.id,
+        description: `AP payment: ${payable.invoiceNumber}`,
+        recordedBy: session.userId,
+      })
     }
   }
 
-  await postAPPaymentToGL(
-    {
-      id: payment.id,
-      payableId: data.payableId,
-      branchId: payable.branchId,
-      amount: data.amount,
-      paymentMethod: data.paymentMethod,
-      invoiceNumber: payable.invoiceNumber,
-    },
-    session.userId
-  )
-
+  // Always create online_transactions row for non-cash methods so the
+  // approver can see and act on it. For held payments this is the gate; the
+  // AP balance/GL only update on confirm.
   let supplierName: string | null = null
   if (payable.supplierId) {
     const supplier = await txDb.query.suppliers.findFirst({
@@ -144,7 +170,7 @@ export async function recordPayableSubmission(
     supplierName = supplier?.name ?? null
   }
 
-  if (data.paymentMethod !== 'cash') {
+  if (isHeld) {
     await txDb.insert(onlineTransactions).values({
       branchId: payable.branchId,
       transactionDate: new Date().toISOString().split('T')[0],
@@ -162,25 +188,14 @@ export async function recordPayableSubmission(
     })
   }
 
-  if (data.paymentMethod === 'cash' && openCashSessionId !== null) {
-    await txDb.insert(cashTransactions).values({
-      sessionId: openCashSessionId,
-      branchId: payable.branchId,
-      transactionType: 'ap_payment',
-      amount: -data.amount,
-      referenceType: 'payable_payment',
-      referenceId: payment.id,
-      description: `AP payment: ${payable.invoiceNumber}`,
-      recordedBy: session.userId,
-    })
-  }
-
   return {
     payment: { id: payment.id, amount: payment.amount },
     payable,
-    newPaidAmount,
-    newRemainingAmount,
-    newStatus,
+    // Report what the AP would look like after approval — caller may use
+    // these for messaging. Held payments DO NOT actually update the AP yet.
+    newPaidAmount: isHeld ? payable.paidAmount : newPaidAmount,
+    newRemainingAmount: isHeld ? payable.remainingAmount : newRemainingAmount,
+    newStatus: isHeld ? (payable.status as 'paid' | 'partial') : newStatus,
     purchaseSync,
     expenseSync,
   }

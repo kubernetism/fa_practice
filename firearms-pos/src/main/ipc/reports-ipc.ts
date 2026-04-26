@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, between, gte, lte, count, like, isNull } from 'drizzle-orm'
+import { eq, and, desc, sql, between, gte, lte, count, like, isNull, ne } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   sales,
@@ -54,7 +54,7 @@ export function registerReportHandlers(): void {
 
         const conditions = [
           between(sales.saleDate, startDate, endDate),
-          eq(sales.isVoided, false),
+          eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
         ]
         if (branchId) conditions.push(eq(sales.branchId, branchId))
         if (paymentMethod) conditions.push(eq(sales.paymentMethod, paymentMethod as any))
@@ -362,7 +362,7 @@ export function registerReportHandlers(): void {
         // Revenue from sales
         const salesConditions = [
           between(sales.saleDate, startDate, endDate),
-          eq(sales.isVoided, false),
+          eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
         ]
         if (branchId) salesConditions.push(eq(sales.branchId, branchId))
 
@@ -527,7 +527,7 @@ export function registerReportHandlers(): void {
         const session = getCurrentSession()
         const { startDate: rawStart, endDate: rawEnd, limit: pageSize = 20, page = 1 } = params
 
-        const conditions = [eq(sales.isVoided, false)]
+        const conditions = [eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')]
         if (rawStart && rawEnd) {
           const { start, end } = normalizeDateRange(rawStart, rawEnd)
           conditions.push(between(sales.saleDate, start, end))
@@ -1257,7 +1257,7 @@ export function registerReportHandlers(): void {
 
         const conditions = [
           between(sales.saleDate, startDate, endDate),
-          eq(sales.isVoided, false),
+          eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
         ]
         if (branchId) conditions.push(eq(sales.branchId, branchId))
 
@@ -1446,7 +1446,8 @@ export function registerReportHandlers(): void {
                 and(
                   eq(sales.branchId, branch.id),
                   between(sales.saleDate, startDate, endDate),
-                  eq(sales.isVoided, false)
+                  eq(sales.isVoided, false),
+                  ne(sales.paymentStatus, 'pending_approval')
                 )
               )
 
@@ -1461,7 +1462,8 @@ export function registerReportHandlers(): void {
                 and(
                   eq(sales.branchId, branch.id),
                   between(sales.saleDate, startDate, endDate),
-                  eq(sales.isVoided, false)
+                  eq(sales.isVoided, false),
+                  ne(sales.paymentStatus, 'pending_approval')
                 )
               )
 
@@ -1606,7 +1608,7 @@ export function registerReportHandlers(): void {
           .where(
             and(
               between(sales.saleDate, startDate, endDate),
-              eq(sales.isVoided, false),
+              eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
               ...conditions
             )
           )
@@ -1697,7 +1699,7 @@ export function registerReportHandlers(): void {
           .where(
             and(
               between(sales.saleDate, startDate, endDate),
-              eq(sales.isVoided, false),
+              eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
               ...conditions
             )
           )
@@ -1906,7 +1908,7 @@ export function registerReportHandlers(): void {
 
         const salesConditions = [
           between(sales.saleDate, dateRange.start, dateRange.end),
-          eq(sales.isVoided, false),
+          eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
         ]
         if (branchId) salesConditions.push(eq(sales.branchId, branchId))
 

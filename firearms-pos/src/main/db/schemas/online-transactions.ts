@@ -43,7 +43,7 @@ export const onlineTransactions = sqliteTable(
     notes: text('notes'),
     // Source tracking - what created this record
     sourceType: text('source_type', {
-      enum: ['sale', 'receivable_payment', 'payable_payment', 'manual'],
+      enum: ['sale', 'receivable_payment', 'payable_payment', 'return_refund', 'manual'],
     })
       .notNull()
       .default('manual'),

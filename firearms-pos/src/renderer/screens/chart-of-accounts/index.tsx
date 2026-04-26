@@ -67,6 +67,7 @@ import {
 import { toPng } from 'html-to-image'
 import { format } from 'date-fns'
 import { useBranch } from '@/contexts/branch-context'
+import { useAuth } from '@/contexts/auth-context'
 import { CoaReportCard } from './report-card'
 
 interface Account {
@@ -133,6 +134,7 @@ interface CashFlowDetail {
 
 export default function ChartOfAccountsScreen() {
   const { currentBranch } = useBranch()
+  const { user } = useAuth()
   const [activeTab, setActiveTab] = useState('accounts')
   const [accounts, setAccounts] = useState<Account[]>([])
   const [balanceSheet, setBalanceSheet] = useState<BalanceSheet | null>(null)
@@ -147,6 +149,12 @@ export default function ChartOfAccountsScreen() {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null)
   const [adjustTarget, setAdjustTarget] = useState('')
   const [adjustReason, setAdjustReason] = useState('')
+  const [openingDialog, setOpeningDialog] = useState(false)
+  const [openingAmount, setOpeningAmount] = useState('')
+  const [openingDate, setOpeningDate] = useState(format(new Date(), 'yyyy-MM-dd'))
+  const [openingOffsetId, setOpeningOffsetId] = useState<string>('')
+  const [openingNotes, setOpeningNotes] = useState('')
+  const [openingSubmitting, setOpeningSubmitting] = useState(false)
   const [recalculating, setRecalculating] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
   const [isCopied, setIsCopied] = useState(false)
@@ -408,6 +416,77 @@ export default function ChartOfAccountsScreen() {
       alert('Failed to recalculate balances: ' + (error as Error).message)
     } finally {
       setRecalculating(false)
+    }
+  }
+
+  const equityAccounts = useMemo(
+    () => accounts.filter((a) => a.accountType === 'equity' && a.isActive),
+    [accounts]
+  )
+
+  const openOpeningDialog = (account: Account) => {
+    setSelectedAccount(account)
+    setOpeningAmount('')
+    setOpeningDate(format(new Date(), 'yyyy-MM-dd'))
+    const defaultOffset =
+      equityAccounts.find((a) => a.accountCode === '3000') ||
+      equityAccounts.find((a) => a.accountCode === '3100') ||
+      equityAccounts[0]
+    setOpeningOffsetId(defaultOffset ? String(defaultOffset.id) : '')
+    setOpeningNotes('')
+    setOpeningDialog(true)
+  }
+
+  const handleSetOpeningBalance = async () => {
+    if (!selectedAccount) return
+    const amount = parseFloat(openingAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert('Please enter a positive amount')
+      return
+    }
+    if (!openingDate) {
+      alert('Please pick an effective date')
+      return
+    }
+    if (!openingOffsetId) {
+      alert('Please select an equity offset account')
+      return
+    }
+    if (Number(openingOffsetId) === selectedAccount.id) {
+      alert('Offset account must differ from the target account')
+      return
+    }
+    if (!user?.userId) {
+      alert('Cannot determine current user — please re-login')
+      return
+    }
+    setOpeningSubmitting(true)
+    try {
+      const result = await window.api.chartOfAccounts.setOpeningBalance({
+        accountId: selectedAccount.id,
+        amount,
+        entryDate: openingDate,
+        offsetAccountId: Number(openingOffsetId),
+        postedBy: user.userId,
+        notes: openingNotes.trim() || undefined,
+      })
+      if (result.success) {
+        alert(
+          `Opening balance posted: ${formatCurrency(amount)}\n` +
+            `Target: ${result.data.target.code} ${result.data.target.name}\n` +
+            `Offset: ${result.data.offset.code} ${result.data.offset.name}\n` +
+            `Journal: ${result.data.journalEntry}`
+        )
+        setOpeningDialog(false)
+        setSelectedAccount(null)
+        await loadData()
+      } else {
+        alert('Failed: ' + result.message)
+      }
+    } catch (e) {
+      alert('Failed to post opening balance: ' + (e as Error).message)
+    } finally {
+      setOpeningSubmitting(false)
     }
   }
 
@@ -722,6 +801,19 @@ export default function ChartOfAccountsScreen() {
                                     </Button>
                                   </TooltipTrigger>
                                   <TooltipContent>Adjust Balance</TooltipContent>
+                                </Tooltip>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 text-blue-500 hover:text-blue-400"
+                                      onClick={() => openOpeningDialog(account)}
+                                    >
+                                      <PiggyBank className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Set Opening Balance</TooltipContent>
                                 </Tooltip>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -1597,6 +1689,107 @@ export default function ChartOfAccountsScreen() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+        {/* Opening Balance Dialog */}
+        <Dialog open={openingDialog} onOpenChange={setOpeningDialog}>
+          <DialogContent onOpenAutoFocus={(e) => e.preventDefault()}>
+            <DialogHeader>
+              <DialogTitle>Set Opening Balance</DialogTitle>
+              <DialogDescription>
+                {selectedAccount && (
+                  <>
+                    Post an opening balance for <strong>{selectedAccount.accountCode} — {selectedAccount.accountName}</strong>.
+                    A balanced journal entry will be created against the chosen equity offset.
+                  </>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Current Balance</Label>
+                  <Input
+                    value={selectedAccount ? formatCurrency(selectedAccount.currentBalance) : ''}
+                    disabled
+                  />
+                </div>
+                <div>
+                  <Label>Opening Amount *</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g. 5000000"
+                    value={openingAmount}
+                    onChange={(e) => setOpeningAmount(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Effective Date *</Label>
+                  <Input
+                    type="date"
+                    value={openingDate}
+                    onChange={(e) => setOpeningDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label>Equity Offset Account *</Label>
+                  <Select value={openingOffsetId} onValueChange={setOpeningOffsetId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select equity account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {equityAccounts.map((a) => (
+                        <SelectItem key={a.id} value={String(a.id)}>
+                          {a.accountCode} — {a.accountName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {selectedAccount && openingAmount && !isNaN(parseFloat(openingAmount)) && parseFloat(openingAmount) > 0 && (
+                <div className="p-3 rounded-lg text-sm bg-blue-500/10 text-blue-400 space-y-0.5">
+                  <div className="font-medium">Journal preview</div>
+                  <div className="font-mono text-xs">
+                    DR&nbsp;&nbsp;{selectedAccount.accountCode} {selectedAccount.accountName}
+                    {selectedAccount.normalBalance === 'debit' ? '' : '   (CR — credit-normal)'}
+                    &nbsp;&nbsp;{formatCurrency(parseFloat(openingAmount))}
+                  </div>
+                  <div className="font-mono text-xs">
+                    CR&nbsp;&nbsp;
+                    {(() => {
+                      const off = equityAccounts.find((a) => String(a.id) === openingOffsetId)
+                      return off ? `${off.accountCode} ${off.accountName}` : '(select offset)'
+                    })()}
+                    &nbsp;&nbsp;{formatCurrency(parseFloat(openingAmount))}
+                  </div>
+                </div>
+              )}
+              <div>
+                <Label>Notes (optional)</Label>
+                <Textarea
+                  placeholder="e.g., Bank balance as of business start date"
+                  value={openingNotes}
+                  onChange={(e) => setOpeningNotes(e.target.value)}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => { setOpeningDialog(false); setSelectedAccount(null) }}
+                disabled={openingSubmitting}
+              >
+                Cancel
+              </Button>
+              <Button onClick={handleSetOpeningBalance} disabled={openingSubmitting}>
+                {openingSubmitting ? 'Posting…' : 'Post Opening Balance'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Off-screen report card for screenshot capture */}
         {balanceSheet && (
           <CoaReportCard

@@ -252,6 +252,8 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('commissions:delete', id),
     getAvailableInvoices: (referralPersonId?: number) =>
       ipcRenderer.invoke('commissions:get-available-invoices', referralPersonId),
+    getSaleProfit: (saleId: number) =>
+      ipcRenderer.invoke('commissions:get-sale-profit', saleId),
   },
 
   // Referral Persons
@@ -447,6 +449,14 @@ const api = {
     recalculateBalances: () => ipcRenderer.invoke('coa:recalculate-balances'),
     adjustBalance: (accountId: number, targetBalance: number, reason: string, postedBy: number) =>
       ipcRenderer.invoke('coa:adjust-balance', accountId, targetBalance, reason, postedBy),
+    setOpeningBalance: (params: {
+      accountId: number
+      amount: number
+      entryDate: string
+      offsetAccountId?: number
+      postedBy: number
+      notes?: string
+    }) => ipcRenderer.invoke('coa:set-opening-balance', params),
     getCashFlowDetail: (params: { branchId: number; startDate: string; endDate: string }) =>
       ipcRenderer.invoke('coa:get-cash-flow-detail', params),
   },
@@ -609,6 +619,8 @@ const api = {
       ipcRenderer.invoke('online-transactions:bulk-confirm', ids),
     markFailed: (id: number, reason?: string) =>
       ipcRenderer.invoke('online-transactions:mark-failed', id, reason),
+    backfillClearing: () =>
+      ipcRenderer.invoke('online-transactions:backfill-clearing'),
     getDashboard: (params: {
       branchId: number
       timePeriod: string

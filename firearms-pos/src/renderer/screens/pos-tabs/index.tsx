@@ -136,7 +136,7 @@ export function PosTabsScreen() {
   const onHoldTabs = tabs.filter((t) => t.status === 'on_hold')
 
   return (
-    <div className="max-w-7xl mx-auto p-6">
+    <div className="theme-agentfactory max-w-7xl mx-auto p-6 bg-background text-foreground min-h-full">
       {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -171,7 +171,7 @@ export function PosTabsScreen() {
               <Filter className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-medium">Filters:</span>
             </div>
-            <div className="grid gap-4 sm:grid-cols-2 sm:flex-1">
+            <div className="grid gap-2 sm:grid-cols-2 sm:flex-1">
               {branches.length > 1 && (
                 <div>
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">
@@ -230,7 +230,7 @@ export function PosTabsScreen() {
                 <ShoppingBag className="h-5 w-5 text-green-600" />
                 Open Tabs ({openTabs.length})
               </h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {openTabs.map((tab) => (
                   <TabCard
                     key={tab.id}
@@ -251,7 +251,7 @@ export function PosTabsScreen() {
                 <Pause className="h-5 w-5 text-yellow-600" />
                 On Hold Tabs ({onHoldTabs.length})
               </h2>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {onHoldTabs.map((tab) => (
                   <TabCard
                     key={tab.id}
@@ -283,7 +283,7 @@ export function PosTabsScreen() {
           )}
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {tabs.map((tab) => (
             <TabCard
               key={tab.id}

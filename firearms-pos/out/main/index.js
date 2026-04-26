@@ -300,7 +300,9 @@ const sales = sqliteCore.sqliteTable("sales", {
   paymentMethod: sqliteCore.text("payment_method", {
     enum: ["cash", "card", "credit", "mixed", "mobile", "cod", "receivable"]
   }).notNull().default("cash"),
-  paymentStatus: sqliteCore.text("payment_status", { enum: ["paid", "partial", "pending"] }).notNull().default("paid"),
+  paymentStatus: sqliteCore.text("payment_status", {
+    enum: ["paid", "partial", "pending", "pending_approval", "cancelled"]
+  }).notNull().default("paid"),
   amountPaid: sqliteCore.real("amount_paid").notNull().default(0),
   changeGiven: sqliteCore.real("change_given").notNull().default(0),
   notes: sqliteCore.text("notes"),
@@ -379,7 +381,9 @@ const returns = sqliteCore.sqliteTable("returns", {
   subtotal: sqliteCore.real("subtotal").notNull().default(0),
   taxAmount: sqliteCore.real("tax_amount").notNull().default(0),
   totalAmount: sqliteCore.real("total_amount").notNull().default(0),
-  refundMethod: sqliteCore.text("refund_method", { enum: ["cash", "card", "store_credit"] }),
+  refundMethod: sqliteCore.text("refund_method", {
+    enum: ["cash", "card", "store_credit", "bank_transfer", "mobile", "cheque", "other"]
+  }),
   refundAmount: sqliteCore.real("refund_amount").notNull().default(0),
   reason: sqliteCore.text("reason"),
   notes: sqliteCore.text("notes"),
@@ -476,6 +480,10 @@ const payablePayments = sqliteCore.sqliteTable(
     // Cheque number, transaction ID, etc.
     notes: sqliteCore.text("notes"),
     paidBy: sqliteCore.integer("paid_by").references(() => users.id),
+    // Approval gate for non-cash payments. 'pending_approval' means the payment
+    // intent is recorded but the AP balance and GL have NOT been updated yet —
+    // those land only when the matching online_transactions row is confirmed.
+    status: sqliteCore.text("status", { enum: ["pending_approval", "posted", "cancelled"] }).notNull().default("posted"),
     paymentDate: sqliteCore.text("payment_date").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString()),
     createdAt: sqliteCore.text("created_at").notNull().$defaultFn(() => (/* @__PURE__ */ new Date()).toISOString())
   },
@@ -1596,7 +1604,7 @@ const onlineTransactions = sqliteCore.sqliteTable(
     notes: sqliteCore.text("notes"),
     // Source tracking - what created this record
     sourceType: sqliteCore.text("source_type", {
-      enum: ["sale", "receivable_payment", "payable_payment", "manual"]
+      enum: ["sale", "receivable_payment", "payable_payment", "return_refund", "manual"]
     }).notNull().default("manual"),
     sourceId: sqliteCore.integer("source_id"),
     // ID of the source record
@@ -2391,6 +2399,8 @@ function sanitizeForAudit(obj) {
 const ACCOUNT_CODES = {
   CASH_IN_HAND: "1010",
   CASH_IN_BANK: "1020",
+  PENDING_ONLINE_PAYMENTS: "1030",
+  // Clearing account for non-cash flows awaiting approval
   ACCOUNTS_RECEIVABLE: "1100",
   INVENTORY: "1200",
   ACCOUNTS_PAYABLE: "2000",
@@ -2400,6 +2410,8 @@ const ACCOUNT_CODES = {
   OWNERS_CAPITAL: "3000",
   RETAINED_EARNINGS: "3100",
   SALES_REVENUE: "4000",
+  SALES_REFUNDS: "4100",
+  // Contra-revenue for sales refunds & returns
   INVENTORY_ADJUSTMENT: "4900",
   // Income from inventory surplus
   COGS: "5000",
@@ -2443,6 +2455,12 @@ const DEFAULT_ACCOUNTS = {
     accountType: "asset",
     normalBalance: "debit",
     description: "Bank account balances"
+  },
+  "1030": {
+    accountName: "Pending Online Payments",
+    accountType: "asset",
+    normalBalance: "debit",
+    description: "Non-cash payments awaiting approval in Online Transactions tab"
   },
   "1100": {
     accountName: "Accounts Receivable",
@@ -2491,6 +2509,13 @@ const DEFAULT_ACCOUNTS = {
     accountType: "revenue",
     normalBalance: "credit",
     description: "Revenue from product sales"
+  },
+  "4100": {
+    accountName: "Sales Refunds & Returns",
+    accountType: "revenue",
+    normalBalance: "debit",
+    // contra-revenue
+    description: "Refunds and returns deducted from gross sales"
   },
   "4900": {
     accountName: "Inventory Adjustment Income",
@@ -2642,24 +2667,26 @@ async function postSaleToGL(sale, saleItems2, userId, payments, codCharges) {
   if (payments && payments.length > 0) {
     for (const payment of payments) {
       if (payment.amount <= 0) continue;
-      const accountCode = ["card", "debit_card", "mobile", "cheque", "bank_transfer"].includes(payment.method) ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+      const isCashSide = payment.method === "cash" || payment.method === "cod";
+      const accountCode = isCashSide ? ACCOUNT_CODES.CASH_IN_HAND : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS;
       const methodLabel = payment.method === "card" ? "Card" : payment.method === "debit_card" ? "Debit Card" : payment.method === "mobile" ? "Mobile" : payment.method === "cheque" ? "Cheque" : payment.method === "bank_transfer" ? "Bank Transfer" : payment.method === "cod" ? "COD" : "Cash";
       lines.push({
         accountCode,
         debitAmount: payment.amount,
         creditAmount: 0,
-        description: `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
+        description: isCashSide ? `${methodLabel} payment for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}` : `Pending ${methodLabel} for sale ${sale.invoiceNumber}${payment.referenceNumber ? ` (Ref: ${payment.referenceNumber})` : ""}`
       });
     }
   } else if (sale.amountPaid > 0) {
     const netCashReceived = sale.amountPaid - (sale.changeGiven || 0);
-    const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+    const isCashSide = sale.paymentMethod === "cash" || sale.paymentMethod === "cod";
+    const cashAccountCode = isCashSide ? ACCOUNT_CODES.CASH_IN_HAND : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS;
     if (netCashReceived > 0) {
       lines.push({
         accountCode: cashAccountCode,
         debitAmount: netCashReceived,
         creditAmount: 0,
-        description: `Cash received for sale ${sale.invoiceNumber}`
+        description: isCashSide ? `Cash received for sale ${sale.invoiceNumber}` : `Pending ${sale.paymentMethod} for sale ${sale.invoiceNumber}`
       });
     }
   }
@@ -2812,10 +2839,10 @@ async function postReturnToGL(returnData, returnItems2, userId) {
   const netRevenue = returnData.subtotal;
   if (netRevenue > 0) {
     lines.push({
-      accountCode: ACCOUNT_CODES.SALES_REVENUE,
+      accountCode: ACCOUNT_CODES.SALES_REFUNDS,
       debitAmount: netRevenue,
       creditAmount: 0,
-      description: `Revenue reversal for return ${returnData.returnNumber}`
+      description: `Refund for return ${returnData.returnNumber}`
     });
   }
   if (returnData.taxAmount > 0) {
@@ -2826,9 +2853,9 @@ async function postReturnToGL(returnData, returnItems2, userId) {
       description: `Tax reversal for return ${returnData.returnNumber}`
     });
   }
-  const cashAccount = returnData.refundMethod === "card" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  const refundAccount = returnData.refundMethod === "cash" ? ACCOUNT_CODES.CASH_IN_HAND : returnData.refundMethod === "store_credit" ? ACCOUNT_CODES.ACCOUNTS_RECEIVABLE : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS;
   lines.push({
-    accountCode: cashAccount,
+    accountCode: refundAccount,
     debitAmount: 0,
     creditAmount: returnData.totalAmount,
     description: `Refund for return ${returnData.returnNumber}`
@@ -2859,12 +2886,13 @@ async function postReturnToGL(returnData, returnItems2, userId) {
 }
 async function postARPaymentToGL(payment, userId) {
   const lines = [];
-  const cashAccount = payment.paymentMethod === "card" || payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  const isCash = payment.paymentMethod === "cash";
+  const cashAccount = isCash ? ACCOUNT_CODES.CASH_IN_HAND : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS;
   lines.push({
     accountCode: cashAccount,
     debitAmount: payment.amount,
     creditAmount: 0,
-    description: `Payment received for ${payment.invoiceNumber}`
+    description: isCash ? `Payment received for ${payment.invoiceNumber}` : `Pending ${payment.paymentMethod} for ${payment.invoiceNumber}`
   });
   lines.push({
     accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
@@ -2883,7 +2911,8 @@ async function postARPaymentToGL(payment, userId) {
 }
 async function postAPPaymentToGL(payment, userId) {
   const lines = [];
-  const cashAccount = payment.paymentMethod === "bank_transfer" || payment.paymentMethod === "cheque" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  const isCash = payment.paymentMethod === "cash";
+  const cashAccount = isCash ? ACCOUNT_CODES.CASH_IN_HAND : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS;
   lines.push({
     accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
     debitAmount: payment.amount,
@@ -2894,7 +2923,7 @@ async function postAPPaymentToGL(payment, userId) {
     accountCode: cashAccount,
     debitAmount: 0,
     creditAmount: payment.amount,
-    description: `Payment for ${payment.invoiceNumber}`
+    description: isCash ? `Payment for ${payment.invoiceNumber}` : `Pending ${payment.paymentMethod} for ${payment.invoiceNumber}`
   });
   return createJournalEntry({
     description: `AP Payment: ${payment.invoiceNumber}`,
@@ -2907,7 +2936,8 @@ async function postAPPaymentToGL(payment, userId) {
 }
 async function postVoidSaleToGL(sale, saleItems2, userId) {
   const lines = [];
-  const cashAccountCode = sale.paymentMethod === "card" || sale.paymentMethod === "mobile" ? ACCOUNT_CODES.CASH_IN_BANK : ACCOUNT_CODES.CASH_IN_HAND;
+  const isCashSide = sale.paymentMethod === "cash" || sale.paymentMethod === "cod";
+  const cashAccountCode = isCashSide ? ACCOUNT_CODES.CASH_IN_HAND : ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS;
   if (sale.amountPaid > 0) {
     lines.push({
       accountCode: cashAccountCode,
@@ -3683,6 +3713,16 @@ async function runMigrations() {
     console.error("Expenses payment_status migration error:", error);
   }
   try {
+    await ensurePayablePaymentsStatus();
+  } catch (error) {
+    console.error("payable_payments status migration error:", error);
+  }
+  try {
+    await ensureReceivablePaymentsStatus();
+  } catch (error) {
+    console.error("receivable_payments status migration error:", error);
+  }
+  try {
     await ensureApplicationInfoSetupCompleted();
   } catch (error) {
     console.error("Application info setup_completed migration error:", error);
@@ -3910,6 +3950,38 @@ async function ensureExpensesPaymentStatus() {
     console.error("Error creating expenses indexes:", error);
   }
   console.log("expenses payment_status migration completed successfully!");
+}
+async function ensurePayablePaymentsStatus() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='payable_payments'`
+  ).get();
+  if (!tableCheck) return;
+  const tableInfo = rawDb.prepare(`PRAGMA table_info(payable_payments)`).all();
+  const existing = new Set(tableInfo.map((c) => c.name));
+  if (!existing.has("status")) {
+    console.log("Adding payable_payments.status column...");
+    const alterSql = `ALTER TABLE payable_payments ADD COLUMN status TEXT DEFAULT 'posted' NOT NULL`;
+    rawDb.prepare(alterSql).run();
+    console.log("payable_payments.status column added");
+  }
+}
+async function ensureReceivablePaymentsStatus() {
+  const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
+  const rawDb = getRawDatabase2();
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='receivable_payments'`
+  ).get();
+  if (!tableCheck) return;
+  const tableInfo = rawDb.prepare(`PRAGMA table_info(receivable_payments)`).all();
+  const existing = new Set(tableInfo.map((c) => c.name));
+  if (!existing.has("status")) {
+    console.log("Adding receivable_payments.status column...");
+    const alterSql = `ALTER TABLE receivable_payments ADD COLUMN status TEXT DEFAULT 'posted' NOT NULL`;
+    rawDb.prepare(alterSql).run();
+    console.log("receivable_payments.status column added");
+  }
 }
 async function ensureApplicationInfoSetupCompleted() {
   const { getRawDatabase: getRawDatabase2 } = await Promise.resolve().then(() => index);
@@ -6916,6 +6988,7 @@ function handleIpcError(operation, error) {
   console.error(`${operation} error [${classified.category}/${classified.code}]:`, error);
   return { success: false, message: classified.message };
 }
+const APPROVER_ROLES = /* @__PURE__ */ new Set(["admin", "manager"]);
 function mapPaymentMethodToChannel(method) {
   switch (method) {
     case "bank_transfer":
@@ -7109,6 +7182,83 @@ function registerOnlineTransactionHandlers() {
       }
     }
   );
+  electron.ipcMain.handle("online-transactions:backfill-clearing", async () => {
+    try {
+      const session = getCurrentSession();
+      if (!session) return { success: false, message: "Unauthorized" };
+      if (session.role !== "admin") {
+        return { success: false, message: "Admin only — destructive migration" };
+      }
+      const pending = await db2.query.onlineTransactions.findMany({
+        where: drizzleOrm.eq(onlineTransactions.status, "pending")
+      });
+      const results = [];
+      for (const row of pending) {
+        try {
+          const marker = await db2.query.journalEntries.findFirst({
+            where: drizzleOrm.and(
+              drizzleOrm.eq(journalEntries.referenceType, "online_transaction_backfill"),
+              drizzleOrm.eq(journalEntries.referenceId, row.id)
+            )
+          });
+          if (marker) {
+            results.push({ id: row.id, ok: false, message: "Already backfilled" });
+            continue;
+          }
+          const lines = row.direction === "outflow" ? [
+            {
+              accountCode: ACCOUNT_CODES.CASH_IN_BANK,
+              debitAmount: row.amount,
+              creditAmount: 0,
+              description: `Backfill: undo legacy bank credit for online tx #${row.id}`
+            },
+            {
+              accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+              debitAmount: 0,
+              creditAmount: row.amount,
+              description: `Backfill: post outflow obligation to clearing for online tx #${row.id}`
+            }
+          ] : [
+            {
+              accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+              debitAmount: row.amount,
+              creditAmount: 0,
+              description: `Backfill: move legacy inflow into clearing for online tx #${row.id}`
+            },
+            {
+              accountCode: ACCOUNT_CODES.CASH_IN_BANK,
+              debitAmount: 0,
+              creditAmount: row.amount,
+              description: `Backfill: undo legacy bank debit for online tx #${row.id}`
+            }
+          ];
+          await createJournalEntry({
+            description: `Clearing backfill for online tx #${row.id} (${row.paymentChannel}, ${row.direction})`,
+            referenceType: "online_transaction_backfill",
+            referenceId: row.id,
+            branchId: row.branchId,
+            userId: session.userId,
+            lines
+          });
+          results.push({ id: row.id, ok: true });
+        } catch (e) {
+          results.push({ id: row.id, ok: false, message: e.message });
+        }
+      }
+      const okCount = results.filter((r) => r.ok).length;
+      return {
+        success: true,
+        data: {
+          totalPending: pending.length,
+          backfilled: okCount,
+          results
+        }
+      };
+    } catch (error) {
+      console.error("Backfill clearing error:", error);
+      return { success: false, message: error.message || "Backfill failed" };
+    }
+  });
   electron.ipcMain.handle("online-transactions:delete", async (_, id) => {
     try {
       const session = getCurrentSession();
@@ -7136,10 +7286,199 @@ function registerOnlineTransactionHandlers() {
       return { success: false, message: "Failed to delete online transaction" };
     }
   });
+  async function finalizeHeldSale(txDb, sale, onlineTx, userId) {
+    const existingJE = await txDb.query.journalEntries.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(journalEntries.referenceType, "sale"),
+        drizzleOrm.eq(journalEntries.referenceId, sale.id),
+        drizzleOrm.ne(journalEntries.status, "reversed")
+      )
+    });
+    if (existingJE) {
+      console.log(
+        `[finalizeHeldSale] sale #${sale.id} already has JE ${existingJE.id}; skipping finalize.`
+      );
+      if (sale.paymentStatus === "pending_approval") {
+        await txDb.update(sales).set({ paymentStatus: "paid", updatedAt: (/* @__PURE__ */ new Date()).toISOString() }).where(drizzleOrm.eq(sales.id, sale.id));
+      }
+      return;
+    }
+    const items = await txDb.query.saleItems.findMany({
+      where: drizzleOrm.eq(saleItems.saleId, sale.id)
+    });
+    for (const item of items) {
+      const product = await txDb.query.products.findFirst({
+        where: drizzleOrm.eq(products.id, item.productId)
+      });
+      const stock = await txDb.query.inventory.findFirst({
+        where: drizzleOrm.and(
+          drizzleOrm.eq(inventory.productId, item.productId),
+          drizzleOrm.eq(inventory.branchId, sale.branchId)
+        )
+      });
+      if (!stock || stock.quantity < item.quantity) {
+        throw new Error(
+          `Insufficient stock for ${product?.name || `product #${item.productId}`} — cannot approve sale ${sale.invoiceNumber}. Reject this transaction instead.`
+        );
+      }
+    }
+    const finalizedItems = [];
+    for (const item of items) {
+      const fifoResult = await consumeCostLayers(
+        item.productId,
+        sale.branchId,
+        item.quantity
+      );
+      const actualCostPerUnit = item.quantity > 0 ? fifoResult.totalCost / item.quantity : item.costPrice;
+      if (Math.abs(actualCostPerUnit - item.costPrice) > 0.01) {
+        await txDb.update(saleItems).set({ costPrice: actualCostPerUnit }).where(drizzleOrm.eq(saleItems.id, item.id));
+      }
+      finalizedItems.push({ costPrice: actualCostPerUnit, quantity: item.quantity });
+    }
+    for (const item of items) {
+      await txDb.update(inventory).set({
+        quantity: drizzleOrm.sql`${inventory.quantity} - ${item.quantity}`,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }).where(
+        drizzleOrm.and(
+          drizzleOrm.eq(inventory.productId, item.productId),
+          drizzleOrm.eq(inventory.branchId, sale.branchId)
+        )
+      );
+    }
+    await txDb.insert(salePayments).values({
+      saleId: sale.id,
+      paymentMethod: sale.paymentMethod === "card" ? "card" : "mobile",
+      amount: sale.totalAmount,
+      referenceNumber: onlineTx.referenceNumber,
+      notes: onlineTx.notes
+    });
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    await txDb.update(sales).set({
+      paymentStatus: "paid",
+      amountPaid: sale.totalAmount,
+      updatedAt: now
+    }).where(drizzleOrm.eq(sales.id, sale.id));
+    const finalizedSale = { ...sale, amountPaid: sale.totalAmount };
+    await postSaleToGL(finalizedSale, finalizedItems, userId, [
+      {
+        method: sale.paymentMethod === "card" ? "card" : "mobile",
+        amount: sale.totalAmount,
+        referenceNumber: onlineTx.referenceNumber || void 0
+      }
+    ]);
+  }
+  async function finalizeHeldPayablePayment(txDb, payment, userId) {
+    const existingJE = await txDb.query.journalEntries.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(journalEntries.referenceType, "payable_payment"),
+        drizzleOrm.eq(journalEntries.referenceId, payment.id),
+        drizzleOrm.ne(journalEntries.status, "reversed")
+      )
+    });
+    if (existingJE) {
+      console.log(
+        `[finalizeHeldPayablePayment] payment #${payment.id} already has JE ${existingJE.id}; skipping finalize.`
+      );
+      if (payment.status !== "posted") {
+        await txDb.update(payablePayments).set({ status: "posted" }).where(drizzleOrm.eq(payablePayments.id, payment.id));
+      }
+      return;
+    }
+    const payable = await txDb.query.accountPayables.findFirst({
+      where: drizzleOrm.eq(accountPayables.id, payment.payableId)
+    });
+    if (!payable) throw new Error(`Payable #${payment.payableId} not found`);
+    const newPaidAmount = payable.paidAmount + payment.amount;
+    const newRemainingAmount = payable.totalAmount - newPaidAmount;
+    const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    await txDb.update(accountPayables).set({
+      paidAmount: newPaidAmount,
+      remainingAmount: Math.max(0, newRemainingAmount),
+      status: newStatus,
+      updatedAt: now
+    }).where(drizzleOrm.eq(accountPayables.id, payable.id));
+    if (payable.purchaseId) {
+      const linkedPurchase = await txDb.query.purchases.findFirst({
+        where: drizzleOrm.eq(purchases.id, payable.purchaseId)
+      });
+      if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
+        await txDb.update(purchases).set({ paymentStatus: newStatus, updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
+      }
+    }
+    if (newStatus === "paid") {
+      const linkedExpense = await txDb.query.expenses.findFirst({
+        where: drizzleOrm.eq(expenses.payableId, payable.id)
+      });
+      if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
+        await txDb.update(expenses).set({ paymentStatus: "paid", updatedAt: now }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+      }
+    }
+    await postAPPaymentToGL(
+      {
+        id: payment.id,
+        payableId: payment.payableId,
+        branchId: payable.branchId,
+        amount: payment.amount,
+        paymentMethod: payment.paymentMethod,
+        invoiceNumber: payable.invoiceNumber
+      },
+      userId
+    );
+    await txDb.update(payablePayments).set({ status: "posted" }).where(drizzleOrm.eq(payablePayments.id, payment.id));
+  }
+  async function finalizeHeldReceivablePayment(txDb, payment, userId) {
+    const existingJE = await txDb.query.journalEntries.findFirst({
+      where: drizzleOrm.and(
+        drizzleOrm.eq(journalEntries.referenceType, "receivable_payment"),
+        drizzleOrm.eq(journalEntries.referenceId, payment.id),
+        drizzleOrm.ne(journalEntries.status, "reversed")
+      )
+    });
+    if (existingJE) {
+      console.log(
+        `[finalizeHeldReceivablePayment] payment #${payment.id} already has JE ${existingJE.id}; skipping finalize.`
+      );
+      if (payment.status !== "posted") {
+        await txDb.update(receivablePayments).set({ status: "posted" }).where(drizzleOrm.eq(receivablePayments.id, payment.id));
+      }
+      return;
+    }
+    const receivable = await txDb.query.accountReceivables.findFirst({
+      where: drizzleOrm.eq(accountReceivables.id, payment.receivableId)
+    });
+    if (!receivable) throw new Error(`Receivable #${payment.receivableId} not found`);
+    const newPaidAmount = receivable.paidAmount + payment.amount;
+    const newRemainingAmount = receivable.totalAmount - newPaidAmount;
+    const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    await txDb.update(accountReceivables).set({
+      paidAmount: newPaidAmount,
+      remainingAmount: Math.max(0, newRemainingAmount),
+      status: newStatus,
+      updatedAt: now
+    }).where(drizzleOrm.eq(accountReceivables.id, receivable.id));
+    await postARPaymentToGL(
+      {
+        id: payment.id,
+        receivableId: payment.receivableId,
+        branchId: receivable.branchId,
+        amount: payment.amount,
+        paymentMethod: payment.paymentMethod,
+        invoiceNumber: receivable.invoiceNumber
+      },
+      userId
+    );
+    await txDb.update(receivablePayments).set({ status: "posted" }).where(drizzleOrm.eq(receivablePayments.id, payment.id));
+  }
   electron.ipcMain.handle("online-transactions:confirm", async (_, id) => {
     try {
       const session = getCurrentSession();
       if (!session) return { success: false, message: "Unauthorized" };
+      if (!APPROVER_ROLES.has(session.role)) {
+        return { success: false, message: "Only admin or manager can approve online transactions" };
+      }
       const existing = await db2.query.onlineTransactions.findFirst({
         where: drizzleOrm.eq(onlineTransactions.id, id)
       });
@@ -7147,12 +7486,78 @@ function registerOnlineTransactionHandlers() {
       if (existing.status === "confirmed") {
         return { success: false, message: "Transaction is already confirmed" };
       }
-      const [updated] = await db2.update(onlineTransactions).set({
-        status: "confirmed",
-        confirmedBy: session.userId,
-        confirmedAt: (/* @__PURE__ */ new Date()).toISOString(),
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+      if (existing.status === "failed") {
+        return { success: false, message: "Transaction was rejected; cannot confirm" };
+      }
+      const result = await withTransaction(async ({ db: txDb }) => {
+        if (existing.sourceType === "sale" && existing.saleId) {
+          const sale = await txDb.query.sales.findFirst({
+            where: drizzleOrm.eq(sales.id, existing.saleId)
+          });
+          if (sale) {
+            await finalizeHeldSale(txDb, sale, existing, session.userId);
+          }
+        }
+        if (existing.sourceType === "payable_payment" && existing.sourceId) {
+          const payment = await txDb.query.payablePayments.findFirst({
+            where: drizzleOrm.eq(payablePayments.id, existing.sourceId)
+          });
+          if (payment) {
+            await finalizeHeldPayablePayment(txDb, payment, session.userId);
+          }
+        }
+        if (existing.sourceType === "receivable_payment" && existing.sourceId) {
+          const payment = await txDb.query.receivablePayments.findFirst({
+            where: drizzleOrm.eq(receivablePayments.id, existing.sourceId)
+          });
+          if (payment) {
+            await finalizeHeldReceivablePayment(txDb, payment, session.userId);
+          }
+        }
+        const lines = existing.direction === "outflow" ? [
+          {
+            accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+            debitAmount: existing.amount,
+            creditAmount: 0,
+            description: `Drain clearing for confirmed ${existing.paymentChannel} #${id}`
+          },
+          {
+            accountCode: ACCOUNT_CODES.CASH_IN_BANK,
+            debitAmount: 0,
+            creditAmount: existing.amount,
+            description: `Bank outflow confirmed: ${existing.invoiceNumber || `tx#${id}`}`
+          }
+        ] : [
+          {
+            accountCode: ACCOUNT_CODES.CASH_IN_BANK,
+            debitAmount: existing.amount,
+            creditAmount: 0,
+            description: `Bank inflow confirmed: ${existing.invoiceNumber || `tx#${id}`}`
+          },
+          {
+            accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+            debitAmount: 0,
+            creditAmount: existing.amount,
+            description: `Drain clearing for confirmed ${existing.paymentChannel} #${id}`
+          }
+        ];
+        const journalEntryId = await createJournalEntry({
+          description: `Confirm online tx #${id} (${existing.paymentChannel}, ${existing.direction})`,
+          referenceType: "online_transaction_confirm",
+          referenceId: id,
+          branchId: existing.branchId,
+          userId: session.userId,
+          lines
+        });
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        const [updated] = await txDb.update(onlineTransactions).set({
+          status: "confirmed",
+          confirmedBy: session.userId,
+          confirmedAt: now,
+          updatedAt: now
+        }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+        return { updated, journalEntryId };
+      });
       await createAuditLog$1({
         userId: session.userId,
         branchId: existing.branchId,
@@ -7160,50 +7565,437 @@ function registerOnlineTransactionHandlers() {
         entityType: "online_transaction",
         entityId: id,
         oldValues: { status: existing.status },
-        newValues: { status: "confirmed" },
-        description: `Confirmed online transaction #${id}`
+        newValues: { status: "confirmed", journalEntryId: result.journalEntryId },
+        description: `Confirmed online transaction #${id} (JE ${result.journalEntryId})`
       });
-      return { success: true, data: updated };
+      return { success: true, data: result.updated };
     } catch (error) {
       console.error("Confirm online transaction error:", error);
-      return { success: false, message: "Failed to confirm transaction" };
+      return { success: false, message: error.message || "Failed to confirm transaction" };
     }
   });
   electron.ipcMain.handle("online-transactions:bulk-confirm", async (_, ids) => {
-    try {
-      const session = getCurrentSession();
-      if (!session) return { success: false, message: "Unauthorized" };
-      const now = (/* @__PURE__ */ new Date()).toISOString();
-      await db2.update(onlineTransactions).set({
-        status: "confirmed",
-        confirmedBy: session.userId,
-        confirmedAt: now,
-        updatedAt: now
-      }).where(
-        drizzleOrm.and(
-          drizzleOrm.inArray(onlineTransactions.id, ids),
-          drizzleOrm.eq(onlineTransactions.status, "pending")
-        )
-      );
-      return { success: true, message: `${ids.length} transactions confirmed` };
-    } catch (error) {
-      console.error("Bulk confirm error:", error);
-      return { success: false, message: "Failed to confirm transactions" };
+    const session = getCurrentSession();
+    if (!session) return { success: false, message: "Unauthorized" };
+    if (!APPROVER_ROLES.has(session.role)) {
+      return { success: false, message: "Only admin or manager can approve online transactions" };
     }
+    const results = [];
+    for (const id of ids) {
+      try {
+        const existing = await db2.query.onlineTransactions.findFirst({
+          where: drizzleOrm.eq(onlineTransactions.id, id)
+        });
+        if (!existing || existing.status !== "pending") {
+          results.push({ id, ok: false, message: "Not pending" });
+          continue;
+        }
+        await withTransaction(async ({ db: txDb }) => {
+          if (existing.sourceType === "sale" && existing.saleId) {
+            const sale = await txDb.query.sales.findFirst({
+              where: drizzleOrm.eq(sales.id, existing.saleId)
+            });
+            if (sale) {
+              await finalizeHeldSale(txDb, sale, existing, session.userId);
+            }
+          }
+          if (existing.sourceType === "payable_payment" && existing.sourceId) {
+            const payment = await txDb.query.payablePayments.findFirst({
+              where: drizzleOrm.eq(payablePayments.id, existing.sourceId)
+            });
+            if (payment) {
+              await finalizeHeldPayablePayment(txDb, payment, session.userId);
+            }
+          }
+          if (existing.sourceType === "receivable_payment" && existing.sourceId) {
+            const payment = await txDb.query.receivablePayments.findFirst({
+              where: drizzleOrm.eq(receivablePayments.id, existing.sourceId)
+            });
+            if (payment) {
+              await finalizeHeldReceivablePayment(txDb, payment, session.userId);
+            }
+          }
+          const lines = existing.direction === "outflow" ? [
+            {
+              accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+              debitAmount: existing.amount,
+              creditAmount: 0
+            },
+            {
+              accountCode: ACCOUNT_CODES.CASH_IN_BANK,
+              debitAmount: 0,
+              creditAmount: existing.amount
+            }
+          ] : [
+            {
+              accountCode: ACCOUNT_CODES.CASH_IN_BANK,
+              debitAmount: existing.amount,
+              creditAmount: 0
+            },
+            {
+              accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+              debitAmount: 0,
+              creditAmount: existing.amount
+            }
+          ];
+          await createJournalEntry({
+            description: `Bulk confirm online tx #${id}`,
+            referenceType: "online_transaction_confirm",
+            referenceId: id,
+            branchId: existing.branchId,
+            userId: session.userId,
+            lines
+          });
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          await txDb.update(onlineTransactions).set({
+            status: "confirmed",
+            confirmedBy: session.userId,
+            confirmedAt: now,
+            updatedAt: now
+          }).where(drizzleOrm.eq(onlineTransactions.id, id));
+        });
+        results.push({ id, ok: true });
+      } catch (e) {
+        results.push({ id, ok: false, message: e.message });
+      }
+    }
+    const okCount = results.filter((r) => r.ok).length;
+    return {
+      success: okCount > 0,
+      message: `${okCount}/${ids.length} confirmed`,
+      data: results
+    };
   });
   electron.ipcMain.handle("online-transactions:mark-failed", async (_, id, reason) => {
     try {
       const session = getCurrentSession();
       if (!session) return { success: false, message: "Unauthorized" };
-      const [updated] = await db2.update(onlineTransactions).set({
-        status: "failed",
-        notes: reason ? drizzleOrm.sql`CASE WHEN ${onlineTransactions.notes} IS NOT NULL THEN ${onlineTransactions.notes} || ' | Failed: ' || ${reason} ELSE 'Failed: ' || ${reason} END` : onlineTransactions.notes,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
-      return { success: true, data: updated };
+      if (!APPROVER_ROLES.has(session.role)) {
+        return { success: false, message: "Only admin or manager can reject online transactions" };
+      }
+      const existing = await db2.query.onlineTransactions.findFirst({
+        where: drizzleOrm.eq(onlineTransactions.id, id)
+      });
+      if (!existing) return { success: false, message: "Transaction not found" };
+      if (existing.status === "failed") {
+        return { success: false, message: "Transaction is already rejected" };
+      }
+      if (existing.status === "confirmed") {
+        return {
+          success: false,
+          message: "Transaction was already confirmed. Use a refund / void flow instead of rejecting."
+        };
+      }
+      const result = await withTransaction(async ({ db: txDb }) => {
+        const now = (/* @__PURE__ */ new Date()).toISOString();
+        let reversalJournalEntryId = null;
+        let sourceRestored = {};
+        if (existing.sourceType === "payable_payment") {
+          const payment = await txDb.query.payablePayments.findFirst({
+            where: drizzleOrm.eq(payablePayments.id, existing.sourceId)
+          });
+          if (!payment) throw new Error(`payable_payment #${existing.sourceId} not found`);
+          const payable = await txDb.query.accountPayables.findFirst({
+            where: drizzleOrm.eq(accountPayables.id, payment.payableId)
+          });
+          if (!payable) throw new Error(`account_payable #${payment.payableId} not found`);
+          if (payment.status === "pending_approval") {
+            await txDb.update(payablePayments).set({ status: "cancelled" }).where(drizzleOrm.eq(payablePayments.id, payment.id));
+            sourceRestored = {
+              payableId: payable.id,
+              invoiceNumber: payable.invoiceNumber,
+              held: true,
+              paymentRowCancelled: payment.id,
+              note: "Held payment cancelled — AP balance and GL untouched."
+            };
+          } else {
+            reversalJournalEntryId = await createJournalEntry({
+              description: `Reject AP payment ${payable.invoiceNumber} (online tx #${id})`,
+              referenceType: "payable_payment_reversal",
+              referenceId: payment.id,
+              branchId: existing.branchId,
+              userId: session.userId,
+              lines: [
+                {
+                  accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+                  debitAmount: existing.amount,
+                  creditAmount: 0,
+                  description: `Drain clearing for rejected payment of ${payable.invoiceNumber}`
+                },
+                {
+                  accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+                  debitAmount: 0,
+                  creditAmount: existing.amount,
+                  description: `Restore AP for rejected payment of ${payable.invoiceNumber}`
+                }
+              ]
+            });
+            const originalJE = await txDb.query.journalEntries.findFirst({
+              where: drizzleOrm.and(
+                drizzleOrm.eq(journalEntries.referenceType, "payable_payment"),
+                drizzleOrm.eq(journalEntries.referenceId, payment.id),
+                drizzleOrm.eq(journalEntries.status, "posted")
+              )
+            });
+            if (originalJE) {
+              await txDb.update(journalEntries).set({
+                status: "reversed",
+                reversedBy: session.userId,
+                reversedAt: now,
+                reversalEntryId: reversalJournalEntryId,
+                updatedAt: now
+              }).where(drizzleOrm.eq(journalEntries.id, originalJE.id));
+            }
+            const restoredPaid = Math.max(0, payable.paidAmount - payment.amount);
+            const restoredRemaining = payable.totalAmount - restoredPaid;
+            const newStatus = restoredPaid <= 0 ? "pending" : restoredRemaining <= 0 ? "paid" : "partial";
+            await txDb.update(accountPayables).set({
+              paidAmount: restoredPaid,
+              remainingAmount: restoredRemaining,
+              status: newStatus,
+              updatedAt: now
+            }).where(drizzleOrm.eq(accountPayables.id, payable.id));
+            await txDb.delete(payablePayments).where(drizzleOrm.eq(payablePayments.id, payment.id));
+            sourceRestored = {
+              payableId: payable.id,
+              invoiceNumber: payable.invoiceNumber,
+              paidAmount: restoredPaid,
+              remainingAmount: restoredRemaining,
+              status: newStatus,
+              paymentRowDeleted: payment.id,
+              legacy: true
+            };
+          }
+        } else if (existing.sourceType === "sale") {
+          const sale = await txDb.query.sales.findFirst({
+            where: drizzleOrm.eq(sales.id, existing.sourceId)
+          });
+          if (!sale) throw new Error(`sale #${existing.sourceId} not found`);
+          if (sale.paymentStatus === "pending_approval") {
+            await txDb.update(sales).set({
+              paymentStatus: "cancelled",
+              isVoided: true,
+              voidReason: reason || `Online tx #${id} rejected`,
+              updatedAt: now
+            }).where(drizzleOrm.eq(sales.id, sale.id));
+            sourceRestored = {
+              saleId: sale.id,
+              invoiceNumber: sale.invoiceNumber,
+              held: true,
+              voided: true,
+              note: "Held sale cancelled — no books impact (nothing was posted at create-time)."
+            };
+          } else {
+            reversalJournalEntryId = await createJournalEntry({
+              description: `Reject ${existing.paymentChannel} for sale ${sale.invoiceNumber} (online tx #${id})`,
+              referenceType: "online_transaction_reject",
+              referenceId: id,
+              branchId: existing.branchId,
+              userId: session.userId,
+              lines: [
+                {
+                  accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+                  debitAmount: existing.amount,
+                  creditAmount: 0,
+                  description: `Receivable opened due to rejected ${existing.paymentChannel} for ${sale.invoiceNumber}`
+                },
+                {
+                  accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+                  debitAmount: 0,
+                  creditAmount: existing.amount,
+                  description: `Drain clearing for rejected ${existing.paymentChannel} on ${sale.invoiceNumber}`
+                }
+              ]
+            });
+            const originalJE = await txDb.query.journalEntries.findFirst({
+              where: drizzleOrm.and(
+                drizzleOrm.eq(journalEntries.referenceType, "sale"),
+                drizzleOrm.eq(journalEntries.referenceId, sale.id),
+                drizzleOrm.eq(journalEntries.status, "posted")
+              )
+            });
+            if (originalJE) {
+              await txDb.update(journalEntries).set({
+                status: "reversed",
+                reversedBy: session.userId,
+                reversedAt: now,
+                reversalEntryId: reversalJournalEntryId,
+                updatedAt: now
+              }).where(drizzleOrm.eq(journalEntries.id, originalJE.id));
+            }
+            const newAmountPaid = Math.max(0, sale.amountPaid - existing.amount);
+            const newPaymentStatus = newAmountPaid <= 0 ? "pending" : newAmountPaid >= sale.totalAmount ? "paid" : "partial";
+            await txDb.update(sales).set({
+              amountPaid: newAmountPaid,
+              paymentStatus: newPaymentStatus,
+              updatedAt: now
+            }).where(drizzleOrm.eq(sales.id, sale.id));
+            const customerId = existing.customerId ?? sale.customerId ?? null;
+            let arOpened = null;
+            if (customerId) {
+              await txDb.insert(accountReceivables).values({
+                customerId,
+                saleId: sale.id,
+                branchId: existing.branchId,
+                invoiceNumber: sale.invoiceNumber,
+                totalAmount: existing.amount,
+                paidAmount: 0,
+                remainingAmount: existing.amount,
+                status: "pending",
+                notes: `Auto-created from rejected online tx #${id} (${existing.paymentChannel})${reason ? ` — ${reason}` : ""}`,
+                createdBy: session.userId
+              });
+              arOpened = existing.amount;
+            }
+            sourceRestored = {
+              saleId: sale.id,
+              invoiceNumber: sale.invoiceNumber,
+              saleAmountPaid: newAmountPaid,
+              salePaymentStatus: newPaymentStatus,
+              arOpened,
+              customerId,
+              walkIn: !customerId,
+              legacy: true
+            };
+          }
+        } else if (existing.sourceType === "receivable_payment") {
+          const payment = await txDb.query.receivablePayments.findFirst({
+            where: drizzleOrm.eq(receivablePayments.id, existing.sourceId)
+          });
+          if (!payment) throw new Error(`receivable_payment #${existing.sourceId} not found`);
+          const receivable = await txDb.query.accountReceivables.findFirst({
+            where: drizzleOrm.eq(accountReceivables.id, payment.receivableId)
+          });
+          if (!receivable) throw new Error(`account_receivable #${payment.receivableId} not found`);
+          if (payment.status === "pending_approval") {
+            await txDb.update(receivablePayments).set({ status: "cancelled" }).where(drizzleOrm.eq(receivablePayments.id, payment.id));
+            sourceRestored = {
+              receivableId: receivable.id,
+              invoiceNumber: receivable.invoiceNumber,
+              held: true,
+              paymentRowCancelled: payment.id,
+              note: "Held collection cancelled — AR balance and GL untouched."
+            };
+          } else {
+            reversalJournalEntryId = await createJournalEntry({
+              description: `Reject AR collection ${receivable.invoiceNumber} (online tx #${id})`,
+              referenceType: "receivable_payment_reversal",
+              referenceId: payment.id,
+              branchId: existing.branchId,
+              userId: session.userId,
+              lines: [
+                {
+                  accountCode: ACCOUNT_CODES.ACCOUNTS_RECEIVABLE,
+                  debitAmount: existing.amount,
+                  creditAmount: 0,
+                  description: `Restore AR for rejected payment of ${receivable.invoiceNumber}`
+                },
+                {
+                  accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+                  debitAmount: 0,
+                  creditAmount: existing.amount,
+                  description: `Drain clearing for rejected payment of ${receivable.invoiceNumber}`
+                }
+              ]
+            });
+            const originalJE = await txDb.query.journalEntries.findFirst({
+              where: drizzleOrm.and(
+                drizzleOrm.eq(journalEntries.referenceType, "receivable_payment"),
+                drizzleOrm.eq(journalEntries.referenceId, payment.id),
+                drizzleOrm.eq(journalEntries.status, "posted")
+              )
+            });
+            if (originalJE) {
+              await txDb.update(journalEntries).set({
+                status: "reversed",
+                reversedBy: session.userId,
+                reversedAt: now,
+                reversalEntryId: reversalJournalEntryId,
+                updatedAt: now
+              }).where(drizzleOrm.eq(journalEntries.id, originalJE.id));
+            }
+            const restoredPaid = Math.max(0, receivable.paidAmount - payment.amount);
+            const restoredRemaining = receivable.totalAmount - restoredPaid;
+            const newStatus = restoredPaid <= 0 ? "pending" : restoredRemaining <= 0 ? "paid" : "partial";
+            await txDb.update(accountReceivables).set({
+              paidAmount: restoredPaid,
+              remainingAmount: restoredRemaining,
+              status: newStatus,
+              updatedAt: now
+            }).where(drizzleOrm.eq(accountReceivables.id, receivable.id));
+            await txDb.delete(receivablePayments).where(drizzleOrm.eq(receivablePayments.id, payment.id));
+            sourceRestored = {
+              receivableId: receivable.id,
+              invoiceNumber: receivable.invoiceNumber,
+              paidAmount: restoredPaid,
+              remainingAmount: restoredRemaining,
+              status: newStatus,
+              paymentRowDeleted: payment.id,
+              legacy: true
+            };
+          }
+        } else if (existing.sourceType === "return_refund") {
+          reversalJournalEntryId = await createJournalEntry({
+            description: `Reject ${existing.paymentChannel} refund for ${existing.invoiceNumber || `return#${existing.sourceId}`} (online tx #${id})`,
+            referenceType: "return_refund_reversal",
+            referenceId: existing.sourceId ?? id,
+            branchId: existing.branchId,
+            userId: session.userId,
+            lines: [
+              {
+                accountCode: ACCOUNT_CODES.PENDING_ONLINE_PAYMENTS,
+                debitAmount: existing.amount,
+                creditAmount: 0,
+                description: `Drain clearing for rejected refund of ${existing.invoiceNumber || `return#${existing.sourceId}`}`
+              },
+              {
+                accountCode: ACCOUNT_CODES.ACCOUNTS_PAYABLE,
+                debitAmount: 0,
+                creditAmount: existing.amount,
+                description: `Refund obligation moved to AP — manual settlement required`
+              }
+            ]
+          });
+          sourceRestored = {
+            returnId: existing.sourceId,
+            obligationMovedTo: "accounts_payable",
+            note: "Settle by paying customer and posting DR AP / CR Cash, or issue a new refund."
+          };
+        } else {
+        }
+        const noteSuffix = reason ? `Rejected: ${reason}` : "Rejected";
+        const [updated] = await txDb.update(onlineTransactions).set({
+          status: "failed",
+          notes: existing.notes ? `${existing.notes} | ${noteSuffix}` : noteSuffix,
+          updatedAt: now
+        }).where(drizzleOrm.eq(onlineTransactions.id, id)).returning();
+        return { updated, reversalJournalEntryId, sourceRestored };
+      });
+      await createAuditLog$1({
+        userId: session.userId,
+        branchId: existing.branchId,
+        action: "update",
+        entityType: "online_transaction",
+        entityId: id,
+        oldValues: { status: existing.status },
+        newValues: {
+          status: "failed",
+          reversalJournalEntryId: result.reversalJournalEntryId,
+          sourceRestored: result.sourceRestored
+        },
+        description: `Rejected online transaction #${id}${reason ? ` — ${reason}` : ""}`
+      });
+      return {
+        success: true,
+        data: {
+          ...result.updated,
+          reversalJournalEntryId: result.reversalJournalEntryId,
+          sourceRestored: result.sourceRestored
+        }
+      };
     } catch (error) {
       console.error("Mark failed error:", error);
-      return { success: false, message: "Failed to update transaction" };
+      return { success: false, message: error.message || "Failed to reject transaction" };
     }
   });
   electron.ipcMain.handle(
@@ -7308,6 +8100,8 @@ function registerSalesHandlers() {
       if (!hasProducts && !hasServices) {
         return { success: false, message: "No items or services in cart" };
       }
+      const HELD_METHODS = /* @__PURE__ */ new Set(["mobile", "card"]);
+      const isHeldSale = HELD_METHODS.has(data.paymentMethod);
       if (data.paymentMethod === "cash" || data.paymentMethod === "cod") {
         const today = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
         const openSession = await db2.query.cashRegisterSessions.findFirst({
@@ -7396,12 +8190,17 @@ function registerSalesHandlers() {
         const saleServicesData = [];
         if (hasProducts) {
           for (const item of data.items) {
-            const fifoResult = await consumeCostLayers(
-              item.productId,
-              data.branchId,
-              item.quantity
-            );
-            const actualCostPerUnit = item.quantity > 0 ? fifoResult.totalCost / item.quantity : item.costPrice;
+            let actualCostPerUnit = item.costPrice;
+            let totalFifoCost = item.costPrice * item.quantity;
+            if (!isHeldSale) {
+              const fifoResult = await consumeCostLayers(
+                item.productId,
+                data.branchId,
+                item.quantity
+              );
+              actualCostPerUnit = item.quantity > 0 ? fifoResult.totalCost / item.quantity : item.costPrice;
+              totalFifoCost = fifoResult.totalCost;
+            }
             const itemSubtotal = item.unitPrice * item.quantity;
             const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100);
             const itemTaxable = itemSubtotal - itemDiscount;
@@ -7415,12 +8214,12 @@ function registerSalesHandlers() {
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               costPrice: actualCostPerUnit,
-              // Use FIFO cost instead of frontend cost
+              // FIFO cost (or placeholder for held sales)
               discountPercent: item.discountPercent || 0,
               discountAmount: itemDiscount,
               taxAmount: itemTax,
               totalPrice: itemTotal,
-              fifoCost: fifoResult.totalCost
+              fifoCost: totalFifoCost
               // Track total FIFO cost for GL posting
             });
           }
@@ -7449,7 +8248,7 @@ function registerSalesHandlers() {
         const codCharges = data.codCharges || 0;
         const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === "cod" ? codCharges : 0);
         const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0;
-        const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
+        const paymentStatus = isHeldSale ? "pending_approval" : data.paymentStatus || (data.amountPaid >= totalAmount ? "paid" : data.amountPaid > 0 ? "partial" : "pending");
         const invoiceNumber = generateInvoiceNumber();
         const outstandingAmount = totalAmount - data.amountPaid;
         const [sale] = await txDb.insert(sales).values({
@@ -7463,8 +8262,8 @@ function registerSalesHandlers() {
           totalAmount,
           paymentMethod: data.paymentMethod,
           paymentStatus,
-          amountPaid: data.amountPaid,
-          changeGiven,
+          amountPaid: isHeldSale ? 0 : data.amountPaid,
+          changeGiven: isHeldSale ? 0 : changeGiven,
           notes: data.notes
         }).returning();
         const createdSaleItems = [];
@@ -7481,6 +8280,46 @@ function registerSalesHandlers() {
             ...svcItem,
             saleId: sale.id
           });
+        }
+        if (isHeldSale) {
+          const customerName = data.customerId ? await txDb.query.customers.findFirst({ where: drizzleOrm.eq(customers.id, data.customerId) }).then((c) => c ? `${c.firstName} ${c.lastName}`.trim() : null) : null;
+          let referenceNumber = null;
+          let bankAccountName = null;
+          let pendingNotes = null;
+          if (data.paymentMethod === "mobile") {
+            referenceNumber = data.mobileTransactionId || null;
+            bankAccountName = `${data.mobileProvider || ""} ${data.mobileReceiverPhone || ""}`.trim() || null;
+            const providerLabels = {
+              jazzcash: "JazzCash",
+              easypaisa: "Easypaisa",
+              nayapay: "NayaPay",
+              sadapay: "SadaPay",
+              other: "Other"
+            };
+            pendingNotes = `Provider: ${providerLabels[data.mobileProvider || "other"]} | To: ${data.mobileReceiverPhone || ""} | From: ${data.mobileSenderPhone || ""}`;
+          } else if (data.paymentMethod === "card") {
+            referenceNumber = data.cardLastFourDigits ? `****${data.cardLastFourDigits}` : null;
+            pendingNotes = `Card Holder: ${data.cardHolderName || "N/A"}`;
+          }
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: totalAmount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: "inflow",
+            referenceNumber,
+            customerName,
+            customerId: data.customerId,
+            invoiceNumber,
+            bankAccountName,
+            status: "pending",
+            sourceType: "sale",
+            sourceId: sale.id,
+            saleId: sale.id,
+            createdBy: session?.userId ?? null,
+            notes: pendingNotes
+          });
+          return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus };
         }
         if (hasProducts) {
           for (const item of data.items) {
@@ -8686,6 +9525,7 @@ async function recordPayableSubmission(txDb, payable, data, session, openCashSes
   if (data.amount > payable.remainingAmount) {
     throw new Error(`Payment amount cannot exceed remaining balance of ${payable.remainingAmount}`);
   }
+  const isHeld = data.paymentMethod !== "cash";
   const newPaidAmount = payable.paidAmount + data.amount;
   const newRemainingAmount = payable.totalAmount - newPaidAmount;
   const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
@@ -8696,50 +9536,65 @@ async function recordPayableSubmission(txDb, payable, data, session, openCashSes
     paymentMethod: data.paymentMethod,
     referenceNumber: data.referenceNumber,
     notes: data.notes,
-    paidBy: session.userId
+    paidBy: session.userId,
+    status: isHeld ? "pending_approval" : "posted"
   }).returning();
-  await txDb.update(accountPayables).set({
-    paidAmount: newPaidAmount,
-    remainingAmount: Math.max(0, newRemainingAmount),
-    status: newStatus,
-    updatedAt: now
-  }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
   let purchaseSync = null;
-  if (payable.purchaseId) {
-    const linkedPurchase = await txDb.query.purchases.findFirst({
-      where: drizzleOrm.eq(purchases.id, payable.purchaseId)
-    });
-    if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
-      await txDb.update(purchases).set({ paymentStatus: newStatus, updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
-      purchaseSync = {
-        purchaseId: linkedPurchase.id,
-        purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
-        oldStatus: linkedPurchase.paymentStatus,
-        newStatus
-      };
-    }
-  }
   let expenseSync = null;
-  if (newStatus === "paid") {
-    const linkedExpense = await txDb.query.expenses.findFirst({
-      where: drizzleOrm.eq(expenses.payableId, payable.id)
-    });
-    if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
-      await txDb.update(expenses).set({ paymentStatus: "paid", updatedAt: now }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
-      expenseSync = { expenseId: linkedExpense.id, oldStatus: linkedExpense.paymentStatus };
+  if (!isHeld) {
+    await txDb.update(accountPayables).set({
+      paidAmount: newPaidAmount,
+      remainingAmount: Math.max(0, newRemainingAmount),
+      status: newStatus,
+      updatedAt: now
+    }).where(drizzleOrm.eq(accountPayables.id, data.payableId));
+    if (payable.purchaseId) {
+      const linkedPurchase = await txDb.query.purchases.findFirst({
+        where: drizzleOrm.eq(purchases.id, payable.purchaseId)
+      });
+      if (linkedPurchase && linkedPurchase.paymentStatus !== newStatus) {
+        await txDb.update(purchases).set({ paymentStatus: newStatus, updatedAt: now }).where(drizzleOrm.eq(purchases.id, linkedPurchase.id));
+        purchaseSync = {
+          purchaseId: linkedPurchase.id,
+          purchaseOrderNumber: linkedPurchase.purchaseOrderNumber,
+          oldStatus: linkedPurchase.paymentStatus,
+          newStatus
+        };
+      }
+    }
+    if (newStatus === "paid") {
+      const linkedExpense = await txDb.query.expenses.findFirst({
+        where: drizzleOrm.eq(expenses.payableId, payable.id)
+      });
+      if (linkedExpense && linkedExpense.paymentStatus === "unpaid") {
+        await txDb.update(expenses).set({ paymentStatus: "paid", updatedAt: now }).where(drizzleOrm.eq(expenses.id, linkedExpense.id));
+        expenseSync = { expenseId: linkedExpense.id, oldStatus: linkedExpense.paymentStatus };
+      }
+    }
+    await postAPPaymentToGL(
+      {
+        id: payment.id,
+        payableId: data.payableId,
+        branchId: payable.branchId,
+        amount: data.amount,
+        paymentMethod: data.paymentMethod,
+        invoiceNumber: payable.invoiceNumber
+      },
+      session.userId
+    );
+    if (openCashSessionId !== null) {
+      await txDb.insert(cashTransactions).values({
+        sessionId: openCashSessionId,
+        branchId: payable.branchId,
+        transactionType: "ap_payment",
+        amount: -data.amount,
+        referenceType: "payable_payment",
+        referenceId: payment.id,
+        description: `AP payment: ${payable.invoiceNumber}`,
+        recordedBy: session.userId
+      });
     }
   }
-  await postAPPaymentToGL(
-    {
-      id: payment.id,
-      payableId: data.payableId,
-      branchId: payable.branchId,
-      amount: data.amount,
-      paymentMethod: data.paymentMethod,
-      invoiceNumber: payable.invoiceNumber
-    },
-    session.userId
-  );
   let supplierName = null;
   if (payable.supplierId) {
     const supplier = await txDb.query.suppliers.findFirst({
@@ -8747,7 +9602,7 @@ async function recordPayableSubmission(txDb, payable, data, session, openCashSes
     });
     supplierName = supplier?.name ?? null;
   }
-  if (data.paymentMethod !== "cash") {
+  if (isHeld) {
     await txDb.insert(onlineTransactions).values({
       branchId: payable.branchId,
       transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
@@ -8764,24 +9619,14 @@ async function recordPayableSubmission(txDb, payable, data, session, openCashSes
       createdBy: session.userId
     });
   }
-  if (data.paymentMethod === "cash" && openCashSessionId !== null) {
-    await txDb.insert(cashTransactions).values({
-      sessionId: openCashSessionId,
-      branchId: payable.branchId,
-      transactionType: "ap_payment",
-      amount: -data.amount,
-      referenceType: "payable_payment",
-      referenceId: payment.id,
-      description: `AP payment: ${payable.invoiceNumber}`,
-      recordedBy: session.userId
-    });
-  }
   return {
     payment: { id: payment.id, amount: payment.amount },
     payable,
-    newPaidAmount,
-    newRemainingAmount,
-    newStatus,
+    // Report what the AP would look like after approval — caller may use
+    // these for messaging. Held payments DO NOT actually update the AP yet.
+    newPaidAmount: isHeld ? payable.paidAmount : newPaidAmount,
+    newRemainingAmount: isHeld ? payable.remainingAmount : newRemainingAmount,
+    newStatus: isHeld ? payable.status : newStatus,
     purchaseSync,
     expenseSync
   };
@@ -9596,6 +10441,21 @@ function isCashMethod(method) {
   if (!method) return true;
   return method === "cash";
 }
+const ONLINE_REFUND_METHODS = /* @__PURE__ */ new Set(["card", "bank_transfer", "mobile", "cheque", "other"]);
+function refundMethodToChannel(method) {
+  switch (method) {
+    case "card":
+      return "card";
+    case "bank_transfer":
+      return "bank_transfer";
+    case "mobile":
+      return "mobile";
+    case "cheque":
+      return "cheque";
+    default:
+      return "other";
+  }
+}
 function registerReturnHandlers() {
   const db2 = getDatabase();
   electron.ipcMain.handle("returns:create", async (_, data) => {
@@ -9739,6 +10599,33 @@ function registerReturnHandlers() {
               recordedBy: session?.userId ?? 0
             });
           }
+        }
+        if (data.returnType === "refund" && data.refundMethod && ONLINE_REFUND_METHODS.has(data.refundMethod) && totalAmount > 0) {
+          let payeeName = null;
+          if (data.customerId) {
+            const cust = await txDb.query.customers.findFirst({
+              where: drizzleOrm.eq(customers.id, data.customerId)
+            });
+            payeeName = cust?.name ?? null;
+          }
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
+            amount: totalAmount,
+            paymentChannel: refundMethodToChannel(data.refundMethod),
+            direction: "outflow",
+            referenceNumber: data.refundReferenceNumber || null,
+            customerName: payeeName,
+            customerId: data.customerId ?? null,
+            invoiceNumber: returnNumber,
+            bankAccountName: data.refundBankAccountName || null,
+            status: "pending",
+            sourceType: "return_refund",
+            sourceId: returnRecord.id,
+            saleId: data.originalSaleId,
+            createdBy: session?.userId ?? null,
+            notes: `Refund for return ${returnNumber}`
+          });
         }
         return { returnRecord, returnNumber, totalAmount };
       });
@@ -10945,6 +11832,40 @@ function registerCommissionHandlers() {
     } catch (error) {
       console.error("Get commission error:", error);
       return { success: false, message: "Failed to fetch commission" };
+    }
+  });
+  electron.ipcMain.handle("commissions:get-sale-profit", async (_, saleId) => {
+    try {
+      const [sale] = await db2.select({
+        id: sales.id,
+        totalAmount: sales.totalAmount,
+        subtotal: sales.subtotal,
+        discountAmount: sales.discountAmount,
+        taxAmount: sales.taxAmount,
+        isVoided: sales.isVoided
+      }).from(sales).where(drizzleOrm.eq(sales.id, saleId)).limit(1);
+      if (!sale) return { success: false, message: "Sale not found" };
+      if (sale.isVoided) return { success: false, message: "Sale is voided" };
+      const itemsAgg = await db2.select({
+        revenue: drizzleOrm.sql`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+        cogs: drizzleOrm.sql`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`
+      }).from(saleItems).where(drizzleOrm.eq(saleItems.saleId, saleId));
+      const revenue = Number(itemsAgg[0]?.revenue ?? 0);
+      const cogs = Number(itemsAgg[0]?.cogs ?? 0);
+      const profit = Math.max(0, revenue - cogs);
+      return {
+        success: true,
+        data: {
+          saleId,
+          revenue,
+          cogs,
+          profit,
+          totalAmount: sale.totalAmount
+        }
+      };
+    } catch (error) {
+      console.error("Get sale profit error:", error);
+      return { success: false, message: "Failed to compute sale profit" };
     }
   });
   electron.ipcMain.handle("commissions:get-available-invoices", async (_, referralPersonId) => {
@@ -13455,7 +14376,8 @@ function registerReportHandlers() {
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         ];
         if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
         if (paymentMethod) conditions.push(drizzleOrm.eq(sales.paymentMethod, paymentMethod));
@@ -13649,7 +14571,8 @@ function registerReportHandlers() {
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         ];
         if (branchId) salesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
         const revenue = await db2.select({
@@ -13749,7 +14672,7 @@ function registerReportHandlers() {
       try {
         const session = getCurrentSession();
         const { startDate: rawStart, endDate: rawEnd, limit: pageSize = 20, page = 1 } = params;
-        const conditions = [drizzleOrm.eq(sales.isVoided, false)];
+        const conditions = [drizzleOrm.eq(sales.isVoided, false), drizzleOrm.ne(sales.paymentStatus, "pending_approval")];
         if (rawStart && rawEnd) {
           const { start, end } = normalizeDateRange(rawStart, rawEnd);
           conditions.push(drizzleOrm.between(sales.saleDate, start, end));
@@ -14186,7 +15109,8 @@ function registerReportHandlers() {
         const { start: startDate, end: endDate } = normalizeDateRange(rawStart, rawEnd);
         const conditions = [
           drizzleOrm.between(sales.saleDate, startDate, endDate),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         ];
         if (branchId) conditions.push(drizzleOrm.eq(sales.branchId, branchId));
         const taxableRevenueExpr = drizzleOrm.sql`coalesce(sum(case when ${products.isTaxable} = 1 then ${saleItems.totalPrice} else 0 end), 0)`;
@@ -14300,7 +15224,8 @@ function registerReportHandlers() {
               drizzleOrm.and(
                 drizzleOrm.eq(sales.branchId, branch.id),
                 drizzleOrm.between(sales.saleDate, startDate, endDate),
-                drizzleOrm.eq(sales.isVoided, false)
+                drizzleOrm.eq(sales.isVoided, false),
+                drizzleOrm.ne(sales.paymentStatus, "pending_approval")
               )
             );
             const cogsResult = await db2.select({
@@ -14309,7 +15234,8 @@ function registerReportHandlers() {
               drizzleOrm.and(
                 drizzleOrm.eq(sales.branchId, branch.id),
                 drizzleOrm.between(sales.saleDate, startDate, endDate),
-                drizzleOrm.eq(sales.isVoided, false)
+                drizzleOrm.eq(sales.isVoided, false),
+                drizzleOrm.ne(sales.paymentStatus, "pending_approval")
               )
             );
             const expenseResult = await db2.select({
@@ -14417,6 +15343,7 @@ function registerReportHandlers() {
           drizzleOrm.and(
             drizzleOrm.between(sales.saleDate, startDate, endDate),
             drizzleOrm.eq(sales.isVoided, false),
+            drizzleOrm.ne(sales.paymentStatus, "pending_approval"),
             ...conditions
           )
         );
@@ -14480,6 +15407,7 @@ function registerReportHandlers() {
           drizzleOrm.and(
             drizzleOrm.between(sales.saleDate, startDate, endDate),
             drizzleOrm.eq(sales.isVoided, false),
+            drizzleOrm.ne(sales.paymentStatus, "pending_approval"),
             ...conditions
           )
         );
@@ -14613,7 +15541,8 @@ function registerReportHandlers() {
         const dateRange = getDateRange(timePeriod, startDate, endDate);
         const salesConditions = [
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         ];
         if (branchId) salesConditions.push(drizzleOrm.eq(sales.branchId, branchId));
         const expenseConditions = [
@@ -15625,6 +16554,7 @@ function registerAccountReceivablesHandlers() {
           return { success: false, message: guard.message };
         }
       }
+      const isHeld = data.paymentMethod !== "cash";
       const newPaidAmount = receivable.paidAmount + data.amount;
       const newRemainingAmount = receivable.totalAmount - newPaidAmount;
       const newStatus = newRemainingAmount <= 0 ? "paid" : "partial";
@@ -15635,41 +16565,44 @@ function registerAccountReceivablesHandlers() {
           paymentMethod: data.paymentMethod,
           referenceNumber: data.referenceNumber,
           notes: data.notes,
-          receivedBy: session.userId
+          receivedBy: session.userId,
+          status: isHeld ? "pending_approval" : "posted"
         }).returning();
-        await txDb.update(accountReceivables).set({
-          paidAmount: newPaidAmount,
-          remainingAmount: Math.max(0, newRemainingAmount),
-          status: newStatus,
-          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-        }).where(drizzleOrm.eq(accountReceivables.id, data.receivableId));
-        if (receivable.saleId) {
-          const sale = await txDb.query.sales.findFirst({
-            where: drizzleOrm.eq(sales.id, receivable.saleId)
-          });
-          if (sale) {
-            const newSaleAmountPaid = sale.amountPaid + data.amount;
-            const saleOutstanding = sale.totalAmount - newSaleAmountPaid;
-            const newSalePaymentStatus = saleOutstanding <= 0 ? "paid" : "partial";
-            await txDb.update(sales).set({
-              amountPaid: newSaleAmountPaid,
-              paymentStatus: newSalePaymentStatus,
-              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-            }).where(drizzleOrm.eq(sales.id, receivable.saleId));
+        if (!isHeld) {
+          await txDb.update(accountReceivables).set({
+            paidAmount: newPaidAmount,
+            remainingAmount: Math.max(0, newRemainingAmount),
+            status: newStatus,
+            updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+          }).where(drizzleOrm.eq(accountReceivables.id, data.receivableId));
+          if (receivable.saleId) {
+            const sale = await txDb.query.sales.findFirst({
+              where: drizzleOrm.eq(sales.id, receivable.saleId)
+            });
+            if (sale) {
+              const newSaleAmountPaid = sale.amountPaid + data.amount;
+              const saleOutstanding = sale.totalAmount - newSaleAmountPaid;
+              const newSalePaymentStatus = saleOutstanding <= 0 ? "paid" : "partial";
+              await txDb.update(sales).set({
+                amountPaid: newSaleAmountPaid,
+                paymentStatus: newSalePaymentStatus,
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              }).where(drizzleOrm.eq(sales.id, receivable.saleId));
+            }
           }
+          await postARPaymentToGL(
+            {
+              id: payment.id,
+              receivableId: data.receivableId,
+              branchId: receivable.branchId,
+              amount: data.amount,
+              paymentMethod: data.paymentMethod,
+              invoiceNumber: receivable.invoiceNumber
+            },
+            session.userId
+          );
         }
-        await postARPaymentToGL(
-          {
-            id: payment.id,
-            receivableId: data.receivableId,
-            branchId: receivable.branchId,
-            amount: data.amount,
-            paymentMethod: data.paymentMethod,
-            invoiceNumber: receivable.invoiceNumber
-          },
-          session.userId
-        );
-        if (data.paymentMethod !== "cash") {
+        if (isHeld) {
           await txDb.insert(onlineTransactions).values({
             branchId: receivable.branchId,
             transactionDate: (/* @__PURE__ */ new Date()).toISOString().split("T")[0],
@@ -15723,19 +16656,29 @@ function registerAccountReceivablesHandlers() {
           remainingAmount: receivable.remainingAmount,
           status: receivable.status
         },
-        newValues: {
+        newValues: isHeld ? {
+          paymentAmount: data.amount,
+          paymentMethod: data.paymentMethod,
+          held: true,
+          note: "Pending approval — AR balance/GL not yet updated"
+        } : {
           paidAmount: newPaidAmount,
           remainingAmount: newRemainingAmount,
           status: newStatus,
           paymentAmount: data.amount,
           paymentMethod: data.paymentMethod
         },
-        description: `Recorded payment of ${data.amount} for receivable ${receivable.invoiceNumber}`
+        description: isHeld ? `Recorded held payment of ${data.amount} for ${receivable.invoiceNumber} — awaiting approval` : `Recorded payment of ${data.amount} for receivable ${receivable.invoiceNumber}`
       });
       return {
         success: true,
         data: result,
-        receivable: {
+        receivable: isHeld ? {
+          paidAmount: receivable.paidAmount,
+          remainingAmount: receivable.remainingAmount,
+          status: receivable.status,
+          held: true
+        } : {
           paidAmount: newPaidAmount,
           remainingAmount: Math.max(0, newRemainingAmount),
           status: newStatus
@@ -17889,6 +18832,103 @@ function registerChartOfAccountsHandlers() {
       return handleIpcError("Adjust balance", error);
     }
   });
+  electron.ipcMain.handle(
+    "coa:set-opening-balance",
+    async (_, params) => {
+      try {
+        const { accountId, amount, entryDate, offsetAccountId, postedBy, notes } = params;
+        if (!Number.isFinite(amount) || amount <= 0) {
+          return { success: false, message: "Amount must be a positive number" };
+        }
+        if (!entryDate) {
+          return { success: false, message: "Effective date is required" };
+        }
+        const account = await db2.query.chartOfAccounts.findFirst({
+          where: drizzleOrm.eq(chartOfAccounts.id, accountId)
+        });
+        if (!account) return { success: false, message: "Account not found" };
+        const offsetCandidate = offsetAccountId ? await db2.query.chartOfAccounts.findFirst({
+          where: drizzleOrm.and(
+            drizzleOrm.eq(chartOfAccounts.id, offsetAccountId),
+            drizzleOrm.eq(chartOfAccounts.isActive, true)
+          )
+        }) : await db2.query.chartOfAccounts.findFirst({
+          where: drizzleOrm.and(drizzleOrm.eq(chartOfAccounts.accountCode, "3000"), drizzleOrm.eq(chartOfAccounts.isActive, true))
+        }) || await db2.query.chartOfAccounts.findFirst({
+          where: drizzleOrm.and(drizzleOrm.eq(chartOfAccounts.accountCode, "3100"), drizzleOrm.eq(chartOfAccounts.isActive, true))
+        }) || await db2.query.chartOfAccounts.findFirst({
+          where: drizzleOrm.and(drizzleOrm.eq(chartOfAccounts.accountType, "equity"), drizzleOrm.eq(chartOfAccounts.isActive, true))
+        });
+        if (!offsetCandidate) {
+          return { success: false, message: "No equity offset account found (need 3000, 3100, or any equity)" };
+        }
+        if (offsetCandidate.id === accountId) {
+          return { success: false, message: "Offset account must differ from target account" };
+        }
+        const result = await withTransaction(async ({ db: txDb }) => {
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          const year = new Date(entryDate).getFullYear();
+          const existing = await txDb.query.journalEntries.findMany({
+            where: drizzleOrm.sql`${journalEntries.entryNumber} LIKE ${"OB-" + year + "-%"}`
+          });
+          const entryNumber = `OB-${year}-${String(existing.length + 1).padStart(4, "0")}`;
+          const targetDebit = account.normalBalance === "debit" ? amount : 0;
+          const targetCredit = account.normalBalance === "debit" ? 0 : amount;
+          const [entry] = await txDb.insert(journalEntries).values({
+            entryNumber,
+            entryDate,
+            description: `Opening balance: ${account.accountCode} ${account.accountName}${notes ? " — " + notes : ""}`,
+            status: "posted",
+            isAutoGenerated: true,
+            postedBy,
+            postedAt: now,
+            createdBy: postedBy,
+            createdAt: now,
+            updatedAt: now
+          }).returning();
+          await txDb.insert(journalEntryLines).values({
+            journalEntryId: entry.id,
+            accountId: account.id,
+            debitAmount: targetDebit,
+            creditAmount: targetCredit,
+            description: `Opening balance — ${account.accountName}`,
+            createdAt: now,
+            updatedAt: now
+          });
+          await txDb.insert(journalEntryLines).values({
+            journalEntryId: entry.id,
+            accountId: offsetCandidate.id,
+            debitAmount: targetCredit,
+            // mirror
+            creditAmount: targetDebit,
+            description: `Offset for opening balance of ${account.accountCode}`,
+            createdAt: now,
+            updatedAt: now
+          });
+          const targetChange = account.normalBalance === "debit" ? targetDebit - targetCredit : targetCredit - targetDebit;
+          const offsetChange = offsetCandidate.normalBalance === "debit" ? targetCredit - targetDebit : targetDebit - targetCredit;
+          await txDb.update(chartOfAccounts).set({ currentBalance: account.currentBalance + targetChange, updatedAt: now }).where(drizzleOrm.eq(chartOfAccounts.id, account.id));
+          await txDb.update(chartOfAccounts).set({
+            currentBalance: offsetCandidate.currentBalance + offsetChange,
+            updatedAt: now
+          }).where(drizzleOrm.eq(chartOfAccounts.id, offsetCandidate.id));
+          return { entryNumber, entryId: entry.id };
+        });
+        return {
+          success: true,
+          data: {
+            journalEntry: result.entryNumber,
+            entryId: result.entryId,
+            target: { code: account.accountCode, name: account.accountName },
+            offset: { code: offsetCandidate.accountCode, name: offsetCandidate.accountName },
+            amount
+          }
+        };
+      } catch (error) {
+        return handleIpcError("Set opening balance", error);
+      }
+    }
+  );
   electron.ipcMain.handle(
     "coa:get-cash-flow-detail",
     async (_, params) => {
@@ -20955,7 +21995,8 @@ function registerDashboardHandlers() {
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         )
       );
       const serviceResult = await db2.select({
@@ -20965,7 +22006,8 @@ function registerDashboardHandlers() {
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         )
       );
       const commissionResult = await db2.select({
@@ -20975,7 +22017,8 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(commissions.branchId, branchId),
           drizzleOrm.eq(commissions.status, "paid"),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         )
       );
       const discountResult = await db2.select({
@@ -20994,7 +22037,8 @@ function registerDashboardHandlers() {
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         )
       );
       const productRevenue = profitResult[0]?.revenue || 0;
@@ -21032,6 +22076,7 @@ function registerDashboardHandlers() {
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
           drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval"),
           // Exclude fully-returned sales
           drizzleOrm.sql`COALESCE((
               SELECT SUM(ri.unit_price * ri.quantity)
@@ -21048,7 +22093,8 @@ function registerDashboardHandlers() {
         drizzleOrm.and(
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
-          drizzleOrm.eq(sales.isVoided, false)
+          drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval")
         )
       );
       const returnedQtyResult = await db2.select({
@@ -21227,13 +22273,13 @@ function registerDashboardHandlers() {
           tax: drizzleOrm.sql`COALESCE(SUM(${saleItems.taxAmount}), 0)`,
           count: drizzleOrm.sql`COUNT(DISTINCT ${sales.id})`,
           groupKey: groupExpr
-        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false), drizzleOrm.ne(sales.paymentStatus, "pending_approval"))).groupBy(groupExpr).orderBy(groupExpr);
         const serviceRows = await db2.select({
           label: labelExpr,
           revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
           tax: drizzleOrm.sql`COALESCE(SUM(${saleServices.taxAmount}), 0)`,
           groupKey: groupExpr
-        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false), drizzleOrm.ne(sales.paymentStatus, "pending_approval"))).groupBy(groupExpr).orderBy(groupExpr);
         const merged = /* @__PURE__ */ new Map();
         for (const r of productRows) {
           merged.set(r.label, {
@@ -21282,7 +22328,7 @@ function registerDashboardHandlers() {
           productId: saleItems.productId,
           name: products.name,
           totalRev: drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity})`
-        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(saleItems.productId).orderBy(drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity}) DESC`).limit(5);
+        }).from(saleItems).innerJoin(sales, drizzleOrm.eq(saleItems.saleId, sales.id)).innerJoin(products, drizzleOrm.eq(saleItems.productId, products.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false), drizzleOrm.ne(sales.paymentStatus, "pending_approval"))).groupBy(saleItems.productId).orderBy(drizzleOrm.sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity}) DESC`).limit(5);
         if (topProducts.length === 0) {
           return { success: true, data: { series: [], seriesLabels: {}, seriesColors: {}, points: [], badge: "0 products" } };
         }
@@ -21307,6 +22353,7 @@ function registerDashboardHandlers() {
             drizzleOrm.eq(sales.branchId, branchId),
             drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end),
             drizzleOrm.eq(sales.isVoided, false),
+            drizzleOrm.ne(sales.paymentStatus, "pending_approval"),
             drizzleOrm.sql`${saleItems.productId} IN (${drizzleOrm.sql.join(productIds.map((id) => drizzleOrm.sql`${id}`), drizzleOrm.sql`, `)})`
           )
         ).groupBy(groupExpr, saleItems.productId).orderBy(groupExpr);
@@ -21338,7 +22385,7 @@ function registerDashboardHandlers() {
           revenue: drizzleOrm.sql`COALESCE(SUM(${saleServices.totalAmount}), 0)`,
           count: drizzleOrm.sql`COUNT(*)`,
           groupKey: groupExpr
-        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false))).groupBy(groupExpr).orderBy(groupExpr);
+        }).from(saleServices).innerJoin(sales, drizzleOrm.eq(saleServices.saleId, sales.id)).where(drizzleOrm.and(drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.between(sales.saleDate, dateRange.start, dateRange.end), drizzleOrm.eq(sales.isVoided, false), drizzleOrm.ne(sales.paymentStatus, "pending_approval"))).groupBy(groupExpr).orderBy(groupExpr);
         return {
           success: true,
           data: {
@@ -22709,7 +23756,7 @@ function registerTaxCollectionsHandlers() {
   electron.ipcMain.handle("tax-collections:get-summary", async (_, params) => {
     try {
       const { branchId, startDate, endDate } = params;
-      const conditions = [drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.eq(sales.isVoided, false)];
+      const conditions = [drizzleOrm.eq(sales.branchId, branchId), drizzleOrm.eq(sales.isVoided, false), drizzleOrm.ne(sales.paymentStatus, "pending_approval")];
       if (startDate && endDate) {
         conditions.push(drizzleOrm.between(sales.saleDate, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`));
       } else if (startDate) {
@@ -22817,6 +23864,7 @@ function registerTaxCollectionsHandlers() {
         const conditions = [
           drizzleOrm.eq(sales.branchId, branchId),
           drizzleOrm.eq(sales.isVoided, false),
+          drizzleOrm.ne(sales.paymentStatus, "pending_approval"),
           drizzleOrm.between(sales.saleDate, startOfYear, endOfYear)
         ];
         let groupBy;

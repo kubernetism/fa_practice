@@ -184,7 +184,7 @@ export function Sidebar() {
   if (collapsed) {
     return (
       <TooltipProvider delayDuration={0}>
-        <aside className="flex h-full w-14 flex-col border-r bg-card transition-all duration-200">
+        <aside className="theme-agentfactory flex h-full w-14 flex-col border-r bg-card text-card-foreground transition-all duration-200">
           {/* Logo / initial */}
           <div className="flex h-14 items-center justify-center border-b border-border">
             <span className="text-base font-bold text-primary">{businessName.charAt(0)}</span>
@@ -251,7 +251,7 @@ export function Sidebar() {
 
   // ── Expanded sidebar ──
   return (
-    <aside className="flex h-full w-64 flex-col border-r bg-card transition-all duration-200">
+    <aside className="theme-agentfactory flex h-full w-64 flex-col border-r bg-card text-card-foreground transition-all duration-200">
       {/* Business Name Header */}
       <div className="flex h-14 items-center border-b border-border px-5">
         <h1
@@ -283,8 +283,8 @@ export function Sidebar() {
                 key={section.id}
                 value={section.id}
                 className={cn(
-                  'border-b-0 rounded-lg mb-0.5',
-                  isActiveSection && 'bg-accent/30'
+                  'border-b-0 rounded-lg mb-0.5 border-l-[3px] border-l-transparent',
+                  isActiveSection && 'bg-accent/30 border-l-primary'
                 )}
               >
                 <AccordionTrigger

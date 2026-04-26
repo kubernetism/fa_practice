@@ -99,6 +99,13 @@ export function registerSalesHandlers(): void {
         return { success: false, message: 'No items or services in cart' }
       }
 
+      // Held-sale gate: pure online-channel sales (mobile / card) do not post
+      // to GL or deduct inventory until the matching online_transaction is
+      // approved. Cash, COD, receivable, credit, and mixed sales keep the
+      // existing immediate-posting flow.
+      const HELD_METHODS = new Set(['mobile', 'card'])
+      const isHeldSale = HELD_METHODS.has(data.paymentMethod)
+
       // Pre-validation: Require open cash register session for cash/cod sales
       if (data.paymentMethod === 'cash' || data.paymentMethod === 'cod') {
         const today = new Date().toISOString().split('T')[0]
@@ -208,17 +215,23 @@ export function registerSalesHandlers(): void {
         // Process products
         if (hasProducts) {
           for (const item of data.items) {
-            // Get actual cost for this item using configured valuation method
-            const fifoResult = await consumeCostLayers(
-              item.productId,
-              data.branchId,
-              item.quantity
-            )
+            // Held sales defer cost-layer consumption until approval; use the
+            // frontend-supplied cost as a placeholder. Approval will re-run
+            // FIFO consumption on the approved sale.
+            let actualCostPerUnit = item.costPrice
+            let totalFifoCost = item.costPrice * item.quantity
 
-            // Calculate cost per unit from FIFO
-            const actualCostPerUnit = item.quantity > 0
-              ? fifoResult.totalCost / item.quantity
-              : item.costPrice
+            if (!isHeldSale) {
+              const fifoResult = await consumeCostLayers(
+                item.productId,
+                data.branchId,
+                item.quantity
+              )
+              actualCostPerUnit = item.quantity > 0
+                ? fifoResult.totalCost / item.quantity
+                : item.costPrice
+              totalFifoCost = fifoResult.totalCost
+            }
 
             const itemSubtotal = item.unitPrice * item.quantity
             const itemDiscount = itemSubtotal * ((item.discountPercent || 0) / 100)
@@ -234,12 +247,12 @@ export function registerSalesHandlers(): void {
               serialNumber: item.serialNumber,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
-              costPrice: actualCostPerUnit, // Use FIFO cost instead of frontend cost
+              costPrice: actualCostPerUnit, // FIFO cost (or placeholder for held sales)
               discountPercent: item.discountPercent || 0,
               discountAmount: itemDiscount,
               taxAmount: itemTax,
               totalPrice: itemTotal,
-              fifoCost: fifoResult.totalCost, // Track total FIFO cost for GL posting
+              fifoCost: totalFifoCost, // Track total FIFO cost for GL posting
             })
           }
         }
@@ -275,7 +288,9 @@ export function registerSalesHandlers(): void {
         const codCharges = data.codCharges || 0
         const totalAmount = subtotal + taxAmount - discountAmount + (data.paymentMethod === 'cod' ? codCharges : 0)
         const changeGiven = data.amountPaid > totalAmount ? data.amountPaid - totalAmount : 0
-        const paymentStatus = data.paymentStatus || (data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending')
+        const paymentStatus = isHeldSale
+          ? 'pending_approval'
+          : (data.paymentStatus || (data.amountPaid >= totalAmount ? 'paid' : data.amountPaid > 0 ? 'partial' : 'pending'))
 
         const invoiceNumber = generateInvoiceNumber()
         const outstandingAmount = totalAmount - data.amountPaid
@@ -294,8 +309,8 @@ export function registerSalesHandlers(): void {
             totalAmount,
             paymentMethod: data.paymentMethod,
             paymentStatus,
-            amountPaid: data.amountPaid,
-            changeGiven,
+            amountPaid: isHeldSale ? 0 : data.amountPaid,
+            changeGiven: isHeldSale ? 0 : changeGiven,
             notes: data.notes,
           })
           .returning()
@@ -317,6 +332,58 @@ export function registerSalesHandlers(): void {
             ...svcItem,
             saleId: sale.id,
           })
+        }
+
+        // ── Held sale: stop here. Inventory, GL, AR, cash-tx, salePayments and
+        // voucher-use are all deferred until the manager approves the matching
+        // online_transactions row. We still insert the pending online_tx so the
+        // approver can see and act on it.
+        if (isHeldSale) {
+          const customerName = data.customerId
+            ? await txDb.query.customers.findFirst({ where: eq(customers.id, data.customerId) })
+                .then((c) => (c ? `${c.firstName} ${c.lastName}`.trim() : null))
+            : null
+
+          let referenceNumber: string | null = null
+          let bankAccountName: string | null = null
+          let pendingNotes: string | null = null
+
+          if (data.paymentMethod === 'mobile') {
+            referenceNumber = data.mobileTransactionId || null
+            bankAccountName = `${data.mobileProvider || ''} ${data.mobileReceiverPhone || ''}`.trim() || null
+            const providerLabels: Record<string, string> = {
+              jazzcash: 'JazzCash',
+              easypaisa: 'Easypaisa',
+              nayapay: 'NayaPay',
+              sadapay: 'SadaPay',
+              other: 'Other',
+            }
+            pendingNotes = `Provider: ${providerLabels[data.mobileProvider || 'other']} | To: ${data.mobileReceiverPhone || ''} | From: ${data.mobileSenderPhone || ''}`
+          } else if (data.paymentMethod === 'card') {
+            referenceNumber = data.cardLastFourDigits ? `****${data.cardLastFourDigits}` : null
+            pendingNotes = `Card Holder: ${data.cardHolderName || 'N/A'}`
+          }
+
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: totalAmount,
+            paymentChannel: mapPaymentMethodToChannel(data.paymentMethod),
+            direction: 'inflow',
+            referenceNumber,
+            customerName,
+            customerId: data.customerId,
+            invoiceNumber,
+            bankAccountName,
+            status: 'pending',
+            sourceType: 'sale',
+            sourceId: sale.id,
+            saleId: sale.id,
+            createdBy: session?.userId ?? null,
+            notes: pendingNotes,
+          })
+
+          return { sale, invoiceNumber, subtotal, discountAmount, taxAmount, totalAmount, paymentStatus }
         }
 
         // 3. Deduct inventory (only for products)
@@ -592,7 +659,7 @@ export function registerSalesHandlers(): void {
 
         if (branchId) conditions.push(eq(sales.branchId, branchId))
         if (customerId) conditions.push(eq(sales.customerId, customerId))
-        if (paymentStatus) conditions.push(eq(sales.paymentStatus, paymentStatus as 'paid' | 'partial' | 'pending'))
+        if (paymentStatus) conditions.push(eq(sales.paymentStatus, paymentStatus as 'paid' | 'partial' | 'pending' | 'pending_approval' | 'cancelled'))
         if (startDate && endDate) {
           conditions.push(between(sales.saleDate, startDate, endDate))
         } else if (startDate) {

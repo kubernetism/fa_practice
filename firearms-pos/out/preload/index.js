@@ -172,7 +172,8 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("commissions:create", data),
     update: (id, data) => electron.ipcRenderer.invoke("commissions:update", id, data),
     delete: (id) => electron.ipcRenderer.invoke("commissions:delete", id),
-    getAvailableInvoices: (referralPersonId) => electron.ipcRenderer.invoke("commissions:get-available-invoices", referralPersonId)
+    getAvailableInvoices: (referralPersonId) => electron.ipcRenderer.invoke("commissions:get-available-invoices", referralPersonId),
+    getSaleProfit: (saleId) => electron.ipcRenderer.invoke("commissions:get-sale-profit", saleId)
   },
   // Referral Persons
   referralPersons: {
@@ -310,6 +311,7 @@ const api = {
     getLedger: (accountId, startDate, endDate) => electron.ipcRenderer.invoke("coa:get-ledger", accountId, startDate, endDate),
     recalculateBalances: () => electron.ipcRenderer.invoke("coa:recalculate-balances"),
     adjustBalance: (accountId, targetBalance, reason, postedBy) => electron.ipcRenderer.invoke("coa:adjust-balance", accountId, targetBalance, reason, postedBy),
+    setOpeningBalance: (params) => electron.ipcRenderer.invoke("coa:set-opening-balance", params),
     getCashFlowDetail: (params) => electron.ipcRenderer.invoke("coa:get-cash-flow-detail", params)
   },
   // Journal Entries
@@ -431,6 +433,7 @@ const api = {
     confirm: (id) => electron.ipcRenderer.invoke("online-transactions:confirm", id),
     bulkConfirm: (ids) => electron.ipcRenderer.invoke("online-transactions:bulk-confirm", ids),
     markFailed: (id, reason) => electron.ipcRenderer.invoke("online-transactions:mark-failed", id, reason),
+    backfillClearing: () => electron.ipcRenderer.invoke("online-transactions:backfill-clearing"),
     getDashboard: (params) => electron.ipcRenderer.invoke("online-transactions:dashboard", params)
   },
   // Discount Management

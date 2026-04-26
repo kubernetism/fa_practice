@@ -14,6 +14,7 @@ import {
   chartOfAccounts,
   cashRegisterSessions,
   cashTransactions,
+  onlineTransactions,
   type NewReturn,
   type NewReturnItem,
 } from '../db/schema'
@@ -42,9 +43,32 @@ interface CreateReturnData {
   branchId: number
   returnType: 'refund' | 'exchange' | 'store_credit'
   items: ReturnItemData[]
-  refundMethod?: 'cash' | 'card' | 'store_credit'
+  refundMethod?: 'cash' | 'card' | 'store_credit' | 'bank_transfer' | 'mobile' | 'cheque' | 'other'
+  refundReferenceNumber?: string
+  refundBankAccountName?: string
   reason?: string
   notes?: string
+}
+
+// Refund methods that flow through the Online Transactions clearing account.
+// store_credit goes to AR; cash goes immediately to register. Everything else needs approval.
+const ONLINE_REFUND_METHODS = new Set(['card', 'bank_transfer', 'mobile', 'cheque', 'other'])
+
+function refundMethodToChannel(
+  method: string
+): 'bank_transfer' | 'mobile' | 'card' | 'cod' | 'cheque' | 'other' {
+  switch (method) {
+    case 'card':
+      return 'card'
+    case 'bank_transfer':
+      return 'bank_transfer'
+    case 'mobile':
+      return 'mobile'
+    case 'cheque':
+      return 'cheque'
+    default:
+      return 'other'
+  }
 }
 
 export function registerReturnHandlers(): void {
@@ -227,6 +251,43 @@ export function registerReturnHandlers(): void {
               recordedBy: session?.userId ?? 0,
             })
           }
+        }
+
+        // Non-cash refunds: queue an outflow row in Online Transactions for approval.
+        // GL has already debited 1030 PENDING_ONLINE_PAYMENTS via postReturnToGL — confirm
+        // moves it to 1010/1020 (cash side); reject restores via mark-failed.
+        if (
+          data.returnType === 'refund' &&
+          data.refundMethod &&
+          ONLINE_REFUND_METHODS.has(data.refundMethod) &&
+          totalAmount > 0
+        ) {
+          let payeeName: string | null = null
+          if (data.customerId) {
+            const cust = await txDb.query.customers.findFirst({
+              where: eq(customers.id, data.customerId),
+            })
+            payeeName = cust?.name ?? null
+          }
+
+          await txDb.insert(onlineTransactions).values({
+            branchId: data.branchId,
+            transactionDate: new Date().toISOString().split('T')[0],
+            amount: totalAmount,
+            paymentChannel: refundMethodToChannel(data.refundMethod),
+            direction: 'outflow',
+            referenceNumber: data.refundReferenceNumber || null,
+            customerName: payeeName,
+            customerId: data.customerId ?? null,
+            invoiceNumber: returnNumber,
+            bankAccountName: data.refundBankAccountName || null,
+            status: 'pending',
+            sourceType: 'return_refund',
+            sourceId: returnRecord.id,
+            saleId: data.originalSaleId,
+            createdBy: session?.userId ?? null,
+            notes: `Refund for return ${returnNumber}`,
+          })
         }
 
         return { returnRecord, returnNumber, totalAmount }

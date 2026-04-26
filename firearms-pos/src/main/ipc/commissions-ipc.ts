@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { eq, and, desc, sql, between, isNull, isNotNull } from 'drizzle-orm'
 import { getDatabase } from '../db'
-import { commissions, users, sales, referralPersons, cashRegisterSessions, cashTransactions, type NewCommission } from '../db/schema'
+import { commissions, users, sales, saleItems, referralPersons, cashRegisterSessions, cashTransactions, type NewCommission } from '../db/schema'
 import { createAuditLog } from '../utils/audit'
 import { getCurrentSession } from './auth-ipc'
 import type { PaginationParams, PaginatedResult } from '../utils/helpers'
@@ -142,6 +142,52 @@ export function registerCommissionHandlers(): void {
     } catch (error) {
       console.error('Get commission error:', error)
       return { success: false, message: 'Failed to fetch commission' }
+    }
+  })
+
+  ipcMain.handle('commissions:get-sale-profit', async (_, saleId: number) => {
+    try {
+      const [sale] = await db
+        .select({
+          id: sales.id,
+          totalAmount: sales.totalAmount,
+          subtotal: sales.subtotal,
+          discountAmount: sales.discountAmount,
+          taxAmount: sales.taxAmount,
+          isVoided: sales.isVoided,
+        })
+        .from(sales)
+        .where(eq(sales.id, saleId))
+        .limit(1)
+
+      if (!sale) return { success: false, message: 'Sale not found' }
+      if (sale.isVoided) return { success: false, message: 'Sale is voided' }
+
+      const itemsAgg = await db
+        .select({
+          revenue: sql<number>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+          cogs: sql<number>`COALESCE(SUM(${saleItems.costPrice} * ${saleItems.quantity}), 0)`,
+        })
+        .from(saleItems)
+        .where(eq(saleItems.saleId, saleId))
+
+      const revenue = Number(itemsAgg[0]?.revenue ?? 0)
+      const cogs = Number(itemsAgg[0]?.cogs ?? 0)
+      const profit = Math.max(0, revenue - cogs)
+
+      return {
+        success: true,
+        data: {
+          saleId,
+          revenue,
+          cogs,
+          profit,
+          totalAmount: sale.totalAmount,
+        },
+      }
+    } catch (error) {
+      console.error('Get sale profit error:', error)
+      return { success: false, message: 'Failed to compute sale profit' }
     }
   })
 

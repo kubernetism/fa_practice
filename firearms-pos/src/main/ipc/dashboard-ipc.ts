@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, sql, between, or, lte, desc } from 'drizzle-orm'
+import { eq, and, sql, between, or, lte, desc, ne } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import {
   sales,
@@ -86,7 +86,7 @@ export function registerDashboardHandlers(): void {
           and(
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false)
+            eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')
           )
         )
 
@@ -102,7 +102,7 @@ export function registerDashboardHandlers(): void {
           and(
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false)
+            eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')
           )
         )
 
@@ -118,7 +118,7 @@ export function registerDashboardHandlers(): void {
             eq(commissions.branchId, branchId),
             eq(commissions.status, 'paid'),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false)
+            eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')
           )
         )
 
@@ -142,7 +142,7 @@ export function registerDashboardHandlers(): void {
           and(
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false)
+            eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')
           )
         )
 
@@ -193,7 +193,7 @@ export function registerDashboardHandlers(): void {
           and(
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false),
+            eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
             // Exclude fully-returned sales
             sql`COALESCE((
               SELECT SUM(ri.unit_price * ri.quantity)
@@ -221,7 +221,7 @@ export function registerDashboardHandlers(): void {
           and(
             eq(sales.branchId, branchId),
             between(sales.saleDate, dateRange.start, dateRange.end),
-            eq(sales.isVoided, false)
+            eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')
           )
         )
 
@@ -471,7 +471,7 @@ export function registerDashboardHandlers(): void {
           })
           .from(saleItems)
           .innerJoin(sales, eq(saleItems.saleId, sales.id))
-          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')))
           .groupBy(groupExpr)
           .orderBy(groupExpr)
 
@@ -485,7 +485,7 @@ export function registerDashboardHandlers(): void {
           })
           .from(saleServices)
           .innerJoin(sales, eq(saleServices.saleId, sales.id))
-          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')))
           .groupBy(groupExpr)
           .orderBy(groupExpr)
 
@@ -551,7 +551,7 @@ export function registerDashboardHandlers(): void {
           .from(saleItems)
           .innerJoin(sales, eq(saleItems.saleId, sales.id))
           .innerJoin(products, eq(saleItems.productId, products.id))
-          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')))
           .groupBy(saleItems.productId)
           .orderBy(sql`SUM(${saleItems.unitPrice} * ${saleItems.quantity}) DESC`)
           .limit(5)
@@ -586,7 +586,7 @@ export function registerDashboardHandlers(): void {
             and(
               eq(sales.branchId, branchId),
               between(sales.saleDate, dateRange.start, dateRange.end),
-              eq(sales.isVoided, false),
+              eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
               sql`${saleItems.productId} IN (${sql.join(productIds.map((id) => sql`${id}`), sql`, `)})`
             )
           )
@@ -629,7 +629,7 @@ export function registerDashboardHandlers(): void {
           })
           .from(saleServices)
           .innerJoin(sales, eq(saleServices.saleId, sales.id))
-          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false)))
+          .where(and(eq(sales.branchId, branchId), between(sales.saleDate, dateRange.start, dateRange.end), eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')))
           .groupBy(groupExpr)
           .orderBy(groupExpr)
 

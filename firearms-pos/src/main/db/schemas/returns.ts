@@ -24,7 +24,9 @@ export const returns = sqliteTable('returns', {
   subtotal: real('subtotal').notNull().default(0),
   taxAmount: real('tax_amount').notNull().default(0),
   totalAmount: real('total_amount').notNull().default(0),
-  refundMethod: text('refund_method', { enum: ['cash', 'card', 'store_credit'] }),
+  refundMethod: text('refund_method', {
+    enum: ['cash', 'card', 'store_credit', 'bank_transfer', 'mobile', 'cheque', 'other'],
+  }),
   refundAmount: real('refund_amount').notNull().default(0),
   reason: text('reason'),
   notes: text('notes'),

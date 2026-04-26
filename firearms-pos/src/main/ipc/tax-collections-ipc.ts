@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { eq, and, desc, sql, between, gte, lte } from 'drizzle-orm'
+import { eq, and, desc, sql, between, gte, lte, ne } from 'drizzle-orm'
 import { getDatabase } from '../db'
 import { sales, saleItems, products, customers } from '../db/schema'
 
@@ -36,7 +36,7 @@ export function registerTaxCollectionsHandlers(): void {
     try {
       const { branchId, startDate, endDate } = params
 
-      const conditions = [eq(sales.branchId, branchId), eq(sales.isVoided, false)]
+      const conditions = [eq(sales.branchId, branchId), eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval')]
 
       if (startDate && endDate) {
         conditions.push(between(sales.saleDate, `${startDate}T00:00:00.000Z`, `${endDate}T23:59:59.999Z`))
@@ -180,7 +180,7 @@ export function registerTaxCollectionsHandlers(): void {
 
         const conditions = [
           eq(sales.branchId, branchId),
-          eq(sales.isVoided, false),
+          eq(sales.isVoided, false), ne(sales.paymentStatus, 'pending_approval'),
           between(sales.saleDate, startOfYear, endOfYear),
         ]
 

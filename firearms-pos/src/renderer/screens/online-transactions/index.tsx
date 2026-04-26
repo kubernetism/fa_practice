@@ -3,7 +3,7 @@ import {
   Search, Plus, RefreshCw, ChevronLeft, ChevronRight,
   Check, X, Landmark, Smartphone, CreditCard, Truck, FileText,
   MoreHorizontal, ArrowUpRight, ArrowDownLeft, CheckCircle2, Clock,
-  AlertTriangle, Filter, Download,
+  AlertTriangle, Filter, Download, Wrench,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -416,6 +416,41 @@ export function OnlineTransactionsScreen() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {user?.role === 'admin' && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      const ok = window.confirm(
+                        'Backfill: move legacy pending online-transaction GL postings from 1020 Cash in Bank → 1030 Pending Online Payments. Idempotent (safe to re-run). Continue?'
+                      )
+                      if (!ok) return
+                      try {
+                        const res = await (window as any).api.onlineTransactions.backfillClearing()
+                        if (res?.success) {
+                          window.alert(
+                            `Backfill complete.\nPending rows: ${res.data.totalPending}\nBackfilled: ${res.data.backfilled}\nSkipped (already done): ${res.data.totalPending - res.data.backfilled}`
+                          )
+                          fetchDashboard()
+                          fetchTransactions()
+                        } else {
+                          window.alert(`Backfill failed: ${res?.message || 'unknown error'}`)
+                        }
+                      } catch (e) {
+                        window.alert(`Backfill error: ${(e as Error).message}`)
+                      }
+                    }}
+                  >
+                    <Wrench className="h-3.5 w-3.5 mr-1.5" />Backfill
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  Migrate legacy pending GL postings into the 1030 clearing model. Admin-only, idempotent.
+                </TooltipContent>
+              </Tooltip>
+            )}
             <Button variant="outline" size="sm" onClick={() => { fetchDashboard(); fetchTransactions() }}>
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" />Refresh
             </Button>

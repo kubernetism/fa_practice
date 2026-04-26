@@ -68,7 +68,7 @@ interface Sale {
   discountAmount: number
   totalAmount: number
   paymentMethod: 'cash' | 'card' | 'credit' | 'mixed'
-  paymentStatus: 'paid' | 'partial' | 'pending'
+  paymentStatus: 'paid' | 'partial' | 'pending' | 'pending_approval' | 'cancelled'
   amountPaid: number
   changeGiven: number
   notes: string | null
@@ -273,7 +273,7 @@ export function SalesHistoryScreen() {
   }
 
   const getPaymentStatusBadge = (status: string, isVoided: boolean) => {
-    if (isVoided) {
+    if (isVoided && status !== 'cancelled') {
       return <Badge variant="destructive">Voided</Badge>
     }
     switch (status) {
@@ -283,6 +283,14 @@ export function SalesHistoryScreen() {
         return <Badge variant="warning">Partial</Badge>
       case 'pending':
         return <Badge variant="destructive">Pending</Badge>
+      case 'pending_approval':
+        return (
+          <Badge className="bg-amber-500/20 text-amber-300 border border-amber-500/40">
+            Awaiting Approval
+          </Badge>
+        )
+      case 'cancelled':
+        return <Badge variant="destructive">Cancelled</Badge>
       default:
         return <Badge variant="outline">{status}</Badge>
     }
@@ -649,7 +657,7 @@ ${changeRow}${voidedStamp}${notesBlock}
           </Select>
 
           <Select value={filterPaymentStatus} onValueChange={(v) => { setFilterPaymentStatus(v); setCurrentPage(1) }}>
-            <SelectTrigger className="h-7 w-24 text-xs">
+            <SelectTrigger className="h-7 w-36 text-xs">
               <SelectValue placeholder="Status" />
             </SelectTrigger>
             <SelectContent>
@@ -657,6 +665,8 @@ ${changeRow}${voidedStamp}${notesBlock}
               <SelectItem value="paid">Paid</SelectItem>
               <SelectItem value="partial">Partial</SelectItem>
               <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="pending_approval">Awaiting Approval</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
 

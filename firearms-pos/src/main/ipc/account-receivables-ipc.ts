@@ -323,6 +323,10 @@ export function registerAccountReceivablesHandlers(): void {
         }
       }
 
+      // Held-payment gate: non-cash AR collections do NOT update AR balance,
+      // sales sync, or GL until the matching online_transaction is approved.
+      const isHeld = data.paymentMethod !== 'cash'
+
       // Calculate new values
       const newPaidAmount = receivable.paidAmount + data.amount
       const newRemainingAmount = receivable.totalAmount - newPaidAmount
@@ -330,7 +334,7 @@ export function registerAccountReceivablesHandlers(): void {
 
       // Execute all operations in a transaction
       const result = await withTransaction(async ({ db: txDb }) => {
-        // 1. Record the payment
+        // 1. Record the payment (held: status='pending_approval')
         const [payment] = await txDb
           .insert(receivablePayments)
           .values({
@@ -340,57 +344,60 @@ export function registerAccountReceivablesHandlers(): void {
             referenceNumber: data.referenceNumber,
             notes: data.notes,
             receivedBy: session.userId,
+            status: isHeld ? 'pending_approval' : 'posted',
           })
           .returning()
 
-        // 2. Update receivable amounts
-        await txDb
-          .update(accountReceivables)
-          .set({
-            paidAmount: newPaidAmount,
-            remainingAmount: Math.max(0, newRemainingAmount),
-            status: newStatus,
-            updatedAt: new Date().toISOString(),
-          })
-          .where(eq(accountReceivables.id, data.receivableId))
+        if (!isHeld) {
+          // 2. Update receivable amounts
+          await txDb
+            .update(accountReceivables)
+            .set({
+              paidAmount: newPaidAmount,
+              remainingAmount: Math.max(0, newRemainingAmount),
+              status: newStatus,
+              updatedAt: new Date().toISOString(),
+            })
+            .where(eq(accountReceivables.id, data.receivableId))
 
-        // 3. Sync with sales table if this receivable is linked to a sale
-        if (receivable.saleId) {
-          const sale = await txDb.query.sales.findFirst({
-            where: eq(sales.id, receivable.saleId),
-          })
+          // 3. Sync with sales table if this receivable is linked to a sale
+          if (receivable.saleId) {
+            const sale = await txDb.query.sales.findFirst({
+              where: eq(sales.id, receivable.saleId),
+            })
 
-          if (sale) {
-            const newSaleAmountPaid = sale.amountPaid + data.amount
-            const saleOutstanding = sale.totalAmount - newSaleAmountPaid
-            const newSalePaymentStatus = saleOutstanding <= 0 ? 'paid' : 'partial'
+            if (sale) {
+              const newSaleAmountPaid = sale.amountPaid + data.amount
+              const saleOutstanding = sale.totalAmount - newSaleAmountPaid
+              const newSalePaymentStatus = saleOutstanding <= 0 ? 'paid' : 'partial'
 
-            await txDb
-              .update(sales)
-              .set({
-                amountPaid: newSaleAmountPaid,
-                paymentStatus: newSalePaymentStatus,
-                updatedAt: new Date().toISOString(),
-              })
-              .where(eq(sales.id, receivable.saleId))
+              await txDb
+                .update(sales)
+                .set({
+                  amountPaid: newSaleAmountPaid,
+                  paymentStatus: newSalePaymentStatus,
+                  updatedAt: new Date().toISOString(),
+                })
+                .where(eq(sales.id, receivable.saleId))
+            }
           }
+
+          // 4. Post to General Ledger
+          await postARPaymentToGL(
+            {
+              id: payment.id,
+              receivableId: data.receivableId,
+              branchId: receivable.branchId,
+              amount: data.amount,
+              paymentMethod: data.paymentMethod,
+              invoiceNumber: receivable.invoiceNumber,
+            },
+            session.userId
+          )
         }
 
-        // 4. Post to General Ledger
-        await postARPaymentToGL(
-          {
-            id: payment.id,
-            receivableId: data.receivableId,
-            branchId: receivable.branchId,
-            amount: data.amount,
-            paymentMethod: data.paymentMethod,
-            invoiceNumber: receivable.invoiceNumber,
-          },
-          session.userId
-        )
-
-        // 5. Auto-record non-cash payments as online transactions
-        if (data.paymentMethod !== 'cash') {
+        // 5. Insert online_transaction row for non-cash so the approver sees it
+        if (isHeld) {
           await txDb.insert(onlineTransactions).values({
             branchId: receivable.branchId,
             transactionDate: new Date().toISOString().split('T')[0],
@@ -449,24 +456,40 @@ export function registerAccountReceivablesHandlers(): void {
           remainingAmount: receivable.remainingAmount,
           status: receivable.status,
         },
-        newValues: {
-          paidAmount: newPaidAmount,
-          remainingAmount: newRemainingAmount,
-          status: newStatus,
-          paymentAmount: data.amount,
-          paymentMethod: data.paymentMethod,
-        },
-        description: `Recorded payment of ${data.amount} for receivable ${receivable.invoiceNumber}`,
+        newValues: isHeld
+          ? {
+              paymentAmount: data.amount,
+              paymentMethod: data.paymentMethod,
+              held: true,
+              note: 'Pending approval — AR balance/GL not yet updated',
+            }
+          : {
+              paidAmount: newPaidAmount,
+              remainingAmount: newRemainingAmount,
+              status: newStatus,
+              paymentAmount: data.amount,
+              paymentMethod: data.paymentMethod,
+            },
+        description: isHeld
+          ? `Recorded held payment of ${data.amount} for ${receivable.invoiceNumber} — awaiting approval`
+          : `Recorded payment of ${data.amount} for receivable ${receivable.invoiceNumber}`,
       })
 
       return {
         success: true,
         data: result,
-        receivable: {
-          paidAmount: newPaidAmount,
-          remainingAmount: Math.max(0, newRemainingAmount),
-          status: newStatus,
-        },
+        receivable: isHeld
+          ? {
+              paidAmount: receivable.paidAmount,
+              remainingAmount: receivable.remainingAmount,
+              status: receivable.status,
+              held: true,
+            }
+          : {
+              paidAmount: newPaidAmount,
+              remainingAmount: Math.max(0, newRemainingAmount),
+              status: newStatus,
+            },
       }
     } catch (error) {
       console.error('Record payment error:', error)

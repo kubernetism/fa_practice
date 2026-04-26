@@ -82,6 +82,20 @@ export async function runMigrations(): Promise<void> {
     // Don't throw - log error but continue
   }
 
+  // Manual migration for payable_payments status column (held-payment gate)
+  try {
+    await ensurePayablePaymentsStatus()
+  } catch (error) {
+    console.error('payable_payments status migration error:', error)
+  }
+
+  // Manual migration for receivable_payments status column (held-collection gate)
+  try {
+    await ensureReceivablePaymentsStatus()
+  } catch (error) {
+    console.error('receivable_payments status migration error:', error)
+  }
+
   // Manual migration for application_info setup_completed column
   try {
     await ensureApplicationInfoSetupCompleted()
@@ -407,6 +421,44 @@ async function ensureExpensesPaymentStatus(): Promise<void> {
   }
 
   console.log('expenses payment_status migration completed successfully!')
+}
+
+async function ensurePayablePaymentsStatus(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='payable_payments'`
+  ).get()
+  if (!tableCheck) return
+
+  const tableInfo = rawDb.prepare(`PRAGMA table_info(payable_payments)`).all() as Array<{ name: string }>
+  const existing = new Set(tableInfo.map((c) => c.name))
+  if (!existing.has('status')) {
+    console.log('Adding payable_payments.status column...')
+    const alterSql = `ALTER TABLE payable_payments ADD COLUMN status TEXT DEFAULT 'posted' NOT NULL`
+    rawDb.prepare(alterSql).run()
+    console.log('payable_payments.status column added')
+  }
+}
+
+async function ensureReceivablePaymentsStatus(): Promise<void> {
+  const { getRawDatabase } = await import('./index')
+  const rawDb = getRawDatabase()
+
+  const tableCheck = rawDb.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='receivable_payments'`
+  ).get()
+  if (!tableCheck) return
+
+  const tableInfo = rawDb.prepare(`PRAGMA table_info(receivable_payments)`).all() as Array<{ name: string }>
+  const existing = new Set(tableInfo.map((c) => c.name))
+  if (!existing.has('status')) {
+    console.log('Adding receivable_payments.status column...')
+    const alterSql = `ALTER TABLE receivable_payments ADD COLUMN status TEXT DEFAULT 'posted' NOT NULL`
+    rawDb.prepare(alterSql).run()
+    console.log('receivable_payments.status column added')
+  }
 }
 
 async function ensureApplicationInfoSetupCompleted(): Promise<void> {

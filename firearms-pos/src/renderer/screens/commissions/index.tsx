@@ -106,6 +106,8 @@ interface CommissionFormData {
   commissionType: string
   baseAmount: string
   rate: string
+  flatAmount: string
+  rateMode: 'percent' | 'flat'
   referralPersonId: string
   userId: string
   notes: string
@@ -116,6 +118,8 @@ const initialFormData: CommissionFormData = {
   commissionType: 'referral',
   baseAmount: '',
   rate: '',
+  flatAmount: '',
+  rateMode: 'percent',
   referralPersonId: '',
   userId: '',
   notes: '',
@@ -217,6 +221,8 @@ export default function CommissionsScreen() {
         commissionType: commission.commissionType,
         baseAmount: commission.baseAmount.toString(),
         rate: commission.rate.toString(),
+        flatAmount: commission.commissionAmount.toString(),
+        rateMode: 'percent',
         referralPersonId: commission.referralPersonId?.toString() || '',
         userId: commission.userId?.toString() || '',
         notes: commission.notes || '',
@@ -241,7 +247,77 @@ export default function CommissionsScreen() {
   }
 
   const handleReferralPersonChange = (referralPersonId: string) => {
-    setFormData({ ...formData, referralPersonId })
+    const person = referralPersons.find((rp) => rp.id === parseInt(referralPersonId))
+    const defaultRate = person?.commissionRate
+    setFormData((prev) => ({
+      ...prev,
+      referralPersonId,
+      // Only pre-fill rate if empty (don't overwrite user edits)
+      rate: prev.rate || (defaultRate != null ? String(defaultRate) : prev.rate),
+    }))
+  }
+
+  const handleInvoiceChange = async (saleId: string) => {
+    setFormData((prev) => ({ ...prev, saleId }))
+    if (!saleId) return
+    try {
+      const response = await window.api.commissions.getSaleProfit(parseInt(saleId))
+      if (response?.success && response?.data) {
+        const profit = Number(response.data.profit ?? 0)
+        setFormData((prev) => ({
+          ...prev,
+          baseAmount: prev.baseAmount || (profit > 0 ? profit.toFixed(2) : prev.baseAmount),
+        }))
+      }
+    } catch (error) {
+      console.error('Failed to fetch sale profit:', error)
+    }
+  }
+
+  const handleRateModeChange = (mode: 'percent' | 'flat') => {
+    setFormData((prev) => {
+      const base = parseFloat(prev.baseAmount) || 0
+      if (mode === 'flat') {
+        const rate = parseFloat(prev.rate) || 0
+        const flat = base > 0 && rate > 0 ? ((base * rate) / 100).toFixed(2) : prev.flatAmount
+        return { ...prev, rateMode: mode, flatAmount: flat }
+      }
+      const flat = parseFloat(prev.flatAmount) || 0
+      const rate = base > 0 && flat > 0 ? ((flat / base) * 100).toFixed(4) : prev.rate
+      return { ...prev, rateMode: mode, rate }
+    })
+  }
+
+  const handleFlatAmountChange = (flatAmount: string) => {
+    setFormData((prev) => {
+      const base = parseFloat(prev.baseAmount) || 0
+      const flat = parseFloat(flatAmount) || 0
+      const rate = base > 0 && flat > 0 ? ((flat / base) * 100).toFixed(4) : ''
+      return { ...prev, flatAmount, rate }
+    })
+  }
+
+  const handleRateChange = (rate: string) => {
+    setFormData((prev) => {
+      const base = parseFloat(prev.baseAmount) || 0
+      const r = parseFloat(rate) || 0
+      const flat = base > 0 && r > 0 ? ((base * r) / 100).toFixed(2) : ''
+      return { ...prev, rate, flatAmount: flat }
+    })
+  }
+
+  const handleBaseAmountChange = (baseAmount: string) => {
+    setFormData((prev) => {
+      const base = parseFloat(baseAmount) || 0
+      if (prev.rateMode === 'flat') {
+        const flat = parseFloat(prev.flatAmount) || 0
+        const rate = base > 0 && flat > 0 ? ((flat / base) * 100).toFixed(4) : ''
+        return { ...prev, baseAmount, rate }
+      }
+      const r = parseFloat(prev.rate) || 0
+      const flat = base > 0 && r > 0 ? ((base * r) / 100).toFixed(2) : ''
+      return { ...prev, baseAmount, flatAmount: flat }
+    })
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -864,7 +940,7 @@ export default function CommissionsScreen() {
                       <Label htmlFor="saleId-referral">Select Invoice *</Label>
                       <Select
                         value={formData.saleId}
-                        onValueChange={(v) => setFormData({ ...formData, saleId: v })}
+                        onValueChange={handleInvoiceChange}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Select invoice" />
@@ -892,52 +968,89 @@ export default function CommissionsScreen() {
                     {formData.saleId && (
                       <>
                         <div className="space-y-2">
-                          <Label htmlFor="baseAmount-referral">Base Amount *</Label>
+                          <Label htmlFor="baseAmount-referral">Base Amount (profit) *</Label>
                           <Input
                             id="baseAmount-referral"
                             type="number"
                             step="0.01"
                             min="0"
                             value={formData.baseAmount}
-                            onChange={(e) => setFormData({ ...formData, baseAmount: e.target.value })}
+                            onChange={(e) => handleBaseAmountChange(e.target.value)}
                             placeholder="0.00"
                             required
                           />
                           <p className="text-xs text-muted-foreground">
-                            Amount from sale that commission is based on
+                            Auto-filled with profit from this sale. Edit if a different base is needed.
                           </p>
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor="rate-referral">Commission Rate (%) *</Label>
-                          <Input
-                            id="rate-referral"
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            max="100"
-                            value={formData.rate}
-                            onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
-                            placeholder="0.00"
-                            required
-                          />
-                          {formData.referralPersonId && (
-                            <p className="text-xs text-muted-foreground">
-                              {referralPersons.find(
-                                (rp) => rp.id === parseInt(formData.referralPersonId)
-                              )?.commissionRate && (
-                                <span>
-                                  Default for this person:{' '}
-                                  {
-                                    referralPersons.find(
-                                      (rp) => rp.id === parseInt(formData.referralPersonId)
-                                    )?.commissionRate
-                                  }
-                                  %
-                                </span>
-                              )}
-                            </p>
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor="rate-referral">
+                              {formData.rateMode === 'percent' ? 'Commission Rate (%) *' : 'Commission Amount *'}
+                            </Label>
+                            <div className="inline-flex rounded-md border border-border overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() => handleRateModeChange('percent')}
+                                className={`px-2 py-0.5 text-[10px] font-medium ${
+                                  formData.rateMode === 'percent'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground hover:bg-muted'
+                                }`}
+                              >
+                                %
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRateModeChange('flat')}
+                                className={`px-2 py-0.5 text-[10px] font-medium ${
+                                  formData.rateMode === 'flat'
+                                    ? 'bg-primary text-primary-foreground'
+                                    : 'bg-background text-muted-foreground hover:bg-muted'
+                                }`}
+                              >
+                                Flat
+                              </button>
+                            </div>
+                          </div>
+                          {formData.rateMode === 'percent' ? (
+                            <Input
+                              id="rate-referral"
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              max="100"
+                              value={formData.rate}
+                              onChange={(e) => handleRateChange(e.target.value)}
+                              placeholder="0.00"
+                              required
+                            />
+                          ) : (
+                            <Input
+                              id="rate-referral"
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={formData.flatAmount}
+                              onChange={(e) => handleFlatAmountChange(e.target.value)}
+                              placeholder="0.00"
+                              required
+                            />
                           )}
+                          {formData.referralPersonId && (() => {
+                            const defaultRate = referralPersons.find(
+                              (rp) => rp.id === parseInt(formData.referralPersonId)
+                            )?.commissionRate
+                            if (defaultRate == null) return null
+                            return (
+                              <p className="text-xs text-muted-foreground">
+                                {formData.rateMode === 'percent'
+                                  ? `Default for this person: ${defaultRate}%`
+                                  : `Derived from ${formData.rate || '—'}% (default ${defaultRate}%)`}
+                              </p>
+                            )
+                          })()}
                         </div>
                       </>
                     )}
@@ -1006,43 +1119,84 @@ export default function CommissionsScreen() {
                         id="saleId-employee"
                         type="number"
                         value={formData.saleId}
-                        onChange={(e) => setFormData({ ...formData, saleId: e.target.value })}
+                        onChange={(e) => handleInvoiceChange(e.target.value)}
                         placeholder="Enter sale/invoice ID"
                         required
                       />
                       <p className="text-xs text-muted-foreground">
-                        Enter the sale/invoice ID to create commission for
+                        Enter the sale/invoice ID — base amount will auto-fill with profit.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="baseAmount-employee">Base Amount *</Label>
+                        <Label htmlFor="baseAmount-employee">Base Amount (profit) *</Label>
                         <Input
                           id="baseAmount-employee"
                           type="number"
                           step="0.01"
                           min="0"
                           value={formData.baseAmount}
-                          onChange={(e) => setFormData({ ...formData, baseAmount: e.target.value })}
+                          onChange={(e) => handleBaseAmountChange(e.target.value)}
                           placeholder="0.00"
                           required
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <Label htmlFor="rate-employee">Commission Rate (%) *</Label>
-                        <Input
-                          id="rate-employee"
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="100"
-                          value={formData.rate}
-                          onChange={(e) => setFormData({ ...formData, rate: e.target.value })}
-                          placeholder="0.00"
-                          required
-                        />
+                        <div className="flex items-center justify-between">
+                          <Label htmlFor="rate-employee">
+                            {formData.rateMode === 'percent' ? 'Commission Rate (%) *' : 'Commission Amount *'}
+                          </Label>
+                          <div className="inline-flex rounded-md border border-border overflow-hidden">
+                            <button
+                              type="button"
+                              onClick={() => handleRateModeChange('percent')}
+                              className={`px-2 py-0.5 text-[10px] font-medium ${
+                                formData.rateMode === 'percent'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-background text-muted-foreground hover:bg-muted'
+                              }`}
+                            >
+                              %
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRateModeChange('flat')}
+                              className={`px-2 py-0.5 text-[10px] font-medium ${
+                                formData.rateMode === 'flat'
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-background text-muted-foreground hover:bg-muted'
+                              }`}
+                            >
+                              Flat
+                            </button>
+                          </div>
+                        </div>
+                        {formData.rateMode === 'percent' ? (
+                          <Input
+                            id="rate-employee"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            max="100"
+                            value={formData.rate}
+                            onChange={(e) => handleRateChange(e.target.value)}
+                            placeholder="0.00"
+                            required
+                          />
+                        ) : (
+                          <Input
+                            id="rate-employee"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={formData.flatAmount}
+                            onChange={(e) => handleFlatAmountChange(e.target.value)}
+                            placeholder="0.00"
+                            required
+                          />
+                        )}
                       </div>
                     </div>
 

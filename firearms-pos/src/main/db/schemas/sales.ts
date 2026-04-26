@@ -23,7 +23,9 @@ export const sales = sqliteTable('sales', {
   })
     .notNull()
     .default('cash'),
-  paymentStatus: text('payment_status', { enum: ['paid', 'partial', 'pending'] })
+  paymentStatus: text('payment_status', {
+    enum: ['paid', 'partial', 'pending', 'pending_approval', 'cancelled'],
+  })
     .notNull()
     .default('paid'),
   amountPaid: real('amount_paid').notNull().default(0),

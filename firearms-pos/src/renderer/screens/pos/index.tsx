@@ -793,7 +793,7 @@ export function POSScreen() {
   }
 
   return (
-    <div className="flex h-full gap-3 -m-6 p-3 overflow-hidden">
+    <div className="theme-agentfactory flex h-full gap-1.5 -m-6 p-3 overflow-hidden bg-background text-foreground">
       {/* ═══ LEFT: Product/Service Catalog ═══ */}
       <div className="flex flex-1 flex-col min-w-0">
         <Tabs value={activeTab} onValueChange={(value) => {
