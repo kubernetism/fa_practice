@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm'
+import { relations } from 'drizzle-orm'
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { users } from './users'
 
@@ -13,7 +13,7 @@ export const cloudCredentials = sqliteTable('cloud_credentials', {
   userId: integer('user_id')
     .notNull()
     .unique()
-    .references(() => users.id),
+    .references(() => users.id, { onDelete: 'cascade' }),
   googleEmail: text('google_email').notNull(),
   refreshTokenEncrypted: text('refresh_token_encrypted').notNull(),
   driveFolderId: text('drive_folder_id'),
@@ -27,7 +27,9 @@ export const cloudCredentials = sqliteTable('cloud_credentials', {
   argonT: integer('argon_t').notNull().default(3),
   argonP: integer('argon_p').notNull().default(4),
   autoUploadEnabled: integer('auto_upload_enabled', { mode: 'boolean' }).notNull().default(false),
-  connectedAt: text('connected_at').notNull().default(sql`(datetime('now'))`),
+  connectedAt: text('connected_at')
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
   lastUploadAt: text('last_upload_at'),
   lastError: text('last_error'),
 })

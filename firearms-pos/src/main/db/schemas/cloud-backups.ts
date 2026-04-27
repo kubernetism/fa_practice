@@ -1,4 +1,4 @@
-import { relations, sql } from 'drizzle-orm'
+import { relations } from 'drizzle-orm'
 import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 import { users } from './users'
 
@@ -14,7 +14,7 @@ export const cloudBackups = sqliteTable(
     id: integer('id').primaryKey({ autoIncrement: true }),
     userId: integer('user_id')
       .notNull()
-      .references(() => users.id),
+      .references(() => users.id, { onDelete: 'cascade' }),
     localPath: text('local_path').notNull(),
     localFilename: text('local_filename').notNull(),
     localSizeBytes: integer('local_size_bytes').notNull(),
@@ -28,8 +28,13 @@ export const cloudBackups = sqliteTable(
     driveFilename: text('drive_filename'),
     uploadedSizeBytes: integer('uploaded_size_bytes'),
     lastError: text('last_error'),
-    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
-    updatedAt: text('updated_at').notNull().default(sql`(datetime('now'))`),
+    createdAt: text('created_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    // Callers must set updatedAt explicitly on UPDATE; SQLite has no ON UPDATE trigger.
+    updatedAt: text('updated_at')
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
     userStatusIdx: index('cloud_backups_user_status_idx').on(table.userId, table.status),

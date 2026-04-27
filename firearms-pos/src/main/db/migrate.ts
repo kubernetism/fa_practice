@@ -270,7 +270,7 @@ export async function runMigrations(): Promise<void> {
     addCloudBackupTables(getRawDatabase())
   } catch (error) {
     console.error('Cloud backup tables migration error:', error)
-    // Don't throw - log error but continue
+    throw error
   }
 }
 

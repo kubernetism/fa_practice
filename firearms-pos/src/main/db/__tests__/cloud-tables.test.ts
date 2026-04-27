@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3'
+import Database from 'better-sqlite3-multiple-ciphers'
 /**
  * Tests for cloud_credentials and cloud_backups schema migration.
  *

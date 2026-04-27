@@ -22,7 +22,7 @@ function tableExists(rawDb: Database.Database, name: string): boolean {
 const CREATE_CLOUD_CREDENTIALS = `
   CREATE TABLE cloud_credentials (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+    user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
     google_email TEXT NOT NULL,
     refresh_token_encrypted TEXT NOT NULL,
     drive_folder_id TEXT,
@@ -41,7 +41,7 @@ const CREATE_CLOUD_CREDENTIALS = `
 const CREATE_CLOUD_BACKUPS = `
   CREATE TABLE cloud_backups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL REFERENCES users(id),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     local_path TEXT NOT NULL,
     local_filename TEXT NOT NULL,
     local_size_bytes INTEGER NOT NULL,
