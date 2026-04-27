@@ -9,6 +9,7 @@ import { fixFinancialIntegrity } from './migrations/fix_financial_integrity'
 import { fixFinancialIntegrityV2 } from './migrations/fix_financial_integrity_v2'
 import { migrateToPayees } from './migrations/migrate_to_payees'
 import { migrateFirearmAttributes } from './migrations/migrate_firearm_attributes'
+import { addCloudBackupTables } from './migrations/0001_add_cloud_backup_tables'
 
 export async function runMigrations(): Promise<void> {
   const db = getDatabase()
@@ -262,6 +263,14 @@ export async function runMigrations(): Promise<void> {
   } catch (error) {
     console.error('Firearm attributes migration error:', error)
     throw error
+  }
+
+  // Cloud backup tables (Google Drive encrypted backup feature)
+  try {
+    addCloudBackupTables(getRawDatabase())
+  } catch (error) {
+    console.error('Cloud backup tables migration error:', error)
+    // Don't throw - log error but continue
   }
 }
 
