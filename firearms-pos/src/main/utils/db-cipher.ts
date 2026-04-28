@@ -1,7 +1,14 @@
-import Database from 'better-sqlite3-multiple-ciphers'
 import { createHash, pbkdf2Sync } from 'node:crypto'
-import { existsSync, unlinkSync, renameSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
+import Database from 'better-sqlite3-multiple-ciphers'
 import { app } from 'electron'
 import { getMachineId } from './license'
 
@@ -174,4 +181,47 @@ export function decryptDatabase(dbPath: string): { success: boolean; message: st
       message: `Failed to decrypt database: ${error instanceof Error ? error.message : String(error)}`,
     }
   }
+}
+
+/**
+ * Export an encrypted SQLCipher database to a plaintext copy at a different path.
+ * Uses the copy+rekey approach (sqlcipher_export is unavailable in better-sqlite3-multiple-ciphers).
+ *
+ * The machineKey is interpreted as a hex passphrase to match encryptDatabase/decryptDatabase.
+ */
+export function exportEncryptedDbToPlaintext(
+  srcEncryptedPath: string,
+  machineKey: Buffer,
+  destPlaintextPath: string,
+): void {
+  if (existsSync(destPlaintextPath)) {
+    unlinkSync(destPlaintextPath)
+  }
+  copyFileSync(srcEncryptedPath, destPlaintextPath)
+  const db = new Database(destPlaintextPath)
+  const hexKey = machineKey.toString('hex')
+  db.pragma(`key='${hexKey}'`)
+  db.pragma('journal_mode=DELETE')
+  db.pragma("rekey=''")
+  db.close()
+}
+
+/**
+ * Encrypt a plaintext SQLite database to a new file using the given machine key.
+ * The machineKey is interpreted as a hex passphrase to match encryptDatabase/decryptDatabase.
+ */
+export function encryptPlaintextToMachineKey(
+  srcPlaintextPath: string,
+  machineKey: Buffer,
+  destEncryptedPath: string,
+): void {
+  if (existsSync(destEncryptedPath)) {
+    unlinkSync(destEncryptedPath)
+  }
+  copyFileSync(srcPlaintextPath, destEncryptedPath)
+  const db = new Database(destEncryptedPath)
+  const hexKey = machineKey.toString('hex')
+  db.pragma('journal_mode=DELETE')
+  db.pragma(`rekey='${hexKey}'`)
+  db.close()
 }
