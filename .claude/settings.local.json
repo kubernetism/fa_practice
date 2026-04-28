@@ -86,7 +86,12 @@
       "Bash(pnpm -v)",
       "Bash(tee /tmp/tsc.out)",
       "Bash(pnpm run *)",
-      "Bash(awk '/reversal_requests/,/CREATE INDEX IF NOT EXISTS payables_purchase_idx/')"
+      "Bash(awk '/reversal_requests/,/CREATE INDEX IF NOT EXISTS payables_purchase_idx/')",
+      "Bash(cat vitest.config.ts)",
+      "Bash(cat vite.config.ts)",
+      "Bash(grep -l \"vitest\" *.config.* electron.vite.config.*)",
+      "Bash(npm test *)",
+      "Bash(awk '/^[[:space:]]*rc = sqlite3_create_function/{getline; print NR\": \"$0}' /home/safdaralishah/Documents/github/fa_practice/firearms-pos/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c)"
     ]
   }
 }
